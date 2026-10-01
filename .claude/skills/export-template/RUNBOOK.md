@@ -65,7 +65,7 @@ Produces `template-export/` per `SPEC.md`.
    ```
 3. On GitHub → **Settings → tick "Template repository"**; add a description + topics
    (`obsidian`, `claude`, `second-brain`, `llm`, `knowledge-management`, `ai-research`).
-4. The README images already ship (`assets/framework_demo.png`, `assets/hero.png` — tracked, referenced
+4. The README images already ship (`assets/framework_demo.png`, `assets/hero.png`, `assets/three-parts.png` — tracked, referenced
    by `README.md`). To refresh one later, replace it under `assets/` at your vault root (where the README
    lives), then `--push` again.
 

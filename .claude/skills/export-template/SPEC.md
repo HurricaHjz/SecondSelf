@@ -14,7 +14,7 @@ second-yourself/                  (= template-export/)
 ├── CLAUDE.md                  # the agent's contract
 ├── .claude/skills/            # ingest · gather · delegate (with lane.py, the fence, routing.json, the lane core and slices) · query · output · reflect · lint · deep-lint · attic · qmd-search · export-template (ships with its payload/)
 ├── .obsidian/                 # graph.json, app.json, core-plugins.json, appearance.json ONLY
-├── assets/                   # README images (framework_demo.png, hero.png) force-tracked; other media gitignored
+├── assets/                   # README images (framework_demo.png, hero.png, three-parts.png) force-tracked; other media gitignored
 ├── output/                    # empty (.gitkeep)
 ├── attic/                     # empty (.gitkeep) — owner cold storage; contents gitignored
 ├── raw/                       # 11 empty lanes (.gitkeep) — NO seed (content is gitignored)

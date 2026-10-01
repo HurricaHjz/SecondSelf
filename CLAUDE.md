@@ -125,10 +125,11 @@ hijacks or silently strips it.
 │
 ├── output/                    ← 📤 DELIVERABLES — agent-generated reports/drafts/decks (the `output` skill); cited, graph-excluded, NOT knowledge
 │   │   (root = TEMP: one-off / unprocessed deliverables, mirroring raw/'s inbox pattern)
+│   ├── reports/               ← 📥 REPORT INBOX: every report the agent generates (run, morning, audit, review) lands here; the owner sorts it later, as with raw/
 │   ├── user-notes/            ← standing owner quick-references (roles, cache/tokens, …)
 │   ├── fundings/              ← funding applications + the live campaign dossier
 │   └── conference/            ← submission-round plan, per-venue catch-up plans, abstract/registration packs
-│   │   Subfolder files are STANDING, ACTIVELY MAINTAINED artefacts: their wiki source pages carry a
+│   │   Subfolder files (`reports/` excepted: an inbox) are STANDING, ACTIVELY MAINTAINED artefacts: their wiki source pages carry a
 │   │   "maintained derivative" line in `## Related` — edit such a page → update the derivative in the
 │   │   same pass. New subfolders on user instruction only.
 │
@@ -149,7 +150,7 @@ hijacks or silently strips it.
 | **`raw/`** | **Read** any file. **Move** a processed file into its category subfolder. **Add** a Markdown file *only* as the MarkItDown conversion of a non-Markdown source (keep the original — see §3.1). | **Edit, rewrite, or delete** the *content* of any existing raw file, or add any other file by hand. |
 | **`assets/`** | **Read** media; **add** new downloaded media; reference via `![[...]]`. | Delete the user's media without asking. |
 | **`wiki/`** | **Full read/write.** Create, update, merge, refactor, link. | Leave orphan pages or break the index/log contracts. |
-| **`output/`** | **Full read/write.** File deliverables (root = one-off/temp); **maintain** standing subfolder artefacts — when a source page flagged "maintained derivative" changes, update the derivative in the same pass. | Treat a deliverable as knowledge (index it, or cite it as a wiki source), or delete a standing artefact without asking. |
+| **`output/`** | **Full read/write.** File deliverables (root = one-off/temp; every report into `reports/`); **maintain** standing subfolder artefacts — when a source page flagged "maintained derivative" changes, update the derivative in the same pass. | Treat a deliverable as knowledge (index it, or cite it as a wiki source), or delete a standing artefact without asking. |
 | **`attic/`** | **Nothing in normal ops.** On an **explicit user instruction only**: read it, archive into it, or restore from it (§2.1). | Read, cite, or index its contents in any normal operation, or delete anything in it. |
 | **`.claude/`** | Read & update skills when asked. | Change settings without explaining. |
 

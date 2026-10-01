@@ -25,6 +25,7 @@
 # the README images are the ONLY tracked assets; all other assets/ media stay LOCAL
 !/assets/framework_demo.png
 !/assets/hero.png
+!/assets/three-parts.png
 # (examples/ is intentionally NOT ignored — it is the shipped demo)
 
 # --- Obsidian per-machine state (graph/app/core-plugins/appearance ARE tracked) ---

@@ -5,7 +5,7 @@ description: >
   vault, on an explicit instruction only: /project link | open | sync | brief | snapshot | status |
   unlink, or "open my research outline", "commit and push the outline", "link this Overleaf project",
   "snapshot the paper into the wiki". The clones live OUTSIDE the vault in the project store
-  (~/.llm-wiki/projects/) or are registered where they already are; the wiki holds only a registry row
+  (the registry page names its folder) or are registered where they already are; the wiki holds only a registry row
   (wiki/tools/Agent Project Store.md) and commit-pinned snapshots ingested through raw/. Never runs
   from passive context, IDEAS.md or another skill; never changes the working directory; commits as
   the owner on the word commit, pushes on the word push, never force.
@@ -119,15 +119,20 @@ The only way repository content reaches the wiki.
 
 ### `status`
 One table for every row: branch · ahead/behind per remote · porcelain count · sha on disk vs the row's
-sha · path present. Name every row whose path or sha disagrees with disk; propose the fix, apply on the
+sha · path present and not a symbolic link. Name every row whose path or sha disagrees with disk; propose the fix, apply on the
 owner's word.
 
 ### `unlink <name>`
 1. **Preview and wait:** every branch with unpushed commits (`git -C <path> log --branches --not
    --remotes --oneline`), the stash list, untracked files, ahead/behind per remote.
-2. On the owner's explicit yes: a store clone is removed (`rm -rf <store>/<name>`, its own simple
-   command); a registered-in-place copy is never removed, only unregistered.
-3. The row's state becomes `unlinked`; the project page keeps its links.
+2. On the owner's explicit yes the row's state becomes `unlinked` and nothing is removed; the reply
+   names the folder at the row's recorded path. **Deleting a project folder is a separate act**, done
+   only on the owner's explicit ask, which the agent may propose: the agent shows again what the folder
+   holds (unpushed commits, the stash list, untracked files, and any other working tree that depends on
+   it, from `git worktree list`), and on the owner's yes moves the folder to the system trash (the Bin
+   on macOS), never with `rm -rf`; a path that is missing or is a symbolic link is reported, not acted
+   on.
+3. The project page keeps its links.
 
 ## The credential helper
 Set once per clone, never a token in the URL; the helper reads the key at use time by grep, never by
