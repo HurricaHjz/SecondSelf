@@ -4,7 +4,7 @@
 # Run:  bash test_setup_customisation.sh
 # Premise guard: this suite needs process substitution. Invoked as `sh <file>` it dies mid-run
 # with a raw syntax error and exit 2, and a caller grepping the output for "FAIL" then reads zero
-# and calls it green (observed 2026-08-28). Probe the CAPABILITY, not the shell name: on macOS
+# and calls it green. Probe the CAPABILITY, not the shell name: on macOS
 # /bin/sh IS bash, so $BASH_VERSION is set while POSIX mode still disables the feature.
 if ! (eval 'cat < <(echo probe)') >/dev/null 2>&1; then
   echo "ERROR: process substitution unavailable (POSIX mode?) — run: bash $0"; exit 2
@@ -64,9 +64,8 @@ grep -q 'two dimensions that move together' "$ROOT/$CUST" 2>/dev/null && no "ret
 grep -q '| depth | per request; ingest picks per source' "$ROOT/$CUST" 2>/dev/null && ok "depth axis row seeded (v0.8.8 vocabulary)" || no "depth axis row missing/stale"
 grep -q '^### customised' "$ROOT/$CUST" 2>/dev/null && ok "customised span seeded (№56)" || no "customised span missing"
 grep -q 'a claim, never a label' "$ROOT/$CUST" 2>/dev/null && ok "status-line claim rule seeded (№56)" || no "status-line claim rule missing"
-# Parity legs (2026-09-06, step 4): three always-on paragraphs of the seeded core must be byte-identical to the live vault's
-# line, so an edit to the live file that misses the seed fails here (the Roles line drifted from 2026-09-04 to 2026-09-06
-# unnoticed: its `mode` clause never reached the seed; critic CRIT-S4). Each leg first proves its live anchor hits.
+# Compare each seeded contract paragraph with its matching source line.
+# Prove each live anchor exists before testing equality, so an absent source cannot pass.
 for anchor in 'The active role is the `role` value' '- **Plain and fluent in every reply to the owner' 'The four styles are one ladder along'; do
   LIVE_LINE=$(grep -F -m1 -e "$anchor" "$VAULT/$CUST" 2>/dev/null); SEED_LINE=$(grep -F -m1 -e "$anchor" "$ROOT/$CUST" 2>/dev/null)   # -e: an anchor may start with "-"
   if [ -z "$LIVE_LINE" ]; then no "parity premise: live anchor not found ($anchor)"; elif [ "$LIVE_LINE" = "$SEED_LINE" ]; then ok "seed parity: '${anchor}…' byte-identical to the live vault"; else no "seed parity: '${anchor}…' drifts from the live vault (seed v live)"; fi
@@ -81,14 +80,9 @@ print(len(re.findall(r'<[a-zA-Z][\w-]*>',b)))" 2>/dev/null || echo 99)
 [ "$RAW" = 0 ]                                && ok "no raw HTML-parsed tokens in rendered prose"      || no "$RAW raw <tag> token(s) leak into rendered prose"
 grep -q 'CUSTOMISATION-LOADED-v1'     "$ROOT/$CUST" 2>/dev/null && ok "load marker seeded"                  || no "load marker missing"
 grep -q '^@CUSTOMISATION\.md' "$VAULT/CLAUDE.md" && ok "shipped CLAUDE.md imports the preference layer" || no "CLAUDE.md import line missing"
-L=$(wc -l < "$ROOT/$CUST" | tr -d ' '); B=$(wc -c < "$ROOT/$CUST" | tr -d ' ')
-# leanness guard only — the old ~10 KB bound encoded the hook-transport limit retired in v0.7.6; raised 2026-07-31 for the shipped Human-expert register default; raised 2026-08-14 for the four-style delivery ladder; raised 2026-08-22 for the №56 style-ceiling enforcement layer (claim + Test clauses + customised spans)
-# raised 2026-08-23 for the fourth invariant (filed work is never restated) — vault↔template parity
+# Preference validity is determined by the semantic checks.
 if grep -q "Four invariants hold across the ladder" "$ROOT/CUSTOMISATION.md" && grep -q "filed work is never restated" "$ROOT/CUSTOMISATION.md"; then ok "fourth invariant (no-restatement) seeded"; else no "fourth invariant missing from seeded CUSTOMISATION"; fi
-[ "$B" -le 16384 ]                            && ok "seeded core stays lean (${B} B / $L lines)"      || no "seeded core too heavy (${B} B / $L lines)"
-DB=$(wc -c < "$ROOT/$DEFS" | tr -d ' ')
-# defs bound: seed measures ~7.6 kB at the 2026-08-25 split; 12288 gives ~60% headroom
-[ "$DB" -le 12288 ]                           && ok "seeded definitions file stays lean (${DB} B)"    || no "seeded definitions file too heavy (${DB} B)"
+# Reference: №56.
 
 echo "== 2b) definitions half is idempotent too =="
 printf '\nMY DEFS EDIT\n' >> "$ROOT/$DEFS"

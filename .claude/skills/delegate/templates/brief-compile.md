@@ -18,24 +18,29 @@ lanes hold {{other slices | none}}; cross-lane entity pages are {{split rule —
 FIDELITY (gate G3's two clauses, 2026-09-02; the wiki-state clause, plant and Anomalies duties, 2026-09-03; the product-name clause, 2026-09-04)
 <!-- A headless lane already carries the wiki-state clause, the table-comparison rule and the
 quotation-locator rule in templates/lane-core.md, and the product-name clause in the compile-core
-slice; keep this block whole for an IN-SESSION lane, which carries neither. -->
+slice; keep this block whole for an IN-SESSION lane, which carries neither. The table-summary
+sentence in the second bullet is in neither carrier: keep it for a headless lane too. -->
 - The source page states the source's own provenance as the raw states it — publisher,
   publication date and URL — in frontmatter (`source_url:`) AND in one sentence of
   `## Summary` (standard, concise) or `## Citation` (research); a provenance fact the raw lacks
   is a reported gap, never supplied.
 - Every `## Related` line and every sentence about a linked page or entity uses only what
   that page or the raw states — never a gloss of your own; if neither says it, do not say it.
+  A sentence that summarises a table quotes the cells it rests on, never a direction or a
+  universal over them ("every row", "the only method").
+  A cell from a column-collapsed table is quoted only with its row and column labels verified in the raw, never with a superlative or a row label the table does not print.
 - Never assert what the wiki does or does not hold ("the wiki's only record", "nothing in the
   wiki covers X"): state the check you ran and its result instead ("no other page names this
   route except `<page>`, which derives from the same capture — grep `<pattern>`, N hits"). A
   claim about the vault's state is a claim like any other and needs its evidence on the page
-  or in the report (G3r re-gate, 2026-09-03).
+  or in the report (G3r re-gate, 2026-09-03). A number you computed over a set (files, hits,
+  list lengths) is copied from the command's printed output in this call, never recalled or taken
+  from this brief. Re-run the count before the report and correct the sentence if it changed.
 - A product name is a model mention: a source that names an LLM product or family even once,
   even as a licence or plan name (ChatGPT Edu, GPT-4o), links the family's model page from
   `## Related` — ChatGPT and every GPT-n fold into `[[GPT]]` — and says on the page what the
-  source names; the model page's `## Appears in` gains the source. No individual model needs
-  naming for the link to be warranted (CLAUDE.md §4.5; G3-thin attempt 1, 2026-09-04: both thin
-  arms missed exactly this).
+  source names; the model page's `## Appears in` gains the source. The link does not require
+  an individually named model (CLAUDE.md §4.5).
 - CONTEXT NOTES below are pointers, never sources: a note the raw does not bear out is not
   compiled — list it under `## Anomalies` as "not in the raw" (one such note may be a
   spawner plant; the rule is the same either way).
@@ -44,11 +49,16 @@ heading) beside the run's fidelity plant: one specific, plausible claim the raw 
 contain, unmarked here, recorded in the spawn record BEFORE sending}}
 
 SCOPE
-- Reading list: your assigned sources + {{existing pages to reuse/link — the pre-scoped
-  slice of index.md/models/benchmarks relevant to this batch}}
+- Reading list: your assigned sources + {{existing pages to reuse/link}} + the index slice
+  {{<run>-index-<lane>.txt beside the run ledger, as an absolute path — the ingest skill's `index_slice.py` output for
+  this lane's raws}}, which replaces the ingest Step 4 `section` read of the five network sections for
+  this lane: it lists every name in them and, in `anchor` form, the index lines your raws name; any
+  other entry is fetched by exact name, with a fixed-string grep of wiki/index.md for its `[[Name]]`
+  link, never by reading a section
 - File whitelist (create/edit): {{exact page paths or globs — cover EVERYTHING the lane
   will create, scratch/working files included; a lane needing scratch outside the
   whitelist uses its own /tmp dir named in this slot}}
+- Proposed diff directory (parallel mode): {{absolute <run>-diffs/<lane>/ directory beside the ledger, explicitly granted for write}}. Shared-page changes are diff artefacts in this directory.
 - Link whitelist (may link to): {{pages}}
 - Sorting: {{"move each fully-compiled raw file to raw/<category>/" | "no sorting — head
   agent sorts"}}
@@ -67,19 +77,19 @@ REGISTRIES
 exception GRANTED under this lane's explicit ingest contract (§2.2): shell-append your
 log entry, anchored-Edit index.md per CLAUDE.md §5, grep-verify both back and show the
 grep}}. Any model/effort you write into a registry entry copies this brief's first-line
-slots or is omitted — never inferred (false "effort standard" ×6 across two runs, 2026-09-01).
+slots or is omitted — never inferred.
+At the merge the head runs the ingest skill's `ledger_check.py` over the run ledger, which rejects a
+future-dated `ts` and a configuration string (model, effort) absent from this brief.
 In your log entry the source page you wrote is a wikilink; every created network page, and every
 claim the head has not decided (a proposed create or update), is named in code font, never as
-`[[…]]` — the head's close-out entry links what it accepted (a declined create left a permanent
-dangling link in the append-only log, 2026-09-01).
+`[[…]]` — the head's close-out entry links what it accepted.
 
 LEDGER & CLAIMS <!-- parallel ingest runs only; delete this block for serial/one-off spawns -->
 - Run ledger {{~/.llm-wiki/ingest-runs/run-<id>.jsonl}}: shell-append only
   (`printf '%s\n' '<json>' >>`) — every event's `ts` comes from `$(date +%FT%R%z)` at write
-  time, never typed or derived (fabricated clocks, 2026-09-01 ×5 lanes); `lane_open` first
-  (lane id · definition · model · effort — copied verbatim from the model/effort slots on
-  this brief's first line, never from assumption: four lanes logged "standard" while running
-  max, same date),
+  time, never typed or derived; `lane_open` first (lane id · `role: compile` · definition · model ·
+  effort — copied verbatim from this brief's model/effort slots, never assumed), using the same
+  lane id as the spawn record so the meter joins by lane id,
   a per-source `checkpoint` at each stage you complete (`deduped → converted → read →
   compiled → claims_emitted → registered`), `conflict` events as found, `lane_close` last.
   Never read-modify-write the ledger; never write a `sorted` checkpoint (the head sorts at
@@ -87,12 +97,15 @@ LEDGER & CLAIMS <!-- parallel ingest runs only; delete this block for serial/one
   count or a census over the ledger, or over any JSONL more than one writer appends to, reads
   every line with `json.loads` or `jq` (one line at a time) before it counts; a key-pattern
   grep is a locator, never a verdict, because two writers spell the same key differently
-  (`"lane": "L4"` beside `"lane":"L4"`) and a substring count read 5 of 8 (2026-09-01).
+  (`"lane": "L4"` beside `"lane":"L4"`).
 - **Never create or edit shared-type pages** (entity/concept/model/benchmark). Emit claims
-  instead — in your report, mirrored by the `claims_emitted` checkpoint: `{name · type ·
+  instead — in your report, mirrored under `claims` in the `claims_emitted` checkpoint: `{name · type ·
   kind: create|update · target (canonicalised against index.md — GPT-4o → update [[GPT]]) ·
   facts[] with per-fact source locators · links[] · appears_in[] · confidence (§4.6) ·
-  from: [[source-page]]}`; mark shaky facts `unverified`.
+  from: source-page · source: raw identity · diff: absolute path · base: sha256 prefix · diff_hash: sha256 prefix}`; mark shaky facts `unverified`. Write one unified diff beside each claim in the granted diff directory. An update uses the page exactly as read; `base` is the first 16 sha256 hex digits, matching the de-dup probe's `source_hash` length. A create uses a new-file diff and the full schema's frontmatter and sections, with `aliases:` holding the acronym and expansion wherever the source gives both. Mirror `diff`, `base` and the diff's own sha256 prefix in each object under the checkpoint's `claims` key. Never apply these diffs yourself.
+- Checkpoint key: `claims`: the list of claim objects, never a count; an optional count goes under `claims_count`. Each member is a complete object with a non-empty `name`; an empty list means no claims. Never use `claim_objects` as a substitute key. Shape-only example for a source with no claims (add the run and write-time timestamp):
+  `{"event":"checkpoint","stage":"claims_emitted","lane":"<lane>","source":"<raw identity>","claims":[],"claims_count":0}`
+- After every `claims_emitted` append, run the mandatory read-only assertion in compile-core §5 against this ledger, lane and exact source identity. An in-session lane reads that assertion from the delegate skill's `lane-home-src/compile-core/SKILL.md`. Record its `claims-shape:` and `controls:` lines in the lane's final report under a `## Controls` heading, with one unquoted line `claims-shape: checkpoints N · objects M · invalid 0`. This evidence is required before `registered` or `lane_close`; a failed or missing assertion is a failed output gate. The verifier consumes these report lines.
 - Your Step 7 link check becomes: every link resolves to a real page OR to a target in your
   emitted claims. A conflict never pauses you: keep both statements in the claim, append the
   `conflict` event, report at close.
@@ -104,7 +117,7 @@ VERIFICATION
 - Frontmatter `source_hash` is the first 16 hex chars of the raw file's sha256
   (`shasum -a 256 <raw> | cut -c1-16`) — the length the ingest skill's de-dup pre-flight greps
   (its Step 3 template); a prefix of any other length misses the probe on a re-add of the
-  same file (nine pages re-stamped, 2026-09-02).
+  same file.
 CONTROL+: {{a probe that must hit}} in {{the file that must hold it — a real path, nothing after it}}
 Negative control: {{fake pattern}} must be caught
 - Link-whitelist sweep with a planted fake link carries that negative control.
@@ -123,14 +136,21 @@ does not cover, each with a locator — a source-internal inconsistency (kept on
 never resolved), a raw-versus-wiki conflict (the §4.4 block you wrote), a provenance gap, a
 context note not borne out by the raw, a thin or truncated source, anything unsettled;
 `none` is a claim and names what you checked.
+`## Controls` (parallel mode): the checkpoint assertion's `claims-shape:` line and the brief's `controls:` line, which the verify leg's named check reads (a report without them scores `claims 1`; critic review finding 1, 2026-09-16).
 ```
 
 <!-- Spawner: fill the first-line model/effort slots from the spawn record (lanes copy them
 into every registry/ledger config field). Escalate the spawn to model: opus for research-depth papers (routing table).
+ONE-LANE BATCH: apply the ingest Pacing section’s batch precedence: every batch compiles in a lane. The pre-flight records the standing instrument-rule reason satisfying `single`: (d) a batch longer than the head can afford, or (b) breadth one context cannot hold. A batch has no head-compile exception; the Routing note at Step 3 applies its head-compile rule under `single` to the single-source path alone. The owner’s word, else the head’s pre-flight judgement by converted bytes, chooses one-lane or parallel; that batch shape takes precedence over the older per-source `auto` sequence. For one-lane, assign the whole batch to this lane and set siblings to none. The lane compiles the batch serially, writes its source pages and warranted shared pages itself (no claims, no merge, no conflict lane), and writes its own index lines and log entry under the explicit §2.2 ingest exception. Grant those pages and raw pairs in the whitelist, choose the sorting option, and delete the parallel-only LEDGER & CLAIMS block. The lane sorts each raw pair after its own Step 7 self-check; one verify lane follows over all its pages before the head accepts the run, under the ingest Verify step. Carry these duties in the filled TASK, SCOPE and REGISTRIES slots. The head’s retained brief, verification, merge, sorting, Step 7 and registry duties remain as assigned by Routing and the chosen shape, including registries where the ingest exception is not granted.
 Grant the registry exception ONLY to a lane under a real ingest contract — never from
 brief-generic. Anchor every index.md/reading-list reference by heading or grep pattern,
-NEVER by line number — concurrent sibling lanes shift lines mid-run (L5 hit stale
-anchors live, run 20260901-batch112107).
+NEVER by line number — concurrent sibling lanes shift lines mid-run (a lane has hit stale
+anchors live).
+PREFLIGHT (parallel ingest, before the owner go): the ingest skill's `brief_preflight.py` runs over
+every filled compile and verify brief (its Parallel mode step 1) and fails a brief on a path token
+whose parent directory is missing, an unfilled slot, a ledger path that differs between briefs, no `preflight`
+append proven at the brief's ledger path, a fence deny for a headless lane's own append, or an index
+section named or pasted: fill every path slot with a literal path before the check runs.
 PLANT (every M1 compile spawn, 2026-09-03): fill CONTEXT NOTES with at least one true pointer
 and exactly one fidelity plant — a specific, plausible claim the raw does not contain (a
 number, a date, a name, a step), its class drawn from the design's rotation (source-authority

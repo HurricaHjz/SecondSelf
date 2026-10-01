@@ -9,7 +9,7 @@ You are {{AGENT_NAME}} (definition: .claude/agents/{{DEF}}.md), lane {{LANE_ID}}
 {{RUN_ID}}.
 
 TASK
-{{One paragraph. State the partition explicitly: which question THIS lane answers, and
+{{State the task concisely. State the partition explicitly: which question THIS lane answers, and
 which adjacent questions belong to other lanes even where files overlap.}}
 
 SCOPE
@@ -19,6 +19,9 @@ SCOPE
 - Link whitelist (may link to): {{pages | n/a}}
 - Boundary: anything outside the whitelists is out of scope — return a proposed diff
   instead of an edit, and report off-scope findings without fixing them.
+- A lane under /tmp dry-runs a returned diff on a flat copy (no `.claude` path component: the
+  fence refuses one there) with `patch -p<depth> --dry-run` run inside the copy, `<depth>` the
+  leading components to strip (4 for `a/.claude/skills/<skill>/<file>`).
 
 REGISTRIES
 wiki/index.md and wiki/log.md are propose-don't-write: return entries as ready-to-apply
@@ -47,8 +50,7 @@ Negative control: {{a planted pattern that must NOT hit / must be caught}}
   negative control | read-only lanes: "—"}}
 - Folds must parse: a count over a run ledger, a spawn record or any JSONL more than one
   writer appends to reads every line with `json.loads` or `jq` before it counts; a key-pattern grep
-  is a locator, never a verdict (two writers spell one key two ways; a substring count read
-  5 of 8, 2026-09-01).
+  is a locator, never a verdict (two writers spell one key two ways).
 
 {{PASTE templates/_inherited.md block}}
 {{extra role conduct | —}}
@@ -62,6 +64,4 @@ eight slots present (GRANTS belongs to slot 2's scope, DECISIONS to slot 8 — n
 ninth); no expected answer leaked anywhere; reading list scoped. Control
 strings for greps over the CURRENT session's transcript must be generated at probe time
 by the lane, never written in the brief — a brief-supplied string matches its own spawn
-prompt inside the transcript (observed live 2026-08-27: a briefed negative control
-returned 1, hitting its own brief), so use a fresh nonce or scope the grep to pre-brief
-lines. -->
+prompt inside the transcript, so use a fresh nonce or scope the grep to pre-brief lines. -->

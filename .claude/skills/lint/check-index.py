@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Index-consistency census: wiki/index.md against the pages on disk.
 
-Lint Step 1 used to be an agent Read of the index plus a glob and a hand comparison — the
-"re-derive a count by hand" the lint Routing note forbids. This is that comparison as a
+Lint Step 1's index comparison, as a script rather than an agent Read of the index plus a glob
+and a hand comparison — the "re-derive a count by hand" the lint Routing note forbids. This is that comparison as a
 script, so the agent reads a report instead of counting.
 
 The rules are deep-lint's, not new ones: `.claude/skills/deep-lint/audit-pools.py` already

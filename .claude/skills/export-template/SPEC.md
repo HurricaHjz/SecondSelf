@@ -37,10 +37,12 @@ second-yourself/                  (= template-export/)
 
 ## KEEP / STRIP (copied from the live vault by the builder)
 - **KEEP →** CLAUDE.md, MANUAL.md, `README.md`/`LICENSE.md` + `assets/` (from the vault root),
-  `.claude/skills/**` — **every** skill, **incl. `export-template`** (the maintainer's publish tool, with its `payload/`),
+  `.claude/skills/**` — every publishable skill, including `export-template` (the maintainer's publish tool, with its `payload/`), except `professor-loop` while its standalone prerequisites are being prepared,
   `.obsidian/{graph,app,core-plugins,appearance}.json`.
 - **STRIP →** all `wiki/**`, `raw/**`, `assets/**` (bar the README images), `output/**`, `attic/**`,
   `wiki/user/**`, `CUSTOMISATION.md`, `CUSTOMISATION-definitions.md`, personal data, `.obsidian/workspace.json`/`plugins/`/`community-plugins.json`, `.claudian/`, `.git/`.
+
+The exclusion removes a previous generated copy from build/push destinations and leaves the private source directory unchanged.
 
 ## Conventions the scaffold must preserve
 - Every empty content dir keeps a `.gitkeep`.
@@ -50,7 +52,7 @@ second-yourself/                  (= template-export/)
 
 ## Push / pull round-trip (how repo and vault stay in sync)
 The builder runs **one direction per invocation** (see SKILL.md):
-- **push** (vault → repo): `copy_framework` (CLAUDE.md, MANUAL.md, skills, `.obsidian`, seed) +
+- **push** (vault → repo): `copy_framework` (CLAUDE.md, MANUAL.md, publishable skills, `.obsidian`, seed) +
   `copy_packaging` (`README.md`/`LICENSE.md` + `assets/` from the vault root; setup.sh + git
   dotfiles from `payload/`) + `make_skeleton` + `apply_fixes`.
 - **pull** (repo → vault, with `--apply`): repo framework → vault (CLAUDE.md, MANUAL.md,

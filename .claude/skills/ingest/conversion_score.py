@@ -4,14 +4,12 @@
 Stdout-only: this script reads conversions and their PDFs, calls `pdftotext` with its output
 on stdout, and writes no file anywhere. It never modifies, creates, moves or deletes anything.
 
-Why it exists (known-issues 2026-09-08, ingest Step 0 conversions): 17 of 96 conversions under
-the vault's paper directory carried source damage in two shapes — two files whose line
-structure had collapsed to one-character lines, and fifteen whose lines were sound but had
-lost the space between words — and only five of the pages compiled from them raised a
-`flagged:` line. No probe scored a conversion. This one does, and its `suspect` verdict is the
+This scorer detects collapsed line structure and lost inter-word spaces before compilation.
+Its `suspect` verdict supplies the
+# References: known-issues 2026-09-08.
 observable Step 0 records as `flagged:` on the source page (never a prose note).
 
-THE FOUR MEASURES (per file; the body is every line below the YAML frontmatter, or the whole
+THE FIVE MEASURES (four text arms plus optional PDF recovery; per file; the body is every line below the YAML frontmatter, or the whole
 file when there is no frontmatter)
   short-lines %   the share of NON-BLANK body lines whose stripped content is one character
                   or less, over all non-blank body lines. A blank line is a paragraph break in
@@ -49,14 +47,25 @@ file when there is no frontmatter)
   long-run /1k    runs of 25 or more ASCII Latin letters (`[A-Za-z]{25,}`) per 1,000
                   whitespace-separated words of the body — the ingest skill's own Step 0 probe
                   (a), the same rule with none of the exclusions above, so the two agree on what
-                  they count (the skill reads the whole file, this reads the body: on the
-                  derivation corpus the two agree on every verdict, and the rates differ by
-                  under 0.5 per 1,000 except on the two collapsed files whose bodies hold 49 and
-                  153 words). Fires when the rate crosses its threshold AND the body holds
+                  they count. The skill reads the whole file; this scorer reads the body.
+                  Fires when the rate crosses its threshold AND the body holds
                   at least LONG_RUN_FLOOR runs — the skill's own floor, set by judgement,
                   unmeasured, which keeps a very short capture off the gate. `n/a` on a
                   non-Latin-majority body for the reason given above (the skill's 3b makes the
                   same CJK carve-out for its chars-per-word mean).
+  readable-words  word-letter share: ASCII letters inside runs of four or more letters
+                  divided by all ASCII letters in the body. YAML frontmatter contributes
+                  neither numerator nor denominator. Digits, punctuation and markup padding
+                  bytes are not ASCII letters and cannot dilute this share. All body ASCII
+                  letters count, including those in code or tags; unlike run-together, this arm
+                  does not use prose exclusions. A long run still contributes all its letters:
+                  joined-word damage remains the other arms' job. This is a word-shape proxy,
+                  not a dictionary or proof of meaningful prose. It is n/a on a non-Latin-majority
+                  body or with no ASCII letters. A diacritic-heavy Latin-script body (Vietnamese,
+                  where few words carry four plain ASCII letters in a row) reads destroyed under
+                  this proxy: such captures are outside its validated scope. A
+                  Unicode-letter run count needs local calibration. Zero share is `damage: destroyed`; a low
+                  non-zero share is `damage: damaged`; both keep `suspect` and exit 3.
   recovery        sentence recovery against `pdftotext` (flow order, no `-layout`) when a
                   sibling PDF exists: the fraction of pdftotext sentences of MIN_SENTENCE_WORDS
                   words or more that are found verbatim in the conversion after whitespace
@@ -70,7 +79,21 @@ file when there is no frontmatter)
                   optional and serves this measure only: when the binary is absent the measure
                   reads `n/a (pdftotext absent)`, when it exits non-zero or times out it reads
                   `n/a (pdftotext failed: <first stderr line>)`, and in every `n/a` case the
-                  verdict rests on the other three measures and the exit code is 0 or 3, never 2.
+                  verdict rests on the other four text measures and the exit code is 0 or 3, never 2.
+                  The reference must itself be readable: a scanned PDF's text layer can be glyph
+                  soup that no conversion holds. Before the comparison the pdftotext text is
+                  judged on two measures, and it is unreadable only when BOTH fire: the
+                  readable-words arm below (its measure, its Latin-majority test and its cut) reads
+                  it below that cut, AND its letter density (letters of any script per character)
+                  is below REFERENCE_LETTER_DENSITY. Unreadable, the measure reads
+                  `n/a (reference unreadable (readable-words <share>, letter density <density>))`,
+                  and with no letter at all `n/a (reference unreadable (no letters))`, so it never
+                  adds `recovery` to the reasons. A short readable reference can have a low
+                  word-letter share and normal letter density; a destroyed layer holds almost no letter. A value
+                  equal to either cut is readable, as for the arm itself; an empty reference keeps
+                  `n/a (pdftotext yielded no sentence of 6 words)`; a reference the arm reads n/a
+                  (non-Latin-majority) is compared as before. Reusing the share cut on the
+                  reference is set by judgement, unmeasured for a new corpus.
 
 SCOPE (printed per file as `scope: pdf` or `scope: other`, with the evidence in brackets)
   The thresholds are derived on PDF conversions of papers, so `pdf` is the scope they were
@@ -82,51 +105,33 @@ SCOPE (printed per file as `scope: pdf` or `scope: other`, with the evidence in 
   verdict: a `suspect` outside the derivation scope is still printed and still exits 3, and
   the ingest skill decides what to do with it (its Step 0 text: a `suspect` on `other` is
   reported in the run report and raises no `flagged:` line by itself). Why not
-  `converted_from:` alone: on the derivation corpus 12 of the 17 damaged files record the
-  paper's abstract URL there, not the PDF the agent downloaded and converted, and the engine
-  is the one remaining observable that says a converter ran. The engine names are the skill's
+  `converted_from:` alone: a damaged file can record the paper's abstract URL there, not the
+  PDF the agent downloaded and converted, and the engine is the one remaining observable that
+  says a converter ran. The engine names are the skill's
   own routes, listed in one tuple (DOCUMENT_CONVERTERS); a route the skill adds later is added
   there, and until it is, a conversion by an unlisted engine reads `other` — reported, never
   silent.
 
 VERDICT  `suspect` when any measure crosses its threshold, else `clean`. Every output line
-prints the four measured values, the threshold each was judged against, and the scope.
+prints the five measured values, the threshold each was judged against, and the scope.
 
 THRESHOLDS — derived, never set by eye. Rule: for each measure, the threshold is the midpoint
 of the gap between the worst-scoring known-clean file (the negatives' maximum for the three
-rates, their minimum for recovery) and the nearest known-damaged file beyond it — the loosest
+upper-tail rates, their minimum for recovery and readable-words) and the nearest known-damaged file beyond it — the loosest
 cut that admits no known-clean file, with half the gap as headroom on each side. A measure
 with no damaged file beyond the worst clean one gets no threshold (`n/a`: it does not
 separate) and the verdict rests on the others. Run `--derive DIR --positives FILE` to print
 the derivation, and `--distribution DIR` for the percentiles behind it.
 
-Derived 2026-09-08 on the vault's `raw/2-papers/` (96 Markdown conversions; 17 listed as
-damaged by the 2026-09-08 deep-lint, the other 79 taken as clean; 57 files had a sibling PDF):
-  short-lines %   negatives 0.00–20.69 · positives 0.00–94.44 · one positive beyond the worst
-                  negative (the structurally collapsed PPO.md at 94.44) · gap 20.69 → 94.44
-                  · threshold > 57.57. This threshold rests on one positive; the second
-                  collapsed file (LLM_Probe.md) reads 0.0 % here and is caught by the other
-                  measures.
-  run-together %  negatives 0.29–3.50 · positives 5.32–52.64 · 17 positives beyond the worst
-                  negative · gap 3.50 → 5.32 · threshold > 4.41. Worst clean file
-                  arxiv-org-html-2604-21284v1.md (3.50 %, a defuddle capture of an arXiv HTML
-                  page); next-worst clean GRPO.md (2.95 %); nearest damaged the SoK survey
-                  conversion at 5.32 %. Before the exclusions the worst clean file read 8.68 %
-                  (DrGRPO.md: 686 of its 879 hits sat on one `<latexit sha1_base64="…">` line
-                  of 8,689 characters) and the threshold, 9.15 %, missed that same 5.32 % file.
-  long-run /1k    negatives 0.00–2.48 · positives 10.64–5224.49 · 17 positives beyond the
-                  worst negative · gap 2.48 → 10.64 · threshold > 6.56. Worst clean SWIFT.md
-                  (2.48), next-worst DrGRPO.md (2.27); nearest damaged the SoK conversion
-                  (10.64, 284 runs in 26,688 words), the file the share alone missed under the
-                  old token rule — the skill's probe (a) caught it at a 4× margin, so it is a
-                  measure here.
-  recovery        negatives 0.29–0.94 (53 with a PDF) · positives 0.00–0.01 (4 with a PDF)
-                  · all 4 beyond the worst negative · gap 0.29 → 0.01 · threshold < 0.15
-  combined verdict at these thresholds: suspect 17 · clean 79 · true positives 17 · false
-  positives 0 · false negatives 0 · precision 1.000 · recall 1.000. Every positive reads
-  `scope: pdf`; 15 of the 79 clean files are web captures and read `scope: other`.
-The numbers above are the ones baked in below; re-run `--derive` after the corpus changes and
-update both places together. A `--thresholds` override is printed on the summary line.
+Compatibility thresholds
+------------------------
+The shipped constants retain the existing behaviour. Their selection is set by judgement,
+unmeasured for a new corpus. Use `--derive DIR --positives FILE` for the original four
+measures and `--derive-readable DIR --positives FILE` for readable-words. Keep the labelled
+corpus and its boundary measurements locally; re-derive affected cuts when it changes.
+The recovery arm combines readable-word share and letter density so neither measure alone
+can reject short readable prose. A `--thresholds` override is printed on the summary line.
+provenance together. A `--thresholds` override is printed on the summary line.
 
 USAGE
   python3 -B conversion_score.py FILE [FILE …]             score files (or every .md in a DIR)
@@ -135,8 +140,13 @@ USAGE
                                                            threshold derivation (FILE lists the
                                                            known-damaged conversions, one path
                                                            per line; matched on the basename)
-  --thresholds SHORT,RUN,RECOVERY,LONGRUN   override the four thresholds (a bare `-` keeps
-                                    one, `off` disables one); recorded on the summary line
+  python3 -B conversion_score.py --derive-readable DIR --positives FILE
+                                                           derive readable-words alone; FILE
+                                                           lists known destroyed captures
+  --thresholds SHORT,RUN,RECOVERY,LONGRUN[,READABLE]
+                                    override thresholds (a bare `-` keeps one, `off` disables
+                                    one); four values keep the derived readable-word cut.
+                                    READABLE is the word-letter share in [0, 1]; recorded on the summary.
   CONVERSION_SCORE_PDFTOTEXT        environment: the pdftotext binary to use (default: PATH,
                                     then the usual Homebrew locations); tests point it away
 
@@ -145,6 +155,7 @@ file, a body with no word token, a directory with no `.md`, a positives entry no
 DIR, a malformed option). A missing or failing `pdftotext` is not a premise failure.
 """
 import os
+import math
 import re
 import sys
 import unicodedata
@@ -152,11 +163,12 @@ import subprocess
 from functools import lru_cache
 
 # --- derived thresholds (see the docstring for the derivation) ---------------------------
-THRESHOLD_SHORT = 57.57    # short-lines %  : suspect when ABOVE (rests on one positive, PPO.md)
+THRESHOLD_SHORT = 57.57    # suspect ABOVE; compatibility default, set by judgement, unmeasured for a new corpus
 THRESHOLD_RUN = 4.41       # run-together % : suspect when ABOVE
 THRESHOLD_RECOVERY = 0.15  # recovery       : suspect when BELOW
 THRESHOLD_LONG_RUN = 6.56  # long-run /1k   : suspect when ABOVE (and LONG_RUN_FLOOR runs or more)
-DERIVED_ON = "2026-09-08 on raw/2-papers (96 files, 17 positives)"
+THRESHOLD_READABLE = 0.367 # suspect BELOW; compatibility default, set by judgement, unmeasured for a new corpus
+DERIVED_ON = "compatibility defaults; re-derive on a labelled local corpus"
 
 LONG_TOKEN = 18            # rule (b): more than this many letters — set by judgement, unmeasured
 LONG_RUN_FLOOR = 10        # long-run fires only with this many runs — the skill's floor, set by judgement, unmeasured
@@ -165,9 +177,11 @@ PDFTOTEXT_TIMEOUT_S = 120  # bound on one pdftotext call — a timeout, set by j
 BLOB_MIN_CHARS = 40        # base64-shaped blob: at least this long — set by judgement, unmeasured
 BLOB_NO_VOWEL_RUN = 6      # …and a run of this many non-vowels — set by judgement, unmeasured
 DOCUMENT_CONVERTERS = ("markitdown", "agent")   # the ingest skill's document-conversion routes (scope pdf)
+REFERENCE_LETTER_DENSITY = 0.306  # compatibility default; set by judgement, unmeasured for a new corpus
 
 LETTER_RUN_RE = re.compile(r"[^\W\d_]+")
 LONG_RUN_RE = re.compile(r"[A-Za-z]{25,}")       # the ingest skill's Step 0 probe (a), verbatim
+READABLE_RUN_RE = re.compile(r"[A-Za-z]{4,}")   # four-letter proxy specified above; set by judgement, unmeasured
 SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
 WS_RE = re.compile(r"\s+")
 FM_RE = re.compile(r"\A---[ \t]*\r?\n(.*?\r?\n)---[ \t]*\r?\n", re.S)
@@ -180,8 +194,20 @@ NO_VOWEL_RUN_RE = re.compile(r"[^aeiouyAEIOUY]{%d}" % BLOB_NO_VOWEL_RUN)
 DIGIT_RE = re.compile(r"\d")
 LETTER_RE = re.compile(r"[A-Za-z]")
 
-USAGE = ("usage: conversion_score.py [--thresholds S,R,C,L] FILE|DIR … | --distribution DIR | "
-         "--derive DIR --positives FILE   (exit 0 clean · 3 suspect · 2 premise failure)")
+USAGE = ("usage: conversion_score.py [--thresholds S,R,C,L[,A]] FILE|DIR … | --distribution DIR | "
+         "--derive DIR --positives FILE | --derive-readable DIR --positives FILE "
+         "(exit 0 clean · 3 suspect · 2 premise failure)\n"
+         "Measures: short-lines, run-together, long-run, recovery, readable-words.\n"
+         "A: readable-words, letters in runs of four or more divided by all ASCII body letters; "
+         "suspect below the derived cut, damage destroyed at zero, damaged otherwise.\n"
+         "Four threshold values keep the readable-words cut; a fifth overrides it; - keeps, off disables. "
+         "Numeric values must be finite and non-negative; readable-words is a share in [0, 1].\n"
+         "--derive uses the original four measures; --derive-readable uses the separately labelled "
+         "destroyed-capture corpus and prints both boundary files.\n"
+         "Recovery: n/a (reference unreadable (readable-words <share>, letter density <density>)) when the "
+         "pdftotext text layer itself reads below the readable-words cut AND below the reference letter-density "
+         "cut (a scanned PDF's glyph soup), n/a (reference unreadable (no letters)) when it holds no letter; "
+         "the verdict then rests on the four text arms.")
 
 
 def probe_failed(message):
@@ -308,6 +334,28 @@ def long_run_rate(body, latin_majority):
     return runs * 1000.0 / words, runs, words
 
 
+def readable_word_share(body, latin_majority):
+    """(share or None, letters in runs of four or more, all ASCII body letters)."""
+    if not body:
+        probe_failed("readable-words requires a non-empty body")
+    word_letters = sum(len(run) for run in READABLE_RUN_RE.findall(body))
+    letters = len(LETTER_RE.findall(body))
+    return (word_letters / letters if latin_majority and letters else None), word_letters, letters
+
+
+def readable_controls():
+    """Same-run positive and negative controls for the new arm, using its derived cut."""
+    destroyed = readable_word_share("a b c 123 !", True)[0]
+    prose = "Readable words support a clear account of the research."
+    clean = readable_word_share(prose, True)[0]
+    _, body = split_frontmatter("---\ntitle: Readable words in a title\n---\na b c 123 !")
+    if not (destroyed == 0 and destroyed < THRESHOLD_READABLE < clean
+            and readable_word_share(body, True)[0] == 0
+            and readable_word_share(prose + " | 0123456789 -- $ {} [] ", True)[0] == clean):
+        probe_failed("readable-words controls did not discriminate")
+    return "controls: readable-words zero-run body caught; readable prose passed; frontmatter excluded; non-letter padding ignored"
+
+
 def normalise(text):
     return WS_RE.sub(" ", unicodedata.normalize("NFKC", text)).strip().lower()
 
@@ -368,9 +416,9 @@ def scope_of(frontmatter, pdf):
     return "other", "no converted_by and no PDF evidence"
 
 
-def pdf_sentences(pdf, exe):
-    """(sentences or None, reason): pdftotext sentences of MIN_SENTENCE_WORDS words or more,
-    normalised; None with the reason when pdftotext fails or times out."""
+def pdf_text(pdf, exe):
+    """(text or None, reason): pdftotext's flow-order text layer, decoded; None with the reason
+    when pdftotext fails or times out."""
     try:
         proc = subprocess.run([exe, "-enc", "UTF-8", pdf, "-"], capture_output=True, timeout=PDFTOTEXT_TIMEOUT_S)
     except subprocess.TimeoutExpired:
@@ -381,21 +429,66 @@ def pdf_sentences(pdf, exe):
         err = proc.stderr.decode("utf-8", "replace").strip().splitlines()
         first = err[0][:120] if err else f"exit {proc.returncode}, no stderr"
         return None, f"pdftotext failed: {first}"
-    text = normalise(proc.stdout.decode("utf-8", "replace"))
+    return proc.stdout.decode("utf-8", "replace"), None
+
+
+def pdf_sentences(text):
+    """pdftotext sentences of MIN_SENTENCE_WORDS words or more, normalised."""
     out = []
-    for sent in SENTENCE_END_RE.split(text):
+    for sent in SENTENCE_END_RE.split(normalise(text)):
         sent = sent.strip()
         if len(sent.split(" ")) >= MIN_SENTENCE_WORDS:
             out.append(sent)
-    return out, None
+    return out
+
+
+def letter_density(text):
+    """Letters (maximal runs of the scorer's letter class, any script) per character of text."""
+    return sum(len(run) for run in LETTER_RUN_RE.findall(text)) / len(text) if text else 0.0
+
+
+def reference_unreadable(text):
+    """The reason the pdftotext reference cannot serve the recovery arm, or None when it can.
+
+    Two measures must BOTH read the reference as destroyed, because either alone misfires:
+    (1) the conversion's own readable-words arm (readable_word_share, with the same
+    Latin-majority test) below its cut, THRESHOLD_READABLE, reused here by judgement,
+    unmeasured for a new corpus; alone it can flag short plain prose. Combine it with
+    (2) letter_density below REFERENCE_LETTER_DENSITY: a destroyed text layer holds few letters,
+    while readable prose mostly holds letters. Equality to either cut remains readable.
+    is readable, as it is for the arm itself (suspect only BELOW). The baked cuts apply whatever
+    `--thresholds` sets for the conversion's own arm, so an override never re-enables a
+    comparison against a destroyed text layer. An empty or whitespace-only reference is not
+    judged here: it yields no sentence and keeps that reason. A reference with no letter at all
+    (so density 0; Unicode letters, so a CJK layer is not letterless) reads unreadable. A
+    reference the arm reads n/a (non-Latin-majority, or Latin letters with no ASCII letter) is
+    compared as before.
+    """
+    if not text.strip():
+        return None
+    if not LETTER_RUN_RE.search(text):
+        return "reference unreadable (no letters)"
+    _, letters, latin = latin_tokens(prose_text(text))   # the arm's Latin-majority census
+    share = readable_word_share(text, letters > 0 and latin * 2 >= letters)[0]
+    if share is None or share >= THRESHOLD_READABLE:
+        return None
+    density = letter_density(text)
+    if density >= REFERENCE_LETTER_DENSITY:
+        return None
+    return f"reference unreadable (readable-words {share:.3f}, letter density {density:.3f})"
 
 
 def recovery_fraction(body, pdf, exe):
-    """(fraction or None, found, total, reason) — None with a reason when pdftotext fails or
-    yields no sentence to look for."""
-    sentences, reason = pdf_sentences(pdf, exe)
-    if sentences is None:
+    """(fraction or None, found, total, reason) — None with a reason when pdftotext fails, when
+    its text layer is itself unreadable (reference_unreadable), or when it yields no sentence to
+    look for."""
+    text, reason = pdf_text(pdf, exe)
+    if text is None:
         return None, 0, 0, reason
+    reason = reference_unreadable(text)
+    if reason:
+        return None, 0, 0, reason
+    sentences = pdf_sentences(text)
     if not sentences:
         return None, 0, 0, f"pdftotext yielded no sentence of {MIN_SENTENCE_WORDS} words"
     conv = normalise(body)
@@ -416,6 +509,7 @@ def score_file(path, exe_cache):
     if not any_token:
         probe_failed(f"{path} holds no word token")
     long_run, n_runs, n_words = long_run_rate(body, latin)
+    readable, n_word_letters, n_ascii_letters = readable_word_share(body, latin)
     pdf = sibling_pdf(path, fm)
     scope, evidence = scope_of(fm, pdf)
     rec = None
@@ -434,11 +528,12 @@ def score_file(path, exe_cache):
         "run": run, "n_hits": n_hits, "n_tokens": n_tokens, "latin": latin, "run_note": run_note,
         "long_run": long_run, "n_runs": n_runs, "n_words": n_words,
         "pdf": pdf, "recovery": rec, "found": found, "total": total, "rec_note": rec_note,
+        "readable": readable, "n_word_letters": n_word_letters, "n_ascii_letters": n_ascii_letters,
         "scope": scope, "scope_evidence": evidence,
     }
 
 
-def verdict(m, t_short, t_run, t_rec, t_long):
+def verdict(m, t_short, t_run, t_rec, t_long, t_readable=THRESHOLD_READABLE):
     reasons = []
     if t_short is not None and m["short"] > t_short:
         reasons.append("short-lines")
@@ -448,6 +543,8 @@ def verdict(m, t_short, t_run, t_rec, t_long):
         reasons.append("long-run")
     if t_rec is not None and m["recovery"] is not None and m["recovery"] < t_rec:
         reasons.append("recovery")
+    if t_readable is not None and m["readable"] is not None and m["readable"] < t_readable:
+        reasons.append("readable-words")
     return ("suspect" if reasons else "clean"), reasons
 
 
@@ -455,8 +552,8 @@ def fmt_threshold(value, unit=""):
     return "n/a" if value is None else f"{value:g}{unit}"
 
 
-def render(m, t_short, t_run, t_rec, t_long):
-    v, reasons = verdict(m, t_short, t_run, t_rec, t_long)
+def render(m, t_short, t_run, t_rec, t_long, t_readable=THRESHOLD_READABLE):
+    v, reasons = verdict(m, t_short, t_run, t_rec, t_long, t_readable)
     ts = fmt_threshold(t_short, " %")
     tr = fmt_threshold(t_run, " %")
     tc = fmt_threshold(t_rec)
@@ -474,7 +571,16 @@ def render(m, t_short, t_run, t_rec, t_long):
         rec = f"recovery n/a ({m['rec_note']})"
     else:
         rec = f"recovery {m['recovery']:.2f} ({'<' if 'recovery' in reasons else '>='} {tc}; {m['found']}/{m['total']} sentences)"
-    return f"{v:7s} {m['path']} · {short} · {run} · {long_run} · {rec} · scope: {m['scope']} ({m['scope_evidence']})"
+    if m["readable"] is None:
+        readable = "readable-words n/a (non-Latin-majority text)"
+    else:
+        ta = fmt_threshold(t_readable)
+        sign = "<" if "readable-words" in reasons else ">="
+        readable = (f"readable-words {m['readable']:.3f} ({sign} {ta}; "
+                    f"{m['n_word_letters']}/{m['n_ascii_letters']} ASCII letters)")
+    damage = (" · damage: destroyed" if m["n_word_letters"] == 0 else " · damage: damaged") if "readable-words" in reasons else ""
+    return (f"{v:7s} {m['path']} · {short} · {run} · {long_run} · {rec} · scope: {m['scope']} "
+            f"({m['scope_evidence']}) · {readable}{damage}")
 
 
 # --- corpus helpers --------------------------------------------------------------------
@@ -501,7 +607,8 @@ def percentile(values, p):
 MEASURES = (("short-lines %", "short", True, 1),
             ("run-together %", "run", True, 1),
             ("long-run /1k", "long_run", True, 1),
-            ("recovery", "recovery", False, 2))
+            ("recovery", "recovery", False, 2),
+            ("readable-words", "readable", False, 3))
 
 
 def distribution(directory):
@@ -509,6 +616,7 @@ def distribution(directory):
     cache = {}
     rows = [score_file(f, cache) for f in files]
     scopes = sum(1 for r in rows if r["scope"] == "pdf")
+    control = readable_controls()
     print(f"DISTRIBUTION over {directory}: {len(rows)} files ({scopes} scope pdf, {len(rows) - scopes} other)   "
           f"(percentiles by linear interpolation)")
     print(f"{'measure':16s} {'n':>10s} {'min':>7s} {'p10':>7s} {'p25':>7s} {'p50':>7s} {'p75':>7s} {'p90':>7s} {'max':>7s}")
@@ -518,6 +626,7 @@ def distribution(directory):
         n = f"{len(vals)}" + (f" ({na} n/a)" if na else "")
         cells = [percentile(vals, p) for p in (0, 10, 25, 50, 75, 90, 100)]
         print(f"{label:16s} {n:>10s} " + " ".join(f"{c:7.{digits}f}" if c is not None else f"{'n/a':>7s}" for c in cells))
+    print(control)
     return 0
 
 
@@ -540,7 +649,7 @@ def separate(neg, pos, higher_is_worse):
     return (worst[0] + nearest[0]) / 2.0, len(beyond), worst, nearest
 
 
-def derive(directory, positives_file):
+def derive(directory, positives_file, readable_only=False):
     files = md_files(directory)
     try:
         with open(positives_file, encoding="utf-8") as fh:
@@ -558,6 +667,10 @@ def derive(directory, positives_file):
     rows = [score_file(f, cache) for f in files]
     pos_rows = [r for r in rows if os.path.basename(r["path"]) in pos_set]
     neg_rows = [r for r in rows if os.path.basename(r["path"]) not in pos_set]
+    if readable_only and (not any(r["readable"] is not None for r in pos_rows)
+                          or not any(r["readable"] is not None for r in neg_rows)):
+        probe_failed("readable-words derivation needs usable positive and negative shares")
+    control = readable_controls()
     print(f"DERIVATION over {directory}: {len(rows)} files · positives {len(pos_rows)} (from {positives_file}) "
           f"· negatives {len(neg_rows)} · scope pdf {sum(1 for r in rows if r['scope'] == 'pdf')} "
           f"(positives {sum(1 for r in pos_rows if r['scope'] == 'pdf')})")
@@ -566,8 +679,14 @@ def derive(directory, positives_file):
           "beyond the worst negative = the measure does not separate (n/a)")
     thresholds = {}
     base = os.path.basename
-    for label, key, worse_high, _ in MEASURES:
-        digits = 2
+    measures = MEASURES[-1:] if readable_only else MEASURES[:-1]
+    if readable_only:
+        print("arm: readable-words only; negatives mean not destroyed, not free of other damage")
+        print("limitation: re-derive this cut when another destroyed capture appears")
+    else:
+        print("arms: original four only; readable-words requires its separate destroyed-capture corpus")
+    for label, key, worse_high, _ in measures:
+        digits = 3 if key == "readable" else 2  # word-letter cut has three decimals; original cuts have two
         pos = [(r[key], base(r["path"])) for r in pos_rows if r[key] is not None]
         neg = [(r[key], base(r["path"])) for r in neg_rows if r[key] is not None]
         na_pos, na_neg = len(pos_rows) - len(pos), len(neg_rows) - len(neg)
@@ -588,10 +707,13 @@ def derive(directory, positives_file):
             print(f"  {'':15s} worst clean {worst[1]} ({worst[0]:.{digits}f})"
                   + (f" · next-worst clean {next_worst[1]} ({next_worst[0]:.{digits}f})" if next_worst else "")
                   + (f" · nearest damaged {nearest[1]} ({nearest[0]:.{digits}f})" if nearest else ""))
+        if readable_only and t is not None:
+            print(f"  boundaries: {worst[1]} {worst[0]:.15f} · {nearest[1]} {nearest[0]:.15f} "
+                  f"· midpoint {t:.15f} · half-gap margin {abs(worst[0] - nearest[0]) / 2:.15f}")
     tp = fp = fn = tn = 0
     wrong = []
     for r in rows:
-        v, _ = verdict(r, thresholds["short"], thresholds["run"], thresholds["recovery"], thresholds["long_run"])
+        v, _ = verdict(r, thresholds.get("short"), thresholds.get("run"), thresholds.get("recovery"), thresholds.get("long_run"), thresholds.get("readable"))
         is_pos = base(r["path"]) in pos_set
         if v == "suspect" and is_pos:
             tp += 1
@@ -605,26 +727,32 @@ def derive(directory, positives_file):
             tn += 1
     prec = tp / (tp + fp) if tp + fp else 0.0
     rec = tp / (tp + fn) if tp + fn else 0.0
-    print(f"combined verdict at these thresholds: suspect {tp + fp} · clean {tn + fn} · true positives {tp} "
+    label = "readable-words verdict" if readable_only else "combined verdict"
+    print(f"{label} at these thresholds: suspect {tp + fp} · clean {tn + fn} · true positives {tp} "
           f"· false positives {fp} · false negatives {fn} · precision {prec:.3f} · recall {rec:.3f}")
     print("misclassified: " + ("(none)" if not wrong else "; ".join(wrong)))
-    baked = (THRESHOLD_SHORT, THRESHOLD_RUN, THRESHOLD_RECOVERY, THRESHOLD_LONG_RUN)
-    derived = tuple(None if t is None else round(t, 2)
-                    for t in (thresholds["short"], thresholds["run"], thresholds["recovery"], thresholds["long_run"]))
+    baked = ((THRESHOLD_READABLE,) if readable_only
+             else (THRESHOLD_SHORT, THRESHOLD_RUN, THRESHOLD_RECOVERY, THRESHOLD_LONG_RUN))
+    keys = ("readable",) if readable_only else ("short", "run", "recovery", "long_run")
+    digits = 3 if readable_only else 2  # same rounding as the selected constants
+    derived = tuple(None if thresholds[k] is None else round(thresholds[k], digits) for k in keys)
     same = baked == derived
     print(f"baked-in thresholds {tuple(fmt_threshold(b) for b in baked)} "
           f"{'match' if same else 'DIFFER FROM'} the derived {tuple(fmt_threshold(d) for d in derived)}"
-          + (" (rounded to two decimals)" if same else " — update the constants and the docstring together"))
+          + (f" (rounded to {digits} decimals)" if same else " — update the selected constants and their provenance together"))
+    print(control)
     return 0
 
 
 # --- entry ------------------------------------------------------------------------------
 def parse_thresholds(spec):
     parts = spec.split(",")
-    if len(parts) != 4:
-        probe_failed(f"--thresholds wants SHORT,RUN,RECOVERY,LONGRUN, got {spec!r}")
+    if len(parts) not in (4, 5):
+        probe_failed(f"--thresholds wants SHORT,RUN,RECOVERY,LONGRUN[,READABLE], got {spec!r}")
+    if len(parts) == 4:
+        parts.append("-")
     out = []
-    for part, default in zip(parts, (THRESHOLD_SHORT, THRESHOLD_RUN, THRESHOLD_RECOVERY, THRESHOLD_LONG_RUN)):
+    for part, default in zip(parts, (THRESHOLD_SHORT, THRESHOLD_RUN, THRESHOLD_RECOVERY, THRESHOLD_LONG_RUN, THRESHOLD_READABLE)):
         part = part.strip()
         if part in ("", "-"):
             out.append(default)
@@ -632,9 +760,14 @@ def parse_thresholds(spec):
             out.append(None)
         else:
             try:
-                out.append(float(part))
+                value = float(part)
             except ValueError:
                 probe_failed(f"--thresholds value {part!r} is not a number")
+            if not math.isfinite(value) or value < 0:
+                probe_failed(f"--thresholds value {part!r} must be finite and non-negative")
+            if len(out) == 4 and value > 1:  # fifth field: a share is bounded by one
+                probe_failed(f"--thresholds readable-words value {part!r} must be in [0, 1]")
+            out.append(value)
     return tuple(out)
 
 
@@ -647,11 +780,11 @@ def main(argv):
         if len(args) != 2:
             probe_failed("--distribution takes exactly one directory")
         return distribution(args[1])
-    if args[0] == "--derive":
+    if args[0] in ("--derive", "--derive-readable"):
         if len(args) != 4 or args[2] != "--positives":
-            probe_failed("--derive DIR --positives FILE")
-        return derive(args[1], args[3])
-    thresholds = (THRESHOLD_SHORT, THRESHOLD_RUN, THRESHOLD_RECOVERY, THRESHOLD_LONG_RUN)
+            probe_failed(args[0] + " DIR --positives FILE")
+        return derive(args[1], args[3], readable_only=args[0] == "--derive-readable")
+    thresholds = (THRESHOLD_SHORT, THRESHOLD_RUN, THRESHOLD_RECOVERY, THRESHOLD_LONG_RUN, THRESHOLD_READABLE)
     override = None
     if args[0] == "--thresholds":
         if len(args) < 3:
@@ -667,13 +800,14 @@ def main(argv):
             targets.extend(md_files(a))
         else:
             targets.append(a)
-    t_short, t_run, t_rec, t_long = thresholds
+    t_short, t_run, t_rec, t_long, t_readable = thresholds
+    control = readable_controls()
     cache = {}
     suspect = 0
     scopes = {"pdf": 0, "other": 0}
     for path in targets:
         m = score_file(path, cache)
-        line = render(m, t_short, t_run, t_rec, t_long)
+        line = render(m, t_short, t_run, t_rec, t_long, t_readable)
         if line.startswith("suspect"):
             suspect += 1
         scopes[m["scope"]] += 1
@@ -682,7 +816,9 @@ def main(argv):
     print(f"SCORED: {len(targets)} file(s) · clean {len(targets) - suspect} · suspect {suspect} · "
           f"scope pdf {scopes['pdf']} | other {scopes['other']} · "
           f"thresholds short-lines > {fmt_threshold(t_short, ' %')} | run-together > {fmt_threshold(t_run, ' %')} "
-          f"| long-run > {fmt_threshold(t_long, ' /1k')} | recovery < {fmt_threshold(t_rec)} ({source})")
+          f"| long-run > {fmt_threshold(t_long, ' /1k')} | recovery < {fmt_threshold(t_rec)} ({source}) "
+          f"| readable-words < {fmt_threshold(t_readable)} (validate on a separately labelled local corpus)")
+    print(control)
     return 3 if suspect else 0
 
 

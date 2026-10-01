@@ -35,9 +35,8 @@ def normalise_base(url):
     """Join-base normalisation for relative links (known-issues entry 2026-08-25).
     Bare urljoin against a slash-less base drops the base's last path segment, so a
     github.com/gitlab.com REPO-ROOT seed mis-joined README links into the owner
-    namespace (./docs/x.md → github.com/owner/docs/x.md). Probed 2026-08-25: that
-    bare joined path dead-ends (GitHub 404, GitLab 403) while <repo>/blob/HEAD/<path>
-    resolves on both forges — so repo-root seeds join under <seed>/blob/HEAD/.
+    namespace (./docs/x.md → github.com/owner/docs/x.md). Repo-root seeds join under
+    <seed>/blob/HEAD/ so a relative document path stays inside the selected repository.
     Any other extensionless, slash-less tail joins as a directory (<seed>/, matching
     the server's own trailing-slash redirect); a file-like base (dot in the last
     segment) keeps standard urljoin semantics. Nested GitLab groups (3+ segments)

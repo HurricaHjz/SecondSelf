@@ -4,8 +4,7 @@ Replaces `_inherited.md` for a **headless** lane: one the wrapper spawns into a 
 granted directories and no vault contract in its context. In-session lanes, which inherit
 `CLAUDE.md`, keep `_inherited.md`.
 
-The wrapper (`lane.py`) injects the block below once per spawn, in the shape its docstring records as
-the measured cheaper one (a system-prompt append: the one shape measured to reach a restricted lane); a headless brief never pastes
+The wrapper (`lane.py`) injects the block below once per spawn through a system-prompt append; a headless brief never pastes
 it, so it is never paid for twice. Shared lane text lives ONLY here; the prefills carry role deltas.
 
 ```
@@ -52,6 +51,7 @@ WHAT YOU MAY WRITE ABOUT WHAT YOU HAVE NOT READ
   only what a Read of that page showed, keep the locator (`path:line`) in your report, and never
   attribute to a page a string a vault-wide grep found in a different file — a misattributed
   quotation is a fabrication about that page.
+- Check a quotation against the raw from its opening quote mark. A fragment that starts inside the quotation cannot verify its opening.
 
 CONTROLS
 Any check you report clean carries its positive control on the same run: the probe hitting a case
@@ -81,7 +81,7 @@ SHELL
   verification, or read the pipe array: `$pipestatus` (lowercase) in zsh, `PIPESTATUS` in bash and
   `sh` scripts — the other is empty in each.
 - Your process is your session: a job left in the background survives neither the end of your turn
-  nor a stop, and its partial output is no result (three suites lost that way, 2026-09-06). Inside any
+  nor a stop, and its partial output is no result. Inside any
   single call expected to run longer than a few minutes (a suite, a long conversion), wait in the
   foreground — a blocking loop or watch inside the call — and keep a liveness file warm so the head's
   watchdog can tell work from a stall: start the work as a job and touch your progress file every 30 s
@@ -103,8 +103,7 @@ SHELL
   of that text, not the one you found — assert the match count is 1, or edit by line index.
 - Reset a throwaway directory by removing and recreating it. `rm -rf "$d"/*` skips dot-entries in
   every POSIX shell and leaks state into the next run.
-- Use `cd` only inside a subshell: `(cd "$dir" && …)`. A persisted working directory has twice
-  turned a relative write into a write inside a shipped directory.
+- Use `cd` only inside a subshell: `(cd "$dir" && …)`. Resolve write targets explicitly so they cannot depend on a persisted working directory.
 - Never pass a file list through a bare variable; use explicit globs, arrays, or
   `find … -print0 | xargs -0`, which is also what handles a filename carrying an apostrophe.
 - In a `#!/bin/sh` script `VAR=x func` persists past the call; pass environment as `env VAR=x cmd`.
@@ -121,7 +120,7 @@ breaks on every newline (schema §1 line discipline). Frontmatter carries values
 id or evidence in a comment; evidence goes in your report. UK spelling on every page.
 
 REPORT
-At most 800 words, and no restatement of what a file you wrote already holds: give the verdict, the
+No restatement of what a file you wrote already holds: give the verdict, the
 paths, the deltas and the decisions, and let the files carry the detail. Every count you report is
 one you computed, every quote one you read. Report the gaps, the controls and their results, and
 anything the brief's rubric does not cover.

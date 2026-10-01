@@ -5,12 +5,11 @@
 #   "vault:<name>"      = <vault>/.claude/skills/<name>      (a DIRECTORY)
 #   "agent:<file.md>"   = <vault>/.claude/agents/<file.md>   (a FILE — note the asymmetry)
 # An entry on disk but not listed here is a FINDING (third-party installers target these roots —
-# e.g. Agent Reach's SKILL.md auto-install; see wiki/developments/agent-reach-adoption-design.md).
+# e.g. a third-party tool's automatic SKILL.md installation).
 # Machine-local baselines live OUTSIDE the vault, never shipped: ~/.claude/skills/.sanctioned.txt
 # and ~/.claude/agents/.sanctioned.txt (one name per line each).
 # Adding a skill or an agent definition is a conscious CLAUDE.md §12 act: add its line here in the
-# same pass. The 2026-08-27 `delegate` skill and the six agent definitions both missed this; both
-# were caught by the guard and the 2026-08-28 deep-lint respectively (known-issues, closed).
+# same pass; the guard checks the resulting exposure rather than trusting the admission record.
 vault:adopt
 vault:attic
 vault:deep-lint

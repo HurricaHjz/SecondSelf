@@ -18,8 +18,7 @@ user-invocable: true
 
 # reflect — capture what a session learned, on the owner's word
 
-The agent already files findings as it works — the in-flight lane is real and measured (see
-`wiki/developments/reflect-skill-design.md`). **That lane is unchanged and ungated.** This skill is the *second* lane: an explicit trigger the owner owns, for the
+The agent files findings as it works. **That lane is unchanged and ungated.** This skill is the *second* lane: an explicit trigger the owner owns, for the
 times the first one did not fire. It removes model-dependence from the **trigger**, not from the quality
 of the harvest — a weaker model still finds less; it just no longer has to think of looking.
 
@@ -58,15 +57,13 @@ Collect candidates of four kinds. The first two matter most often; the last is t
 **Horizon, measured every run.** Earlier turns may have been compacted out of context, so measure the
 boundary against the on-disk session transcript instead of asserting it: `echo` a fresh nonce in shell,
 then grep for it **in a later call** under the harness transcript directory (the transcript records a
-call's result only after that call returns, so the same call cannot find its own nonce — the first
-probe of 2026-09-07 printed 0 for that reason and was re-run) (Claude Code: `~/.claude/projects/<vault path,
+call's result only after that call returns, so the same call cannot find its own nonce) (Claude Code: `~/.claude/projects/<vault path,
 separators as dashes>/*.jsonl`). The single file containing the nonce IS this session's record — the
-transcript logs the probe itself, which is the positive control (CLAUDE.md §11). A **negative** control here needs a needle the transcript has not already recorded: assemble it at runtime rather than typing the literal (a typed literal matches because the command logging it is part of the medium), or state the baseline count of self-hits. A control that fires against its own stated expectation is repaired, never narrated past (2026-09-03: one printed `exit=0` where it declared `1 = correctly none`, and the run continued). Count its human turns
+transcript logs the probe itself, which is the positive control (CLAUDE.md §11). A **negative** control here needs a needle the transcript has not already recorded: assemble it at runtime rather than typing the literal (a typed literal matches because the command logging it is part of the medium), or state the baseline count of self-hits. A control that fires against its own stated expectation is repaired, never narrated past. Count its human turns
 with a filter **verified against the visible span** (every visible human turn must be matched; beware:
 tool results, harness task-notifications AND Skill-tool injections (`isMeta: true`, opening "Base directory for
-this skill") all carry `"type":"user"` and must all be excluded — the notification miss overcounted 9 turns as
-27, №103 cross-reflection P1, 2026-08-28; the injection miss counted 4 turns for 3, cross-reflection R1 of session
-`80de6d8b`, 2026-09-05), and report
+this skill") all carry `"type":"user"` and must all be excluded: №103 cross-reflection P1, 2026-08-28; cross-reflection R1,
+2026-09-05), and report
 `visible k of N recorded turns`. **Fallback** — no transcript, no unique nonce match, or a filter that fails its own check →
 the unmeasured form: name the earliest visible turn and state that the boundary carries no control
 this run. **Never report "nothing to capture this session"** — only "nothing in the visible span".
@@ -86,8 +83,8 @@ failed>)` and skip.
   (`fable-share.py --session <sid> --lanes auto`, §2a), then the run total as a shown sum of those
   session figures. Records with no boundary figure → meter the session once now and say the boundaries
   carried none; an `unmetered` or `unbilled` exit is quoted as printed, never read as zero or estimated.
-- **One waste table, three classes** (the owner's, from the 2026-09-04 live case,
-  `wiki/developments/hands-off-live-case-2026-09-04.md`): `| Item | ≈ $ or idle min | Kind | Fix and
+- **One waste table, three classes:**
+  `| Item | ≈ $ or idle min | Kind | Fix and
   where it lands |`, keyed on what the spend produced — **real** = its output was lost or unused (a lost
   lane, a wrong probe, a stall); **arguable** = its output was used, but a better brief, order or spec
   would have bought it cheaper; **structural** = a cost of the chosen shape (the contract prefix, a
@@ -125,16 +122,15 @@ A candidate survives only if all three hold:
 2. **Not already recorded** — check *everywhere* it could already live before proposing it: the
    destination page, `known-issues.md`, the relevant `developments/` doc, and a `grep` of `wiki/` for
    the claim. **Open every hit.** A `grep -l` answers "does this string occur", never "is this idea
-   recorded", and the filename it returns often looks unrelated to the candidate — on 2026-09-03 a dedup
-   hit was the one page already carrying the candidate's entire argument, and it went unopened, so the
-   candidate was proposed as novel. A hit that is not opened leaves the candidate *unresolved*, not clear. **Stamp each dedup probe with the time it ran (2026-09-06):** a reflect run over a session that
+   recorded", and the filename it returns often looks unrelated to the candidate — an unopened hit
+   can be the one page already carrying the candidate's entire argument, and the candidate is then
+   proposed as novel. A hit that is not opened leaves the candidate *unresolved*, not clear. **Stamp each dedup probe with the time it ran (2026-09-06):** a reflect run over a session that
    edited the vault is checking a moving surface, and a candidate can be fixed by the same run that
-   raised it — in the N128 run two of four were, and the Step 5b critic spent its budget refuting
-   defects that no longer existed. The stamp is what lets a later reader tell a stale candidate from a
+   raised it, and a critic can spend its budget refuting defects that no longer exist. The stamp is what lets a later reader tell a stale candidate from a
    wrong one. This is also what stops repeat runs re-proposing the same thing; there is no session
    cursor, and none can be built (the log carries no clock). Check against the files on disk, never the copy of
    `CLAUDE.md` or `CUSTOMISATION.md` injected into your context: a helper agent's injected copy is the
-   head's session-start snapshot, and on 2026-09-05 a reflector's copy lacked four edits made that day.
+   head's session-start snapshot, so it can lack edits made since.
 3. **Load-bearing** — one decidable question: *would a future session do the work worse without it?*
    That covers both halves — repeating a mistake, redoing work or answering wrongly, **and** missing a
    better approach, a known preference, or a direction already decided. If the honest answer is no, it
@@ -154,12 +150,10 @@ candidate is still not proposed, whatever the flag.
 mechanism that caught it** — a printed control, a failing test, an owner correction, a reviewer. An
 unwitnessed self-assessment has no witness and does not survive step 3.
 
-**Probe discipline (2026-08-27).** A dedup grep never carries an exclusion filter — one filtered out the
-very record that made a candidate redundant, manufacturing false novelty. And a probe's control is never
+**Probe discipline (2026-08-27).** A dedup grep never carries an exclusion filter — one can filter out the very record that makes a candidate redundant, manufacturing false novelty. And a probe's control is never
 the claim under test: pair every 0-hit with a positive control that hits on the same surface (§11),
 phrased in the subject's own vocabulary — a path or name as the checked text spells it, never as the
-checker would spell it: a control in the checker's spelling read 0 of 4 on a live dual-name path
-(VER-130A, 2026-09-07) while the subject's spelling hit 4 of 4.
+checker would spell it; a spelling mismatch must not turn a present record into a false absence.
 
 ### Step 4 — Route it
 In priority order. Say which rule sent it there.
@@ -195,7 +189,7 @@ is it load-bearing, and does a self-conduct item name a true external witness? A
 moves to "seen, not proposed" with the refutation as its reason; an arguable refutation stays proposed
 with the objection attached. **A refuted candidate's defensible residue is a NEW candidate**: it
 re-enters at Step 3 and waits for the Step 6 preview like any other — never a direct write, however
-broad the standing go (the missing salvage path let two refuted items ship pre-preview, №103 session,
+broad the standing go (№103 session,
 recorded 2026-08-28). This is the bounded per-run witness self-reflection lacks (the
 cross-session form is `## Cross-reflection` below). `--no-critic` skips it and the preview says "critic: skipped"; where the
 harness offers no subagent mechanism, say "critic: unavailable". **The critic filters proposals; it
@@ -213,14 +207,14 @@ Proposed rules: 1 · always-on cost +180 bytes
 ```
 
 **The preview leads with the head's recommendation** (owner instruction 2026-09-06): one line per
-item — approve · strike · defer, each with its one-clause reason — printed before the approval
+item — approve · strike · defer, each with its concise reason — printed before the approval
 question, so the owner can accept in a word; the recommendation is the head's, never the critic's,
 and it changes nothing about who approves. **The line is style-invariant** (owner ruling 2026-09-07:
 a style chooses the form of an obligation, never its presence): under `brief` and `shortest` it
-compresses to one clause per item (`1 approve — repeat`, `2 strike — already recorded`), never to a
+gives a concise reason per item (`1 approve — repeat`, `2 strike — already recorded`), never to a
 bare verdict in a column and never absent; a style's `Test:` bounds content, never an obligation's
 presence (CUSTOMISATION `## Output styles`). The Stop-hook check that logs its absence, warn-only,
-is recorded on `wiki/developments/per-reply-contract-enforcement.md` (`reflect-preview`).
+is recorded on the per-reply contract enforcement page (`reflect-preview`).
 The owner approves per item ("1 and 3", "all but 2"). **Nothing is written without approval**, except
 under `--yes` below. One exception is a duty, not a licence: a defect the run itself finds is registered
 under CLAUDE.md §12 with the pass whatever else is approved, listed in the preview as `register (§12)` so
@@ -258,8 +252,7 @@ or `not eligible`, 2026-08-30 — an accepted proposal being traced by the cross
 session's transcript as of spawn — the live-write race is declared in the report; for the current
 session (a self-cross run) the head freezes a `/tmp` copy of the transcript BEFORE it writes the run
 record's controls line and grants the copy alone, because the live file logs that very write and a
-live-file grant voids the instrument check (2026-09-06, lane XR-PUB2, known-issues); the pilot tested
-the finished case only (dated caveat: `wiki/developments/cross-reflection-pilot.md`).
+live-file grant voids the instrument check (2026-09-06, known-issues).
 
 **Mechanism.** The head agent spawns a READ-ONLY reflector lane (delegate skill,
 `templates/brief-reflector.md`) that applies Steps 1–5, except 2b (head-only), to the target transcript. The lane extracts
@@ -326,3 +319,4 @@ Bounded **by path, not by judgement**:
   while working, file it then, exactly as now.
 - **Approval terminates at the owner.** A subagent may propose; it may never approve.
 - Write in British/UK English.
+

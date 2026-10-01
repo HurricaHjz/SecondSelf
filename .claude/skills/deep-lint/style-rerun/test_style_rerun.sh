@@ -46,7 +46,7 @@ eq "K02b it plans one session per usable line (blank and # lines skipped)" "$(pr
 eq "K02c the prompt is the hand-off opener: role, style, then the question" \
 	"$(printf '%s\n' "$DRY" | grep -c '^plan 1: tag=tutor-shortest prompt="tutor, shortest. What is the first thing?"$')" "1"
 eq "K02d the header names the count, the style, the model and the vault" \
-	"$(printf '%s\n' "$DRY" | grep -c "^dry run: 3 session(s) on the shortest style, model claude-fable-5-1, from $VAULT$")" "1"
+	"$(printf '%s\n' "$DRY" | grep -c "^dry run: 3 session(s) on the shortest style, model claude-opus-5-5, from $VAULT$")" "1"
 eq "K02e and writes nothing: the out directory is not created" "$(if [ -e "$W/never" ]; then echo yes; else echo no; fi)" "no"
 printf 'tutor: one\ntutor: two\n' >"$W/q-dup.txt"
 DUP=$(bash "$HERE/run.sh" --dry-run --questions "$W/q-dup.txt" --vault "$VAULT" --style brief 2>&1)
@@ -73,7 +73,7 @@ probe "K03g an unknown argument" "unknown argument" --dry-run --bogus
 TOOLBIN="$W/toolbin"; mkdir -p "$TOOLBIN"
 for t in bash dirname sed python3 date mkdir cp basename rm; do ln -s "$(command -v "$t")" "$TOOLBIN/$t"; done
 GOT=$(env PATH="$TOOLBIN" "$TOOLBIN/bash" "$HERE/run.sh" --questions "$W/questions.txt" --vault "$VAULT" --out "$W/never2" 2>&1); RC=$?
-eq "K03h a real run without claude on PATH is PROBE FAILED, exit 2, and creates no run directory" \
+eq "K03h an invocation without claude on PATH is PROBE FAILED, exit 2, and creates no run directory" \
 	"$RC/$(printf '%s\n' "$GOT" | grep -c '^PROBE FAILED: claude is not on PATH$')/$(if [ -e "$W/never2" ]; then echo yes; else echo no; fi)" "2/1/no"
 
 # ---------------------------------------------------------------- 4 · a full run through a stub claude
@@ -91,7 +91,7 @@ while [ $# -gt 0 ]; do
 done
 n=$(cat "$STUB_COUNT" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" >"$STUB_COUNT"
 # what reached this call's stdin: run.sh must feed /dev/null, since the real claude -p reads a non-terminal
-# stdin as part of its prompt (the first live run, 2026-09-05, sent every session the loop's remaining rows)
+# stdin as part of its prompt; the stub verifies that loop input is not forwarded.
 stdin_bytes=$(cat | wc -c | tr -d ' '); echo "$sid $stdin_bytes" >>"$STUB_STDIN"
 python3 - "$STUB_TRANSCRIPTS/$sid.jsonl" "$n" "$prompt" "$PWD" <<'PY'
 import json, sys
@@ -154,6 +154,8 @@ eq "K04h the record holds a probe-open and a probe-closed line per session, with
 eq "K04i the record's session ids are the manifest's" \
 	"$(awk '{print $2}' "$OUT/manifest.txt" | while read -r s; do grep -c "\"session\":\"$s\"" "$REC"; done | tr '\n' '/')" "2/2/2/"
 eq "K04j the plan scratch file is gone" "$(ls -a "$OUT" | grep -c '^\.plan')" "0"
+eq "K04k run.sh staged the judge's rule texts beside the rubric, byte for byte, so the judge needs no vault grant (register 2026-09-08)" \
+	"$(cmp -s "$VAULT/CUSTOMISATION.md" "$OUT/defs/CUSTOMISATION.md" && echo same)/$(cmp -s "$VAULT/CUSTOMISATION-definitions.md" "$OUT/defs/CUSTOMISATION-definitions.md" && echo same)" "same/same"
 
 # ---------------------------------------------------------------- 5 · extract.py on the planted transcripts
 SNAP_T=$(cd "$STUB_TRANSCRIPTS" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256)
@@ -162,11 +164,11 @@ EXT=$("$PY" "$HERE/extract.py" --out "$OUT" --transcripts "$STUB_TRANSCRIPTS" 2>
 RC=$?
 eq "K05a extract exits 0 and prints one line per manifest row" "$RC/$(printf '%s\n' "$EXT" | grep -c '^[a-z-]* *sid=')" "0/3"
 eq "K05b session 1: the main reply is the status-line reply, not the progress line; opens_status=yes" \
-	"$(printf '%s\n' "$EXT" | grep -c "^tutor-shortest .*opens_status=yes texts=2 corrections=0 opening='testbot · tutor · shortest · single'$")/$(head -1 "$OUT/tutor-shortest.full.txt")" "1/testbot · tutor · shortest · single"
+	"$(printf '%s\n' "$EXT" | grep -c "^tutor-shortest .*opens_status=yes texts=2 corrections=0 harness_fed=0 confound=unknown opening='testbot · tutor · shortest · single'$")/$(head -1 "$OUT/tutor-shortest.full.txt")" "1/testbot · tutor · shortest · single"
 eq "K05c session 2: the longer post-feedback correction is left out by the record rule; the main reply is the shorter one; the backticked line still opens" \
 	"$(printf '%s\n' "$EXT" | grep -c "^engineer-shortest .*opens_status=yes texts=2 corrections=1 ")/$(grep -c '^Sound, and reusable' "$OUT/engineer-shortest.full.txt")/$(grep -c 'Correction:' "$OUT/engineer-shortest.full.txt")" "1/1/0"
 eq "K05d session 3: a reply without the line reports opens_status=no" \
-	"$(printf '%s\n' "$EXT" | grep -c "^generalist-shortest .*opens_status=no texts=1 corrections=0 opening='No status line here\.'$")" "1"
+	"$(printf '%s\n' "$EXT" | grep -c "^generalist-shortest .*opens_status=no texts=1 corrections=0 harness_fed=0 confound=unknown opening='No status line here\.'$")" "1"
 eq "K05e the harness-written API record was never a candidate (session 2 saw two model texts)" "$(printf '%s\n' "$EXT" | grep -c 'texts=2 corrections=1')" "1"
 eq "K05f extract read the transcripts and the vault without changing a byte (checksums before and after)" \
 	"$(if [ "$(cd "$STUB_TRANSCRIPTS" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256)" = "$SNAP_T" ] && [ "$(cd "$VAULT" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256)" = "$SNAP_V" ]; then echo same; else echo changed; fi)/$(printf '%s\n' "$SNAP_T" | grep -c .)" "same/3"
@@ -201,6 +203,54 @@ DERIVE_END
 )
 eq "K05k the transcript directory is derived as Claude Code derives it (every non-alphanumeric character becomes '-')" "$DER" "True"
 
+# ---------------------------------------------------------------- 5b · the confound fields (register 2026-09-09)
+# A kit session reads pages with tools, so it is multi-turn by construction: the turn count never marks a row.
+# Five planted sessions: many tool-use turns and nothing else; a refusal; a correction after the Stop hook's
+# feedback; a harness-fed isMeta record after the model began; no result file at all.
+CF="$W/confound"; mkdir -p "$CF/transcripts"
+"$PY" - "$CF" <<'CONFOUND_END'
+import json, os, sys
+out = sys.argv[1]
+def user(text, meta=False):
+    r = {"type": "user", "message": {"role": "user", "content": text}}
+    if meta:
+        r["isMeta"] = True
+    return r
+def bot(text=None, tool=None):
+    content = [{"type": "text", "text": text}] if text is not None else [{"type": "tool_use", "name": tool}]
+    return {"type": "assistant", "message": {"role": "assistant", "content": content}}
+result = {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": "page text"}]}}
+sessions = [
+    ("tools-x", [user("q")] + [bot(tool="Read"), result] * 11 + [bot("The answer, after eleven reads.")],
+     {"permission_denials": [], "num_turns": 12}),
+    ("denied-x", [user("q"), bot(tool="Bash"), result, bot("The answer, after a refusal.")],
+     {"permission_denials": [{"tool_name": "Bash"}], "num_turns": 3}),
+    ("corrected-x", [user("q"), bot("A first reply."), user("Stop hook feedback:\nno status line.", meta=True),
+                     bot("A correction, longer than the first reply by some margin.")],
+     {"permission_denials": [], "num_turns": 2}),
+    ("fed-x", [user("q"), bot("The answer."), user("A harness note fed into the session.", meta=True), bot("A second text.")],
+     {"permission_denials": [], "num_turns": 2}),
+    ("unknown-x", [user("a setup note", meta=True), user("q"), bot("An answer with no result file.")], None),
+]
+with open(os.path.join(out, "manifest.txt"), "w", encoding="utf-8") as fh:
+    for n, (tag, recs, res) in enumerate(sessions):
+        sid = "00000000-0000-0000-0000-%012d" % n
+        fh.write("%s %s\n" % (tag, sid))
+        with open(os.path.join(out, "transcripts", sid + ".jsonl"), "w", encoding="utf-8") as t:
+            for r in recs:
+                t.write(json.dumps(r) + "\n")
+        if res is not None:
+            with open(os.path.join(out, tag + ".json"), "w", encoding="utf-8") as j:
+                json.dump(res, j)
+CONFOUND_END
+CGOT=$("$PY" "$HERE/extract.py" --out "$CF" --transcripts "$CF/transcripts" 2>&1); RC=$?
+eq "K05o twelve tool-use turns with no refusal, correction or harness-fed turn are no confound: the turn count alone never marks a row" \
+	"$RC/$(printf '%s\n' "$CGOT" | grep -c '^tools-x .*denials=0 turns=12 opens_status=no texts=1 corrections=0 harness_fed=0 confound=no ')" "0/1"
+eq "K05p a refusal, a post-warning correction and a harness-fed turn each mark the session confounded" \
+	"$(printf '%s\n' "$CGOT" | grep -c '^denied-x .*denials=1 .*corrections=0 harness_fed=0 confound=yes ')/$(printf '%s\n' "$CGOT" | grep -c '^corrected-x .*corrections=1 harness_fed=1 confound=yes ')/$(printf '%s\n' "$CGOT" | grep -c '^fed-x .*corrections=0 harness_fed=1 confound=yes ')" "1/1/1"
+eq "K05q no result file and nothing seen reads unknown, never no; a setup isMeta record before the model began is not harness-fed" \
+	"$(printf '%s\n' "$CGOT" | grep -c '^unknown-x .*denials=absent turns=absent .*harness_fed=0 confound=unknown ')" "1"
+
 # ---------------------------------------------------------------- 6 · render-rubric.py
 REN=$("$PY" "$HERE/render-rubric.py" --style shortest --vault "$VAULT" 2>&1); RC=$?
 eq "K06a the rubric renders to stdout with the style name and the live Test, whitespace collapsed, from the definitions file" \
@@ -234,6 +284,14 @@ eq "K07d the run loop calls claude in print mode with the read-only tool set (co
 	"$(grep -c 'claude -p "\$role, \$STYLE\. \$question" --model "\$MODEL" --session-id "\$sid" --allowedTools "Read,Grep,Glob" --output-format json' "$HERE/run.sh")" "1"
 eq "K07e the read-only scripts open no file for writing outside their run directory (extract: one write, the .full.txt; render: one write, rubric.md)" \
 	"$(grep -c 'open(.*"w"' "$HERE/extract.py")/$(grep -c 'open(.*"w"' "$HERE/render-rubric.py")/$(grep -c -E 'os\.(remove|unlink|rename|replace|rmdir)|rmtree|shutil' "$HERE/extract.py" "$HERE/render-rubric.py" | awk -F: '{s+=$2} END {print s}')" "1/1/0"
+
+# ---------------------------------------------------------------- 8 · the judge template (register 2026-09-08 and 2026-09-09)
+eq "K08a complete per-reply tables and concise prose; control: the retired instruction is absent" \
+	"$(grep -c 'The prose as short as it can be; the per-reply tables whole' "$HERE/judge-brief.md")/$(grep -c 'at most 800 words' "$HERE/judge-brief.md")" "1/0"
+eq "K08b the confound rule marks a row on a refusal, a correction or a post-warning re-reply, never on the turn count alone (control: the retired wording is gone)" \
+	"$(grep -c 'never on the turn count alone' "$HERE/judge-brief.md")/$(grep -c 'more than one turn' "$HERE/judge-brief.md")" "1/0"
+eq "K08c the SCOPE slot reads the rule texts from the staged defs directory and says a file grant reaches its whole parent (control: the vault-path wording is gone)" \
+	"$(grep -c '{{OUT}}/defs/' "$HERE/judge-brief.md" | awk '{print ($1 >= 2) ? "yes" : "no"}')/$(grep -c 'a file grant reaches its whole parent directory' "$HERE/judge-brief.md")/$(grep -c 'CUSTOMISATION.md ## Identity and ## Output styles, and the' "$HERE/judge-brief.md")" "yes/1/0"
 
 TOTAL=$((PASS + FAIL))
 if [ "$FAIL" -eq 0 ]; then

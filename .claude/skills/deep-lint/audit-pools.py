@@ -307,10 +307,9 @@ def main():
     parser.add_argument("--baseline", default=None,
                         help="previous deep-lint date YYYY-MM-DD; absent = no-baseline mode")
     parser.add_argument("--today", default=None, help="override today's date (default: the system date)")
-    # Cap 40 and tail 20 come from the deep-lint skill's Step 3 derivation: an audit read is
-    # frontmatter plus the opening section (median 2.5 kB, p90 4.4 kB over 623 pages), so 40 reads
-    # are ~100 kB ~ 25k tokens, and 40 changed + <=20 tail is a 60-page ceiling a real run has
-    # already carried. Absolute, never a fraction of the changed set.
+    # Cap 40 plus tail 20 bounds the combined sample at 60 pages, independent of write volume.
+    # These compatibility defaults are set by judgement, unmeasured for a new vault; report
+    # actual read sizes so its owner can review affordability.
     parser.add_argument("--cap", type=int, default=40, help="pool A read cap (default 40)")
     parser.add_argument("--tail", type=int, default=20, help="pool B sample cap (default 20)")
     parser.add_argument("--seed", type=int, default=0, help="sampling seed (default 0; printed)")
@@ -516,8 +515,8 @@ def main():
     # In-memory control: a copy of a real page whose `updated:` is planted one day BEFORE the oldest
     # body date that page itself carries must be caught by the same sweep. The planted date is
     # derived from the page, never fixed: a constant silently stops firing on any vault whose pages
-    # predate it, turning a working sweep into a probe failure (a fixed 2026-01-01 did exactly that
-    # against a 2024-dated fixture). index.md is preferred because it carries the most dates.
+    # predate it, turning a working sweep into a probe failure (as a fixed date would against an
+    # older fixture). index.md is preferred because it carries the most dates.
     control_base, control_dates = None, []
     preferred = pages.get(INDEX_REL)
     if preferred is not None and body_dates(preferred, today):

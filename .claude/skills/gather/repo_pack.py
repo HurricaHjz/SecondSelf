@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""repo_pack — pinned repo evidence for the raw layer (design: wiki/developments/repo-pack-design.md).
+"""repo_pack — pinned repo evidence for the raw layer.
 
 Verbs:
   clone          --url U [--sha S] [--sparse a,b]          → ~/.llm-wiki/repos/<owner>-<repo>/ (shallow, blob-filtered, sha-pinned)
@@ -8,7 +8,7 @@ Verbs:
                  Emits the pack to a temp file, self-checks it (footer marker · header count == section count),
                  then invokes capture_write.py IN-PROCESS on exit-0, propagating failure. Never a pipe.
                  `--repo` names a clone in the store by slug, or any git working copy by absolute path
-                 (the project store's snapshots, wiki/developments/project-store-design.md D4, 2026-09-07).
+                 (the project store's pinned snapshots).
   clean          --repo <slug>                              → removes the clone; refuses any path outside the store
                  (an absolute path elsewhere, the project store included, is refused by the same guard).
 
@@ -22,7 +22,7 @@ Snapshot guards (project-store design D4, 2026-09-07; they bind every pack, the 
       refuses an existing one — the immutability rule).
 
 Caps (derivations in the design): --max-files 40 · per-file truncate 65536 B (judgement-set, marker emitted)
-· soft-warn 122880 B (≈30k tokens: the ≈100k lane anchor minus the ≈65–70k inherited prefix)
+· soft-warn 122880 B (≈30k tokens at an assumed four bytes per token; set by judgement, unmeasured)
 · hard refuse 307200 B without --allow-large (2.5× the warn, stated headroom); --allow-large '<why>' lifts the hard cap AND
   the per-file truncation (2026-09-07: a single-file document is packed whole, the reason recorded in the header).
 Skips, each noted in the header: binaries (NUL sniff) · git-LFS pointers · control-byte-bearing files (packed, noted).
@@ -187,8 +187,7 @@ def cmd_pack(a):
     if dirty:
         die("dirty tree — the header sha would misdescribe the bytes packed; commit first. Offending: " + "; ".join(dirty[:20]))
     rationale = a.rationale or f"{len(rels)} paths named after in-clone study"
-    # --allow-large lifts the per-file truncation too (2026-09-07): a single-file document (a 127 KB main.tex)
-    # is packed whole under the stated reason; the hard cap below is lifted by the same flag.
+    # --allow-large lifts per-file truncation as well as the total size bound.
     body, n = build_pack(repo_dir, rels, url, sha, a.slice, a.tree_depth,
                          rationale + (f" · allow-large: {a.allow_large}" if a.allow_large else ""),
                          truncate_at=None if a.allow_large else TRUNCATE_AT)

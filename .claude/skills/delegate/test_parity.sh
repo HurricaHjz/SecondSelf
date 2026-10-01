@@ -81,14 +81,16 @@ make_dir /tmp/b6-parity-suite/arm-one
 make_dir /tmp/b6-parity-suite/arm-two
 make_dir /tmp/b6-parity-suite/vault/wiki
 make_dir /tmp/b6-parity-suite/vault/raw     # the lint root guard (2026-09-07) wants raw/ beside wiki/
+# The synthetic vault has no search index; declare the optional index disabled.
+touch /tmp/b6-parity-suite/vault/.qmd-off
 make_dir /tmp/b6-parity-suite/vault/.claude/skills/demo
 make_dir /tmp/b6-parity-suite/vault/.claude/agents
 make_dir /tmp/b6-parity-suite/emptylint
 
 cat > /tmp/b6-parity-suite/arm-one/lint.md <<'ARTEFACT_A1'
 # Lint artefact A1
-Produced by the head of run run-20260905-handsoff, session b62193b5-2fc4-4f2b-8b74-912c4ef8d7f8,
-at 2026-09-05T04:12:00Z on vendor-opus-5. The head read the pages itself; no lane, no pack.
+Produced by the synthetic head of run run-20990101-fixture, session 00000000-0000-4000-8000-000000000001,
+at 2099-01-01T04:12:00Z on vendor-opus-5. The head read the pages itself; no lane, no pack.
 DEAD LINKS: 0 and DEAD EMBEDS: 0 by my own count.
 ARTEFACT_A1
 
@@ -99,8 +101,8 @@ ARTEFACT_A2
 
 cat > /tmp/b6-parity-suite/arm-two/lint.md <<'ARTEFACT_B1'
 # Lint artefact B1
-Produced by a thin head in run run-20260905-handsoff at 04:31 with a lint lane and a hunter pack,
-model fable-5-1, session 7a1b2c3d. Counts copied from the scripts.
+Produced by a synthetic thin head in run run-20990101-fixture at 04:31 with a lint lane and a hunter pack,
+model fable-5-1, session 0000000b. Counts copied from the scripts.
 ARTEFACT_B1
 
 cat > /tmp/b6-parity-suite/arm-two/query.md <<'ARTEFACT_B2'
@@ -123,7 +125,7 @@ title: "Page one"
 type: source
 confidence: medium
 ---
-Page one links to [[page-two]] and states that the run cost 55.02 dollars by phase.
+Page one links to [[page-two]] and states that the run cost 42.00 dollars by phase.
 The three waste classes were idle minutes, over-cap reports and denials.
 VAULT_P1
 
@@ -192,7 +194,7 @@ m=$(ls /tmp/b6-parity-suite/fx/fixture | grep -c 'mapping')
 if [ "$m" -eq 0 ]; then ok "no mapping inside the granted fixture directory"; else no "a mapping leaked into the fixture directory"; fi
 
 # ---------------------------------------------------------------- 2 blindness, planted markers
-SWEEP='run-2026|b62193b5|7a1b2c3d|fable-5-1|vendor-opus|thin|pack|[0-9]{4}-[0-9]{2}-[0-9]{2}'
+SWEEP='run-20990101-fixture|00000000-0000-4000-8000-000000000001|0000000b|fable-5-1|vendor-opus|thin|pack|[0-9]{4}-[0-9]{2}-[0-9]{2}'
 leaks=$(grep -R -l -E "$SWEEP" /tmp/b6-parity-suite/fx/fixture | wc -l | tr -d ' ')
 src=$(grep -R -l -E "$SWEEP" /tmp/b6-parity-suite/arm-one /tmp/b6-parity-suite/arm-two | wc -l | tr -d ' ')
 if [ "$leaks" -eq 0 ]; then ok "planted markers are gone from the fixture (negative control)"; else no "planted markers survive in $leaks fixture file(s)"; fi
@@ -280,8 +282,8 @@ infile "the brief states the score line format" 'SCORE ART-ID accuracy=N complet
 infile "the brief carries a positive-control line" 'CONTROL+: ' "$B"
 # D37 and D39: a bare rubric line the judge echoes, a bare control-plus line with nothing after the
 # file path, and a separate negative-control line. The one-line `Controls: positive … negative …`
-# form was refused twice on 2026-09-05 because the wrapper's parser read the prose after the path
-# as part of the path.
+# form fails: the wrapper splits the control-plus line on its last ' in ', so prose after the path
+# would be read as part of the path.
 infile "the brief carries the bare rubric line the score step groups on" '^RUBRIC: lint$' "$B"
 infile "the control-plus line starts its own line" '^CONTROL+: ' "$B"
 infile "the negative control is a separate line" '^Negative control: ' "$B"
@@ -314,7 +316,11 @@ if [ "$badctl" = caught ]; then ok "the same check catches a planted trailing cl
 # added to satisfy the wrapper, and the leg's intent — the wrapper's own control parser run on the
 # generated brief — is unchanged.
 if [ -f "$LANE" ]; then
-  PYTHONDONTWRITEBYTECODE=1 python3 -B "$LANE" spawn --dry-run --run run-x --lane J1 \
+  # A dry run makes no model call; its positive estimate is set by judgement, unmeasured.
+  PYTHONDONTWRITEBYTECODE=1 python3 -B "$LANE" init --home /tmp/b6-parity-suite/lane-home > /tmp/b6-parity-suite/init.txt 2>&1
+  home_rc=$?
+  if [ "$home_rc" -eq 0 ]; then ok "the parser fixture has an initialised lane home"; else no "lane-home fixture init failed (exit $home_rc)"; fi
+  PYTHONDONTWRITEBYTECODE=1 python3 -B "$LANE" spawn --dry-run --home /tmp/b6-parity-suite/lane-home --expect-usd 1 --model opus --effort max --choice-reason "fixture: exercise the Claude wrapper parser" --run run-x --lane J1 \
     --class critic --brief "$B" --grant /tmp/b6-parity-suite/fx/fixture \
     --grant /tmp/b6-parity-suite/tr --grants-only --delegation single --delegation-src head \
     --reason "(a) independence: the parity judge scores the fixture blind to its arm" \
@@ -481,8 +487,8 @@ has "the unscored artefact is named (positive control for the coverage guard)" "
 # Planted input: two lint judges and two query judges, each scoring the artefacts of its own rubric.
 # The truth of the fixture, computed by hand from the numbers written below: per rubric, arm a lint
 # 7.00 (all sevens) and query 8.00 (all eights); arm b lint 8.50 (accuracy 9, completeness 8,
-# citations (9+8)/2) and query 8.00. Over the two rubrics: arm a 7.50, arm b 8.25 — the figures run
-# 1 computed by hand while the script printed 4.17 and 5.08 from the mixed pool. Every per-rubric
+# citations (9+8)/2) and query 8.00. Over the two rubrics: arm a 7.50, arm b 8.25, where a reading
+# that pooled the judges would print 4.17 and 5.08 from the mixed pool. Every per-rubric
 # mean differs from its arm's mixed mean, so a grouping that silently pooled the judges again would
 # print a different number in at least one row.
 python3 -B -c "

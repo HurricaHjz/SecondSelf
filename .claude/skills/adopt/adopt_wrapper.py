@@ -212,7 +212,7 @@ def main(argv=None):
     text = render(name, a.level, a.description.strip(), upstream, limits, a.templates)
     data = text.encode("utf-8")
     desc_bytes = len(a.description.strip().encode("utf-8"))
-    print(f"description: {desc_bytes} B" + (" (the register design aims at about 250 B for a wrapper; the listing carries every byte per request)" if desc_bytes > 400 else ""))
+    print(f"description: {desc_bytes} B")
 
     state = entry_state(entry)
     skill_path = os.path.join(entry, "SKILL.md")

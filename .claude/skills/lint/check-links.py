@@ -20,6 +20,11 @@ identical rules instead of re-deriving an ad-hoc scanner. Rules encoded here:
     directory): it is resolved with expanduser and reported as present or as missing in
     its own bucket, never as dangling (known-issues 2026-09-08: two false positives per
     run, and the class grows with every hands-off run report). A missing one is a finding;
+  - every raw/**/*.md conversion's frontmatter `converted_from:` names its original, which
+    §3.1 keeps beside the conversion: a local value is resolved beside the file, then at its
+    vault path; a file of the same basename anywhere else under raw/ means the value is stale
+    and the original survives (listed, never a finding); nothing at all is a MISSING ORIGINAL,
+    the finding (known-issues 2026-09-09). A URL or prose value is counted, never resolved;
   - prints scan totals as its own positive control (a zero-findings run with zero links
     scanned is a broken probe, per CLAUDE.md §11);
   - refuses a root that is not a vault (no raw/ + wiki/): PROBE FAILED on stderr, exit 2.
@@ -46,8 +51,8 @@ def probe_failed(message):
 def parse_root(argv):
     """Take the root from the sibling flag spelling or the historical positional form.
 
-    An unrecognised flag is refused, never swallowed as a root: `--vault X` used to set the
-    root to the literal string "--vault", so the scan opened nothing and still printed a
+    An unrecognised flag is refused, never swallowed as a root: `--vault X` swallowed would set the
+    root to the literal string "--vault", so the scan would open nothing and still print a
     clean bill of health (known-issues 2026-09-06).
     """
     root, rest = None, list(argv)
@@ -111,15 +116,8 @@ for _dir, _subdirs, _names in os.walk(root):
 
 # --- sources: provenance resolution -------------------------------------------------------
 # Classification of one `sources:` entry, in this order (the order matters: an email address
-# ends in a dot-extension, so the prose test has to run before the path test). The counts
-# beside each rule are what the live vault held when the rule was derived (1,256 entries on
-# 686 pages, measured 2026-09-07 with this same parser):
-#   url        a scheme form — never resolved against disk                              (54)
-#   annotated  the entry itself declares the file gone: "path (deleted 2026-08-13)"      (2)
-#   prose      provenance written as prose: "email: …", "session: …", "20 Aug 2026"     (10)
-#   outside    led by "~" or "/": provenance outside the vault, resolved with expanduser
-#              and reported present or missing in its own bucket, never dangling (2026-09-08)
-#   path       contains "/" (1,177) or ends in a file extension, e.g. CLAUDE.md          (18)
+# A prose marker takes precedence over a path-like suffix. Classify URLs first, then explicit
+# deletion annotations, prose, outside-vault paths, and relative or extension-named paths.
 # Only `path` and `outside` entries are resolved; everything else is counted so a zero is
 # auditable.
 URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
@@ -132,9 +130,8 @@ SOURCES_KEY_RE = re.compile(r"^sources:", re.M)
 def split_flow_list(text):
     """Split a YAML flow list's body on commas OUTSIDE quotes.
 
-    A quoted path may carry commas — quoting is exactly the fix a page took for that on
-    2026-09-03 — and a naive split turns one live path into two or three fragments that then
-    read as dangling. Quote state is tracked so the fix is not punished.
+    A quoted path may carry commas; splitting inside quotes would invent dangling paths.
+    Track quote state so one quoted path remains one entry.
     """
     out, buf, quote = [], "", ""
     for ch in text:
@@ -320,4 +317,116 @@ for label, items in (("annotated absence", annotated_sources), ("empty or unpars
 print(f"OUT-OF-VAULT SOURCES: {len(outside_present)} present | {len(outside_missing)} missing")
 for d in outside_missing:
     print(f"  (out-of-vault missing) {d}")
-sys.exit(1 if (dead_links or dead_embeds or dangling_sources or outside_missing) else 0)
+
+# --- converted_from: the original beside its conversion (§3.1) ----------------------------
+# A conversion in raw/ names its original in `converted_from:`; §3.1 keeps the original and the
+# pair moves together, so this arm checks the pair (known-issues 2026-09-09). Classification of one
+# value, in this order:
+#   url        a scheme form — the capture came from the web, nothing on disk to resolve
+#   annotated  the value declares the original gone: "x.pdf (deleted 2026-08-13)"
+#   prose      no file extension once a trailing "(…)" note is dropped: a pasted email, a chat
+#   local      a file name or path, a trailing note dropped ("x.pdf (arXiv:…)" -> "x.pdf"):
+#              resolved beside the conversion, then at its vault path (or with expanduser when
+#              led by ~ or /); failing both, a file of the same basename anywhere under raw/
+#              (any case) means the value is stale and the original survives — listed, never a
+#              finding; nothing at all is a MISSING ORIGINAL, the finding
+TRAILING_NOTE_RE = re.compile(r"\s+\([^()]*\)\s*$")
+CONVERTED_FROM_RE = re.compile(r"^converted_from:[ \t]*(.*?)[ \t]*$", re.M)
+RAW_FM_RE = re.compile(r"\A---\n(.*?)\n---", re.S)
+# A bound, not a decider: conversion keys sit in the first lines; a block that has not closed
+# inside the bound is re-read whole, so the bound can never silently drop a key.
+RAW_HEAD_BYTES = 16384
+
+
+def classify_original(value):
+    """Return (kind, cleaned) for one `converted_from:` value; kind is url · annotated · prose · local."""
+    text = value.strip()
+    if len(text) > 1 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    if not text:
+        return "prose", text
+    if URL_RE.match(text):
+        return "url", text
+    if ANNOTATED_RE.search(text):
+        return "annotated", text
+    bare = TRAILING_NOTE_RE.sub("", text).strip()
+    if bare and EXT_RE.search(bare):
+        return "local", bare
+    return "prose", text
+
+
+def raw_frontmatter(path):
+    """The frontmatter block of one raw file, or None when the file opens with none."""
+    with open(path, "rb") as fh:
+        head = fh.read(RAW_HEAD_BYTES)
+    text = head.decode("utf-8-sig", "replace").replace("\r\n", "\n")
+    if not text.startswith("---\n"):
+        return None
+    m = RAW_FM_RE.match(text)
+    if m is None and len(head) == RAW_HEAD_BYTES:
+        m = RAW_FM_RE.match(read_text(path))
+    return m.group(1) if m else None
+
+
+raw_md, raw_basenames = [], set()
+for _dir, _subdirs, _names in os.walk(os.path.join(root, "raw")):
+    _subdirs[:] = sorted(d for d in _subdirs if not d.startswith("."))
+    for _n in sorted(_names):
+        if _n.startswith("."):
+            continue
+        raw_basenames.add(_n.lower())
+        if _n.endswith(".md"):
+            raw_md.append(os.path.join(_dir, _n))
+
+conv_files = conv_local = conv_urls = conv_prose = 0
+conv_missing, conv_elsewhere, conv_annotated, conv_unreadable = [], [], [], []
+for p in raw_md:
+    rel_conv = os.path.relpath(p, root)
+    try:
+        block = raw_frontmatter(p)
+    except OSError as exc:
+        conv_unreadable.append(f"{rel_conv} ({exc.__class__.__name__})")
+        continue
+    m = CONVERTED_FROM_RE.search(block) if block is not None else None
+    if not m:
+        continue
+    conv_files += 1
+    kind, value = classify_original(m.group(1))
+    if kind == "url":
+        conv_urls += 1
+        continue
+    if kind == "prose":
+        conv_prose += 1
+        continue
+    if kind == "annotated":
+        conv_annotated.append(f"{rel_conv} · {value}")
+        continue
+    conv_local += 1
+    if value[0] in "~/":
+        candidates = [os.path.expanduser(value)]
+    else:
+        candidates = [os.path.join(os.path.dirname(p), value)]
+        if "/" in value:
+            candidates.append(os.path.join(root, value))
+    if any(os.path.exists(c) for c in candidates):
+        continue
+    if os.path.basename(value).lower() in raw_basenames:
+        conv_elsewhere.append(f"{rel_conv} · {value}")
+    else:
+        conv_missing.append(f"{rel_conv} · {value}")
+
+print(f"CONVERSIONS SCANNED: {len(raw_md)} raw .md files | {conv_files} carry converted_from: "
+      f"| {conv_local} local | {conv_urls} URLs | {conv_prose} prose | {len(conv_annotated)} annotated absences "
+      f"| {len(conv_unreadable)} unreadable   (nonzero raw file total = the conversions arm ran)")
+print(f"MISSING ORIGINALS: {len(conv_missing)}")
+for d in conv_missing:
+    print("  " + d)
+# None of these is a finding: a stale value whose original survives elsewhere under raw/, an
+# original the value itself declares gone, a raw file that could not be opened. Each prints so
+# nothing is silently skipped.
+for label, items in (("original found elsewhere under raw/", conv_elsewhere),
+                     ("annotated original", conv_annotated),
+                     ("unreadable raw file", conv_unreadable)):
+    for d in items:
+        print(f"  ({label}) {d}")
+sys.exit(1 if (dead_links or dead_embeds or dangling_sources or outside_missing or conv_missing) else 0)

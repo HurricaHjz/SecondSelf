@@ -7,7 +7,7 @@ Fill every cell from the fingerprint and the assessment; one row per add-on (a s
 | {{what}} | {{channel}} | {{level}} — {{reason}} | {{cost}} | {{risks}} | {{changes}} | {{probe}} |
 
 **Columns.**
-- **What** — the add-on in one clause: name, publisher, pin (commit or tag), licence.
+- **What** — the add-on concisely: name, publisher, pin (commit or tag), licence.
 - **Channel** — `user-level skill` (symlink or wrapper under `~/.claude/skills`), `plugin` (floating; a `hooks.json` reaches every session), `CLI tool` (pin-by-class), `connector` (rows only), or `knowledge only` (the README is ingested, nothing installed).
 - **Level (reason)** — `auto` · `propose-first` · `by-name`, the most restrictive clause winning: the fingerprint's mechanical floor (a hook or a network primitive in code → at least `propose-first`), then the assignment rule (`by-name` when it substitutes for a vault workflow's job or runs arbitrary user code; `propose-first` when a run has an external effect, or the owner wants it offered; `auto` when it serves inside a vault workflow). Token cost never decides a level.
 - **Always-on cost** — the description bytes the listing carries per request (`auto`: the upstream description; `propose-first`: the wrapper's short description; `by-name`: 0 B).

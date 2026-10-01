@@ -23,29 +23,29 @@ You maintain a **persistent, compounding wiki** (see `CLAUDE.md`). `raw/` root i
 2. **`/ingest <path>`** → process just that file (or a YouTube/web URL the user gives you).
 3. **Implicit** → user says "add this to my wiki" / "ingest this" / "file this source".
 
-## Pacing: auto (default), one-by-one, batch, or parallel
+## Pacing: auto (default), one-by-one, batch, one-lane, or parallel
 Read the **pacing** from the user's words; **if they don't specify, default to `auto` and decide yourself.**
 Do not ask which *pacing* to use unless the choice is genuinely risky. (This is pacing only — **depth**
 is a separate axis with its own rules; see Depth. `auto` names a default on both, so never read a
 pacing sentence as licence on depth, or a depth rule as licence on pacing.)
 
-- **`auto` (DEFAULT)** — pick the cheapest path that preserves quality:
-  - **Batch** in a single pass when the inbox is small (≲5 files), the sources overlap the existing
-    wiki, or conflict risk is low.
-  - **One-by-one** when there are many diverse/unfamiliar sources, conflict risk is high, or the
-    source is long and dense.
-  - Either way, **pause immediately** if a genuine knowledge conflict surfaces.
-- **`one-by-one`** — user says "one at a time" / "let me review each", or names a single file.
-- **`batch`** — user says "all at once" / "batch them" / "do them all".
-- **`parallel [N]`** — user says `--parallel` (optionally a lane count), or `auto` proposes it when the
-  inbox holds **≥6 independent sources** (threshold set by judgement, unmeasured — recalibrate on batch
-  metering; ≤5 stays the small-batch boundary above). **Owner-go gate, knob-invariant:** parallel compile lanes
-  are never spawned without the owner's explicit go on the echoed spawn record — the `pre-report` knob
-  switches reporting only, never this consent (delegate skill §3 slot 0); a routed single-source lane's
-  go is the `/ingest` invocation itself (Routing note, Step 3; 2026-09-03); under the `light` breadth tier
-  a fan-out needs an explicit owner ask. Parallel mode is available under **both** delegation modes:
-  a batch the head cannot hold in one context is the instrument rule's reason (b), and the verify legs
-  of the lanes it spawns are reason (a) (delegate skill §1). Mechanics: **Parallel mode** below.
+**Execution precedence:** every batch compiles in a lane; the owner’s word, else the head’s pre-flight judgement, chooses the one-lane or parallel shape.
+
+For every batch the pre-flight records the standing instrument-rule reason that satisfies the `single` regime: (d) a batch longer than the head can afford, or (b) breadth one context cannot hold. A batch has no head-compile exception. The Routing note at Step 3 applies its head-compile rule under `single` to the single-source path alone. For a batch, the owner’s word, else the head’s pre-flight judgement, selects `one-lane` for the whole batch serially where converted bytes fit the source-size bound, or `parallel` for several lanes above that bound or under time pressure.
+
+A two-source batch under `single` uses `one-lane` where its converted bytes fit the source budget, with its standing instrument-rule reason recorded in the pre-flight; the owner’s word or the head’s pre-flight judgement can select `parallel`. The same batch under `multi` follows the same shape rule.
+
+The batch shape takes precedence over the Routing note’s older per-source `auto` sequence. The head’s retained duties remain as assigned by Routing and the chosen shape: the brief, the verify leg, any merge, sorting and Step 7 work retained by the head, and registries where the ingest exception is not granted.
+
+Compile routing follows the standing instrument-rule reason above. Source size selects the lane
+shape; source count does not. The source budget is `partition.py --max-bytes` (default 250000
+bytes, set by judgement, unmeasured, beside the index slice). Both shapes keep the **Verify step**.
+
+- **`auto` (DEFAULT)** — every batch compiles in a lane; choose `one-lane` or `parallel` by the owner’s word, else the head’s pre-flight judgement and the source-size bound above. Use batch review when sources overlap the existing wiki or conflict risk is low; use one-by-one review for diverse or unfamiliar sources, high conflict risk, or a long, dense source. Pause immediately if a genuine knowledge conflict surfaces.
+- **`one-by-one`** — user says "one at a time" / "let me review each", or names a single file; the Routing note at Step 3 governs routing.
+- **`batch`** — user says "all at once" / "batch them" / "do them all"; the batch compiles in a lane, with its standing instrument-rule reason recorded in the pre-flight. Choose `one-lane` or `parallel` by the owner’s word, else the source-size bound and the head’s pre-flight judgement.
+- **`one-lane`** — one `wiki-compile` lane under `brief-compile` compiles the whole batch serially, writes its source pages and warranted shared pages itself (no claims, no merge, no conflict lane; the head stays thin), and writes its own index lines and log entry under the §2.2 ingest exception. It sorts each raw pair after its own Step 7 self-check, as the routed single-source shape does. One verify lane covers all its pages before the head accepts the run; follow the **Verify step** and the Routing note at Step 3 for the head's retained duties.
+- **`parallel [N]`** — user says `--parallel` (optionally a lane count), or the head's pre-flight judgement selects it when converted bytes exceed one lane's source budget or time pressure warrants it. **Owner-go gate, knob-invariant:** parallel compile lanes are never spawned without the owner's explicit go on the echoed spawn record — the `pre-report` knob switches reporting only, never this consent (delegate skill §3 slot 0); a routed single-source lane's go is the `/ingest` invocation itself (Routing note, Step 3; 2026-09-03); under the `light` breadth tier a fan-out needs an explicit owner ask. Parallel mode is available under **both** delegation modes: a batch the head cannot hold in one context is the instrument rule's reason (b), and the verify legs of the lanes it spawns are reason (a) (delegate skill §1). Mechanics: **Parallel mode** below.
 
 ### Token-efficiency rules (especially in batch — avoid redundant repetition)
 - Read each source **once**; never re-read the whole wiki per file.
@@ -73,8 +73,7 @@ anything other than the default, and resolve an ambiguous phrase to the **narrow
 - **T2 · Proximity** — does it bear on a topic named in `wiki/user/`, or on an open question already in
   the wiki (a `## Conflicts / Open Questions` block, a `flagged:` page)? *Fallback*: if
   `wiki/user/` is absent, empty, **or outside the reader's scoped reading list** (a delegated compile
-  lane — two №103 lanes resolved this opposite ways, one probing off-scope, one forced down to
-  `standard`; cross-reflection P3, 2026-08-28), read T2 as "a topic with ≥3 source pages in `index.md`"; if the wiki
+  lane; №103), read T2 as "a topic with ≥3 source pages in `index.md`"; if the wiki
   is too small for even that, say so once and work in concise/standard only.
 - **T3 · Novelty** — does it add anything not already on an existing page?
 
@@ -95,7 +94,7 @@ A trigger letter with empty parentheses is a defect, not a record. **If you cann
 take the lower rung** (the §4.6 tie-goes-lower principle, applied to depth).
 
 - **standard (the usual outcome)** — articles, blogs, posts, docs. Run Steps 2–4 as written.
-- **concise** — thin or fully-redundant sources (brief tweet, link dump, thin page): 1–3-sentence
+- **concise** — thin or fully-redundant sources (brief tweet, link dump, thin page): concise
   summary, create pages only for genuinely new entities/concepts, minimal bullets.
 - **research** — primary material the owner will need to reuse exactly. At research depth:
   - Preserve exact figures (no rounding); quote critical claims verbatim with §/page refs; mark
@@ -103,9 +102,15 @@ take the lower rung** (the §4.6 tie-goes-lower principle, applied to depth).
   - **Quote discipline, all depths:** short critical quotes as above stay mandatory; *long-form
     block quotes* stay in the raw file — link, never transplant — so compiled pages stay quotable
     from their source (a refusal while reading is handled reactively, CLAUDE.md §11).
+  - **Computed numbers and quotation starts, all depths (2026-09-10):** a number you computed over a set
+    (files, hits, list lengths) is copied from the command's printed output in this pass, never recalled,
+    and re-run once before the report, the sentence corrected if it moved; a quotation checked back against
+    the raw is checked from its opening quote mark, so a splice at the start cannot pass.
   - Replace the Step 3 source page with the **literature-note template** below.
   - Add academic frontmatter (`authors`, `year`, `venue`, `doi`, `depth: research`).
   - Cross-check findings against existing pages and flag confirmations/contradictions explicitly.
+
+**Table quotations, all depths:** A cell from a column-collapsed table is quoted only with its row and column labels verified in the raw, never with a superlative or a row label the table does not print. If the raw does not let you verify the labels, report the cell as unverifiable and omit the attributed figure.
 
 **Record it, always.** Every source page carries `depth: concise|standard|research` (Step 3); every run
 reports each source's depth + locator (Step 8) and logs the tally (Step 5). *Never silent* is now
@@ -114,6 +119,9 @@ onto pages compiled before this contract — an absent value means "unknown", an
 fabrication.
 
 ### Research-depth source page (replaces the Step 3 template)
+Schema (CLAUDE.md §4.3, the research-depth clause of 2026-09-14): these sections stand in place of
+`## Summary` and `## Key Takeaways`; `## Related` stays mandatory, and the lint required-sections check
+reads `depth:` before judging the page.
 ```markdown
 ---
 title: "Paper: <Title>"
@@ -157,8 +165,8 @@ replace the paper-shaped middle sections (Research Question … Limitations) wit
 equivalents (e.g. Scope & Applicability · Requirements & Thresholds · Deadlines & Milestones ·
 Governance). The obligations never flex — exact figures, verbatim quotes with §/page refs,
 `## Relation to Wiki`, `## Related` — and the substitution is declared on the page and in the run
-report. First exercised 2026-08-26 on an institutional research-degree handbook, where the exact
-thresholds and term-relative deadlines are precisely what a paraphrase would falsify.
+report. A regulation or an institutional handbook is the typical case: its exact thresholds and
+term-relative deadlines are precisely what a paraphrase would falsify.
 
 ## Run ledger (persistence — every run, serial or parallel)
 
@@ -166,27 +174,25 @@ Every ingest run appends an event log under the agent home `~/.llm-wiki/`:
 `~/.llm-wiki/ingest-runs/run-<YYYYMMDD-HHMM-id>.jsonl` — one JSON
 event per line via shell append (`printf '%s\n' '<json>' >> <ledger>`), the same primitive that makes
 `log.md` race-safe. **Never read-modify-write it**; resume state is a fold over events.
-No helper script — primitives first (§12), until a real run shows hand-rolled appends failing. *(Status 2026-09-02: that condition has fired twice — five fabricated clocks in run 20260901-batch112107, then a hard-coded stamp in run 20260901-mp2i despite a brief mandate — so a helper or a mechanical ledger check is now the owner's call, recorded in known-issues.)*
-(Design record: `wiki/developments/ingest-persistence-parallelism-design.md`.)
+No helper script — primitives first (§12), until a real run shows hand-rolled appends failing; once one has, a helper or a mechanical ledger check is the owner's call, recorded in `known-issues`.
 
 **Fold with a parser; a key-pattern grep is a locator, never a verdict.** Writers disagree on key
 spacing (`json.dumps` writes `"lane": "LB"`, a `printf` event `"lane":"LB"`), so every count, census
 or resume fold reads the lines through `python3 -c` or `jq`. A grep locates a line to look at; it
-never settles a question. Evidence: a head grep of `"lane":"LB"` reported two lanes' claim objects
-missing and that false negative reached a verify brief (2026-09-04), and `grep -c '"lane":"L4"'`
-returned 5 of 8 on the same shape (2026-09-01) — both in `known-issues`.
+never settles a question. Parse records before counting fields or using absence as evidence.
 
 **Every event's `ts` is the shell clock at write time** — `$(date +%FT%R%z)`, one offset format,
-head-written events included — never typed, remembered or derived from context. Five lanes stamped
-~6.5–7 h fast on one run (2026-09-01), and the resume pre-flight below reads a future-dated stamp as
+head-written events included — never typed, remembered or derived from context. A lane that types
+its own clock can stamp hours fast, and the resume pre-flight below reads a future-dated stamp as
 perpetually live, so a fabricated clock disables the liveness check it feeds.
 
 **Events** (extra fields are free): `run_open` (run id · pacing · authorised depth range · inbox
 listing as `inbox: [{file, sha256 prefix}]`) · `lane_open` / `lane_close` (lane id · definition ·
-model · effort) · per-source `checkpoint` (`source` + `stage` + stage fields) · `conflict` (page ·
+model · effort · `role: compile|verify|conflict` on `lane_open`) · per-source `checkpoint` (`source` + `stage` + stage fields; `claims_emitted` carries every claim object, its `diff`, `base` and `diff_hash` in the `claims` list, never a count; an optional count goes under `claims_count`) · `conflict` (page ·
 both statements' locators · disposition) · `merge_open` (plan artefact named, parallel mode) · `merged` (per merge target, parallel
-mode) · `verify` (Verify step: lane · definition · model · effort · `scores:` line · verdict · fixes) ·
-`run_close` (tallies mirroring the Step 5 log entry). **Serial runs use lane id `head`** — one schema serves both.
+mode) · `verify` (Verify step: compile lane id · verifier id · definition · model · effort · all nine names on the `scores:` line in parallel mode · verdict · fixes · distinct source-qualified `quarantined` claim objects) ·
+`preflight` (parallel mode: the head's append before the owner go, at the ledger path copied from a
+brief — briefs · failures · controls; Parallel mode step 1) · `run_close` (tallies mirroring the Step 5 log entry). **Serial runs use lane id `head`** — one schema serves both.
 
 **Checkpoint stages, mapped to the pipeline** (append as each source passes the step):
 `deduped` (pre-flight) → `converted` (Step 0; skipped for native `.md`) → `read` (Step 1) →
@@ -206,10 +212,9 @@ silently). Any open run → report it (each source's last checkpoint, plus the *
 event**) and offer resume before scanning the inbox fresh. Last event under **~60 minutes** old →
 flag "possibly live in another session" and let the owner decide (concurrent sessions are routine
 against this vault; resuming a live run would create a dual-writer race). The 60-minute line is
-judgement, loosely anchored to a once-observed ~30-minute cloud-sync materialisation lag.
-
-**A `ts` later than the shell clock is invalid — never "live".** Five lanes stamped ~6.5–7 h fast on
-2026-09-01, and a future stamp sits under the 60-minute line for ever, disabling the check it feeds. So
+set by judgement, unmeasured for a new installation.
+**A `ts` later than the shell clock is invalid — never "live".** A typed clock can run hours fast,
+and a future stamp sits under the 60-minute line for ever, disabling the check it feeds. So
 age the latest event against the wall clock, comparing stamps as parsed instants (a string `max` ranks
 `+0100` above `+0000` for the same clock reading), and where the latest `ts` is later than now, or any
 stamp is unparseable or carries no UTC offset, fall back to the ledger file's mtime and name the source of
@@ -235,7 +240,7 @@ older stamp, so the age it yields may overstate how long the run has been quiet.
 stamp as "ledger clock rejected, mtime age <n> min" and let the owner decide, exactly as with a run
 inside the 60-minute window.
 
-**Completion gating (ungated mid-pipeline duties measure at 4% compliance here — so gate, don't
+**Completion gating (ungated mid-pipeline duties are easily skipped — so gate, don't
 trust habit):** the Step 8 report carries one mandatory line — `Run: <id> · <n> ledger events ·
 closed` — and the Step 5 log entry names the run id. A silent zero surfaces in the reply the
 completion gate already requires; the warn-only Stop hook (`.claude/hooks/ingest-ledger-check.sh`)
@@ -243,65 +248,65 @@ additionally flags stale open runs at turn end.
 
 ## Parallel mode (compile lanes + entity merge)
 
-The serial pipeline is unchanged; parallel adds lanes and a merge stage. Run it through the delegate
-skill (routing, spawn slots, `brief-compile` template). Full rationale:
-`wiki/developments/ingest-persistence-parallelism-design.md`.
+Every batch compiles in a lane under the precedence in **Pacing**. The pre-flight records the standing instrument-rule reason satisfying `single`: (d) a batch longer than the head can afford, or (b) breadth one context cannot hold; there is no head-compile exception for a batch. The Routing note at Step 3 applies its head-compile rule under `single` to the single-source path alone. The owner’s word, else the head’s pre-flight judgement, chooses `one-lane` for a whole batch fitting the source budget or `parallel` for several lanes above it or under time pressure. The chosen batch shape takes precedence over the older per-source `auto` sequence. The head’s retained brief, verification, merge, sorting, Step 7 and registry duties remain as assigned by Routing and the chosen shape, including registries where the ingest exception is not granted. Parallel adds a merge stage; both shapes keep the **Verify step**. Run parallel through the delegate skill (routing, spawn slots, `brief-compile` template).
 
-1. **Partition (head agent; planner lane where used — its output is a proposal, §2.2).** Disjoint
-   source sets, balanced by size/likely depth; related sources deliberately co-assigned to one lane so
-   shared-entity claims cluster. **Verified, never assumed:** before any spawn, a mechanical
-   disjointness assert — every inbox source in exactly one lane; pairwise-empty file whitelists — plus
-   a head review of every brief.
+1. **Partition (script; planner lane where a source read is needed, on the head's recorded judgement — its output is a proposal, §2.2).** Run `python3 .claude/skills/ingest/partition.py --inbox <raw root> --lanes <N>` or `--ledger <run ledger>` with `--lanes <N>` or `--max-bytes <B>` (default 250000 bytes, set by judgement, unmeasured). Every direct Markdown file counts, native Markdown included; a same-stem original is not counted twice. Related sources can be co-assigned with `--group <file>` (one stem per line, blank lines between groups). Largest sources or whole groups go first into the lightest lane. **Verified, never assumed:** the script asserts that every inbox source appears in exactly one lane; a broken premise exits 2 with `PROBE FAILED`. Before any spawn the head reviews every brief, including pairwise-empty source/page file whitelists. **Then the brief check, before the owner-go echo** (design extension
+   2026-09-13, part 4; a head-side rewrite can mangle the ledger path in every compile brief, and a
+   lane given a mangled path appends nothing): create each lane's scratch directories, persist each headless
+   lane's `lane.py spawn … --expect-usd <usd> --dry-run` stdout, and run `python3 .claude/skills/ingest/brief_preflight.py
+   --ledger <run ledger> --dry-run <lane>=<that file> … --in-session <lane> … <every filled compile and
+   verify brief>`. It fails a brief on (a) a path token whose parent directory is missing or that holds
+   an unfilled `{{…}}` or `<…>` slot, (b) a ledger path that differs between briefs or from the run's,
+   (c) no `preflight` event after `run_open` at the brief's literal ledger path, (d) a fence answer
+   other than allow for a headless lane's own append there, (e) a reading list that names an index
+   `## ` section or carries one whole; exit 2 is a broken probe, never a pass. The head proves (c) with
+   its own append, made only once a run shows (a), (b), (d) and (e) passing (the check's `NEXT:` line;
+   `>>` creates a file wherever its parent exists, so an earlier append could land in another run's
+   ledger): copy the path from a brief's text, append
+   `printf '{"ts":"%s","event":"preflight","run":"<run>","lane":"head","briefs":<n>,"failures":<n>,"controls":"ok"}\n' "$(date +%FT%R%z)" >> <that path>`
+   (`briefs` and `failures` copied from that run's `summary:` line), then run the check again: exit 0
+   is the only pass, and the owner-go echo carries its `summary:` line.
 2. **Owner go on the echoed spawn record** — this skill's own approval gate, whatever `pre-report`
    says (a reporting knob, never a consent switch).
-3. **Lane shape.** `wiki-compile` under `brief-compile` + two added duties: **ledger appends**
+3. **Lane shape.** `wiki-compile` under `brief-compile` + **ledger appends and anchored claim diffs**
    (`lane_open` · per-source checkpoints · `lane_close`) and **claims instead of shared-page writes**.
    Per-lane whitelist: its raw pairs (conversion writes — disjoint files), its source pages (sole
    writer), the run ledger (append-only), and, under the §2.2 ingest exception, its own
    `index.md` source-heading lines by **anchored per-heading `Edit`** and its own `log.md`
    entry by **shell append** (`cat >>`) — never an `Edit` on the log, which the harness
-   would make the lane read whole (600 kB+). Grep-verify both back and show the grep.
-   Everything else: propose-don't-write.
+   would make the lane read whole. Grep-verify both back and show the grep.
+   Also grant the lane's own `<run>-diffs/<lane>/` directory beside the ledger for its proposed unified diffs. A `lane_open` records `role: compile`; verify and conflict lanes record their corresponding role. The ledger lane id must equal the spawn record's lane id: the meter joins its per-agent rows on that id before grouping by role. This is the baseline attribution change; no historical re-meter is built here. Everything else is propose-don't-write.
 4. **Lanes never write shared-type pages** (entity/concept/model/benchmark — the true race surface).
-   Each lane emits **claims** in its report AND **in full inside the `claims_emitted` checkpoint** —
-   the event carries the claim objects themselves, never just their names: lane reports die with
-   their sessions, so a name-only mirror leaves the run unresumable if the head dies before merge
-   (gate evidence 2026-08-28: lanes mirrored inconsistently; the head's plan artefact had to carry
-   the load). Claim schema:
-   `{name · type · kind: create|update · target (canonicalised against index.md/existing pages —
-   GPT-4o arrives as an update to the GPT page, §4.5) · facts[] with per-fact source locators · links[] ·
-   appears_in[] · confidence (lane-assigned, §4.6) · from: source-page}`; shaky facts marked
-   `unverified`. The claims consumer is the head LLM — report framing is tolerated; no parser exists.
+   Each lane emits **claims** in its report AND **in full under `claims` inside the `claims_emitted` checkpoint** —
+   `claims` is the list of claim objects, never a count; an optional count goes under `claims_count`. The event carries complete objects, never just their names: lane reports die with
+   their sessions, so a name-only mirror leaves the run unresumable if the head dies before merge. Claim schema:
+   `{name · type · kind: create|update · target · facts[] with per-fact source locators · links[] · appears_in[] · confidence · from: source-page · source: raw identity · diff: absolute path · base: sha256 prefix · diff_hash: sha256 prefix}`. Canonicalise against index names and page aliases; mark shaky facts `unverified`. Each update diff is against the exact bytes read, with `base` the first 16 sha256 hex digits, the `source_hash` length used by de-dup. The planner keeps that validated hash as the expected base; a later disk read cannot replace it, and drift during planning is manual or a probe failure. A create diff uses `/dev/null` as its old header and carries the schema's frontmatter and sections, including `aliases:` with acronym and expansion wherever the source gives both. The checkpoint's `claims` list mirrors the complete objects and the diff's own hash. Reports remain readable prose; the planner consumes the parsed `claims` objects. Before `registered` or `lane_close`, the lane runs compile-core §5's mandatory post-checkpoint assertion and records its `claims-shape:` and `controls:` lines in its final report under `## Controls`; the verifier checks that evidence.
 5. **Lanes do NOT sort — they end at `registered`.** Sorting before merge would mark sources processed
    while their entity claims were still unapplied, silently breaking root-state truth (the §2
    fallback invariant). The head sorts at merge-close.
-6. **Merge stage (head agent, after all lanes close). Open it by persisting the plan:** write the
-   deduped merge plan (targets · kinds · fact sources · tiers · close-out steps) to a scratch file
-   and append a `merge_open` event naming it BEFORE the first page write — with the full claims in
-   the ledger this is belt-and-braces, and together they are what makes a mid-merge crash honestly
-   resumable (the leg-2 gate drill resumed from exactly these two artefacts). Then: dedupe claims cross-lane by canonical target
-   (two lanes' names for one new entity → one page + aliases) · merge facts · write each shared page
-   **once** (create per schema, or anchored incremental merge — never clobber), appending a per-target
-   `merged` event as it goes · **reconcile lane-page links** (apply the canonical-name map back to
-   lane source pages whose `## Related` named a losing variant — safe, all lanes are closed) · index
-   each merged page · sort each fully-merged source's raw pair (`sorted` checkpoints) · append the
-   head's batch `log.md` entry naming lanes and models (§5 attribution). Run log composition: N lane
-   entries + 1 head batch entry.
+6. **Plan and anchored apply (head, after each lane's latest close and verify).** Run `python3 .claude/skills/ingest/merge_plan.py --vault <vault> --ledger <run ledger> --lanes <comma-separated compile lane ids>`; repeat `--ledger` for separate claims JSONL files. The first ledger binds the run, and runless events inherit only their own file's `run_open`. Separate-file claims require timestamps proving they preceded the close and verify. Persist the plan and append `merge_open` naming it BEFORE a page write. An empty or unparseable ledger, a latest opening or latest close without subsequent verification, malformed claim containers, foreign or premature evidence, missing score names, or a quarantine count without distinct objects exits 2. An unsettled malformed line also exits 2; only an explicit `--allow-malformed <exact file>:<line>` settles that real file and line. A zero-target plan carries its same-run control.
+
+   The planner joins normalised targets and aliases from existing pages and create diffs. Quarantine removes individual objects first. Each remaining target has one disposition: `conflict` outranks `manual`, which outranks `tier-raised`, which outranks `apply-union`, which outranks `apply`. More than one claiming lane is a conflict except when every member adds only link lines under `## Appears in` or `## Related`. Those link additions form one `apply-union` diff against the current page, preserving lane order and de-duplicating the whole line after whitespace collapse and trailing-space trimming only. Punctuation, case and target/gloss boundaries are preserved, so different glosses for one target both survive. Prose under disjoint headings also stays conflict. Missing or unusable member diffs stay conflict; an otherwise eligible union whose base/context or heading re-base fails is manual. Missing diffs, moved bases and existing creates from one lane are manual. A confidence lift always requires a full-page head read even when its disposition is conflict or manual. An otherwise link-only overlap that edits confidence is tier-raised first; it returns to conflict resolution after that read, and the union never lifts a tier. A single-lane tier-raised target follows its next class after the read (otherwise apply or manual).
+
+   Name `--union-dir <existing run scratch directory>` when planning unions. This is the planner's sole write exception: it creates union diff artefacts outside the vault, reuses identical bytes and refuses to overwrite different bytes. Missing scratch is a broken premise (exit 2), never an apply. Read the composed diff, then use the same dry-run, immediate base re-check, patch flags and per-target event as for apply. No union is emitted while the ledger evidence is incomplete.
+
+   Read the create list's names and aliases and move any semantic duplicate into conflict. Spawn one `wiki-compile` conflict lane only if conflicts remain, with `brief-merge-conflict.md`, `role: conflict`, all competing claims/diffs and each target. Manual targets join it when it exists; otherwise resolve each by an anchor read. It returns resolved diffs, the canonical-name map and link diffs for losing source-page variants. Read every resolved diff and run `merge_plan.py --vault <vault> --resolved <diff>`: an introduced confidence lift, quoted or unquoted, requires a whole-page read. Resolved diffs are head-reviewed; they receive no new verify score.
+
+   For each apply target use the printed command with `patch -F0 -N --no-backup-if-mismatch -r <scratch reject file> --dry-run <explicit target> <diff>`, then re-check the base hash immediately before the same command without `--dry-run`. A create re-check proves absence. Zero fuzz derives from exact-context anchoring; `-N` on an already-applied patch is a failed replay probe. Rejects stay in run scratch, with no backup or reject beside a page. Append `merged` per target only after its added lines are verified on disk. On resume both disk content and that event are required. The head reconciles source links, indexes each accepted page, sorts fully merged raw pairs with `sorted` checkpoints and appends its batch log entry. Run log composition remains the lane entries plus one head batch entry.
 7. **Confidence at merge (§4.6):** the lane that read the source assigns the tier; merge *combines* —
    corroboration across claims may lift a compiled page toward its `high` cap, never above — and never
    re-grades a reading lane's tier without reading the source. The head's §4.6 spot-check rides the
    merge pass; `audited:` stamps at merge write.
 8. **Step 7 splits.** A claims-mode lane checks: every link resolves to a real page **or to a target
    in my emitted claims**. The head runs the Verify step (below) over each lane's pages and claims
-   BEFORE merge, then the full Step 7 over the batch post-merge — the final gate before `run_close`.
+   BEFORE merge, including every claim diff's added lines as page text under fabrication, then the full Step 7 over the batch post-merge — the final gate before `run_close`.
    **Quarantine is per claim, not per lane.** A claim's facts carry their own locators, so the verify
    leg's `claims` dimension counts the claim objects whose facts the flagged sentence, paragraph or
    table feeds and names them; the head quarantines exactly those and merges the lane's remaining
-   claims. Two cases still take the whole set: a **plant** hit (the lane failed the fidelity gate, not
+   claims. Name each quarantined object by `claim_id` from the plan or by `name` plus `lane` and `source` or `from`; an ambiguous name or the same object named twice exits 2, including in a `--quarantine` JSON list. A numeric `claims` score must equal the number of distinct objects named. Two cases still take the whole set: a **plant** hit (the lane failed the fidelity gate, not
    one sentence) and a leg that could not run the dimension (`claims -`) — fail closed. Derivation:
-   on run `run-20260904-0230-thin` the per-lane rule discarded 93 usable claim objects over one
-   fabricated sentence each on three lanes and the merge re-derived them, ≈$16.7 against ≈$10 list
-   (`known-issues`, 2026-09-04).
+   a per-lane quarantine discards every usable claim object a lane made over one fabricated
+   sentence, and the merge then pays to re-derive them.
 9. **Conflicts under parallelism.** A lane never pauses the batch: it keeps both statements in its
    claim (§4.4) and appends a `conflict` event; the head surfaces every conflict in the batch report,
    and high-stakes ones pause the **merge** — the single point where a pause still has leverage.
@@ -309,8 +314,9 @@ skill (routing, spawn slots, `brief-compile` template). Full rationale:
 ## Verify step (every compile a lane did — the routed single-source path and each parallel lane's pages)
 
 Runs head-side after the lane closes and before the head accepts the run (Step 7 and the close-out).
-Design: `wiki/developments/fable-minimising-routing.md`, protocol items 3, 4, 5, 6 and 9 (item 4's
-single-source form and item 3's mechanism delta are dated status facts there). **Routing (shipped
+Design: the routing design page (see **Vault records** at the end of this skill), protocol items
+3, 4, 5, 6 and 9 (item 4's single-source form and item 3's mechanism delta are dated status facts
+there). **Routing (shipped
 2026-09-03, critic C15 folded; mode-gated 2026-09-04):** the scripts run in the head's shell (M0), the
 scoring runs in a `verifier` lane on opus (the class's default from 2026-09-06; before that a per-call escalation inside its option set, since
 tier verdicts are judgement claims — delegate skill §2), the verdict stays with the head (M2). The lane
@@ -334,19 +340,19 @@ independent leg, in either mode, and a head-compiled source gets one only where 
    lane's `## Anomalies` is checked against); `python3 .claude/skills/lint/check-links.py` (dead
    links). Write all three, each under a heading naming its script, to
    `~/.llm-wiki/ingest-runs/<run>-m0-<lane>.txt` beside the run ledger, and let the brief name that
-   path instead of pasting the lines: a lane cannot treat brief text as evidence, and two verify lanes
-   scored the pasted `tier-cap-check.py` line UNVERIFIABLE for exactly that reason (`known-issues`,
-   2026-09-04). The path joins the lane's read grants. A breach here is a miss before the verifier runs.
+   path instead of pasting the lines: a lane cannot treat brief text as evidence, so it scores a pasted
+   line UNVERIFIABLE (`known-issues`, 2026-09-04). The path joins the lane's read grants. A breach here is a miss before the verifier runs.
+   **Raw slices (parallel mode).** Run `python3 .claude/skills/ingest/raw_slices.py --raw <converted raw> --page <source page> --lane <compile lane> --ledger <run ledger>` for each source; persist the complete outputs beside the M0 file as `<run>-slices-<lane>.txt` and grant that file for read. The skeleton is structural, independent of the claims. Missing claims, conversion suspicion or hash drift take the whole-read fallback. Conversion pairs count as one source identity before ambiguity is checked; distinct source directories still compete. An empty claim object exits 2; a partial claim with missing source or locator evidence counts unresolved and takes the whole-read fallback. An incomplete output (a missing numbered line, footer or closing `controls:` line) also takes the whole raw. Exit 2 is a broken probe and cannot establish coverage.
 3. **Verifier lane** from `.claude/skills/delegate/templates/brief-ingest-verify.md`, which also
-   receives the compile brief's CONTEXT NOTES verbatim, the plant, the M0 file's path, and (parallel
-   mode) the lane's emitted claims: claim list and warranted set from the raw first, then the counts —
+   receives the compile brief's CONTEXT NOTES verbatim, the plant, the M0 file's path and the raw slices file, and (parallel mode) the lane's emitted claims: claim list and warranted set from each raw's skeleton before opening outputs, then the counts —
    fabrication · plant · coverage · tier · structure · integration · language · anomalies, plus
    `claims` in parallel mode (the claim objects whose facts a flagged sentence feeds, the quarantine
    unit of step 8 above) — evidence per non-zero, both controls, the plant grep's own positive
    control, and the last line `scores: …` (`plant -` when its control could not run; `claims` is
    appended to that line in parallel mode only, so a serial line keeps the eight names the parity
-   gate's verdict script parses). One lane per compile; a second only where the head disputes a call, and the lane's evidence,
-   never its verdict, decides.
+   gate's verdict script parses). One lane per up to six compile lanes; a seventh opens a second; a disputed call re-runs that lane alone (six is set by judgement, unmeasured). Run the full protocol per compile lane in order, with its own pages, plant, claim objects, slices file, M0 file and `## Controls`; the head prepares raw slices once per compile lane's set and names every file. Parallel score lines are prefixed by the compile lane id, keeping the exact eight names plus `claims`: `<lane> scores: fab <n> plant <n|-> cov <n> tier <n> struct <n> integ <n> lang <n> anom <n> claims <n|->`. The lane's evidence decides. Each unsupported fabrication candidate is confirmed on its source's whole raw before it counts; that source's remaining checks then use the whole raw. Plant greps and both controls use the whole raw. Controls carry `raw read: <source> · slices <bytes> of <bytes> · full no|yes (<reason>)` per source.
+
+   **Shadow coverage measurement.** The designated measurement run gets one independent whole-raw shadow over the compile lane with the most sources, whether or not any call is disputed (one leg and the selection are set by judgement, unmeasured). Trace every item the shadow finds that the slice leg lacks with `raw_slices.py --trace <persisted slices> --item <absolute raw path>:<first>-<last>`. Full source identities remain distinct; an ambiguous source or incomplete output exits 2. An item outside or crossing the slices is `LOSS` (exit 1); an item wholly inside them, or in a whole-read source, is `VARIANCE` (exit 0). Any slicing loss fails coverage and returns every verify leg to whole-raw reads until the prefill changes; lane variance is recorded. Meter the shadow separately from cost per source. Coverage reading (i), (ii), (iv) and (v) is checked: one verify event per compile lane, all nine score names with numeric plant and claims, whole-raw confirmation for every counted fabrication, and this shadow. Reading (iii), a mechanical plant census in spawn records, is not built.
 4. **Verdict (head, M2).** Fabrication 0 and plant 0 are required; `plant -` (no plant, a placeholder,
    or a plant that hits in the raw) means the leg did not run — re-plant and re-run it, or the compile
    reverts. A fabrication or plant hit reverts that compile to the head for the run: the head corrects
@@ -359,12 +365,11 @@ independent leg, in either mode, and a head-compiled source gets one only where 
    omitted is judged and, where real, written as a §4.4 block. **Head slice (protocol item 4):**
    whatever the scores, the head reads the source page and up to two more set pages in full against
    the raw (the larger of three items or ten per cent); the per-run empirical re-compile is withdrawn
-   for single-source compiles (design page, dated status) — every fifth routed run the head also
+   for single-source compiles (routing design page, dated status) — every fifth routed run the head also
    compiles the source in a fixture and diffs. The head never edits a lane's page on a verdict alone —
    it reads the cited line first.
-5. **Record.** One `verify` ledger event (lane id · definition · model · effort · the `scores:` line ·
-   verdict · fixes applied), appended with a shell clock; the spawn record carries the plant and the
-   full meter; **a routed-run register row on the design page every run** (misses, reverts, fable
+5. **Record.** One `verify` ledger event per compile lane scored (compile lane id · verifier id · definition · model · effort · that lane's complete `scores:` line · verdict · fixes applied · distinct quarantined claim objects), appended with a shell clock. Never replace these with one aggregate event for the verifier. The verifier's `lane_open` has `role: verify`; the spawn record carries each lane's plant and the
+   full meter; **a routed-run register row on the routing design page every run** (misses, reverts, fable
    share). Then Step 7 runs head-side over the set (its controls are the head's, not the lane's); the
    lane's `audited:` stamps stand, with the mechanism (lane check · verify leg · head slice) named in
    the head's close-out log entry (protocol item 9) — always written for a routed run beside the lane's
@@ -392,6 +397,7 @@ grep -rlF "source_hash" wiki/sources/ | head -1   # §11 control: MUST print a p
 ```
 An empty candidate list means NEW **only when the control line printed**; stderr stays visible by
 design (a missing file or unreadable dir must surface, never read as "no duplicate").
+**Paper keys:** run `python3 .claude/skills/ingest/dedup_probe.py "raw/$f" --url "$u"` (add `--title`/`--doi` for a PDF), which covers the block's name, hash and URL keys and adds arXiv id, DOI and normalised title, also without a trailing site suffix such as ` | arXiv`, over `wiki/sources/` and `raw/` frontmatter — the key code `capture_write.py dedup` loads — and prints `CANDIDATE <path> [keys]` lines or `NEW` beside its controls, exiting 2 with `PROBE FAILED: <what>`, never NEW, when its premise fails.
 
 **On a match, decide (don't blindly skip):**
 - **Process it as an UPDATE** when there's something new to extract — the user gave extra instructions,
@@ -409,14 +415,15 @@ design (a missing file or unreadable dir must surface, never read as "no duplica
   **"ignore duplicates"**. Move the file there — never leave dups in the inbox or delete them.
 - No match (genuinely new) → proceed to Step 0. Record `source_url`/`source_hash` (Step 3) for next time.
 
-> The shell check only catches *exact/near-exact* dups (name · byte-hash · URL). A **content duplicate
-> in a different file** (same paper, different PDF/version; an OpenReview page) won't match — spot it
-> while reading, then apply the same decision (update vs `duplicates`).
+> The probe catches *exact/near-exact* dups (name · byte-hash · URL) and the same paper in another file
+> when an arXiv id, DOI or normalised title is shared. A **content duplicate carrying none of those keys**
+> (a retitled version; an OpenReview page) won't match — spot it while reading, then apply the same
+> decision (update vs `duplicates`).
 
 - **Opt-out**: `--no-dedup` (or "skip dedup") skips this pre-flight for bulk all-new loads. On by default (cheap).
 
 ### Step 0 — Normalize to Markdown (MarkItDown) — conversion for non-`.md` sources; the score (3c) for every file carrying `converted_by:`
-**If the source is already `.md`, SKIP the conversion (1–3b) — do NOT invoke MarkItDown — but still run 3c on it when its frontmatter carries `converted_by:`.** A gather, Jina or defuddle capture is a conversion whatever its extension, and the score keys on that observable, never on the extension (two of the three damage admissions the 2026-09-08 lint probe found sat on Jina captures no check had scored). A `.md` with no `converted_by:` takes no Step 0 at all.
+**If the source is already `.md`, SKIP the conversion (1–3b) — do NOT invoke MarkItDown — but still run 3c on it when its frontmatter carries `converted_by:`.** A gather, Jina or defuddle capture is a conversion whatever its extension, and the score keys on that observable, never on the extension; a Markdown extension alone does not establish that a conversion is undamaged. A `.md` with no `converted_by:` takes no Step 0 at all.
 
 Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.html`, `.csv`, `.epub`,
 … or a YouTube/web URL):
@@ -427,7 +434,8 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
    `pdftotext` is **optional** and serves 3c's recovery measure only: `command -v pdftotext || brew install poppler`
    (macOS; the `poppler-utils` package elsewhere). Absent, or failing on a PDF, the scorer prints
    `recovery n/a (pdftotext absent)` or `recovery n/a (pdftotext failed: <reason>)` and decides on its other
-   three measures — it never stalls a conversion on the binary.
+   four text measures — it never stalls a conversion on the binary. A scanned PDF whose own text layer is
+   unreadable reads `recovery n/a (reference unreadable (readable-words <share>, letter density <density>))` the same way (3c).
 2. **Convert** (always use the module form — `python3 -m markitdown` — since the bare `markitdown`
    script isn't on PATH):
    - **Local file** → `python3 -m markitdown "<absolute path>" -o "raw/<stem>.md"`
@@ -438,9 +446,10 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
      - **GitHub repo** → `curl -sL` the raw README/files (`raw.githubusercontent.com/<owner>/<repo>/<branch>/README.md`), or `gh api` / `gh repo view` if authenticated.
      - **YouTube / binary URL** → MarkItDown's Python API (its CLI only accepts file paths):
        `python3 -c "from markitdown import MarkItDown; open('raw/<stem>.md','w').write(MarkItDown().convert('<url>').text_content)"`
+     - **Blocked paper** (a paywall, a bot wall, an abstract-only page) → resolve it first through the gather skill's open-access resolver, `python3 .claude/skills/gather/oa_resolve.py <doi|arXiv id|url|title> [--json] [--hand-fetch]`, which prints `RESOLVED <url> via <source>` (capture that URL by the rules above) or `UNRESOLVED` with a hand-fetch block for the owner; the gather skill defines the abstract-page refusal and any separately configured browser fallback. The resolver requires `OA_CONTACT_EMAIL`.
      - **Fallback — a web page none of the above can capture** (JS-heavy / anti-bot / empty or garbled result) → `curl -sL "https://r.jina.ai/<url>"` (Jina Reader renders server-side → clean Markdown). **Last resort only**; it routes the URL through a third party, so skip it for sensitive or login-walled pages.
-     - **Public X/Twitter post URL** → capture via the tier-1 Jina channel: `curl -sL "https://r.jina.ai/<post-url>"` (route live-verified 2026-08-23; declare the routing in the ingest report, as with any Jina capture). Single public posts only — X search, timelines and protected content take the platform-gap path below.
-     - **Platform URL the whole chain cannot capture** (a Reddit thread, XiaoHongShu note, X search/timeline/protected content, Bilibili search page, or other login-walled/bot-blocked platform page) → do NOT improvise a scraper and never WebFetch it: report the gap and point at the ready, owner-gated platform-reach option (`wiki/developments/agent-reach-adoption-design.md` — nothing installs or routes without the owner's word). YouTube stays on the markitdown route above.
+     - **Public X/Twitter post URL** → capture via the tier-1 Jina channel: `curl -sL "https://r.jina.ai/<post-url>"` (declare the routing in the ingest report, as with any Jina capture). Single public posts only — X search, timelines and protected content take the platform-gap path below.
+     - **Platform URL the whole chain cannot capture** (a Reddit thread, XiaoHongShu note, X search/timeline/protected content, Bilibili search page, or other login-walled/bot-blocked platform page) → do NOT improvise a scraper and never WebFetch it: report the gap and point at the ready, owner-gated platform-reach option (nothing installs or routes without the owner's word). YouTube stays on the markitdown route above.
      - **Opt-in `--verbatim` (byte-exact original).** When the user wants the *unaltered* source (research-grade provenance / exact quoting), `curl -sL "<url>" > raw/<stem>.md` (or `gh`) and keep the bytes **unmodified** — skip the step-3 defang/clean (raw/ is graph-excluded anyway). For an HTML page, `curl` it then `python3 -m markitdown` to convert deterministically (full content, no summary). Heavier on tokens → opt-in, not the default.
 3. **Save** the Markdown into `raw/` as `<original-stem>.md` (use `<original-stem>.converted.md` if
    that name is taken). **This is the only time you may add a file to `raw/`.** Prepend provenance:
@@ -449,19 +458,19 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
    converted_from: <original filename or source URL>
    converted_by: markitdown
    converted_on: <YYYY-MM-DD>
-   conversion_score: <from 3c, e.g. short-lines 4.0 % · run-together 1.7 % · long-run 0.3 /1k · recovery 0.96 · clean · scope pdf>
+   conversion_score: <from 3c, e.g. short-lines 4.0 % · run-together 1.7 % · long-run 0.3 /1k · recovery 0.96 · readable-words 0.950 · clean · scope pdf>
    ---
    ```
-   Then **sanitize the saved body** so it can never pollute the Obsidian graph (MarkItDown emits stray
+   Then **sanitise the saved body** so it can never pollute the Obsidian graph (MarkItDown emits stray
    `[text](bareword)` links from math/citations, and sometimes control/binary bytes):
    ```bash
-   perl -i -pe 's/[\x00-\x08\x0b\x0c\x0e-\x1f]//g; s{\[([^\]\n]*)\]\(([^)\n]*)\)}{my($t,$u)=($1,$2); $u =~ m{://|^#|^mailto} ? "[$t]($u)" : "$t ($u)"}ge; s/\[\[/[ [/g; s/\]\]/] ]/g' "raw/<stem>.md"
+   python3 -B .claude/skills/ingest/sanitise.py "raw/<stem>.md"
    ```
-   (Strips control bytes; defangs `[a,b](z)`→`a,b (z)` and `[[x]]`→`[ [x] ]`; keeps real `https://` links. `raw/` is also graph-excluded — see CLAUDE.md §12.)
-   **Post-sanitise check (same pass, cheap):** keep a pre-image first (`cp "raw/<stem>.md" /tmp/` — perl edits in place), then compare `wc -c` and `grep -c ']('` before/after: bytes may fall only by the stripped control bytes, and the `](` count only by the intended bareword defangs — any other delta (a falling kept-link count above all) is a sanitiser defect: STOP, restore the pre-image, inspect. No pre-image (premise failure) → recompute the before-counts from the fetched source and say so. `--verbatim` captures skip sanitising, and this check with it. (Instantiates `wiki/developments/verification-discipline.md`; the 2026-08-23 capture-group clobber shipped `[]()` mangles for two months before an ad-hoc size check caught it — `wiki/developments/known-issues.md` §Closed.)
+   (Strips control bytes; defangs `[a,b](z)`→`a,b (z)` and `[[x]]`→`[ [x] ]`, repeating until nothing changes; keeps real `://`, `#` and `mailto` links. `raw/` is also graph-excluded — see CLAUDE.md §12.)
+   **The script checks its own invariants before it writes** (the passes converged, control bytes gone, no `[[`/`]]` or bareword link left, no real link's tail lost, the byte delta accounted for) and prints one `PASS <file>` line with the before/after counts; the independent check is its suite's perl oracle (`bash .claude/skills/ingest/test_sanitise.sh`). `FAIL` (exit 3) is a sanitiser defect with the file untouched: STOP and inspect. Exit 2 is a missing or unwritable file; exit 5 is a file outside the lane's write grants (`LLM_WIKI_LANE_WRITES`: the fence cannot see a write made inside an interpreter's script, so the script honours the variable itself). It runs under the lane fence, which denies in-place editors and redirection. `--verbatim` captures skip sanitising. (A capture-group clobber can ship `[]()` mangles that only a size check catches — `wiki/developments/known-issues.md` §Closed.)
 3b. **Conversion-quality check (converted files only).** *3b and 3c never contradict: a `COLLAPSED` here is
    authoritative on its own, a `suspect` from 3c (scope `pdf`) is authoritative on its own, and either one
-   raises the `flagged:` line on the source page — 3c's line records the four measures and names `3b COLLAPSED`
+   raises the `flagged:` line on the source page — 3c's line records the five measures and names `3b COLLAPSED`
    beside them when 3b fired, so the line says which check spoke; a 3c `clean` never clears a 3b `COLLAPSED`.
    Probe (b) locates the damage.* Some PDFs convert with the inter-word spaces
    stripped, so the body reads `ProximalPolicyOptimizationAlgorithms…`. The text is still readable but
@@ -475,7 +484,7 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
    ```
    **The whole-file mean clears a partially collapsed file.** MarkItDown's table padding, reference lists
    and prompt blocks restore enough whitespace to pull the ratio back under 50 while the running prose
-   stays space-stripped (2026-09-04, ten arXiv PDFs: `ok` at 8–17 chars/word, prose-only ratios 13–21).
+   stays space-stripped.
    So every converted file also takes probe (a) below, which decides; where the mean or (a) fires, run probe (b)
    for the locators:
    ```bash
@@ -485,14 +494,13 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
    t=open(sys.argv[1],encoding='utf-8',errors='replace').read()
    r=len(re.findall(r'[A-Za-z]{25,}',t)); w=len(t.split()) or 1
    print(('COLLAPSED' if r>=10 and r*1000.0/w>5 else 'ok'), r, 'runs', round(r*1000.0/w,1), 'per 1k words')" "raw/<stem>.md"
-   # positive control on the same run — the register's own probe against a known-clean capture (defuddle
-   # or curl). `-c` counts matching LINES, not runs: 4 on a clean arXiv-HTML capture against 758 on the
-   # collapsed file measured 2026-09-07, so the control must sit far below the file under test.
+   # Positive control on the same run: compare with a known-clean capture.
+   # `-c` counts matching lines, not runs; confirm that the control is below the suspect input.
    grep -coE '[A-Za-z]{25,}' "raw/<a clean capture>.md"
    # (b) per-line ratio over PROSE lines only — fences, |-rows, quotes, embeds and numbered
    #     reference entries dropped, since their markup is what dilutes the whole-file mean.
    #     (Both counts sit in their own variables: a `/` straight after `)` reads as a path to the lane
-   #     shell fence, which denies the whole command — verified 2026-09-07.)
+   #     shell fence, which denies the whole command.)
    python3 -c "
    import re,sys
    fence=False; bt=chr(96)*3
@@ -507,46 +515,34 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
    compile at standard, say so in the Step 8 report, and offer `--agent-convert` or a different capture
    route if the owner wants it quotable.
    A high ratio with ≥10% CJK is **not** a collapse — Chinese and Japanese have no inter-word spaces, so
-   word counts are meaningless there while quoting works fine. (Threshold calibrated on this vault: real
-   collapses sit near 300–400 chars/word, ordinary English clips with long URLs reach 25. The run rate is
-   calibrated on the same corpus, the 96 Markdown captures under `raw/2-papers/` on 2026-09-07: 76 sit
-   below 2 runs per 1,000 words and three at 2.2–2.5, the next value up is 10.6, and every file from
-   there up is a MarkItDown PDF conversion with space-stripped prose — 5 lies in the empty band between
-   the two populations, and the 10-run floor keeps a short clean capture off the gate, a clean defuddle
-   capture of an arXiv HTML page measuring 11 runs in 9,513 words. Probe (b) is read, never counted: on
-   the same corpus a clean capture carried up to 8 flagged lines, all glyph padding or data-URI blobs,
-   and a collapsed one as few as 8, so only (a) separates the two populations.)
+   word counts are meaningless there while quoting works fine. The compatibility thresholds are
+   set by judgement, unmeasured for a new corpus. Review them with known clean and damaged captures.
+   Probe (b) is read, never counted: glyph padding and data-URI blobs can create false positives.
 3c. **Conversion score — the scripted check (every file carrying `converted_by:`; register entry 2026-09-08).**
-   Its thresholds are derived from the vault's own 96-file distribution, never set by eye. Run it on every
+   Its compatibility thresholds require review against the local labelled corpus. Run it on every
    conversion after the sanitiser and its post-check, and on every `.md` capture whose frontmatter carries
    `converted_by:` — a gather or Jina capture included; the conversion steps are what a `.md` source skips,
    never this score:
    ```bash
    python3 -B .claude/skills/ingest/conversion_score.py "raw/<stem>.md"
    ```
-   One verdict line per file — `clean` or `suspect` — with four measures, the threshold each was judged
-   against, and a `scope`. **Short-line share:** non-blank body lines of one character or less over all
-   non-blank body lines (the structural collapse reads 94.4 % against a clean maximum of 20.7 %; threshold
-   > 57.57 %; the cut rests on one positive, PPO.md — the other collapsed file reads 0.0 % here and is caught
-   by the other three). **Run-together share:** Latin word tokens carrying an internal lower-to-upper case
-   join or more than 18 letters, over all Latin word tokens, with fenced code, angle-bracket tags (attributes
-   and their blobs included) and base64-shaped blobs excluded from both sides (the space-stripped conversions
-   read 5.3–52.6 % against a clean maximum of 3.50 % — a defuddle capture of an arXiv HTML page whose hits are
-   product names; next-worst clean 2.95 %; threshold > 4.41 %; `n/a` on a non-Latin-majority file, which has
-   no inter-word spaces to lose). Before the exclusions the worst clean file read 8.68 % on one
-   `<latexit sha1_base64="…">` line, and the 9.15 % cut that floor forced missed the SoK survey conversion at
-   5.3 %. **Long-run rate:** probe (a) above, as a measure — runs of 25+ Latin letters per 1,000 words, firing
-   at ten runs or more (the damaged conversions read 10.6–5,224 per 1,000 against a clean maximum of 2.48;
-   threshold > 6.56), so 3b's probe and 3c count the same thing and differ only in the cut (3b's 5 per 1,000 set by judgement, 3c's 6.56 derived); a file between the two cuts is 3b's `COLLAPSED`, and that stands. **Sentence
-   recovery** against `pdftotext` where a sibling PDF exists: the share of pdftotext sentences of six words or
-   more found in the conversion after whitespace normalisation (damaged conversions read 0.00–0.01 against a
-   clean minimum of 0.29; threshold < 0.15; `n/a` with no PDF, with `pdftotext` absent, or when it fails — the
-   reason prints and the verdict rests on the other three). Each threshold is the midpoint of the gap between
-   the worst known-clean file and the nearest known-damaged one beyond it — derived 2026-09-08 on
-   `raw/2-papers/`, 17 known-damaged files against 79 clean, 17 caught at zero false positives; the token
-   rule and the derivation are in the script's docstring, and `--derive DIR --positives FILE` reprints them.
-   Exit 0 = clean, 3 = suspect, 2 = a premise failure (an empty or unreadable file, a directory with no
-   `.md`): a premise failure is not a verdict — fix the premise and re-run.
+   One verdict line per file — `clean` or `suspect` — with five measures, the threshold each was judged
+   **The five measures.** Short-line share, joined-word share and long-run rate detect damaged
+   spacing. Their compatibility cuts are 57.57%, 4.41% and 6.56 per 1,000 words; the long-run
+   arm needs at least ten runs. Sentence recovery compares sentences of six or more words
+   against an available `pdftotext` reference, with a cut below 0.15. Readable-word share counts
+   ASCII letters in runs of four or more divided by all ASCII letters, with a cut below 0.367.
+   The selection of these compatibility cuts is set by judgement, unmeasured for a new corpus;
+   use `--derive DIR --positives FILE` and `--derive-readable DIR --positives FILE` with labelled
+   local examples before relying on their calibration. Code, tags, links and non-Latin text
+   follow the scorer's documented scope exclusions. Zero readable share means `destroyed`;
+   low non-zero share means `damaged`. These are proxy flags, not an independent damage audit.
+   Recovery is `n/a` when its PDF or tool is absent or its reference is unreadable. A reference
+   is unreadable only when both readable-word share and letter density fall below their cuts;
+   the density cut 0.306 is set by judgement, unmeasured for a new corpus. Equality remains readable.
+   Same-run controls check glyph soup, readable prose, excluded frontmatter and inert padding.
+   **`readable-words` (fourth text arm):** word-letter share — letters inside ASCII runs of four or more divided by all ASCII letters in the body, excluding YAML frontmatter. Digits, punctuation and markup padding do not enter the denominator; body letters in code and tags do. The compatibility cut is set by judgement from the author's own conversions; re-derive it against labelled local examples before relying on it. Keep corpus counts, boundary-file identities and measured scores in local records.`--derive-readable DIR --positives FILE` re-derives only this arm and names both boundary files. Zero share is `damage: destroyed`; a low non-zero share is `damage: damaged`; both retain `suspect` and exit 3. These are proxy flags, not an independent damage audit. The arm is `n/a` on non-Latin-majority bodies. Same-run controls check glyph soup, readable prose, excluded frontmatter and inert non-letter padding.
+   Exit 0 = clean, 3 = suspect, 2 = a premise failure (an empty or unreadable file, a body with no alphabetic token, including digits only, or a directory with no `.md`): a premise failure is not a verdict — fix the premise and re-run.
    - **Scope — where the thresholds hold.** They were derived on PDF conversions of papers, and every verdict
      line says whether the file is inside that population: `scope: pdf` when `converted_from:` names a `.pdf`,
      a `.pdf` sibling exists, or `converted_by:` is one of this skill's document-conversion routes
@@ -554,20 +550,21 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
      `suspect` in scope `other` goes into the Step 8 `Suspect conversions:` block with its scope and measures
      and raises **no `flagged:` line by itself**: read the verdict line — API-docs captures fire the long-run
      rate on `BetaMessageParam`-shaped identifiers, READMEs the share on product names — and flag it only
-     where the damage is real (on 2026-09-08, 9 of 301 non-paper captures read `suspect`, none of them damaged).
-   - Copy the four measures, the verdict and the scope into the provenance block's `conversion_score:` line
-     (the template in step 3), e.g.
-     `conversion_score: short-lines 4.0 % · run-together 1.7 % · long-run 0.3 /1k · recovery 0.96 · clean · scope pdf`. A source that arrived as `.md` (a gather capture) has no step-3 template of its own: its score stays in the run report and on the source page's `flagged:` line when suspect, and the raw file is never written back (raw immutability).
+     where the damage is real (a non-paper capture can read `suspect` with nothing damaged).
+   - Copy the five measures, the verdict and the scope into the provenance block's `conversion_score:` line
+     (the template in step 3), a measure the scorer reads `n/a` with its reason as printed (e.g.
+     `recovery n/a (reference unreadable (readable-words 0.000, letter density 0.003))`), e.g.
+     `conversion_score: short-lines 4.0 % · run-together 1.7 % · long-run 0.3 /1k · recovery 0.96 · readable-words 0.950 · clean · scope pdf`. A source that arrived as `.md` (a gather capture) has no step-3 template of its own: its score stays in the run report and on the source page's `flagged:` line when suspect, and the raw file is never written back (raw immutability).
    - **`suspect` in scope `pdf`, and 3b's `COLLAPSED`, are recorded in the flag channel, and only there.** The
      source page (Step 3) carries one line,
-     `flagged: <YYYY-MM-DD> source conversion suspect — raw/<path>.md · short-lines N % · run-together N % · long-run N /1k · recovery N[ · 3b COLLAPSED]; verify quotations against the original`
+     `flagged: <YYYY-MM-DD> source conversion suspect — raw/<path>.md · short-lines N % · run-together N % · long-run N /1k · readable-words N · recovery N[ · 3b COLLAPSED]; verify quotations against the original`
      — the 3c measures always, `3b COLLAPSED` appended when 3b fired, so the line says which check spoke;
      never a prose note in the summary and never a `depth:` comment: deep-lint reads `flagged:` and nothing
      else, and lint's `check_flag_admissions.py` reports a source page that admits damage in prose without a
      conversion flag. The source **cannot be research** (the Depth override); a quotation from it is
      paraphrase, or is checked against the original; and the Step 8 report lists it under `Suspect
      conversions:` with its measures. Offer `--agent-convert` or another capture route if the owner wants it
-     quotable (`pdftotext` read 0.0 % run-together where MarkItDown read 10.4 % on the same PDF, 2026-09-08).
+     quotable.
    - **Terminal state — how a conversion flag ends.** The flag is removed when a repaired conversion — a
      `raw/<path>-repair.md` beside the original, or a re-fetched conversion — scores `clean` here and joins the
      page's `sources:`, and the page's `## Summary` ends with one dated Provenance sentence naming the repair
@@ -576,8 +573,7 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
      That sentence admits the old damage by design, and `check_flag_admissions.py` counts an admission that
      also names a `repaired conversion` under its `RESOLVED:` line, never as a finding. Removing the flag
      without the repair, or rewriting the admission away, is not a resolution.
-   - `--thresholds SHORT,RUN,RECOVERY,LONGRUN` overrides the four for a scratch run (`-` keeps one, `off`
-     disables one) and is printed on the summary line; it is never the way to make a conversion pass.
+   - `--thresholds SHORT,RUN,RECOVERY,LONGRUN[,READABLE]` overrides the five measures for a scratch run (`-` keeps one, `off` disables one); four values retain the derived readable-word cut. The override is printed on the summary line; it is never the way to make a conversion pass.
 4. **Keep the original untouched.** The original and the converted `.md` are now a **pair**. For a
    URL source there is no local original — the converted `.md` is the only file; keep the URL in
    `converted_from`.
@@ -588,8 +584,7 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
    layout or precision defeats MarkItDown — it costs real tokens, so it is never the default. **Fallback:**
    when a conversion returns empty/garbled text (e.g. a scanned, image-only PDF), FIRST rule out a
    truncated download — an empty converter error on a binary source may mean a partial file, so compare
-   byte size against the source and re-fetch once (precedent 2026-08-25: an arXiv PDF at 2.6 of 5.4 MB
-   failed markitdown silently; the re-download converted cleanly). Only then OFFER this route with a
+   byte size against the source and re-fetch once. Only then OFFER this route with a
    page/token estimate and proceed only on explicit confirmation; otherwise ask the user to OCR
    externally. Never fabricate content.
 
@@ -606,7 +601,7 @@ Otherwise (`.pdf`, `.pptx`, `.docx`, `.xlsx`, `.png`/`.jpg`, `.mp3`/`.wav`, `.ht
   from the source, not the stub.
 
 ### Step 2 — Extract & (if needed) translate
-Pull out: **core thesis** (1–2 sentences), **entities** (people/companies), **tools** (software/apps/plugins/skills/services),
+Pull out: **core thesis** (concise and complete), **entities** (people/companies), **tools** (software/apps/plugins/skills/services),
 **concepts** (frameworks/methods/theories). Translate non-English content into British/UK English.
 
 ### Step 3 — Create the source summary → `wiki/sources/<slug>.md` (kebab-case)
@@ -626,7 +621,7 @@ updated: <YYYY-MM-DD>
 ---
 
 ## Summary
-[3–5 sentence core summary.]
+[The core summary, with the detail its claims need.]
 
 ## Key Takeaways
 - ...
@@ -639,7 +634,7 @@ updated: <YYYY-MM-DD>
 the original (file path, or the URL for web/YouTube). Predict the post-sort paths (Step 6) so the
 links don't break after the move.
 
-**Routing (parity gates G3 and G4, 2026-09-02 — `wiki/developments/fable-minimising-routing.md`).** Gate evidence: G4 passed with both lane arms cleaner than the head arm (the lanes kept the paper's internal contradictions the head had restated) and carries the flag "passed against a head arm the record cannot certify as strong"; G3 passed on its second attempt, after two brief clauses, without that flag. The routed step is in force — its carriers shipped 2026-09-03: (a) `.claude/skills/delegate/templates/brief-compile.md` carries the two gate-added clauses (the source page states the source's own provenance — publisher, date, URL; any sentence about a linked page uses only that page's or the raw's words), the CONTEXT NOTES fidelity-plant slot and the `## Anomalies` report section; (b) the Verify step above scores every lane compile against the raw — fabrication · plant · coverage · tier · structure · integration · language · anomalies, plus `claims` in parallel mode — before the head accepts it. **Mode gate (2026-09-04):** this routed default applies under the `multi` regime (owner-set, or head-resolved for the run under delegation `auto`, 2026-09-04). Under `single` the head compiles in-session unless an instrument-rule reason holds for that source — a batch it cannot hold (reason (b), which is Parallel mode below), or context isolation its watermark bands demand (reasons (c)/(d)) — and it may propose ONE verify lane for a high-stakes in-head compile, once (delegate skill §1). Default executor for a single-source compile in `multi`: a `wiki-compile` lane on opus (the definition's default since 2026-09-02) at the run's authorised depth range — standard and research are gated (G3, G4); concise is ungated (a lane that chooses it is covered by the verify leg and the plant; the design page records the residual); every compile clears the design's ≈30k leave-the-head threshold by construction, since a compile loads `wiki/index.md` (≈32k tokens at 127 kB, 2026-09-06; ≈27k when this line was written) before the source and its network pages, and the fresh-session head arm of 2026-09-03 spent 44k Fable output tokens on a 3.8 kB source — the derivation the cost rule requires; a 2–5 source `auto` batch routes one lane at a time (two routed lanes writing network pages concurrently is Parallel mode's race surface, and that shape takes Parallel mode's claims); the head keeps the resume pre-flight, the spawn record with its plant (echoed per `pre-report`; under `auto` the owner's `/ingest` invocation is the go for this single lane, whose whitelist is the ingest's own output — delegate skill §3 slot 0, dated clause), the Verify step and the close-out. When routed: the lane runs with the shape the gates tested — it writes the source page and the warranted network pages, its own index line and log entry under the §2.2 ingest exception, and sorts the raw; the head's post-lane check is the verify step plus Step 7's controls plus a full read of every page whose tier the lane raised (§4.6: delegation never raises a tier unread); §4.4 conflict settlement and the research-depth key-claim spot-check stay head-side; the head's close-out log entry, always written for a routed run beside the lane's, carries the verify verdict, the stamp mechanism and the `fable share` meter line; the spawn record keeps the plant and the full meter. **Re-gate runbook (rule 7; the G4 flag):** the second routed use at each depth re-runs the paired fixture form — the parity store's `g34v2` fixture builder, scope parser, verify-dir stager and verdict script — with a fresh-session head arm (`claude -p --model <fable id> --effort max` in a snapshot-equal fixture, its transcript effort confirmed) against two routed lanes on the current carriers; the routed-run register on the design page is the use counter. Standard depth's re-gate **passed 2026-09-03** (G3r, second attempt, after FIDELITY clause 3 was added; detail on the design page), so the routed default stands at standard depth; research depth's re-gate, carrying G4's flag, is the next research-depth compile.
+**Compile routing — G3 and G4.** The routed workflow uses these carriers: (a) `.claude/skills/delegate/templates/brief-compile.md` carries the two gate-added clauses (the source page states the source's own provenance — publisher, date, URL; any sentence about a linked page uses only that page's or the raw's words), the CONTEXT NOTES fidelity-plant slot and the `## Anomalies` report section; (b) the Verify step above scores every lane compile against the raw — fabrication · plant · coverage · tier · structure · integration · language · anomalies, plus `claims` in parallel mode — before the head accepts it. **Mode gate (2026-09-04):** this routed default applies under the `multi` regime (owner-set, or head-resolved for the run under delegation `auto`, 2026-09-04). Under `single` the head compiles in-session unless an instrument-rule reason holds for that source — a batch it cannot hold (reason (b), which is Parallel mode below), or context isolation its watermark bands demand (reasons (c)/(d)) — and it may propose ONE verify lane for a high-stakes in-head compile, once (delegate skill §1). Default executor for a single-source compile in `multi`: a `wiki-compile` lane on opus (the definition's default since 2026-09-02) at the run's authorised depth range — standard and research are gated (G3, G4); concise is ungated (a lane that chooses it is covered by the verify leg and the plant; the routing design page records the residual); estimate the current installation's index and source load for the cost rule; a 2–5 source `auto` batch routes one lane at a time (two routed lanes writing network pages concurrently is Parallel mode's race surface, and that shape takes Parallel mode's claims); the head keeps the resume pre-flight, the spawn record with its plant (echoed per `pre-report`; under `auto` the owner's `/ingest` invocation is the go for this single lane, whose whitelist is the ingest's own output — delegate skill §3 slot 0, dated clause), the Verify step and the close-out. When routed: the lane runs with the shape the gates tested — it writes the source page and the warranted network pages, its own index line and log entry under the §2.2 ingest exception, and sorts the raw; the head's post-lane check is the verify step plus Step 7's controls plus a full read of every page whose tier the lane raised (§4.6: delegation never raises a tier unread); §4.4 conflict settlement and the research-depth key-claim spot-check stay head-side; the head's close-out log entry, always written for a routed run beside the lane's, carries the verify verdict, the stamp mechanism and the `fable share` meter line; the spawn record keeps the plant and the full meter. **Re-gate runbook (rule 7; the G4 flag):** the second routed use at each depth re-runs the paired fixture form — the parity store's `g34v2` fixture builder, scope parser, verify-dir stager and verdict script — with a fresh-session head arm (`claude -p --model <the head's model id> --effort max` in a snapshot-equal fixture, its transcript effort confirmed; the head's model is opus 5.5 unless the owner names fable, owner ruling 2026-09-29,) against two routed lanes on the current carriers; the routed-run register on the routing design page is the use counter (see **Vault records** below). The standard-depth routed default remains in force; the next research-depth compile runs the qualified research comparison through the re-gate runbook above.
 
 ### Step 4 — Network the knowledge (entities · tools · concepts · models · benchmarks)
 
@@ -650,11 +645,18 @@ these eight rows are the whole list; a step that needs a section outside them sa
 
 | `## ` section | Mode | Why | Write |
 |---|---|---|---|
-| Entities · Tools · Concepts · Models · Benchmarks | `section` (46.6 kB, 37 % of the file) | the only types a source shares with existing pages, so the only place duplication is the risk (§4.5) | free |
-| Sources | `name` (10.3 kB) | sibling-source links in the new page's `## Related` and name canonicalisation (291 of 348 source pages link another source); de-dup is the pre-flight's grep over `wiki/sources/` frontmatter, never this read; a source never merges into another, so the 53 kB of descriptions is not needed | free |
-| Syntheses | `section` (4.2 kB; the names alone are 0.6 kB and carry no claim to contradict) | a new source can contradict an answer already filed; surface it as a §4.4 conflict | **ask** |
-| Maps | `name` (0.1 kB) | a source in a mapped cluster usually belongs on that map | **ask** |
-| Developments · User | `name` (2.3 kB + 0.05 kB) | framework records and the owner's profile: 34 of 348 source pages link a Developments page and 17 a User page from `## Related`, so the names are needed to link and to propose; the descriptions are not | **ask** |
+| Entities · Tools · Concepts · Models · Benchmarks | `section` | the only types a source shares with existing pages, so the only place duplication is the risk (§4.5) | free |
+| Sources | `name` | sibling-source links in `## Related` and name canonicalisation; de-dup uses the pre-flight frontmatter probe, and sources never merge into another source | free |
+| Syntheses | `section` | a new source can contradict an answer already filed; surface it as a §4.4 conflict | **ask** |
+| Maps | `name` | a source in a mapped cluster usually belongs on that map | **ask** |
+| Developments · User | `name` | framework records and the owner's profile may be relevant to source links and proposals; descriptions are not required | **ask** |
+
+**A lane whose brief names an index slice reads that file instead of the five `section` rows** (design
+extension 2026-09-13, part 3): `python3 .claude/skills/ingest/index_slice.py <the lane's raws>`, persisted
+by the head beside the run ledger as `<run>-index-<lane>.txt`, prints the complete name list of the five
+sections (so membership recall equals the section read's), in `anchor` form the index line of every entry
+whose name or `aliases:` value the raws name, and the index's sha256 prefix, which dates the slice; any
+other entry is fetched by exact name, so a slice is a small fraction of the index it stands in for.
 
 **"Ask" means propose, never write.** Those four are the owner's or a past decision's, so this step
 reports the proposed line and waits; `wiki/user/` already carries that rule in CLAUDE.md §1. A lane
@@ -666,7 +668,7 @@ GPT, Llama) → `wiki/models/`, **benchmark** (any eval dataset named — e.g. A
 `wiki/benchmarks/` (Title Case filenames; a tool keeps its canonical lowercase where applicable):
 1. **Page missing** → create it per the `CLAUDE.md` frontmatter + required sections (`## Definition /
    ## Key Points / ## Related`; model & benchmark pages also carry `## Appears in`); set its
-   `confidence` per §4.6 (compiled pages **cap at `high`**). Judge by **grounding strength, not source count** (the rubric's settled reading, 2026-09-02): one strong source that is *primary for the page's own claims* grounds `high` on its own; a strong source primary only for something adjacent, or reputable-secondary grounding, is `medium`; conflicting corroboration stays `medium` by the tie rule; "thin" (one paragraph in one witness) is `low`. The cap is a ceiling, never a demotion (G3r evidence 2026-09-03: five blind scorings, every arm including the head tiered a single-source entity page `medium` citing source count).
+   `confidence` per §4.6 (compiled pages **cap at `high`**). Judge by **grounding strength, not source count** (the rubric's settled reading, 2026-09-02): one strong source that is *primary for the page's own claims* grounds `high` on its own; a strong source primary only for something adjacent, or reputable-secondary grounding, is `medium`; conflicting corroboration stays `medium` by the tie rule; "thin" (one paragraph in one witness) is `low`. The cap is a ceiling, never a demotion; assess the strength of the evidence rather than counting sources.
 2. **Page exists** → read it, then **incrementally merge** new info (don't clobber).
 3. **Conflict found** → **pause**, report the conflict to the user, ask how to handle it
    (keep both under `## Conflicts / Open Questions`, overwrite, or skip), then continue.
@@ -676,8 +678,7 @@ GPT, Llama) → `wiki/models/`, **benchmark** (any eval dataset named — e.g. A
    evidence of age, not of correctness. Either run ONE bounded verification probe (a single
    search or authoritative lookup) to settle which side is current, or set
    `flagged: YYYY-MM-DD <one-phrase reason>` on the page and keep both statements per §4.4.
-   In batch pacing this needs no pause — report the outcome in Step 8. (Precedent: the
-   2026-08-23 Opus-5 staleness reversal, log entry same date.)
+   In batch pacing this needs no pause — report the outcome in Step 8.
 
 **Models & benchmarks link bidirectionally** (CLAUDE.md §4.5): add this paper under the model/benchmark
 page's `## Appears in`, and list the models/benchmarks the paper uses in the source page's `## Related`
@@ -701,7 +702,7 @@ gets a `## Related` section.
   not alphabetical** — place the new line beside its nearest relations, not at the section tail.
   **Mechanism: anchored `Edit` (or append)
   per heading — NEVER a whole-file read-modify-write** (a rewrite writes back a stale snapshot and
-  silently drops entries a concurrent session added; CLAUDE.md §5, incident 2026-08-23).
+  silently drops entries a concurrent session added; CLAUDE.md §5).
 - **`wiki/log.md`** → append **via shell** (`cat >> wiki/log.md …`; never Read the whole file — it grows unbounded):
   ```markdown
   ## [YYYY-MM-DD] ingest | <short title>
@@ -765,9 +766,9 @@ Confidence:
 - [[Some Concept]] — medium
 - [[Some Entity]] — low  (single promo source)
 Suspect conversions:
-- raw/2-papers/some-paper.md — scope pdf · run-together 12.3 % · long-run 31.8 /1k · short-lines 1.0 % · recovery n/a → flagged: on its source page; standard depth
+- raw/2-papers/some-paper.md — short-lines 1.0 % · run-together 12.3 % · long-run 31.8 /1k · recovery n/a · scope pdf · readable-words 0.950 → flagged: on its source page; standard depth
 - raw/4-webinfo/some-api-docs.md — scope other · long-run 8.7 /1k (identifiers in the prose) → read, not flagged
-Run: run-20260827-2330-a1 · 14 ledger events · closed
+Run: run-<id> · 14 ledger events · closed
 Re-grade a depth or a confidence and I'll fix it.
 ```
 
@@ -805,3 +806,6 @@ created, one line saying so satisfies the gate.
 - Don't fabricate. Mark uncertain claims `unverified` and cite the source.
 
 > **Standing derivative**: `output/user-notes/gather-ingest-quick-reference.md` — a change to this skill's user-facing workflow (commands, flags, gates, report shape) updates that note in the same pass (§2 output contract).
+
+**Vault records.** Some steps above lean on records a vault keeps for itself rather than on anything this skill ships. The **routing design page** holds the routing's protocol items, the parity gates' evidence, the dated status facts and the **routed-run register**: one row per routed run (run id · step · lanes and models · verify-leg result · head slice result · empirical item result · misses · reverts · head output delta and fable share), appended at the close-out (Verify step, item 5); the register is the re-gate runbook's use counter. The **parity store** holds the paired fixture form's fixture builder, scope parser, verify-dir stager and verdict script, under the agent home. A vault names both in its local pointers here; where a vault has neither, the re-gate runbook cannot run as written, and the head reports that gap rather than guess a counter or a fixture.
+

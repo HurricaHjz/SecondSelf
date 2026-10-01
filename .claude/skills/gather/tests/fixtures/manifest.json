@@ -1,0 +1,37 @@
+{
+ "https://api.openalex.org/works/doi:10.1177/0272989X211044697?select=id%2Cdoi%2Ctitle%2Cdisplay_name%2Copen_access%2Cbest_oa_location%2Clocations%2Cids": {
+  "file": "openalex-doi-mishra.json",
+  "recorded": "2026-09-13T14:10:52",
+  "status": 200
+ },
+ "https://api.openalex.org/works/doi:10.5555/oa-resolve-absent-doi?select=id%2Cdoi%2Ctitle%2Cdisplay_name%2Copen_access%2Cbest_oa_location%2Clocations%2Cids": {
+  "file": "openalex-doi-absent.json",
+  "recorded": "2026-09-13T14:10:52",
+  "status": 404
+ },
+ "https://api.openalex.org/works?search=Recalibration+Methods+for+Improved+Clinical+Utility+of+Risk+Scores&per-page=5&select=id%2Cdoi%2Ctitle%2Cdisplay_name%2Copen_access%2Cbest_oa_location%2Clocations%2Cids": {
+  "file": "openalex-search-mishra.json",
+  "recorded": "2026-09-13T14:10:53",
+  "status": 200
+ },
+ "https://api.unpaywall.org/v2/10.1177/0272989X211044697": {
+  "file": "unpaywall-doi-mishra.json",
+  "recorded": "2026-09-13T14:10:51",
+  "status": 200
+ },
+ "https://api.unpaywall.org/v2/10.5555/oa-resolve-absent-doi": {
+  "file": "unpaywall-doi-absent.json",
+  "recorded": "2026-09-13T14:10:51",
+  "status": 404
+ },
+ "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.1177%2F0272989X211044697%22&format=json&pageSize=5": {
+  "file": "europepmc-doi-mishra.json",
+  "recorded": "2026-09-13T14:12:32",
+  "status": 200
+ },
+ "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI%3A%2210.5555%2Foa-resolve-absent-doi%22&format=json&pageSize=5": {
+  "file": "europepmc-doi-absent.json",
+  "recorded": "2026-09-13T14:12:33",
+  "status": 200
+ }
+}

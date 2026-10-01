@@ -81,8 +81,7 @@ mechanism that caught it — a printed control, a failing test, an owner correct
 transcript citation (file and line) is that witness here, because the proposer is not the agent
 whose behaviour is in question.
 
-**Probe discipline.** A dedup grep never carries an exclusion filter: one filtered out the very
-record that made a candidate redundant and manufactured false novelty. Pair every zero-hit with a
+**Probe discipline.** A dedup grep never carries an exclusion filter: one can filter out the very record that makes a candidate redundant and manufacture false novelty. Pair every zero-hit with a
 positive control that hits on the same surface, and never let the claim under test be its own
 control.
 

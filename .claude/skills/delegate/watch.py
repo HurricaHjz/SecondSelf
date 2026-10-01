@@ -10,6 +10,15 @@ in the close's tone: bold green when every item is done, bold yellow when one wa
 per lane coloured by class) · feed (the record's events and the head's prose and tool calls, alerts
 in red).
 
+The live screen fits the window. A frame taller than the window scrolls its top away and loses
+the header and the first items. So the live, non-plain console folds, in this order, until the frame fits:
+the timeline keeps its running and held lanes and the newest closed ones, the older closed lanes
+counted on one line; then lanes now, the same way (on a plain record every lane is in hand, so
+that panel grows too); then the items panel keeps a window around the item in hand, each run of rows
+outside it counted on one line, the overall line whole; then the feed goes below its three rows,
+to one; and a window too small even for that is clipped from the bottom, so the header always
+shows. `--once`, `--plain`, the final board and the report stay whole: their reader scrolls.
+
 Reads the run record, the hand-off pack the record's `run-open` names, the head's transcript and the
 lanes' transcripts.  It writes exactly one file, and only when the run closes: the plain-text
 timeline report `<store>/spawn-records/<run>-timeline.txt`.  No tokens, no API calls.
@@ -22,10 +31,11 @@ draws the same boxed notice and writes the same timeline report. A record that H
 no items is still the broken premise it always was.
 
 A lane with no close event is not taken on trust. Every open lane's recorded processes — the
-`pid` and `wrapper_pid` its `lane-spawned` or `lane-resumed` carries — are probed with
+`pid` and `wrapper_pid` its latest `lane-spawned`, `lane-resumed` or `lane-respawned` carries — are
+probed with
 `os.kill(pid, 0)` on every frame, and one whose processes have all gone is drawn `✗ dead` in
 the lanes panel and counted as `dead` in the close banner, never `● running`: a lane killed by
-hand writes no `lane-closed`, and the console used to show it running for ever. Only
+hand may write no `lane-closed`, so the console probes its processes. Only
 `ProcessLookupError` counts as gone; a `PermissionError` (alive, another user's process) and
 any unanswered probe leave the lane running, and an open lane whose record carries no pid at
 all stays running too — an absence is never read as a death. `lane.py kill` is the deliberate
@@ -36,12 +46,36 @@ run and reads done, one that never started reads skipped, the overall line carri
 and a boxed RUN CLOSED notice with the run's totals follows the final board, the report's path
 on a bare line beneath it so it is never cut.
 
+Item keys. The pack's rows are keyed by the bare `item<k>`; a record's gate `item` and
+boundary `from` and `to` reduce to their leading `item<k>` token (`item_key`). A longer label
+must therefore match the existing row rather than create another.
+Queue reference: N148. Register reference: register 2026-09-09 11:21.
+
+The lanes panel is the item in hand plus the running set: every lane still running, whatever item
+opened it, so a lane resumed under a later item is drawn there until its next `lane-closed`
+(register 2026-09-13 03:44). A resume's processes come from `lane-resumed` and, where the wrapper
+writes one after it, `lane-respawned`. A held lane has an open lane `hold` that names the lane
+and carries a cap; the older decision hold does not qualify. A held lane is drawn there
+too, `◐ held` with its beat count, its last beat and the next beat's due time, until its hold
+ends or it runs again; the items panel marks it `◐`, a lane whose hold has ended names the reason
+on its row, and a `hold-beat` that failed is an alert.
+
+The header names the head's model and effort from the LATEST head start (`run-open`,
+`head-successor`, `head-resumed`) alone — `model·effort` when that event carries the keys, else the
+live process's own command line, else `model unrecorded` — so an earlier head's fields never
+stand in for a later head that recorded none (register 2026-09-10 20:29).
+
+A live console started before its record exists waits up to `--wait-record` seconds for the
+record to hold an event before the missing-record premise failure stands: a wrapper now opens the
+console before its detached worker writes the lane's first line (register 2026-09-09 11:21).
+`--once` never waits.
+
 Every path is derived: the vault is `--vault`, else `CLAUDE_PROJECT_DIR`, else three directory
 levels above this script; the run store and the record path come from `handsoff.py`
 (`store_root`, `record_path`); the head's transcript is `handsoff.py`'s `transcript_for`; a lane's
 transcript follows `lane.py`'s `find_transcript` rule over the lane's own `lane-open` event.
 
-Usage: watch.py --run RUN [--once] [--plain] [--no-notify] [--refresh S] [--vault DIR]
+Usage: watch.py --run RUN [--once] [--plain] [--no-notify] [--refresh S] [--wait-record S] [--vault DIR]
 Keys while it runs: `q` quits · `r` resumes a stopped head (`handsoff.py resume-head`).
 Design and derivations: DESIGN.md beside this file; suite: test_watch.sh.
 """
@@ -184,24 +218,36 @@ def lane_transcript_for(home, sid, config_dir=None, root=None):
 CLASS_COLOUR = {"builder": 33, "critic": 170, "verifier": 37, "reflector": 34,
                 "memory-hunter": 178, "gate-judge": 208, "planner": 99, "wiki-compile": 30}
 ITEM_COLOURS = [39, 45, 51, 87, 123, 159, 195, 75]            # eight blues, cycled by item order
-GREY, DIM, WHITE, RED, GREEN, YELLOW, CYAN = 244, 240, 255, 196, 40, 220, 37
+GREY, DIM, RED, GREEN, YELLOW, CYAN = 244, 240, 196, 40, 220, 37
+WHITE = None      # Use the terminal's default foreground in both light and dark themes.
 
 ALERT_EVENTS = ("stop-condition", "supervisor-stood-down", "successor-aborted", "head-exit",
-                "run-close")
+                "run-close", "lane-swapped")
+# The `fallback` verdicts a lane close can carry that the owner is told of (lane.py fallback_decide):
+# a probe-confirmed re-route, a detection the probe could not confirm, and an alias that moved.
+FALLBACK_ALERTS = ("fallback", "unconfirmed", "stale-map")
 ALERT_WORDS = re.compile(r"warning|refus|parked|held|reverted|PROBE FAILED|FAIL ", re.I)
 
 # The header line of the plain-lane-run shape: a record with lane events and no `run-open`
 # (handsoff.py's PLAIN_SHAPE, written on that record's own run-close). One string, so the console,
 # the suite and a reader's grep all name it the same way.
 PLAIN_HEADER = "plain lane run · no run-open"
+NO_ITEMS_HEADER = ("no item row yet · none in the pack, none in a pre-flight beside it, none on the "
+                   "run-open, none from a gate or boundary")
 
 FEED_MAX = 400          # lines kept in memory: ~5 screens of scrollback, bounded by judgement
+RECORD_WAIT_S = 60      # set by judgement, unmeasured: a detached worker writes its first record line within seconds of the caller's opener (lane.py's own appear bound is 5 s); a minute is headroom for a loaded host, after which the premise failure stands
 REPORT_WIDTH = 140      # the close report is a file, so its width is fixed, not the terminal's
 REPORT_HEIGHT = 60      # only bounds the feed, which the report omits
 MAX_WIDTH = 200         # beyond this the timeline's one-character slices stop being readable
-LANE_NAME_W = 15        # the longest lane name over the 52 records of a live store, 2026-09-07
+LANE_NAME_W = 15        # display width, set by judgement, unmeasured for a new run store
+MODEL_W = 11            # Width of the plain model/effort cell; shorten the model label, never the effort: `sonnet·high` (11) is the widest plain `model·effort` the routing table makes.
 ITEM_NAME_W = 20        # the widest name the accepted grammar makes: `<TODO> · verify+close` (19)
 TIMELINE_MIN_W = 20     # fewer than 20 slices cannot separate two marks; the panel says so instead
+FEED_MIN = 3            # feed rows a crowded live screen keeps before the feed itself shrinks: the floor the feed always had, set by judgement
+FOLD_LANE_ROWS = 4      # timeline lane rows, fold line included, a crowded screen keeps before the items fold; set by judgement, unmeasured (the running lanes also stand in lanes now)
+FOLD_ITEM_ROWS = 3      # item rows a crowded screen keeps around the item in hand before the feed shrinks; set by judgement, unmeasured
+FOLD_ANCHOR_STATES = ("running",)   # the item states the items fold centres on, first match in run order
 NOTIFY_CHARS = 180      # osascript's notification body is truncated by the notification centre
 
 USE_COLOUR = True
@@ -213,8 +259,8 @@ def c(text, colour=None, bold=False, dim=False):
     seq = ""
     if bold:
         seq += "\x1b[1m"
-    if dim:
-        seq += "\x1b[2m"
+    if dim and colour is None:
+        colour = GREY     # Avoid faint text in a light terminal theme.
     if colour is not None:
         seq += "\x1b[38;5;%dm" % colour
     return seq + text + "\x1b[0m"
@@ -229,6 +275,40 @@ def fit(s, width):
     if width <= 0:
         return ""
     return s if len(s) <= width else s[:max(0, width - 1)] + "…"
+
+
+def head_token(s):
+    """The first word of a recorded field: `model` and `effort` are written with their reason in the
+    same string (`max (definition, throttle default)`), and a panel cell shows the value alone."""
+    return re.split(r"[\s(]", str(s or "").strip(), maxsplit=1)[0] or "?"
+
+
+def short_model(name):
+    """A model name cut to the segment that names it. The segments before the LAST one starting with
+    a letter are the vendor and the version (`gpt-6-astra` → `astra`, `claude-opus-4-5` → `opus-4-5`),
+    so dropping them keeps the word the reader recognises. Keyed on the property, never on a model
+    list: the next long name shortens the same way."""
+    flat = str(name or "").replace(chr(47), "-")   # chr(47) is the slash a vendor prefix uses
+    segs = [x for x in re.split(r"[-_]", flat) if x != ""]
+    if not segs:
+        return str(name or "")
+    keep = max(i for i, x in enumerate(segs) if x[:1].isalpha()) if any(
+        x[:1].isalpha() for x in segs) else 0
+    return "-".join(segs[keep:])
+
+
+def model_cell(model, effort, width):
+    """The lanes-now `model·effort` cell, fitted so the EFFORT always survives. A whole name is used
+    where it fits, its last segment next, and only then is the name itself cut.
+    Preserve the effort label when the display column is narrow."""
+    m, e = head_token(model), head_token(effort)
+    for cand in (m, short_model(m)):
+        if len(cand) + 1 + len(e) <= width:
+            return cand + "·" + e
+    room = width - len(e) - 1
+    if room >= 2:
+        return fit(short_model(m), room) + "·" + e
+    return fit(m + "·" + e, width)      # even the effort alone overflows: the ordinary cut
 
 
 def parse_ts(ts):
@@ -246,6 +326,11 @@ def parse_ts(ts):
 def hms(ts):
     d = parse_ts(ts)
     return d.strftime("%H:%M:%S") if d else str(ts)[11:19]
+
+
+def hms_dt(d):
+    """A parsed stamp as HH:MM (the held row's beat times)."""
+    return d.strftime("%H:%M") if d else "?"
 
 
 def epoch(ts):
@@ -278,7 +363,26 @@ def read_events(path):
 
 # ------------------------------------------------------------------ the pack's items --------
 
-ITEM_LINE = re.compile(r"^\s*(?:[-*]\s*)?\*{0,2}item(\d+)\*{0,2}\s+(.+?)\s+—")
+ITEM_LINE = re.compile(r"^\s*(?:[-*]\s*)?[*_`]*item(\d+)[*_`]*\s+(.+?)\s+—")
+
+# A record's item string reduces to its leading `item<k>` token (delegate skill section 4: gate and
+# boundary events carry the bare `item<k>`), so the three reads in Run.rebuild key through this.
+# Reconcile observed phases with the plan without adding duplicate rows.
+ITEM_KEY = re.compile(r"^\s*[*_`]*item(\d+)(?![0-9])", re.I)
+
+
+def item_key(value):
+    """The planned row a record item string names: its leading `item<k>` token, spelled as the pack
+    parser spells it (`item1 N148 · build+install` -> `item1`). A string with no such token keys as
+    itself, stripped, so an item no pack names still gets a row of its own as before; an empty or
+    missing value is None, which every caller reads as no item at all."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    m = ITEM_KEY.match(text)
+    return "item" + m.group(1) if m else text
 
 
 def clean_name(text):
@@ -315,22 +419,108 @@ def parse_items(text):
     return scan(resume) or scan(lines)
 
 
-def pack_items(events):
-    """(items, pack path). The pack is the `handoff` the last run-open names."""
-    path = ""
-    for e in events:
-        if e.get("event") in ("run-open", "run-resume") and e.get("handoff"):
-            path = os.path.expanduser(str(e["handoff"]))
+def read_text(path):
+    """The file's text, or "" for no path, no file or an unreadable one."""
     if not path or not os.path.isfile(path):
-        return {}, path
+        return ""
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
-            return parse_items(fh.read()), path
+            return fh.read()
     except OSError:
-        return {}, path
+        return ""
+
+
+PREFLIGHT_PATH = re.compile(r"(?:~|/)[^\s`'\"<>|)\]]*-preflight\.md")
+
+
+def preflight_candidates(text, pack, run):
+    """Where a pack that names its items elsewhere may keep them: every `…-preflight.md` path its
+    text names, then the sibling
+    `<run>-preflight.md` beside the pack, then the pack's own name with `-handoff` swapped for
+    `-preflight`. Existing files only, in that order, each once."""
+    seen, out = set(), []
+
+    def add(p):
+        p = os.path.expanduser(p)
+        if p and p not in seen and os.path.isfile(p):
+            seen.add(p)
+            out.append(p)
+
+    for m in PREFLIGHT_PATH.finditer(text or ""):
+        add(m.group(0))
+    if pack:
+        here = os.path.dirname(pack)
+        if run:
+            add(os.path.join(here, "%s-preflight.md" % run))
+        base = os.path.basename(pack)
+        if base.endswith("-handoff.md"):
+            add(os.path.join(here, base[:-len("-handoff.md")] + "-preflight.md"))
+    return out
+
+
+def pack_items(events):
+    """(items, the path they came from). The pack is the `handoff` the last run-open names. A pack
+    whose items live elsewhere is followed rather than refused: the pre-flight candidates next, then
+    the run-open's `expect_items` keys as
+    unnamed rows; nothing anywhere returns {} and the caller warns and watches on."""
+    path, run, expect = "", "", {}
+    for e in events:
+        if e.get("event") in ("run-open", "run-resume"):
+            if e.get("handoff"):
+                path = os.path.expanduser(str(e["handoff"]))
+            run = str(e.get("run") or run)
+            if isinstance(e.get("expect_items"), dict) and e["expect_items"]:
+                expect = e["expect_items"]
+    text = read_text(path)
+    items = parse_items(text) if text else {}
+    if items:
+        return items, path
+    for cand in preflight_candidates(text, path, run):
+        items = parse_items(read_text(cand))
+        if items:
+            return items, cand
+    keys = [item_key(k) for k in expect if ITEM_KEY.match(str(k))]
+    if keys:
+        return {k: "" for k in keys}, path or "(the run-open's expect_items)"
+    return {}, path
 
 
 # ------------------------------------------------------------------ the run model -----------
+
+# What services a hold is the run's supervisor, so what an open hold's row means depends on the
+# state of that supervisor. An unserviced hold must not promise a future beat.
+# The four states below are the record's own, read exactly as
+# handsoff.py's hold_supervision and run_is_closed read them, so board and supervisor never
+# disagree: `live` (a supervisor attached or launched, or none recorded yet — a hold written
+# before a supervisor attaches is serviced at its first tick), `stop-requested` (a
+# `supervise --stop`, which the head's exit turns into a stand-down and which `resume-head` can
+# still clear), `stood-down` and `closed`. The last two are terminal: the supervisor ends every
+# open hold as it goes, so a hold still open under one is the residue of a crash between the two
+# writes, and the row says `unserviced` rather than promising a beat.
+HOLD_SERVICE_LIVE = "live"
+
+
+def hold_service_state(events):
+    """(state, why) for the run's hold service, in record order: the latest of a `run-close`
+    (against a later `run-open` or `run-resume`), a `supervisor-stood-down`, a `supervise` with
+    mode `stop-requested`, and a `supervise` that attached or launched."""
+    state, why = HOLD_SERVICE_LIVE, ""
+    for e in events:
+        ev = e.get("event")
+        when = e.get("ts") or "no ts"
+        if ev in ("run-open", "run-resume"):
+            state, why = HOLD_SERVICE_LIVE, ""
+        elif ev == "run-close":
+            state, why = "closed", "the run closed at %s" % when
+        elif ev == "supervisor-stood-down":
+            state, why = "stood-down", "the supervisor stood down (%s) at %s" % (
+                e.get("reason") or "unstated", when)
+        elif ev == "supervise" and e.get("mode") == "stop-requested":
+            state, why = "stop-requested", "a supervisor stop was requested at %s" % when
+        elif ev == "supervise" and e.get("mode") in ("launched", "attached"):
+            state, why = HOLD_SERVICE_LIVE, ""
+    return state, why
+
 
 class Lane:
     def __init__(self, e, projects=None):
@@ -349,6 +539,8 @@ class Lane:
         self.resumes = 0
         self.notes = ""                                        # a stall or an unwatched transcript
         self.pids = []                                         # what the spawn recorded (see probe_liveness)
+        self.held = None                                       # the open hold
+        self.hold_note = ""                                    # how the last hold ended
         self.home = e.get("cwd") or ""
         self.config_dir = e.get("config_dir")
         self.projects = e.get("projects_root") or projects
@@ -370,8 +562,9 @@ class Lane:
 
     def note_pids(self, e):
         """The processes a spawn or a resume names: the lane's own `pid` and the wrapper's
-        `wrapper_pid`, which `lane.py` writes on both `lane-spawned` and `lane-resumed`. A later
-        spawn or resume of the same lane name replaces them, so the pids in hand are always the
+        `wrapper_pid`: `lane-spawned` carries both, a `lane-resumed` the wrapper's (lane.py since
+        2026-09-13) or neither (codex-lane.py), and the `lane-respawned` after it both. A later spawn,
+        resume or respawn of the same lane name replaces them, so the pids in hand are always the
         latest run's."""
         pids = []
         for key in ("pid", "wrapper_pid"):
@@ -383,8 +576,8 @@ class Lane:
     def probe_liveness(self):
         """An open lane whose recorded processes have ALL gone is drawn `✗ dead`, never `● running`.
 
-        A lane killed by hand writes no `lane-closed`, and until this probe the console drew it
-        as running for ever. The observable is `os.kill(pid, 0)`: `ProcessLookupError` is the
+        A lane killed by hand may lack a close event. The observable is `os.kill(pid, 0)`:
+        `ProcessLookupError` is the
         one answer that means gone, `PermissionError` means the process is there and owned by
         another user, and any other `OSError` means the question was not answered — so only a
         lane every one of whose pids raised `ProcessLookupError` is called dead. A lane with a
@@ -413,10 +606,14 @@ class Lane:
         self.exit = e.get("exit_class") or "closed"
         self.cost = e.get("total_cost_usd")
         self.turns_final = e.get("num_turns")
+        # A close that lands while a hold is open is the lane's new last call (critic F6,
+        # 2026-09-17): a later close moves the next beat to one interval after that close.
+        if self.held is not None and self.closed is not None:
+            self.held["last_call"] = self.closed
+            self.held["last_call_src"] = "the close that followed the hold"
 
     def resume(self, e):
-        """`lane-resumed`: the lane runs again, under a new session (the console miss of
-        2026-09-07 was leaving it drawn as closed)."""
+        """`lane-resumed`: the lane runs again, under a new session."""
         self.closed, self.exit, self.cost, self.turns_final = None, "running", None, None
         self.resumes += 1
         self.note_pids(e)
@@ -425,6 +622,64 @@ class Lane:
         if e.get("session_id"):
             self.session, self.pos, self.turns = e["session_id"], 0, 0
             self.transcript = self._transcript()
+
+    def hold(self, e):
+        """`hold` (a lane hold: it names the lane and carries a cap; a renew is one with a fresh
+        count): the finished lane is kept warm by the supervisor's beats until the hold ends."""
+        cap = e.get("cap")
+        self.held = {"cap": cap if isinstance(cap, int) and not isinstance(cap, bool) else None,
+                     "beats": 0, "ok": 0, "failed": 0, "since": parse_ts(e.get("ts")),
+                     "last": None, "last_ok": None, "renew": bool(e.get("renew")),
+                     "interval": e.get("beat_after_s"), "last_call": parse_ts(e.get("last_call"))}
+        self.hold_note = ""
+
+    def beat(self, e):
+        """`hold-beat`: one beat through the lane's wrapper, ok or failed."""
+        if self.held is None:
+            return
+        ok = e.get("ok") is True
+        self.held["beats"] += 1
+        self.held["ok" if ok else "failed"] += 1
+        self.held["last"], self.held["last_ok"] = parse_ts(e.get("ts")), ok
+
+    def hold_ended(self, e):
+        """`hold-ended`: the lane is closed again, the reason kept for its row."""
+        self.held = None
+        self.hold_note = "hold ended (%s)" % (e.get("reason") or "unstated")
+
+    def is_held(self):
+        """Drawn `held` only while the hold is open and the lane is not running again."""
+        return self.held is not None and self.exit != "running"
+
+    def held_text(self, now, service=HOLD_SERVICE_LIVE, why=""):
+        """The held row. `service` is the run's hold-service state (hold_service_state): only a
+        live one promises a beat, so a requested stop qualifies the row instead of counting down,
+        and a hold still open under a stood-down or closed run — the residue of a crash between
+        the supervisor's `hold-ended` and its own last event — reads `unserviced` with the
+        reason (review finding 1, 2026-09-18)."""
+        h = self.held
+        cap = h["cap"] if h["cap"] is not None else "?"
+        last = "none yet" if h["last"] is None else "%s %s" % (
+            hms_dt(h["last"]), "ok" if h["last_ok"] else "FAILED")
+        if service == "stop-requested":
+            qualifier = " · stop requested · no beat until the supervisor is back"
+        elif service in ("stood-down", "closed"):
+            qualifier = " · unserviced (%s)" % (why or service)
+        else:
+            qualifier = ""
+        text = "held%s · beats %d/%s · last beat %s" % (qualifier, h["beats"], cap, last)
+        if qualifier:
+            return text            # no due time: nothing is ticking to make one true
+        # the supervisor's own reference: the later of the lane's last call (as the hold recorded
+        # it, or a close that followed the hold) and its last beat; the hold's own stamp only
+        # where the record carries neither
+        marks = [t for t in (h["last"], h["last_call"]) if t is not None]
+        ref = max(marks) if marks else h["since"]
+        interval = h["interval"]
+        if ref is not None and isinstance(interval, int) and not isinstance(interval, bool):
+            due = ref + timedelta(seconds=interval)
+            text += " · next due %s" % hms_dt(due) if due > now else " · beat due"
+        return text
 
     def poll(self):
         """Read the lane's transcript forward for its live turn count and last tool call."""
@@ -468,6 +723,7 @@ MARKS = {"gate": "gate", "phase-boundary": "boundary", "head-exit": "boundary",
          "head-resumed": "resume", "head-successor": "resume", "run-resume": "resume",
          "run-close": "close"}
 MARK_GLYPH = {"gate": "│", "boundary": "▲", "stop": "✖", "resume": "↻", "close": "■"}
+HEAD_STARTS = ("run-open", "head-successor", "head-resumed")   # a head process starts; run-resume is the started head's own marker
 TREATMENT = {
     "run-open": "the run's start, its pack and its head session; feed",
     "run-resume": "a head start: the followed transcript and a ↻ mark; feed",
@@ -483,10 +739,16 @@ TREATMENT = {
     "supervise": "the header's supervisor state; feed",
     "lane-open": "opens the lane's row, its class, model, effort, cap and transcript; feed",
     "lane-spawned": "the session the wrapper really started under; feed",
+    "lane-respawned": "the processes a resumed call really started under (pid, wrapper_pid); feed",
     "lane-closed": "closes the lane's row with its cost, turns and exit; feed, alert when the "
-                   "exit class is not completed",
-    "lane-resumed": "the lane runs again under its new session: ● on the items panel and a bar "
-                    "growing again on its timeline row; feed",
+                   "exit class is not completed or the close carries a fallback verdict "
+                   "(fallback, unconfirmed or stale-map: the owner's ruling of 2026-09-29 that he "
+                   "is told of every refused or re-routed task)",
+    "lane-swapped": "a fallen-back task moved to GPT-6 Astra at the lane's own effort (lane.py's "
+                    "swap), or the swap that could not be done; feed, alert",
+    "lane-resumed": "the lane runs again under its new session: ● on the items panel, a row in "
+                    "lanes now until its next close and a bar growing again on its timeline row; "
+                    "feed",
     "stall": "a note on the lane's row; feed",
     "unwatched": "a note on the lane's row; feed",
     "observation": "feed, alert when the what matches the alert words",
@@ -495,8 +757,105 @@ TREATMENT = {
     "reflect-inputs": "feed only (deliberately undrawn: a reflection input count)",
     "decision": "feed only (a schema kind no writer emits today)",
     "correction": "feed only (a schema kind no writer emits today)",
-    "hold": "feed only (a schema kind no writer emits today)",
+    "hold": "a lane hold (the event names a lane and carries a cap): the finished lane reads "
+            "◐ held on the lanes panel and the items panel until the hold ends; the schema's "
+            "older decision hold (class, what, route, no lane) stays feed only",
+    "hold-beat": "one beat through the lane's wrapper: the held row's beat count and last beat; "
+                 "feed, alert when ok is false",
+    "hold-ended": "the lane reads closed again, its row naming the reason; feed",
 }
+
+
+# ------------------------------------------------------------------ the live head meter --------
+# The head's list-price cost read straight from its transcript, so the header carries a figure
+# before any boundary meters the run, including records with no lane-open event. List prices come
+# from prices.json beside this file; the figure is an estimate labelled `live`, never the billed
+# line, which the boundary still writes.
+_PRICES = None
+_LIVE_CACHE = {}
+
+
+def load_prices():
+    global _PRICES
+    if _PRICES is None:
+        try:
+            with open(os.path.join(HERE, "prices.json"), encoding="utf-8") as fh:
+                _PRICES = json.load(fh)
+        except (OSError, ValueError) as exc:
+            _PRICES = {"error": "prices.json unreadable: %s" % exc}
+    return _PRICES
+
+
+def family_of(model, prices):
+    low = (model or "").lower()
+    for fam in prices.get("family_order", []):
+        if fam in low:
+            return fam
+    return None
+
+
+def usage_usd(model, usage, prices):
+    """One message's list price in dollars; None when the model matches no priced family."""
+    fam = family_of(model, prices)
+    if fam is None:
+        return None
+    p = prices["families"][fam]
+    cc = usage.get("cache_creation") or {}
+    if cc:
+        w1h = cc.get("ephemeral_1h_input_tokens", 0) or 0
+        w5m = cc.get("ephemeral_5m_input_tokens", 0) or 0
+    else:   # an older record names no tier: priced at the 5-minute rate
+        w1h, w5m = 0, usage.get("cache_creation_input_tokens", 0) or 0
+    return ((usage.get("input_tokens", 0) or 0) * p["input"]
+            + (usage.get("output_tokens", 0) or 0) * p["output"]
+            + (usage.get("cache_read_input_tokens", 0) or 0) * p["input"] * p["read_mult"]
+            + w1h * p["input"] * p["write_1h_mult"] + w5m * p["input"] * p["write_5m_mult"]) / 1e6
+
+
+def head_live_spend(path):
+    """{'usd', 'messages', 'unpriced'} for the transcript at `path`, one entry per message id (a
+    multi-block turn is written as several records carrying the same id and usage, so
+    a raw sum over-counts), or {'error': why}. Cached by
+    file size, so an unchanged transcript is not re-read every frame."""
+    if not path or not os.path.isfile(path):
+        return {"error": "no transcript"}
+    prices = load_prices()
+    if "error" in prices:
+        return {"error": prices["error"]}
+    try:
+        size = os.path.getsize(path)
+    except OSError as exc:
+        return {"error": str(exc)}
+    hit = _LIVE_CACHE.get(path)
+    if hit and hit[0] == size:
+        return hit[1]
+    seen = {}
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if '"usage"' not in line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                m = e.get("message")
+                if e.get("type") != "assistant" or not isinstance(m, dict) \
+                        or not isinstance(m.get("usage"), dict):
+                    continue
+                seen[m.get("id") or e.get("uuid")] = (m.get("model"), m["usage"])
+    except OSError as exc:
+        return {"error": str(exc)}
+    usd, unpriced = 0.0, 0
+    for model, usage in seen.values():
+        one = usage_usd(model, usage, prices)
+        if one is None:
+            unpriced += 1
+        else:
+            usd += one
+    out = {"usd": usd, "messages": len(seen), "unpriced": unpriced}
+    _LIVE_CACHE[path] = (size, out)
+    return out
 
 
 class Run:
@@ -508,6 +867,7 @@ class Run:
         self.pack = ""
         self.events = []
         self.lanes = {}
+        self.head_live = None      # the live meter's last reading (head_live_spend)
         self.rebuild(read_events(record))
 
     def rebuild(self, events):
@@ -524,33 +884,57 @@ class Run:
         self.item_start, self.item_end, self.gates, self.waits, self.marks = {}, {}, [], [], []
         self.heads, self.meters, self.closed_at = [], [], None
         self.supervisor, self.stopped_note = "-", ""
+        # What an open hold's row may promise: read from the record's own supervisor and run
+        # events, exactly as the supervisor reads them (review finding 1, 2026-09-18).
+        self.hold_service, self.hold_service_why = hold_service_state(events)
         self.head_model = None
+        self.head_effort, self.head_pid = None, None   # the effort when a writer records it; the latest head-start pid (2026-09-10)
+        # Items whose ONLY start is a boundary's `to` field: no gate of their own, no lane of
+        # their own and no record event whose `phase` names them since that boundary. The close
+        # reads such an item as skipped, never done, and draws no elapsed time for it (register
+        # 2026-09-17 12:51: a closing boundary names the bare next item, so every early
+        # close-out produces this shape).
+        self.boundary_only = set()
+        self.close_items = None                        # the run-close event's own `items` text
         current, wait_open = None, None
         for e in events:
             ev, ts = e.get("event"), parse_ts(e.get("ts"))
             lane = self.lanes.get(e.get("lane"))
-            if ev == "gate" and e.get("item"):
-                current = e["item"]
-                if current not in self.item_order:
-                    self.item_order.append(current)
-                self.item_start.setdefault(current, ts)
-                self.gates.append((ts, current, e.get("percent")))
-            elif ev == "phase-boundary":
-                if e.get("from"):
-                    self.item_end[e["from"]] = ts
-                if e.get("meter"):
-                    self.meters.append(e["meter"])
-                current = e.get("to") or current
-                if current:
-                    self.item_start.setdefault(current, ts)
+            # Once a run-close exists, the items' verdicts are read from the events before it
+            # alone: an event after the close (an observation, a ledger row, a late lane close)
+            # changes no item's state, and the run-close's own `items` text stays the quoted
+            # authority. The lanes panel and the feed still take every event.
+            settled = self.closed_at is not None
+            if ev == "gate" and item_key(e.get("item")):
+                key = item_key(e["item"])
+                self.gates.append((ts, key, e.get("percent")))
+                if not settled:
+                    current = key
                     if current not in self.item_order:
                         self.item_order.append(current)
+                    self.item_start.setdefault(current, ts)
+                    self.boundary_only.discard(current)        # a gate of its own is work
+            elif ev == "phase-boundary":
+                if e.get("meter"):
+                    self.meters.append(e["meter"])
+                if not settled:
+                    if item_key(e.get("from")):
+                        self.item_end[item_key(e["from"])] = ts
+                    current = item_key(e.get("to")) or current
+                    if current:
+                        if current not in self.item_start:
+                            self.boundary_only.add(current)    # started by this boundary alone, so far
+                        self.item_start.setdefault(current, ts)
+                        if current not in self.item_order:
+                            self.item_order.append(current)
             elif ev == "lane-open" and e.get("lane"):
                 new = Lane(e, projects=None)
-                new.item = current
+                new.item = current if not settled else None
                 self.lanes[new.name] = new
-            elif ev == "lane-spawned" and lane:
-                lane.spawned(e)
+                if not settled:
+                    self.boundary_only.discard(current)        # a lane of its own is work
+            elif ev in ("lane-spawned", "lane-respawned") and lane:
+                lane.spawned(e)                                # a respawn names the resumed call's processes
             elif ev == "lane-closed" and lane:
                 lane.close(e)
             elif ev == "lane-resumed":
@@ -558,27 +942,50 @@ class Run:
                     lane.resume(e)
                 elif e.get("lane"):                            # a resume without its open in view
                     new = Lane(e, projects=None)
-                    new.item = current
+                    new.item = current if not settled else None
                     self.lanes[new.name] = new
+                    if not settled:
+                        self.boundary_only.discard(current)
             elif ev in ("stall", "unwatched") and lane:
                 lane.notes = "%s %s" % (ev, e.get("action") or e.get("silent_s") or "")
+            elif ev == "hold" and lane and "cap" in e:       # a lane hold, never the decision hold
+                lane.hold(e)
+            elif ev == "hold-beat" and lane:
+                lane.beat(e)
+            elif ev == "hold-ended" and lane:
+                lane.hold_ended(e)
             elif ev in ("run-open", "run-resume", "head-successor", "head-resumed"):
                 self.heads.append(e)
                 # any head start ends an open limit wait: an in-place resume, or the successor the
-                # supervisor starts above the 60 % band (run-20260908-n148n147 drew the wait to the
-                # close because only head-resumed closed it; register entry 2026-09-09)
+                # supervisor starts above the 60 % band (
+                # register entry 2026-09-09)
                 if ev in ("head-resumed", "head-successor", "run-resume") and wait_open:
                     self.waits.append((wait_open, ts))
                     wait_open = None
-                model = head_model(e)
-                if model:
-                    self.head_model = model
-            elif ev == "stop-condition" and e.get("which") == "limit":
+                if ev in HEAD_STARTS:
+                    # The header names the LATEST head start's own model and effort: an earlier
+                    # head's fields never stand in for a later head that recorded none (register
+                    # 2026-09-10 20:29). run-resume is the started head's own marker, not a start,
+                    # so it neither sets nor clears them.
+                    self.head_model = head_model(e)
+                    self.head_effort = str(e["effort"]) if e.get("effort") else None
+                    self.head_pid = e.get("pid") if ev in ("head-successor", "head-resumed") else None
+            elif ev == "stop-condition" and str(e.get("which") or "").startswith("limit"):
+                # every limit kind opens the wait: limit, limit-model (a model-scoped stop, which
+                # must open one too) and limit-unparsed; the next head start closes it
                 wait_open = ts
             elif ev == "run-close":
                 self.closed_at = ts
                 if e.get("meter"):
                     self.meters.append(e["meter"])
+                if isinstance(e.get("items"), str) and e["items"].strip():
+                    self.close_items = e["items"].strip()      # the close's own word on the items
+            # Any record event whose `phase` names an item (a ledger row, a decision, an
+            # observation) is work on it: the item is no longer a boundary's target alone —
+            # before the close only; a phase event after the run-close changes no verdict.
+            phased = item_key(e.get("phase")) if e.get("phase") else None
+            if phased and not settled:
+                self.boundary_only.discard(phased)
             if ev == "supervise":
                 self.supervisor = "supervise %s" % (e.get("mode") or "")
             elif ev == "supervisor-stood-down":
@@ -595,12 +1002,16 @@ class Run:
             lane_obj.probe_liveness()
         if wait_open:
             self.waits.append((wait_open, None))               # a wait still open ends at "now"
-        if self.closed_at and current:
+        if self.closed_at and current and current not in self.boundary_only:
             self.item_end.setdefault(current, self.closed_at)  # the close ends the item in hand
         if self.closed_at:
             # the close ends every item that ever started (a gate, a boundary or a lane of its
-            # own); an item with none of those reads skipped, never pending, once the run is over
+            # own) and was worked; an item a boundary's `to` alone named, with no gate, lane or
+            # phase event of its own since, reads skipped, never done (register 2026-09-17 12:51);
+            # an item with no start at all reads skipped, never pending, once the run is over
             for it in self.item_order:
+                if it in self.boundary_only:
+                    continue
                 if it in self.item_start or any(l.item == it for l in self.lanes.values()):
                     self.item_end.setdefault(it, self.closed_at)
         self.current = current
@@ -648,19 +1059,75 @@ class Run:
             costs = [l.cost for l in self.lanes.values()
                      if isinstance(l.cost, (int, float)) and not isinstance(l.cost, bool)]
             return "lanes $%.2f (%d of %d priced)" % (sum(costs), len(costs), len(self.lanes))
+        live = self.head_live or {}
+        tail = ""
+        if live.get("messages"):
+            tail = " · head ≈$%.2f live" % live["usd"]
+            if live.get("unpriced"):
+                tail += " (%d unpriced)" % live["unpriced"]
         if not self.meters:
-            return "spend not yet metered"
+            costs = [l.cost for l in self.lanes.values()
+                     if isinstance(l.cost, (int, float)) and not isinstance(l.cost, bool)]
+            lanes = " · lanes $%.2f" % sum(costs) if costs else ""
+            return "spend not yet metered" + tail + lanes
         m = re.search(r"(head \$[\d.]+ · lanes \$[\d.]+ · session \$[\d.]+)", str(self.meters[-1]))
-        return m.group(1) if m else str(self.meters[-1])[:48]
+        return (m.group(1) if m else str(self.meters[-1])[:48]) + tail
 
     def context_pct(self):
         return self.gates[-1][2] if self.gates else None
 
 
+_LIVE_MODEL = {}   # pid -> (model, effort) or None: one ps read per head pid, never per refresh (2026-09-10)
+
+
+def live_model(pid):
+    """The model and effort on a live head's own command line (`claude -p … --model X --effort Y`),
+    read once per pid with `ps`; None when the pid is gone or the line carries no --model. A
+    head-start event written before the model and effort keys existed carries neither (known-issues
+    2026-09-10 20:29), so for such a start this is the console's only source for a running head; a
+    dead head with no recorded field stays `unrecorded` rather than guessed."""
+    if not pid:
+        return None
+    if pid in _LIVE_MODEL:
+        return _LIVE_MODEL[pid]
+    found = None
+    try:
+        out = subprocess.run([shutil.which("ps") or "ps", "-o", "command=", "-p", str(pid)], capture_output=True,
+                             text=True, timeout=5).stdout
+        m = re.search(r"--model\s+(\S+)", out)
+        if m:
+            eff = re.search(r"--effort\s+(\S+)", out)
+            found = (m.group(1), eff.group(1) if eff else None)
+    except (OSError, subprocess.SubprocessError):
+        found = None
+    if found is not None or not _pid_alive(pid):
+        _LIVE_MODEL[pid] = found          # cache a hit, or a miss on a dead pid; a live miss is retried
+    return found
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def head_model_text(run):
+    """The header's model token: the record's own fields first, the live process next, else
+    `model unrecorded` (a claim about what was checked, never a guess)."""
+    if run.head_model:
+        return run.head_model + ("·" + run.head_effort if run.head_effort else "")
+    live = live_model(run.head_pid)
+    if live:
+        return live[0] + ("·" + live[1] if live[1] else "")
+    return "model unrecorded"
+
+
 def head_model(e):
     """The head's model as the record carries it: a `model` field when a writer adds one, else a
     `model <name>` phrase in the event's own free text (`mechanism`, `head`, `detail`, `out`).
-    No such field exists in today's head events, so the caller's fallback is what usually runs."""
+    A start event written before the field existed carries neither, and the caller's fallback runs."""
     if e.get("model"):
         return str(e["model"])
     for key in ("mechanism", "head", "detail", "note"):
@@ -700,6 +1167,8 @@ def items_summary(run):
     A plain record has no items to verdict, and says so rather than reading `0/0 done`."""
     if run.plain:
         return PLAIN_HEADER
+    if not run.item_order:
+        return NO_ITEMS_HEADER
     n = len(run.item_order)
     done_n = sum(1 for it in run.item_order if run.state(it) == "done")
     return "%d/%d items done · %s" % (done_n, n, "all done" if done_n == n else "%d skipped" % (n - done_n))
@@ -709,9 +1178,11 @@ def close_tone(run):
     """The close's colour, one rule for the timeline mark, the header's RUN CLOSED, the overall line
     and the banner: green when every item is done (a plain record has no items to verdict and reads
     green), yellow when the close skipped an item, so a close that skipped an item never reads green
-    anywhere. Owner request 2026-09-08: the white close mark did not show a finished run at one look."""
+    anywhere."""
     if run.plain:
         return GREEN
+    if not run.item_order:
+        return YELLOW          # no item to verdict is not a clean close
     return GREEN if all(run.state(it) == "done" for it in run.item_order) else YELLOW
 
 
@@ -724,11 +1195,14 @@ def render_close_banner(run, head_turns, report, width):
         by_exit[l.exit] = by_exit.get(l.exit, 0) + 1
     lanes = " · ".join("%d %s" % (k_n, k) for k, k_n in sorted(by_exit.items(), key=lambda kv: (-kv[1], kv[0])))
     elapsed = span((now - run.t0).total_seconds()) if run.t0 else "-"
-    body = ["closed %s · elapsed %s · %s" % (now.strftime("%H:%M:%S"), elapsed, items_summary(run)),
-            "lanes %d: %s" % (len(run.lanes), lanes or "none"),
-            "%s · head turns %s" % (run.spend(), head_turns),
-            "timeline report: written (its path follows the box)" if report
-            else "timeline report: not written (--once)"]
+    body = ["closed %s · elapsed %s · %s" % (now.strftime("%H:%M:%S"), elapsed, items_summary(run))]
+    if run.close_items:
+        # the run-close event's own word on the items, beside the board's count (2026-09-17)
+        body.append("run-close says: %s" % run.close_items)
+    body += ["lanes %d: %s" % (len(run.lanes), lanes or "none"),
+             "%s · head turns %s" % (run.spend(), head_turns),
+             "timeline report: written (its path follows the box)" if report
+             else "timeline report: not written (--once)"]
     title = fit(" ■ RUN CLOSED · %s " % run.run, max(0, width - 2))
     lines = ["┌" + c(title, close_tone(run), bold=True) + "─" * max(0, width - 2 - len(title)) + "┐"]
     for i, b in enumerate(body):
@@ -756,9 +1230,9 @@ def render_header(run, width, head_turns):
         line = "%s · lanes %d · %s · elapsed %s" % (
             PLAIN_HEADER, len(run.lanes), run.spend(), elapsed)
     else:
-        line = "head %s · turn %s · context %s · %s · elapsed %s · supervisor %s" % (
-            sid, head_turns, ("%s %%" % pct) if pct is not None else "-", run.spend(), elapsed,
-            run.supervisor)
+        line = "head %s · %s · turn %s · context %s · %s · elapsed %s · supervisor %s" % (
+            sid, head_model_text(run), head_turns, ("%s %%" % pct) if pct is not None else "-",
+            run.spend(), elapsed, run.supervisor)
     line = fit(line, max(0, width - 4 - len(closed)))              # the close is never truncated away
     return [top, row(c(line, WHITE) + c(closed, close_tone(run), bold=True), width)]
 
@@ -781,9 +1255,11 @@ def render_items(run, width):
             f = 0.0
         frac_sum += f
         start, end = run.item_start.get(it), run.item_end.get(it)
-        # a pending item shows no clock: a record that skipped a boundary can leave a start behind
-        dur = span(((end or now) - start).total_seconds()) if start and st != "pending" else ""
-        marks = " ".join(("●" if l.exit == "running" else "✓" if l.exit == "completed" else "✗")
+        # a pending or a skipped item shows no clock: a record that skipped a boundary can leave
+        # a start behind, and a boundary's never-worked target has a start and no work
+        dur = span(((end or now) - start).total_seconds()) if start and st in ("done", "running") else ""
+        marks = " ".join(("●" if l.exit == "running" else "◐" if l.is_held() else
+                          "✓" if l.exit == "completed" else "✗")
                          + l.name for l in sorted(lanes, key=lambda x: x.opened or now))
         colour = item_colour(run, it) if st not in ("pending", "skipped") else DIM
         used = 6 + 1 + ITEM_NAME_W + 1 + bw + 1 + 9 + 1 + 7 + 2
@@ -796,6 +1272,8 @@ def render_items(run, width):
         lines.append(row(coloured, width))
     total = len(run.item_order) or 1
     summary, tone = " %d/%d items done" % (done_n, total), GREY
+    if not run.item_order:
+        summary, tone = " " + NO_ITEMS_HEADER, YELLOW     # never `0/1 items done` on an empty list
     if run.closed_at:
         # the close has the last word: every item is done or was never started, and the line says
         # which, in green when nothing was skipped
@@ -807,10 +1285,24 @@ def render_items(run, width):
     return lines
 
 
+def lanes_now(run):
+    """The lanes the lanes-now panel draws, in opening order."""
+    now = run.now()
+    # The item in hand's lanes plus the running set: a lane resumed under a later item runs again
+    # and is drawn here until its next lane-closed, whatever item opened it (register 2026-09-13
+    # 03:44).
+    in_hand = [l for l in run.lanes.values() if l.item == run.current]
+    running = [l for l in run.lanes.values() if l.exit == "running" and l not in in_hand]
+    # A held lane is drawn beside the running ones whatever item
+    # opened it: the supervisor's beats keep it warm for a resume the head still expects
+    held = [l for l in run.lanes.values() if l.is_held() and l not in in_hand and l not in running]
+    lanes = (in_hand + running + held) or sorted(run.lanes.values(), key=lambda x: x.opened or now)[-4:]
+    return sorted(lanes, key=lambda x: x.opened or now)
+
+
 def render_lanes(run, width):
     now = run.now()
-    lanes = [l for l in run.lanes.values() if l.item == run.current] or \
-        sorted(run.lanes.values(), key=lambda x: x.opened or now)[-4:]
+    lanes = lanes_now(run)
     if not lanes:
         return [row(c("no lanes yet", DIM), width)]
     lines = []
@@ -818,6 +1310,8 @@ def render_lanes(run, width):
         col = CLASS_COLOUR.get(l.cls, WHITE)
         if l.exit == "running":
             mark, state = c("●", YELLOW, bold=True), "running"
+        elif l.is_held():
+            mark, state = c("◐", CYAN, bold=True), "held"
         elif l.exit == "completed":
             mark, state = c("✓", GREEN, bold=True), "completed"
         else:
@@ -826,23 +1320,28 @@ def render_lanes(run, width):
         turns = l.turns_final if l.turns_final is not None else l.turns
         cost = ("$%.2f" % l.cost) if isinstance(l.cost, (int, float)) else (
             "cap $%s" % l.budget if l.budget is not None else "")
-        name, model = fit(l.name, LANE_NAME_W), fit(l.model + "·" + l.effort, 11)
-        stem = "%s %-*s %-9s %-11s %7s %4s turns %8s " % (
-            "•", LANE_NAME_W, name, fit(l.cls, 9), model, elapsed, turns, cost)
+        name, model = fit(l.name, LANE_NAME_W), model_cell(l.model, l.effort, MODEL_W)
+        stem = "%s %-*s %-9s %-*s %7s %4s turns %8s " % (
+            "•", LANE_NAME_W, name, fit(l.cls, 9), MODEL_W, model, elapsed, turns, cost)
         left = "%s %s %s %s %s %s %s " % (
             mark, c("%-*s" % (LANE_NAME_W, name), col, bold=l.exit == "running"),
-            c("%-9s" % fit(l.cls, 9), col), c("%-11s" % model, GREY),
+            c("%-9s" % fit(l.cls, 9), col), c("%-*s" % (MODEL_W, model), GREY),
             c("%7s" % elapsed, GREY), c("%4s turns" % turns, GREY), c("%8s" % cost, GREY))
         if l.exit == "running":
             tail = l.last_call or l.notes
+        elif l.is_held():
+            tail = l.held_text(now, run.hold_service, run.hold_service_why)
         elif l.exit == "dead":
             # No lane-closed will ever arrive for this one: the row says why it stopped moving
             # rather than the reason it was opened for.
             tail = "dead · %s" % (l.notes or "no close event")
         else:
-            tail = "%s%s" % (state, (" · " + l.reason) if l.reason else "")
+            # how a hold ended goes before the reason, which the row's width may cut
+            tail = "%s%s%s" % (state, (" · " + l.hold_note) if l.hold_note else "",
+                               (" · " + l.reason) if l.reason else "")
         tail = fit(tail, max(0, width - 4 - len(stem)))
-        lines.append(row(left + c(tail, WHITE if l.exit == "running" else DIM), width))
+        lines.append(row(left + c(tail, WHITE if l.exit == "running" else
+                                  CYAN if l.is_held() else DIM), width))
     return lines
 
 
@@ -907,7 +1406,7 @@ def render_timeline(run, width, for_report=False):
                          + c("".join(body), body_colour,
                              dim=not for_report and l.exit != "running"), width))
     legend = fit("legend: █ item or lane · │ gate · ▲ boundary · ░ limit wait · ✖ stop · ↻ resume"
-                 " · ■ close · ▶ running · ✓ completed · ✗ other", width - 4)
+                 " · ■ close · ▶ running · ✓ completed · ◐ held · ✗ other", width - 4)
     lines.append(row(c(legend, GREY), width))
     return lines
 
@@ -916,12 +1415,21 @@ def fmt_event(e):
     lane = (" " + e["lane"]) if e.get("lane") else ""
     extra = ""
     for k in ("item", "to", "from", "what", "reason", "exit_class", "total_cost_usd",
-              "disposition", "which", "action", "mode", "note", "class", "target", "phase"):
+              "disposition", "which", "action", "mode", "note", "class", "target", "phase",
+              "cap", "ok", "beats"):
         if e.get(k) is not None:
             v = e[k]
             if isinstance(v, float):
                 v = "%.2f" % v
             extra += " %s=%s" % (k, str(v).replace("\n", " ")[:160])
+    fb = e.get("fallback") if isinstance(e.get("fallback"), dict) else None
+    if fb and fb.get("verdict"):
+        extra += " fallback=%s ran-on=%s expected=%s" % (fb.get("verdict"), ",".join(fb.get("non_helper") or []) or "-",
+                                                       fb.get("expected") or "-")
+    if e.get("event") == "lane-swapped":
+        extra += " effort=%s" % e.get("effort")
+        if e.get("error"):
+            extra += " error=%s" % str(e["error"]).replace("\n", " ")[:160]
     return "%s  %-7s %s%s%s" % (hms(e.get("ts")), "RECORD", e.get("event"), lane, extra)
 
 
@@ -930,6 +1438,11 @@ def is_alert(e):
     if ev in ALERT_EVENTS:
         return True
     if ev == "lane-closed" and (e.get("exit_class") or "completed") != "completed":
+        return True
+    fb = e.get("fallback") if isinstance(e.get("fallback"), dict) else None
+    if ev == "lane-closed" and fb and fb.get("verdict") in FALLBACK_ALERTS:
+        return True
+    if ev == "hold-beat" and e.get("ok") is not True:      # a beat that failed: the cache lapses
         return True
     return ev == "observation" and bool(ALERT_WORDS.search(str(e.get("what", ""))))
 
@@ -966,26 +1479,142 @@ def colour_feed(kind, text, width):
     return c(text, GREY)
 
 
-def render(run, feed, head_turns, width, height, for_report=False):
+def fold_counts(states):
+    """`6 done · 1 running`: the states a fold line hides, in the order they first appear."""
+    counts = {}
+    for s in states:
+        counts[s] = counts.get(s, 0) + 1
+    return " · ".join("%d %s" % (n, s) for s, n in counts.items())
+
+
+def fold_lane_rows(lanes, rows, keep_n, width, lead=""):
+    """`rows[i]` draws `lanes[i]`, in opening order. The running and held lanes, then the newest
+    others, keep their rows, up to `keep_n`; the rest are counted on one line placed first."""
+    live = [i for i, l in enumerate(lanes) if l.exit == "running" or l.is_held()]
+    rest = [i for i in range(len(lanes)) if i not in live]
+    keep = set((live[::-1] + rest[::-1])[:max(0, keep_n)])    # the newest first within each group
+    glyphs = ["●" if l.exit == "running" else "◐" if l.is_held() else
+              "✓" if l.exit == "completed" else "✗"
+              for i, l in enumerate(lanes) if i not in keep]
+    text = "%s%-*s %s" % (lead, LANE_NAME_W, fit("+%d lanes" % len(glyphs), LANE_NAME_W),
+                          "folded to fit the window: %s · the whole board: --once"
+                          % fold_counts(glyphs))
+    return [row(c(fit(text, width - 4), DIM), width)] + [rows[i] for i in range(len(lanes)) if i in keep]
+
+
+def fold_timeline(run, lines, max_rows, width):
+    """The timeline on a crowded live screen, its lane rows folded by fold_lane_rows. `lines` is
+    render_timeline's output: the axis, the head row on a hands-off record, one row per lane in
+    opening order, the legend. Any other shape (the too-narrow notice) comes back whole, and the
+    frame's last-resort clip covers it."""
+    end = run.now()
+    lanes = sorted(run.lanes.values(), key=lambda x: x.opened or end)
+    top = 1 if run.plain else 2
+    if len(lines) != top + len(lanes) + 1 or len(lines) <= max_rows:
+        return lines
+    body = fold_lane_rows(lanes, lines[top:-1], max_rows - top - 2, width)
+    return lines[:top] + body + lines[-1:]
+
+
+def fold_lanes_now(run, lines, max_rows, width):
+    """The lanes-now panel on a crowded live screen, folded by fold_lane_rows: it grows with the
+    item in hand's lanes, and on a plain record every lane is in hand. `lines` is render_lanes's
+    output, one row per lanes_now lane; any other shape comes back whole."""
+    lanes = lanes_now(run)
+    if not lanes or len(lines) != len(lanes) or len(lines) <= max_rows:
+        return lines
+    return fold_lane_rows(lanes, lines, max_rows - 1, width, lead="  ")
+
+
+def fold_items(run, lines, max_rows, width):
+    """The items panel on a crowded live screen: a window of rows around the item in hand (the
+    first running item, else the first pending one, else the last), each run of rows outside it
+    counted on one line, the overall line whole. `lines` is render_items's output: one row per item
+    in run order, then the overall line. Any other shape comes back whole."""
+    order = run.item_order
+    n = len(order)
+    if n < 2 or len(lines) != n + 1 or len(lines) <= max_rows:
+        return lines
+    states = [run.state(it) for it in order]
+    anchor = next((i for i, s in enumerate(states) if s in FOLD_ANCHOR_STATES),
+                  next((i for i, s in enumerate(states) if s == "pending"), n - 1))
+
+    def cost(lo, hi):                        # the window, a fold line each side it leaves, overall
+        return (hi - lo + 1) + (lo > 0) + (hi < n - 1) + 1
+
+    lo = hi = anchor
+    side = 0                                 # grow before first: the item just finished is context
+    while True:
+        for s in (side, 1 - side):
+            nlo, nhi = (lo - 1, hi) if s == 0 else (lo, hi + 1)
+            if nlo >= 0 and nhi < n and cost(nlo, nhi) <= max_rows:
+                lo, hi, side = nlo, nhi, 1 - s
+                break
+        else:
+            break
+
+    def fold(i, j):
+        what = order[i] if i == j else "%s … %s" % (order[i], order[j])
+        tone = YELLOW if any(s in FOLD_ANCHOR_STATES for s in states[i:j + 1]) else DIM
+        text = "%-6s %s folded to fit the window: %s" % ("⋯", what, fold_counts(states[i:j + 1]))
+        return row(c(fit(text, width - 4), tone), width)
+
+    out = [fold(0, lo - 1)] if lo > 0 else []
+    out += lines[lo:hi + 1]
+    if hi < n - 1:
+        out.append(fold(hi + 1, n - 1))
+    return out + lines[n:]
+
+
+def render(run, feed, head_turns, width, height, for_report=False, fit_screen=False):
+    """The board, one string per row. `fit_screen` is the live screen's: the frame is folded to
+    `height` (the module docstring's fold order), since a taller frame scrolls its top away. A
+    snapshot, the final board and the report are drawn whole."""
+    budget = max(1, height - 1)              # the frame is written with a trailing newline
     if width < 40:                                             # too narrow for the box: plain rows
         out = ["%s %s" % (run.run, run.now().strftime("%H:%M:%S"))]
         for it in run.item_order:
             out.append(fit("%s %s" % (it, run.state(it)), width))
-        return [fit(line, width) for line in out]
-    lines = render_header(run, width, head_turns)
+        out = [fit(line, width) for line in out]
+        return out[:budget] if fit_screen else out
+    header = render_header(run, width, head_turns)
+    items = [] if run.plain else render_items(run, width)
+    lanes = render_lanes(run, width)
+    timeline = render_timeline(run, width, for_report)
+    fit_screen = fit_screen and not for_report
+    if fit_screen:
+        fixed = len(header) + (3 if run.plain else 4) + 1      # the header, the section rules, the bottom rule
+
+        def over():
+            return fixed + len(items) + len(lanes) + len(timeline) + FEED_MIN - budget
+
+        if over() > 0:     # the timeline's axis, head row and legend stay: the floor adds them
+            floor = min(len(timeline), (1 if run.plain else 2) + FOLD_LANE_ROWS + 1)
+            timeline = fold_timeline(run, timeline, max(floor, len(timeline) - over()), width)
+        if over() > 0:
+            lanes = fold_lanes_now(run, lanes, max(min(len(lanes), FOLD_LANE_ROWS),
+                                                   len(lanes) - over()), width)
+        if over() > 0 and items:
+            floor = min(len(items), FOLD_ITEM_ROWS + 3)        # two fold lines and the overall line
+            items = fold_items(run, items, max(floor, len(items) - over()), width)
+    lines = header
     if not run.plain:      # a plain record has no pack and no gates: no items panel at all
         lines.append(section("items", width))
-        lines += render_items(run, width)
+        lines += items
     lines.append(section("lanes now", width))
-    lines += render_lanes(run, width)
+    lines += lanes
     lines.append(section("timeline", width))
-    lines += render_timeline(run, width, for_report)
+    lines += timeline
     if not for_report:
         lines.append(section("feed", width))
-        room = max(3, height - len(lines) - 2)
+        room = max(1, budget - len(lines) - 1) if fit_screen else max(FEED_MIN, height - len(lines) - 2)
         for _, kind, text in list(feed)[-room:]:
             lines.append(row(colour_feed(kind, text, width), width))
-    lines.append("└" + "─" * (width - 2) + "┘")
+    bottom = "└" + "─" * (width - 2) + "┘"
+    lines.append(bottom)
+    if fit_screen and len(lines) > budget:
+        # a window too small for the floors: clip from the bottom, so the header always shows
+        lines = lines[:max(1, budget - 1)] + ([bottom] if budget > 1 else [])
     return lines
 
 
@@ -1031,8 +1660,10 @@ def resume_command(run, model):
     return base + ["--run", run, "--model", model, "--effort", "max"]
 
 
-def handle_key(key, run, fallback_model="fable"):
-    """(quit, feed lines). `q` quits; `r` resumes only a stopped head."""
+def handle_key(key, run, fallback_model="opus"):
+    """(quit, feed lines). `q` quits; `r` resumes only a stopped head, on the model its record
+    names, else `fallback_model`: opus, the default Claude model since the owner's ruling of
+    2026-09-29 (fable before)."""
     if key in ("q", "Q"):
         return True, ["quit"]
     if key not in ("r", "R"):
@@ -1107,29 +1738,16 @@ SUITE_TOTALS_FILE = "watch-suite-totals.json"   # the per-suite denominator cach
 
 JOB_TAIL_BYTES = 65536  # bytes of a job's output read for its last non-empty line and its `ok`
                         # count; a bound on a job's OUTPUT file, distinct from the status hook's
-                        # transcript-tail bound (JOBS_TAIL_BYTES, 512 KB, role-style-anchor.py,
-                        # re-derived 2026-09-08 by lane B-JOBS). A suite's 48 `ok` lines are
-                        # ~5 KB, so the count is exact for every suite in this skill; a job whose
-                        # output is larger has its earlier `ok` lines outside the window and its
-                        # bar reads low rather than wrong — stated in the header when it bites.
+                        # transcript-tail bound. This compatibility window is set by judgement,
+                        # unmeasured for a new workload; larger output may undercount earlier ok
+                        # lines, which the header discloses.
 JOB_LAST_LINE_W = 48    # the last-line column: the widest that leaves the bar column whole at the
                         # 120-column default terminal (kind 8 + id 11 + started 17 + state 9 + bar 20)
-JOB_ID_W = 18           # the longest job id observed is 17 characters (an agent id); a Bash id is 9
+JOB_ID_W = 18           # display width; set by judgement, unmeasured for a new installation
 JOB_BAR_W = 14          # the bar itself, matching the run console's lane bars
 
-# The four start shapes an attended session writes, each measured on a live transcript
-# (2026-09-08).  A job reaches the job directory by any of them, and only the first carries
-# `run_in_background` on the tool call — a foreground Bash command that outruns its timeout is
-# *moved* to the background and is a job like any other, with no flag anywhere on the tool_use.
-#
-# Each pattern is ANCHORED at the start of the tool_result's text, because the harness writes its
-# start sentence first and nothing else does: the same sentence inside a tool's output, in
-# assistant prose or in a quoted brief is somebody talking ABOUT a job, never a start. Measured on
-# 469 live transcripts, 2026-09-08: unanchored, `Monitor started (task …)` matched 10 texts, every
-# one of them another tool's output (a grep, a file read, a probe's own summary) and not one a
-# start; a grep over a second session's transcript put a phantom row on the operator's own board.
-# Route 4's leading sentence is the launch line and the id sits on a line of its own inside the
-# same text (231 live occurrences), so it takes an id pattern beside its anchor.
+# Recognise each supported harness start shape only at the start of its text.
+# Agent ids may occupy a separate line; pair that id pattern with the start anchor.
 JOB_START_RES = (
     # (the anchor at the text's start, the id pattern within it or None for the anchor's group 1)
     (re.compile(r"^Command running in background with ID: ([A-Za-z0-9]+)"), None),
@@ -1149,10 +1767,8 @@ JOB_NOTIF_STATUS = re.compile(r"<status>([^<]*)</status>")
 # a suite's command may name lane.py; `waiter` last of the command rules because a suite that
 # sleeps between legs is still a suite.
 #
-# Each script name may be followed by a closing quote: an operator's command quotes the script's
-# path (`python3 -B "…/lane.py" watch --run …`), and without the optional quote every real lane
-# watch of one live operator session read `other` (7 of 7 measured, 2026-09-08). The
-# same three strings are shared verbatim with the status-line hook's `_jobs_kind`.
+# Accept a closing quote after a script name so quoted shell commands classify correctly.
+# The status-line hook shares these three patterns.
 JOB_SUITE_RE = re.compile(r"\btest_[A-Za-z0-9_]+\.sh\b")
 JOB_LANE_RE = re.compile(r"""lane\.py["']?\s+(?:\S+\s+)*?(?:watch|spawn|resume)\b""")
 JOB_WAITER_RE = re.compile(r"""\bsleep\b|\bwait-reset\b|handsoff\.py["']?\s+watch\b|"""
@@ -1166,7 +1782,7 @@ SUITE_OK_RE = re.compile(r"^\s*ok\b")
 
 def tasks_root():
     """The harness's job root: `<TASKS_ROOT_ENV>`, else `/tmp/claude-<uid>` composed from this
-    process's own uid — the shape a live root was read at on 2026-09-08 (`/tmp` is the symlink
+    process's own uid (`/tmp` is the symlink
     macOS resolves to `/private/tmp`, so both spellings reach the same directory). The uid is
     never a literal: a copy of this console run by another account finds that account's root."""
     env = os.environ.get(TASKS_ROOT_ENV)
@@ -1207,10 +1823,9 @@ def resolve_session(sid, vault):
 def notif_texts(rec):
     """Every string of a record that can carry a `<task-notification>`.
 
-    Measured on a live transcript (2026-09-08): the eleven notifications of one session sat in
-    three carriers — a `user` record's `message.content`, a `queue-operation` record's top-level
-    `content`, and an `attachment` record's `attachment.prompt`. Reading the user records alone
-    saw one of the four notified jobs, so all three are read and the ids de-duplicated."""
+    Read all supported carriers: a user record's message.content, a queue-operation record's
+    top-level content, and an attachment record's attachment.prompt.
+    De-duplicate job ids across those carriers."""
     out = []
     if isinstance(rec.get("content"), str):
         out.append(rec["content"])
@@ -1242,8 +1857,7 @@ def start_id(text):
 
     The text must BEGIN with one of the harness's start sentences (leading whitespace aside).
     The sentence anywhere else in a text — inside another tool's output, inside assistant prose
-    quoted back, inside a brief — is a mention, not a start, and mentions have put phantom rows
-    on the board with ids read out of somebody else's transcript."""
+    quoted back, inside a brief — is a mention, not a start."""
     if not isinstance(text, str):
         return ""
     head = text.lstrip()
@@ -1398,8 +2012,7 @@ def job_output(path):
 def lane_cap(command, vault):
     """(turns, cap) for a `lane.py` job: the lane's live turns as the run console counts them,
     against the cap its `lane-open` recorded. (None, None) where the command names no run, the
-    record is absent, or the record carries no `max_turns` — on this store 30 of 215 `lane-open`
-    events carried one (2026-09-08), so the honest answer is usually no denominator."""
+    record is absent, or the record carries no `max_turns`: no denominator is invented."""
     run = JOB_RUN_RE.search(command or "")
     want = JOB_LANE_NAME_RE.search(command or "")
     if not run:
@@ -1592,6 +2205,24 @@ def main_session(a):
 
 # ------------------------------------------------------------------ main --------------------
 
+def wait_for_record(record, bound, poll=0.5):
+    """True once the record exists and holds at least one parseable event, polled for at most
+    `bound` seconds; one line on stdout says what the console is waiting for. False when the bound
+    passes first, and the caller's premise checks then decide exactly as before."""
+    began, said = time.time(), False
+    while True:
+        if os.path.isfile(record) and read_events(record):
+            return True
+        if time.time() - began >= bound:
+            return False
+        if not said:
+            sys.stdout.write("waiting up to %d s for the run record %s (a detached lane writes its "
+                             "first line within seconds)\n" % (bound, record))
+            sys.stdout.flush()
+            said = True
+        time.sleep(poll)
+
+
 def die(reason):
     sys.stderr.write("watch.py: PROBE FAILED: %s\n" % reason)
     sys.exit(2)
@@ -1619,6 +2250,11 @@ def main(argv=None):
                          "the clock and the lane bars move every tick)")
     ap.add_argument("--vault", default=None,
                     help="the vault root (default: CLAUDE_PROJECT_DIR, else three levels up)")
+    ap.add_argument("--wait-record", type=float, default=RECORD_WAIT_S, metavar="S",
+                    help="a live console whose record does not exist yet, or holds no event, waits "
+                         "up to S seconds for it (default %d: a wrapper opens the console before its "
+                         "detached worker writes the first line); 0 or --once never waits"
+                         % RECORD_WAIT_S)
     a = ap.parse_args(argv)
 
     USE_COLOUR = not a.plain and (sys.stdout.isatty()
@@ -1628,18 +2264,26 @@ def main(argv=None):
 
     vault = vault_root(a.vault)
     record = record_path(a.run)
+    if not a.once and a.wait_record > 0:
+        wait_for_record(record, a.wait_record)
     if not os.path.isfile(record):
         die("no run record at %s" % record)
     run = Run(a.run, record, vault)
-    # The items premise belongs to a record that HAS a run-open: only such a record names a pack
-    # to take items from. A plain record (no run-open) is watched on its lane events, and its own
-    # premise is that it holds some — an empty file is still a broken premise.
+    # A plain record (no run-open) is watched on its lane events, and its own premise is that it
+    # holds some — an empty file is still a broken premise. A record with a run-open is a live
+    # run whether or not an item row exists yet: the pack may name none, no pre-flight beside it
+    # may name any, the run-open may carry no expect_items and no gate or boundary may have
+    # landed. That reads as a warning on stderr and on the board, never a refusal;
+    # the item rows appear at the first gate or boundary, the lanes and the feed show at once.
     if run.plain:
         if not run.lanes:
             die("no run-open, no lane-open and no lane-closed event in %s: a plain lane run is "
                 "watched on its lane events and this record holds none" % record)
     elif not run.item_order:
-        die("no items in %s and no gate events in %s" % (run.pack or "(no pack in run-open)", record))
+        sys.stderr.write("watch.py: warning: no item line in %s, none in a pre-flight beside it, "
+                         "no expect_items on the run-open and no gate or boundary event yet in "
+                         "%s: watching the lanes and the feed; item rows appear at the first gate "
+                         "or boundary\n" % (run.pack or "(no hand-off named by the run-open)", record))
 
     USE_COLOUR = not a.plain and (sys.stdout.isatty()
                                   or os.environ.get("AIMYTH_WATCH_COLOUR") == "1")
@@ -1647,6 +2291,7 @@ def main(argv=None):
 
     feed = build_feed(run)
     transcript = run.head_transcript()
+    run.head_live = head_live_spend(transcript)
     rows, tpos = follow(transcript, 0)
     head_turns = 0
     for line in rows:
@@ -1659,9 +2304,11 @@ def main(argv=None):
         l.poll()
     rpos = os.path.getsize(record)
 
-    def frame():
+    def frame(live=False):
+        # the live screen is folded to the window; --once, --plain and the final board stay whole
         size = shutil.get_terminal_size((120, 40))
-        return render(run, feed, head_turns, min(max(1, size.columns), MAX_WIDTH), size.lines)
+        return render(run, feed, head_turns, min(max(1, size.columns), MAX_WIDTH), size.lines,
+                      fit_screen=live and not a.plain)
 
     if a.once:
         print("\n".join(frame()))
@@ -1682,7 +2329,7 @@ def main(argv=None):
     if not a.plain:
         sys.stdout.write("\x1b[?1049h\x1b[?25l")
     try:
-        sys.stdout.write(("\x1b[2J\x1b[H" if not a.plain else "") + "\n".join(frame()) + "\n")
+        sys.stdout.write(("\x1b[2J\x1b[H" if not a.plain else "") + "\n".join(frame(live=True)) + "\n")
         sys.stdout.flush()
         while not run.closed_at:
             key = read_key(a.refresh)
@@ -1693,6 +2340,7 @@ def main(argv=None):
                                  % (time.strftime("%H:%M:%S"), "KEY", line)))
                 if quit_now:
                     break
+            run.head_live = head_live_spend(transcript)   # cached by size: cheap when unchanged
             new, rpos = follow(record, rpos)
             if new:
                 run.rebuild(read_events(record))
@@ -1722,7 +2370,7 @@ def main(argv=None):
                 if l.exit == "running":
                     l.poll()
                     l.probe_liveness()             # a lane can die between two frames
-            sys.stdout.write(("\x1b[2J\x1b[H" if not a.plain else "") + "\n".join(frame()) + "\n")
+            sys.stdout.write(("\x1b[2J\x1b[H" if not a.plain else "") + "\n".join(frame(live=True)) + "\n")
             sys.stdout.flush()
     except KeyboardInterrupt:
         pass

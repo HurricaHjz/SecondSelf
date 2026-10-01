@@ -28,13 +28,12 @@ Two record schemas, both read (the vault never breaks between a delivery and its
   schema 1 (no `schema` key, or `schema: 1`) — `roles`, each a model triple
   (floor · default · ceiling) and an effort pair (floor · ceiling).
   schema 2 (`schema: 2`) — `classes`, each an option SET with a marked default per axis,
-  plus grants, writes, tools, skills, mcp, cache, gate and dated (design:
-  wiki/developments/thin-lanes-design.md, "The class table"). Strength on both axes is
+  plus grants, writes, tools, skills, mcp, cache, gate and dated (the routing contract
+  class table). Strength on both axes is
   read from `order` by index, never from a list's position, so an unsorted options list
   still resolves correctly.
 
-Resolution rule (design: wiki/developments/throttle-routing-design.md, "The selection rule";
-the `auto` row: the owner's ruling of 2026-09-07 17:0x, built 2026-09-08)
+Resolution rule (the routing contract selection rule; the `auto` row is task-dependent)
 
   throttle      model (v1 · v2)               effort (v1 · v2)
   auto          role default · row default    ceiling · row default    (the anchors)
@@ -43,6 +42,13 @@ the `auto` row: the owner's ruling of 2026-09-07 17:0x, built 2026-09-08)
   cheap         floor · weakest option        ceiling · strongest option
   fast          role default · row default    floor · weakest option
   cheap-fast    floor · weakest option        floor · weakest option
+
+  A schema-2 record may carry `preset_model`, naming the model a preset resolves to on every
+  class in place of the option the table above would pick; the effort axis keeps the table's
+  rule. From the owner's ruling of 2026-09-29 `top` and `cheap` both resolve to opus there,
+  until a stronger Claude model (fable 5.5 or later) arrives and the owner says so. Every class
+  must list the named model among its options, a broken premise otherwise; a record without
+  the block resolves as the table says.
 
   `auto` is the default preset: the Settings default from 2026-09-08 once the owner runs
   `set auto`, and what a missing Settings line reads as. Under it the head picks model and
@@ -72,7 +78,10 @@ the `auto` row: the owner's ruling of 2026-09-07 17:0x, built 2026-09-08)
   recorded on the lane-open event with its reason and never gated; critic and reflector keep
   `max`, the effort being the product, and the gate-judge stays fixed); `cheap` keeps the
   ceiling effort because the constraint the owner named there is spend, which the model
-  axis carries.
+  axis carries. From the owner's ruling of 2026-09-29 the model axis no longer carries it:
+  `cheap` resolves to opus like `top` (`preset_model`), so the two presets resolve alike on
+  every class, and whether `cheap` should lower the effort instead is open (the register's
+  entry of 2026-09-06 on `cheap` and `default`).
 
 Where the ranges come from (a deciding number carries its derivation)
 
@@ -82,8 +91,15 @@ Where the ranges come from (a deciding number carries its derivation)
   2026-09-02 under the owner's routing mandate of that date. `gate-judge` is a single
   value on both axes: a parity gate measures the routed step's executor at its default
   tier, so a gate run at any other tier measures nothing the gate exists to measure.
-  Every model ceiling except `gate-judge`'s is fable, per the owner's ruling of
-  2026-09-02.
+  Every model ceiling except `gate-judge`'s and `memory-hunter`'s was fable, per the owner's
+  ruling of 2026-09-02, until the owner's rulings of 2026-09-22 (19:0x) and 2026-09-29: no
+  class row lists fable since, except the writer's, where it stays an option for an important
+  check on the owner's standing word; opus 5.5 is the default for every Claude seat, and fable runs
+  only on the owner's word, as a by-name spawn lane.py records as
+  outside the options. Opus (Opus 5.5) is the strongest helper for closed work, and `top` and
+  `cheap` resolve every class's model to opus through `preset_model`; Astra through
+  codex-lane.py serves open work, outside this throttle. `fable` stays in `order.model` for a
+  by-name spawn and the meter's picks tally.
 
 Guards, each keyed on a premise that can fail
 
@@ -94,9 +110,8 @@ Guards, each keyed on a premise that can fail
   throttle name, a definition whose frontmatter cannot be parsed, or a missing
   `.claude/agents/` directory all print one
   `PROBE FAILED: <reason>` line and exit 2 — never "clean". The record is read from
-  `<root>` and from nowhere else: an earlier draft fell back to this script's own sibling
-  copy when the root had none, and a fixture whose record had been deleted then reported
-  "clean" against a foreign record (measured 2026-09-02). A MISSING Settings line is not
+  `<root>` and from nowhere else; a fallback could validate an unrelated record.
+  A MISSING Settings line is not
   a failure: it resolves to `auto` (the default preset from 2026-09-08; `default` until
   then) and says so once, because a fresh or pulled template vault has never run `set` and
   CUSTOMISATION is never published. `set` validates the
@@ -104,7 +119,7 @@ Guards, each keyed on a premise that can fail
   record changes no file.
 
   What this script cannot check: whether a model or effort name the record admits is one
-  the harness will actually honour. Headless spawns ignore the DEFINITION's effort and apply --effort (probe 2026-09-04), and the available
+  the harness will actually honour. Headless spawns ignore the DEFINITION's effort and apply --effort, and the available
   levels depend on the model, so the first in-session spawn after a switch is that check,
   read from the lane transcript. The record's own order lists are therefore the enum, and
   no model name is hard-coded here: a hard-coded list would silently exclude the next
@@ -162,13 +177,18 @@ SELECT_V2 = {"auto": ("default", "default"),
 V2_FIELDS = ("model", "effort", "grants", "writes", "tools", "skills", "mcp", "cache",
              "gate", "dated")
 # The head's own tier under each throttle. A recommendation the head carries in its
-# hand-off line; the head's real model and effort are the owner's client settings.
-HEAD_LINE = {"auto": "head: fable · max",
-             "top": "head: fable · max",
-             "default": "head: fable · max",
-             "cheap": "head: opus · max recommended",
-             "cheap-fast": "head: opus · max recommended",
-             "fast": "head: fable · high recommended"}
+# hand-off line; the head's real model and effort are the owner's client settings. Opus
+# under every throttle since the owner's ruling of 2026-09-29 (opus 5.5 is the default Claude
+# model, the heads of hands-off and multi-agent runs included; fable only on his word). The line
+# serves the next session a hand-off names, a build or a run; an attended session that is mostly
+# discussion takes a fable head (his amendment of 20:0x the same day), which the head recommends
+# in words, suggesting a swap when a session's work shifts.
+HEAD_LINE = {"auto": "head: opus · max",
+             "top": "head: opus · max",
+             "default": "head: opus · max",
+             "cheap": "head: opus · xhigh recommended",
+             "cheap-fast": "head: opus · xhigh recommended",
+             "fast": "head: opus · high recommended"}
 
 # The Settings-line regex is the anchor hook's `_defaults()` family, unchanged: one
 # bullet, a bold key, the value token. Trailing prose after the value is ignored, so the
@@ -193,7 +213,7 @@ ROLE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # lane brief quoting it would carry the wrong routing. `set` never edits prose, so this is a
 # finding for a human to reword — the durable form states the admitted RANGE and says the
 # active throttle sets the current values. Pinned form (design v1.4, 2026-09-02).
-DESC_TIER_RE = re.compile(r"·\s*(low|medium|high|xhigh|max)\b")  # any tier after a middle dot: "opus · max effort", "opus · max;" (reflector wording, live miss 2026-09-02)
+DESC_TIER_RE = re.compile(r"·\s*(low|medium|high|xhigh|max)\b")  # any tier after a middle dot: "opus · max effort", "opus · max;" (the reflector wording)
 FIELD_RE = {k: re.compile(r"^(?P<key>%s:)(?P<sp>[ \t]*)(?P<val>[^\r\n]*?)(?P<eol>\r?\n?)$" % k)
             for k in ("model", "effort")}
 
@@ -211,7 +231,7 @@ def _fail(reason):
 def load_routing(root):
     """The routing record under `root`, validated before it is returned. One path only:
     a fallback to another copy would let a fixture be checked against a foreign record
-    and report clean (measured 2026-09-02)."""
+    and report clean."""
     path = os.path.join(root, ROUTING_REL)
     if not os.path.exists(path):
         _fail("no routing record at %s (wrong --root?)" % ROUTING_REL)
@@ -310,6 +330,11 @@ def validate_v2(rec, rel):
             if ax["default"] not in opts:
                 _fail("%s: class `%s` %s default %r is not one of its options (%s)"
                       % (rel, cls, axis, ax["default"], " ".join(map(str, opts))))
+        for name, model in preset_models(rec, rel).items():
+            if model not in spec["model"]["options"]:
+                _fail("%s: `preset_model.%s` names %r, which class `%s` does not list among its "
+                      "model options (%s)" % (rel, name, model, cls,
+                                              " ".join(map(str, spec["model"]["options"]))))
         for field, keys in (("grants", ("default", "extras")),
                             ("skills", ("default", "extras")),
                             ("mcp", ("default", "grantable"))):
@@ -329,6 +354,28 @@ def validate_v2(rec, rel):
         for field in ("cache", "gate", "dated"):
             if not isinstance(spec[field], str) or not spec[field].strip():
                 _fail("%s: class `%s` `%s` is not a non-empty string" % (rel, cls, field))
+
+
+def preset_models(rec, rel=ROUTING_REL):
+    """{preset name: model} from a schema-2 record's optional `preset_model` block (owner ruling
+    2026-09-29: `top` and `cheap` both resolve to opus). Absent is {}; a block that is not an object,
+    a key that names no preset, or a value that is not a model in `order.model` is a broken premise.
+    The `_` key carries the block's own note and is skipped."""
+    block = rec.get("preset_model")
+    if block is None:
+        return {}
+    if not isinstance(block, dict):
+        _fail("%s: `preset_model` is not an object" % rel)
+    out = {}
+    for name, model in block.items():
+        if name == "_":
+            continue
+        if name not in THROTTLES:
+            _fail("%s: `preset_model` key %r names no preset (known: %s)" % (rel, name, ", ".join(THROTTLES)))
+        if not isinstance(model, str) or model not in rec["order"]["model"]:
+            _fail("%s: `preset_model.%s` value %r is not a model in `order.model`" % (rel, name, model))
+        out[name] = model
+    return out
 
 
 def rows(rec):
@@ -352,11 +399,13 @@ def resolve(rec, name):
         _fail("unknown throttle %r (known: %s)" % (name, ", ".join(THROTTLES)))
     if rec.get("schema") == 2:
         mh, eh = SELECT_V2[name]
+        pinned = preset_models(rec).get(name)      # owner ruling 2026-09-29: top and cheap resolve to opus
         out = {}
         for cls, spec in rec["classes"].items():
-            out[cls] = tuple(
+            model, effort = tuple(
                 pick_option(rec["order"][axis], spec[axis]["options"], spec[axis]["default"], how)
                 for axis, how in (("model", mh), ("effort", eh)))
+            out[cls] = (pinned or model, effort)
         return out
     mi, ei = SELECT[name]
     return {role: (spec["model"][mi], spec["effort"][ei])

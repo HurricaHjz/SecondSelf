@@ -10,8 +10,8 @@ bash .claude/skills/export-template/export_template.sh template-export
 Produces `template-export/` per `SPEC.md`.
 
 ## B. Verify (script prints most of this — confirm)
-- Skills = **every directory under `.claude/skills/`** (auto-discovered by `list_skills()`; check with `ls .claude/skills` — never a hand-kept list, which has gone stale twice: v0.7.6 and the 2026-08-23 `attic` omission). export-template ships too — users need its `--pull` to update.
-- **Suites — run every one the tree holds (discovered, never hand-kept: a hand list went stale a third time, 8 named of 21, 2026-09-06), then the build-side re-run; green = `0 failed` printed by each suite itself** (never compare against a historical count — assertion totals grow):
+- Skills are discovered automatically. The public payload contains every discovered skill except professor-loop, whose standalone prerequisites are still being prepared. Verify both that professor-loop is absent and that an ordinary skill and export-template are present. Verify the vault's excluded skill is unchanged. The exclusion applies to build/push packaging, not to private source maintenance.
+- **Suites — run every one the tree holds (discovered from the tree), then the build-side re-run; green = `0 failed` printed by each suite itself** (never compare against a historical count — assertion totals grow):
   ```bash
   n=0; L=$(mktemp -d); while IFS= read -r t; do n=$((n+1)); d=$(dirname "$t"); f=$(basename "$t")
     case "$f" in *.py) (cd "$d" && python3 "$f") ;; *) (cd "$d" && bash "$f") ;; esac > "$L/$n.log" 2>&1 || echo "SUITE FAILED: $t"
@@ -21,13 +21,12 @@ Produces `template-export/` per `SPEC.md`.
   ```
   Quote the `suite :: verdict` lines in the recap and sum them there, visibly; an empty verdict is a suite whose
   result line the parser did not recognise, to be read by hand, never a pass. A total carried from an earlier run
-  is not a verification (2026-09-06: a recap stated the previous session's total after its own probe printed another figure).
+  is not a verification.
   ```bash
   (cd template-export/.claude/skills/export-template && bash test_export_template.sh) || echo "SUITE FAILED: export suite INSIDE the build"
   ```
   The build-side re-run exists because the copy's premises differ from the vault's (`wiki/` is empty by
-  construction): a guard can pass here and fail there — the 2026-08-30 empty-wiki regression is the class
-  it catches, found only because that run was done ad hoc; this line makes it repeat.
+  construction): a guard can pass here and fail there; this line makes it repeat.
 - `template-export/wiki` & `/raw` hold only `.gitkeep` (no seed, no `index.md`/`log.md`); the demo is in
   `template-export/examples/seed/`.
 - No personal leak: the payload gate below covers this, deriving your strings from the vault rather
@@ -37,7 +36,8 @@ Produces `template-export/` per `SPEC.md`.
 - **Git-policy test** (the important one):
   ```bash
   cd template-export && git init -q && git add -A
-  git check-ignore -q wiki/log.md raw/x.md output/y.md wiki/sources/z.md && echo "content ignored ✓"
+  n=0; for p in wiki/log.md raw/x.md output/y.md wiki/sources/z.md; do git check-ignore -q "$p" && n=$((n + 1)); done
+  [ "$n" = 4 ] && echo "content ignored ✓"   # one path per call: git refuses --quiet with several paths (exit 128)
   git ls-files | grep -qE 'CLAUDE.md|MANUAL.md|\.claude/skills/|examples/seed' && echo "framework tracked ✓"
   cd ..
   ```
@@ -88,7 +88,7 @@ ordinary state of a new or reimaged machine, and what the script reports as
 does not exist yet.
 
 **Push (vault → repo)** — you improved the framework locally and want to publish it. One chain, never the steps by
-hand — a hand-typed chain committed past a failed gate (known-issues 2026-09-08). (§C's first publish is the one
+hand (known-issues 2026-09-08). (§C's first publish is the one
 exception: no clone exists there yet, so there is nothing to pull, overlay or gate.)
 ```bash
 bash .claude/skills/export-template/publish.sh --release <candidate> /path/to/second-yourself
@@ -105,7 +105,7 @@ git step fails; nothing is committed on any non-zero exit, and a STOP leaves the
 (`git -C <repo> reset -q`). `export_template.sh --push` is the overlay step it runs, and stays usable on its own for an
 overlay with no publish.
 `--push` overlays vault-owned files (CLAUDE.md, MANUAL.md, `README.md`/`LICENSE.md` + `assets/`,
-`.claude/skills/**`, `.obsidian` config, `examples/seed`) **and** the build machinery from the skill's
+the publishable skills under `.claude/skills/**` (the exception is listed in §B), `.obsidian` config, `examples/seed`) **and** the build machinery from the skill's
 `payload/` (setup.sh, .gitignore, .gitattributes), leaving `.git/` untouched. (`--sync` is an alias.)
 
 **Pull (repo → vault)** — the repo has a newer framework (another machine, a merged PR) and you want it:

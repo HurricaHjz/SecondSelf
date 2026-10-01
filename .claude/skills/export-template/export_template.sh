@@ -58,7 +58,10 @@ copy_framework() {
   [ -n "$STRAY" ] && { echo "ERROR: knowledge-shaped dirs inside .claude/skills — fix before shipping:"; echo "$STRAY"; exit 1; }
   cp "$SRC/CLAUDE.md" "$SRC/MANUAL.md" "$D/"
   mkdir -p "$D/.claude/skills"
+  # The authoring workflow remains local until its public prerequisites are packaged.
+  rm -rf "$D/.claude/skills/professor-loop"
   for s in $(list_skills "$SRC"); do
+    [ "$s" = professor-loop ] && continue
     rm -rf "$D/.claude/skills/$s"; cp -R "$SRC/.claude/skills/$s" "$D/.claude/skills/"
   done
   if [ -n "$(list_agents "$SRC")" ]; then    # known-issues 2026-08-27: the delegate skill's routing table
@@ -137,18 +140,95 @@ a = json.load(open(p))
 a.pop("enabledCssSnippets", None)
 json.dump(a, open(p, "w"), indent=2)
 PY2
+  # Local cost samples and gate histories stay in the source routing record.
+  # A fresh installation collects its own advisory costs; operational routing is unchanged.
+  if [ -f "$D/.claude/skills/delegate/routing.json" ]; then
+  python3 - "$D/.claude/skills/delegate/routing.json" <<'PY_ROUTING_PUBLIC'
+import json, sys
+p = sys.argv[1]
+with open(p, encoding="utf-8") as fh:
+    routing = json.load(fh)
+original = json.dumps(routing, sort_keys=True)
+for row in routing.get("classes", {}).values():
+    row.pop("cost", None)
+    if "gate" in row:
+        row["gate"] = "Local gate evidence is not distributed; validate changes with the routing procedure."
+    if "dated" in row:
+        row["dated"] = "Defaults are release configuration; record local changes with their evidence."
+if "_" in routing:
+    routing["_"] = "Model and effort defaults are anchors for per-call selection; record a reason for each override."
+if "preset_model" in routing and "_" in routing["preset_model"]:
+    routing["preset_model"]["_"] = "Presets select the configured model; the effort axis follows each preset rule."
+if json.dumps(routing, sort_keys=True) != original:
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(routing, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+PY_ROUTING_PUBLIC
+  fi
+  # Local pricing citations and alias-probe accounts remain in the source copy.
+  if [ -f "$D/.claude/skills/delegate/prices.json" ]; then
+  python3 - "$D/.claude/skills/delegate/prices.json" <<'PY_PRICES_PUBLIC'
+import json, sys
+p = sys.argv[1]
+with open(p, encoding="utf-8") as fh:
+    prices = json.load(fh)
+original = json.dumps(prices, sort_keys=True)
+if "source" in prices:
+    prices["source"] = "Packaged vendor list-price reference, used as a proxy rather than billing truth. Confirm current vendor rates before quoting costs."
+for section in ("families", "ids"):
+    for row in prices.get(section, {}).values():
+        if "source" in row:
+            row["source"] = "Input and output are list-price references in the declared units; cache prices derive from input multiplied by the listed factors. Confirm current vendor rates and cache tiers."
+if "conflicts" in prices:
+    prices["conflicts"] = ["The packaged Sonnet reference uses the introductory rate. Verify the applicable current rate before quoting a billed estimate."]
+if "models" in prices:
+    if '_' in prices["models"]:
+        prices["models"]["_"] = "Expected vendor model identifiers for alias resolution; re-probe and update these values when aliases change."
+    if 'aliases_probed' in prices["models"]:
+        prices["models"]["aliases_probed"] = "Probe each configured alias locally and record its returned model identifier before relying on fallback detection."
+    if 'helpers_note' in prices["models"]:
+        prices["models"]["helpers_note"] = "Harness helper-family substrings are exempt from fallback counts."
+if json.dumps(prices, sort_keys=True) != original:
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(prices, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+PY_PRICES_PUBLIC
+  fi
   # Strip VAULT-LOCAL blocks from every shipped Markdown file — content the vault needs but the
   # template must never ship (owner-specific setup: tier-3 activation wiring, machine paths, burner).
   # Marker: <!-- vault-local:begin --> … <!-- vault-local:end -->. General conditional-compile, so any
   # future vault-specific block ships nothing by wrapping it (added 2026-08-26).
-  find "$D" -name '*.md' -type f -print0 2>/dev/null | while IFS= read -r -d '' f; do
-    python3 - "$f" <<'PY3' || true
+  find "$D" -type f \( -name '*.md' -o -name '*.py' -o -name '*.sh' -o -name '*.txt' \) -print0 | while IFS= read -r -d '' f; do
+    python3 - "$f" <<'PY3'
 import re, sys
 p = sys.argv[1]
-try: t = open(p, encoding="utf-8").read()
-except Exception: sys.exit(0)
-n = re.sub(r"[ \t]*<!-- *vault-local:begin *-->.*?<!-- *vault-local:end *-->[ \t]*\n?", "", t, flags=re.S)
-if n != t: open(p, "w", encoding="utf-8").write(n)
+with open(p, encoding="utf-8") as fh:
+    t = fh.read()
+if p.endswith(".md"):
+    marker = r"<!-- *vault-local:(begin|end) *-->"
+    pattern = r"[ \t]*<!-- *vault-local:begin *-->.*?<!-- *vault-local:end *-->[ \t]*\n?"
+else:
+    marker = r"^[ \t]*# +<!-- *vault-local:(begin|end) *-->[ \t]*$"
+    pattern = r"^[ \t]*# +<!-- *vault-local:begin *-->[ \t]*\n.*?^[ \t]*# +<!-- *vault-local:end *-->[ \t]*(?:\n|$)"
+depth = 0
+for match in re.finditer(marker, t, flags=re.M):
+    if match.group(1) == "begin":
+        if depth:
+            print("PROBE FAILED: nested vault-local block in " + p)
+            sys.exit(2)
+        depth = 1
+    else:
+        if not depth:
+            print("PROBE FAILED: unmatched vault-local end in " + p)
+            sys.exit(2)
+        depth = 0
+if depth:
+    print("PROBE FAILED: unmatched vault-local begin in " + p)
+    sys.exit(2)
+n = re.sub(pattern, "", t, flags=re.S | re.M)
+if n != t:
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write(n)
 PY3
   done
 }

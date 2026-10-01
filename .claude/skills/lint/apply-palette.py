@@ -42,8 +42,8 @@ while args:
     elif a.startswith("--vault="):
         a = a.split("=", 1)[1]
     elif a.startswith("-"):
-        # An unknown flag used to be taken as the vault root, so a typo pointed the write at a
-        # directory named "--dry-run" instead of stopping (known-issues 2026-09-06).
+        # An unknown flag is refused, never taken as the vault root, so a typo cannot point the write
+        # at a directory named "--dry-run" (known-issues 2026-09-06).
         print(f"PROBE FAILED: unknown option {a} ({USAGE})", file=sys.stderr)
         sys.exit(2)
     if root is not None:

@@ -19,9 +19,9 @@ any other gate failure:
                               the owner-local output/publish-gate-strings.txt.
 
 Why both, and why here: the public payload ships `.claude/skills/**` wholesale, so anything
-that lands in a skill directory ships by default. On 2026-09-03 six tracked `.pyc` files
-(five under `.claude/skills/`) each carried the owner's absolute vault path in their
-bytecode; `.gitignore` cannot help once a file is tracked, and `strip_junk()` in
+that lands in a skill directory ships by default. A tracked `.pyc` file can carry the owner's
+absolute vault path in its bytecode; `.gitignore` cannot help once a file is tracked, and
+`strip_junk()` in
 export_template.sh keys on three file NAMES (__pycache__, *.pyc, .DS_Store), so the next
 artefact class slips past it. This gate keys on the observable property instead — what the
 bytes are, and where in the payload they sit — so it needs no list to maintain.
@@ -34,8 +34,8 @@ directory is caught by probe 1. Without a git work tree (a fresh build directory
 is walked on disk and the output says so.
 
 Probe 3 replaces the hand-run personal-strings gate of the export-template SKILL.md, which
-depended on the operator recalling every derivation source; on 2026-09-06 one run omitted the
-punctuation-led components of the vault path and missed a fixture hit. Its rules follow
+depended on the operator recalling every derivation source; a hand run can omit the
+punctuation-led components of the vault path and miss a fixture hit. Its rules follow
 publish-allowlist.md, which is parsed rather than read: an entry names the files it covers, a
 permanent entry is uncapped inside them, a provisional entry carries a per-file OCCURRENCE
 count and an expiry release, and a placeholder key covers a derivation class so the shipped
@@ -67,7 +67,7 @@ allowlist is missing, unreadable, parses to zero entries, or holds an entry that
 file, an unknown placeholder, a count on a permanent entry, a missing count on a provisional
 one, or two paths covering one payload file; the corpus control matches nothing.
 
-Suite: test_publish_guard.sh beside this file. Design: wiki/developments/publish-payload-guard-design.md
+Suite: test_publish_guard.sh beside this file.
 """
 
 import getpass
@@ -88,10 +88,10 @@ BATCH = 200                 # shas per `cat-file --batch` write (see read_index)
 #   fragment, not an absolute path: "$W" + the Linux home root is a fixture path in
 #   deep-lint/style-rerun/test_style_rerun.sh, and a URL segment of the same spelling is a
 #   URL. `/` stays OUT of the exclusion class, so a `file://` URL into a home root still fires.
-#   BYTES: no lookbehind. In a non-text file the preceding byte is data, not context — the
-#   2026-09-03 bytecode carried its path behind a marshal length byte ('o'), which the text
-#   lookbehind silently swallowed. Found by prototyping on the live payload, 2026-09-06:
-#   before this split the guard MISSED the exact artefact it was built for.
+#   BYTES: no lookbehind. In a non-text file the preceding byte is data, not context — a
+#   bytecode file can carry its path behind a marshal length byte ('o'), which the text
+#   lookbehind silently swallows, so without this split the guard would miss the exact artefact
+#   it was built for.
 #   ROOTS: all three a home directory can have — the macOS, Linux and Windows ones. Keying
 #   on the two this machine happens to use is the "instance constant" failure §12 warns
 #   about; a contributor's fixture is as public as ours (critic finding, 2026-09-06).
@@ -104,8 +104,7 @@ HOME_BYTES_RE = re.compile(_POSIX + rb"|" + _WIN)
 # the guard exempts nothing, because an exemption is the hole the next artefact walks through.
 # Every example home path below is therefore ASSEMBLED at import time, never written as a
 # literal, so the invariant stays absolute: no shipped file contains an absolute home path.
-# (Found by prototyping the guard on the live payload before review, 2026-09-06: written as
-# literals, this file and its suite halted the publish on themselves.)
+# (Written as literals, this file and its suite would halt the publish on themselves.)
 _U = "/U" + "sers"
 _H = "/h" + "ome"
 
@@ -129,8 +128,8 @@ CLASS_CONTROLS = (
 # ── probe 3: personal strings ────────────────────────────────────────────────
 # The strings that identify THIS owner are derived at run time from the vault beside this
 # script, never stored, because storing them would ship them. Deriving them also puts the
-# derivation under test, which is the half the hand-run gate kept losing: the 2026-09-06 run
-# that omitted the punctuation-led components of the vault path missed a fixture hit.
+# derivation under test, which is the half the hand-run gate kept losing (a hand run that omits
+# the punctuation-led components of the vault path misses a fixture hit).
 MIN_NEEDLE = 4              # bytes. Set by judgement against the live needle set, whose
                             # shortest member is 5 bytes. The floor drops the generic short
                             # components a system or temp root contributes (var, tmp, usr,
@@ -308,9 +307,8 @@ def path_components(path):
     A leading drive letter and a leading home-root marker are the machine's, not the owner's
     (see HOME_MARKERS); everything from the account name onward is the owner's. Components
     are kept VERBATIM and never split: splitting a punctuation-led component into its word
-    would fire on ordinary prose (114 hits of one such word across 24 files of the live
-    payload, measured 2026-09-06) while adding no personal string, because the personal shape
-    IS the component and probe 1 already owns the full-path form.
+    would fire on ordinary prose while adding no personal string: the component is the
+    personal shape, and probe 1 already owns the full-path form.
     """
     comps = [c for c in re.split(r"[\\/]+", path) if c]
     if comps and DRIVE_RE.match(comps[0]):
@@ -573,15 +571,13 @@ def entry_cap(entry, path):
     # A literal key writes its own string into this file, so the entry covers its key inside
     # the file that declares it. Not an exemption: it is scoped to the one string the entry
     # already adjudicates, and any OTHER personal string reaching the allowlist still halts.
-    # Found by prototyping on the live payload, 2026-09-06 — the first entry with a literal
-    # key halted the publish on the allowlist itself.
+    # An entry with a literal key would otherwise halt the publish on the allowlist itself.
     if not entry["placeholder"] and (path == ALLOWLIST_NAME or path.endswith("/" + ALLOWLIST_NAME)):
         return -1
     # Longest suffix wins, and the binding is unambiguous by construction: two DISTINCT
     # entry paths of equal length cannot both be component-anchored suffixes of one payload
-    # path, so a tie needs no rule. (An ambiguity check was written here and removed the same
-    # day once that was proved: a branch that can never run is worse than none, because it
-    # reads as a hazard someone handled.)
+    # path, so a tie needs no rule, and no ambiguity check sits here: a branch that can never
+    # run is worse than none, because it reads as a hazard someone handled.
     best = None
     for p, count in entry["paths"].items():
         if path == p or path.endswith("/" + p):

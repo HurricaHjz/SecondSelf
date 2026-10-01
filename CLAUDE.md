@@ -29,6 +29,14 @@ When you operate on the knowledge base, you operate as its **librarian and compi
 > **You do all the bookkeeping** — summarising, cross-linking, filing, deduping, conflict-tracking.
 > Obsidian is the IDE · you are the programmer · the wiki is the codebase.
 
+**Reading the owner (owner ruling 2026-09-29).** Read the owner as a person would: act on a clear
+instruction, and on the standing duties and rulings of this contract and `CUSTOMISATION.md`, within
+every permission and owner gate they set; ask when unsure what the owner wants (unattended: ask in
+the report); propose, rather than make, any other change the owner did not ask for. Mechanisms keep
+what the owner confirmed, enforce fixed limits, and observe and report; none replaces reading the
+owner, and none is worked around, though a state a mechanism set without the owner's confirmation
+is corrected, not obeyed (§12).
+
 **Personal context (`wiki/user/`):** the human's own profile, research, publications, and works live
 in `wiki/user/`. **Consult it whenever personal context helps** — tailoring an answer to their field,
 citing their own work, or resolving who "I / me / my" refers to. The human curates it; add or update
@@ -176,7 +184,7 @@ context, or its add-ons suffice; a lane only where a named reason holds — (a) 
 independence or blindness, (b) parallel breadth one context cannot hold, (c) context isolation the
 watermark bands demand, (d) a task longer than the head can afford at its current context — and then
 the minimum number (drafting helpers on disjoint, fully specified writing tasks are uncapped, one page or section each, the head applying and deciding: owner ruling 2026-09-07). The reason enters the spawn record **before** the spawn; a spawn without one is a
-defect for the register. Design: `wiki/developments/thin-lanes-design.md`.
+defect for the register.
 
 **A lane's context is assigned per call, never inherited.** A headless lane, spawned through `lane.py`
 from the machine-local lane home (§2 map), sees its brief, the appended lane core and class slices,
@@ -187,7 +195,7 @@ in-session lane spawned with the Agent tool still inherits this contract in full
 bound by the write classes above.
 
 Which steps route to lanes and which stay with the head is decided per skill under the parity-gate
-protocol of `wiki/developments/fable-minimising-routing.md`; a routed skill carries a **Routing** note at
+protocol described in the delegate skill; a routed skill carries a **Routing** note at
 the step it routes, and the note applies under the `multi` regime (in `single` the head runs the step unless an
 instrument-rule reason holds). The regime is the `delegation` knob's value, `auto` by default: the head
 resolves each run into `single` or `multi`, records why in the run's spawn record, and the status line
@@ -258,14 +266,17 @@ the raw file) let `ingest` detect a re-added document — see the `ingest` skill
 
 - **Entities, Concepts, Models, Benchmarks & Tools** → `Title Case With Spaces.md` → e.g. `[[Claude Code]]`, `[[Qwen]]`, `[[AIME]]` (a tool keeps its conventional lowercase name where canonical, e.g. `qmd`, `defuddle`). User pages follow the same Title Case (`About Me.md`, `Customisation.md`).
 - **Sources, Syntheses, Developments & Maps** → `kebab-case.md` → e.g. `karpathy-llm-wiki-gist.md`, `wiki-confidence-levels.md`.
-- **Notes** — the owner's compact mind-refreshers, a **synthesis subtype** (`type: synthesis`, structure and rules unchanged) — keep kebab-case but **must be prefixed `notes-`** → e.g. `notes-token-and-caching.md`, so the owner can find every note at a glance.
+- **Notes** — the owner's compact mind-refreshers, a **synthesis subtype** (`type: synthesis`, structure and rules unchanged) — keep kebab-case but **must be prefixed `notes-`** → e.g. `notes-example-topic.md`, so the owner can find every note at a glance.
 - **A rename keeps its old name.** Add the previous stem to the successor's `aliases:` in the same pass — renames here run through shell `mv`, so Obsidian's link updater never fires, and the alias is what keeps historical links (`log.md`, `IDEAS.md`, `output/`, dated `developments/` records) resolving without sweeping every layer.
 
 ### 4.3 Required structure per type
 
 - **concept / entity / tool** — `## Definition` · `## Key Points` · `## Related` (backlinks)
 - **model / benchmark** — `## Definition` · `## Key Points` (optional) · `## Appears in` (papers that use it) · `## Related`
-- **source** — `## Summary` (3–5 sentences) · `## Key Takeaways` · `## Related`
+- **source** — `## Summary` (the source's core, concisely) · `## Key Takeaways` · `## Related`
+  - **Research-depth source pages** (`depth: research`) may carry the ingest skill's research template
+    sections in place of `## Summary` and `## Key Takeaways`; `## Related` stays mandatory (the
+    no-orphans rule); the lint required-sections check reads `depth:` before judging a page's sections.
 - **synthesis** — the analysis/answer · `## Sources Used` (wikilinks to every page cited)
 - **development** — a *framework self-upgrade* doc (design · plan · rollout for changes to **this vault itself**); flexible sections + `## Sources Used`
 - **map** — a curated Map of Content: brief orientation + grouped `[[links]]` to a cluster's key pages (a navigational hub; exempt from the no-orphan rule)
@@ -322,8 +333,8 @@ instruction overrides a page's tier** (e.g. the owner's published paper → `aut
 
 ### `wiki/index.md` — content catalogue (update on every ingest)
 Format: `- [[Page Name]] — one-line description.` grouped under `## Sources / Entities / Tools / Models / Benchmarks / Concepts / Syntheses / Developments / Maps / User`.
-**Every writer updates it by anchored `Edit` or append — never a whole-file read-modify-write**: a rewrite commits a stale snapshot and silently erases entries a concurrent session added meanwhile (observed live 2026-08-23; anchored `Edit` instead surfaces a modified-on-disk warning and the concurrent entry survives).
-**Read it by need, in four modes.** `route` — the whole file, whenever the question is *which* pages bear on a topic; the only mode at full recall, since a lexical grep over the index finds 49 % of what real syntheses cited and a grep good enough to route costs what the whole read costs. `section` — one or more named `## ` blocks, only where the list is one a shipped skill step prints (the `ingest` Step 4 table) or the owner's instruction names; a list composed in-session is doubt. `name` — the `- [[…]]` targets alone (`grep -o`), for a membership check. `anchor` — one entry fetched by its exact page name already known, to read its description or copy its line before an edit; never a search (owner 2026-09-07). `anchor` — `grep -n` for one heading or entry line, the only read a registry write needs. **On any doubt, `route`**: a wrong section list loses recall silently. Derivation and the per-consumer table: [[registry-read-policy]]. This replaces embedding-based RAG at this scale.
+**Every writer updates it by anchored `Edit` or append — never a whole-file read-modify-write**: a rewrite commits a stale snapshot and silently erases entries a concurrent session added meanwhile; anchored `Edit` instead surfaces a modified-on-disk warning.
+**Read it by need, in four modes.** `route` — the whole file, whenever the question is *which* pages bear on a topic; the only mode at full recall, because lexical matches cannot establish complete relevance. `section` — one or more named `## ` blocks, only where the list is one a shipped skill step prints (the `ingest` Step 4 table) or the owner's instruction names; a list composed in-session is doubt. `name` — the `- [[…]]` targets alone (`grep -o`), for a membership check. `anchor` — one entry fetched by its exact page name already known, to read its description or copy its line before an edit; never a search (owner 2026-09-07). `anchor` — `grep -n` for one heading or entry line, the only read a registry write needs. **On any doubt, `route`**: a wrong section list loses recall silently. This replaces embedding-based RAG at this scale.
 
 ### `wiki/log.md` — append-only timeline (log brain-updating ops only)
 **Append-only — in normal ops never read the whole file** (it grows unbounded): *append via shell* (`cat >>` / `echo >>`), never Read+Edit. Read or grep it **only** on explicit request or for debugging — e.g. `grep "^## \[" wiki/log.md | tail -5` lists recent activity cheaply:
@@ -334,7 +345,7 @@ Format: `- [[Page Name]] — one-line description.` grouped under `## Sources / 
 - **Clock**: HH:MM BST   (the write primitive stamps it from the clock, 2026-09-08)
 - **Conflicts**: none   (or: conflict with [[Page B]], flagged)
 ```
-**Keep the entry small** — the shape above, ~600 bytes (template ≈175 B, corpus median ≈750 B when set — 2026-08-23, `wiki/developments/threshold-governance-and-prefix-reconciliation.md`). Detail belongs in the `wiki/developments/` page the entry links, not in the log; the one exception is an entry that is itself the run's only record (a deep-lint audit), which takes what the record needs and no more.
+**Keep the entry small** — use the shape above. Detail belongs in the `wiki/developments/` page the entry links, not in the log; the one exception is an entry that is itself the run's only record (a deep-lint audit), which takes what the record needs and no more.
 Actions: `ingest` · `gather` · `synthesis` · `lint` · `deep-lint` · `framework` · `setup` · `maps` · `attic` · `export`.
 **Delegation:** an entry a delegate produced names its mechanism (which lane, which model); the head
 agent owns the run's log record unless the lane holds the §2.2 registry exception.
@@ -371,7 +382,13 @@ A query answered **inline** (no file written) and a **read-only** lint scan are 
 > frontmatter, §4.4 blocks — no extra reads); `ingest`, on a conflict over a time-sensitive fact,
 > suspects the older page, not the newer source (one bounded probe or a `flagged:` mark before any
 > downgrade — the ingest skill, Step 4); and `deep-lint` reconciles the flags plus capped samples of the
-> changed and cold pools rather than re-reading the vault (design: `wiki/developments/deeplint-scalable-maintenance-design.md`).
+> changed and cold pools rather than re-reading the vault.
+> **Supersession is flagged when it is learned, in every workflow (owner ruling 2026-09-22).** New
+> information that arrives in a session — a ruling, an installed design, a measurement, a source — and
+> contradicts a dated fact a wiki page states as current is marked on that page in the same pass, research
+> and development alike: a dated status fact where the edit is small, else a `flagged:` line naming what
+> superseded it; and a rule quoted from a design page is first checked for a later status on the pages that
+> link to it before relying on the quoted rule.
 
 **Gap-driven gather (propose-only).** When a `query`/`output` run finds the vault demonstrably lacks
 knowledge load-bearing for the live task, it may propose ONE `/gather` (never `--yes`), surfaced
@@ -395,7 +412,7 @@ step. In `query`, `research` stays **opt-in or ask-first, never silent**.
 Each skill's own description surfaces automatically — below is just *when to reach for which*:
 - **Capture / convert**: `defuddle` for web page → Markdown; **`markitdown`** for any non-`.md` source; WebFetch only for throwaway lookups, **never to capture a source** (§3.1).
 - **Vault I/O**: prefer **`obsidian-cli`** (cheaper/safer than raw file ops); `obsidian-markdown` for Obsidian-flavoured syntax; `obsidian-bases` (`.base` views) · `json-canvas` (`.canvas` maps).
-- **Adopted add-ons** (user-level skills, plugins, CLI tools, connectors; machine-local, never shipped): each has a use level, `auto` · `propose-first` · `by-name`, with its pin and grant wording in `wiki/developments/capability-register.md`; consult it before using an adopted add-on the owner did not name and before writing a hands-off grant. On a fresh vault the page is absent: every add-on is then `auto` under its own description until `/adopt` seeds it. Design: `wiki/developments/capability-register-design.md`.
+- **Adopted add-ons** (user-level skills, plugins, CLI tools, connectors; machine-local, never shipped): each has a use level, `auto` · `propose-first` · `by-name`, with its pin and grant wording in `wiki/developments/capability-register.md`; consult it before using an adopted add-on the owner did not name and before writing a hands-off grant. On a fresh vault the page is absent: every add-on is then `auto` under its own description until `/adopt` seeds it.
 - **Custom (this vault)**: `ingest` · `gather` (opt-in web capture: seed or search mode) · `delegate` (head-agent delegation runbook + spawn-brief templates, agent-internal) · `reflect` (explicit-only session capture) · `query` · `lint` · `deep-lint` (heavy ~monthly maintenance) · `attic` (explicit-only cold-storage archive/restore) · `qmd-search` (opt-in semantic search; dormant until qmd is installed) · `output` · `export-template` (publish/update the public framework repo) · `adopt` (owner-triggered add-on adoption; the register's only writer) · `project` (explicit-only management of the owner's own working repositories, Overleaf and code, kept outside the vault) — see §6.
 - **Version control / backup**: the **Obsidian Git** plugin backs up the *whole vault* (knowledge included) to a *private* remote (history + multi-device sync); `export-template` publishes the *framework only* to the *public* repo. Two repos, never crossed (§11).
 
@@ -428,7 +445,7 @@ Each skill's own description surfaces automatically — below is just *when to r
 
 ## 10. Search & Scale
 
-- At this scale (348 sources, 863 pages on 2026-09-06) **`index.md` is the search layer** — no vector DB needed. A routing question reads it in `route` mode and then `grep`s the pages it named; a grep over the index alone is a membership check, never a search (§5).
+- For catalogue routing **`index.md` is the search layer** — no vector DB needed. A routing question reads it in `route` mode and then `grep`s the pages it named; a grep over the index alone is a membership check, never a search (§5).
 - **Optional semantic layer — [qmd](https://github.com/tobi/qmd) via the `qmd-search` skill**,
   **dormant by default**: used only when qmd is installed, an index exists, and no `.qmd-off` marker
   sits at the vault root; otherwise silent fallback to `index.md` → `grep`. **Retrieval only** — the
@@ -479,8 +496,8 @@ Each skill's own description surfaces automatically — below is just *when to r
   head re-reads before continuing. The per-turn `context:` line (a vault-local hook like the git guard
   above: never ships, recreate on a fresh machine) carries two bands: from the first, write the hand-off
   document at every item boundary and, with an owner present, recommend a fresh session; from the
-  second, finish what is in flight and start nothing new. Rule and document shape: the `delegate` skill
-  §4; design and derivation: `wiki/developments/context-length-resilience-n115.md`.
+  second, finish what is in flight and open a new item only where the hands-off gate's fit check allows it (an attended session starts nothing new). Rule and document shape: the `delegate` skill
+  §4.
 - ⚠️ **Human in the loop.** Default ingest pacing is `auto` (the `ingest` skill chooses batch,
   one-by-one or parallel — see its Pacing section; parallel always gets the owner's go first); always surface conflicts and large/uncertain changes for
   review rather than committing silently. A **hands-off long run** starts only after a pre-flight the owner can
@@ -505,20 +522,23 @@ Each skill's own description surfaces automatically — below is just *when to r
   ruling 2026-09-02; the proactive isolation clause of the earlier wording is retired). **Key the
   guard on the behaviour, not a model name.** No lane, read or task is routed away from a model on
   the agent's belief that content is trigger-prone: the routing ranges and the `throttle` knob
-  decide the model, and a hard task takes fable. *Lane-level refusal:* the first `stop_reason:
-  "refusal"` / safeguard refusal of legitimate content is the signal — stop retrying (it re-flags,
-  and one flagged read poisons the resent history), or a platform-side ban of that model for that
-  task: recover that lane's state from disk, re-run that one task one step down the model order
-  (fable → opus), and notify the owner once; every other task keeps its model, and no session-wide
-  downgrade is inferred. *Head-level refusal* ends the session: the harness error is the
+  decide the model (task kind first: opus for closed work, Astra for open work; opus 5.5 on every
+  Claude seat and fable only on the owner's word, the head's own model as `CUSTOMISATION.md` sets
+  it; owner rulings 2026-09-22 and 2026-09-29). *Lane-level refusal:* the first `stop_reason: "refusal"` / safeguard refusal of
+  legitimate content is the signal — stop retrying (it re-flags, and one flagged read poisons the
+  resent history), or a platform-side ban of that model for that task, or a *transparent safeguard
+  fallback* (Opus 5.5 re-routes some tasks to another model with no refusal to see; the lane wrapper
+  reads it from the result's model ids and marks the close `fallback`): recover that lane's state from
+  disk, move that one task's remaining work to GPT-6 Astra (`codex-lane.py`) at the same effort rung,
+  and tell the owner once; every other task keeps its model, no session-wide downgrade is inferred,
+  and the agent never provokes either (owner rulings 2026-09-22 and 2026-09-29; before them the fallback
+  was one step down the model order, fable → opus). *Head-level refusal* ends the session: the harness error is the
   notification, and recovery runs in a fresh session from disk (work to disk, recover from vault
   state). An account-level ban is an external event, reported when seen. A usage or session limit, a timeout or a
   stall is never a fallback trigger: wait for the reset and re-run on the same model; any other fallback
   the agent thinks a task needs goes to the owner for permission before it starts (owner ruling
   2026-09-02). The classifiers are
-  server-side, never disableable, never circumvented. Design record, the exposure map for reading a
-  refusal, and limits: `wiki/developments/model-safety-fp-isolation.md` (proactive isolation retired
-  there as a dated status fact).
+  server-side, never disableable, never circumvented. The refusal remains the boundary.
 
 ---
 
@@ -528,7 +548,7 @@ Each skill's own description surfaces automatically — below is just *when to r
   the supervisor down unless the pre-flight armed limit-off, in which case it waits for the reset
   time the stop text names and resumes per the design's rule. Any change to
   that handling, and any inquiry into why a limit fell when it did, needs the owner's explicit
-  approval first (design record: `wiki/developments/hands-off-mode-design.md`, §Account plan).
+  approval first.
 
 ## 12. Framework / self-modification policy
 When you change *how the system works* (this `CLAUDE.md`, a skill, the folder layout, conventions):
@@ -554,14 +574,14 @@ When you change *how the system works* (this `CLAUDE.md`, a skill, the folder la
   rationale live in `wiki/developments/` and `wiki/log.md` — never in files loaded each session.
 - **Sweep the contract, not just the code.** A change that retires or alters a rule must find and
   reconcile every *restatement* — in this schema, the skills, their tests, and forward-facing
-  `developments/` specs — in the same change (dated records of what was once true stay). Grep for the
+  `developments/` specs — in the same change (dated records of what was once true stay; a superseded
+  design page takes a dated status fact or a `flagged:` line at its top, never silence). Grep for the
   retired **claim**, not only the changed path, and prove the sweep ran with a control pattern (§11).
   An **addition** (a new field, a new duty) has no retired claim to grep: sweep the surfaces that
   *emit* pages instead — frontmatter templates, seeders (`setup.sh` heredocs, shipped examples), lane
-  duty lists (a live miss: the 2026-08-27 `audited:` rollout reached schema and skills, not the export payload).
+  duty lists.
   A **fold** — a claim that an existing surface already carries an idea — is a claim too: record it
-  with the carrying file and clause, grep-checked; a fold without a named carrier stays open (live
-  miss 2026-08-30: a plan marked an idea "folded" into surfaces that carried nothing).
+  with the carrying file and clause, grep-checked; a fold without a named carrier stays open.
 - **A number that decides carries its derivation.** A threshold that fires a flag, blocks an action
   or reroutes work states its evidence (measurement · dated incident · cost model) or an explicit
   "set by judgement, unmeasured" beside it; a number that merely bounds (safety cap, truncation,
@@ -570,12 +590,19 @@ When you change *how the system works* (this `CLAUDE.md`, a skill, the folder la
   composition — attribute each delta — rather than thresholding the total: a growth threshold
   converts sanctioned change into alarm. Cite vault-local evidence pages in **ship-safe wording** —
   every shipped surface is scanned for personal strings at publish, and a personally-named path in a
-  citation halts it (halt precedent 2026-08-25).
+  citation halts it.
 - **The prefix admits only what binds globally.** A new always-on line (this schema,
   `CUSTOMISATION.md`) earns its place only if it changes behaviour in sessions where its topic never
-  arises through a skill; procedure a skill owns lives in that skill, with at most a one-line pointer
-  here. Deep-lint's prefix reconciliation attributes what slips through. (Evidence: the measured
-  decomposition record on the skills-strategy page in `wiki/developments/`.)
+  arises through a skill; procedure a skill owns lives in that skill, with a concise pointer
+  here. Deep-lint's prefix reconciliation attributes what slips through.
+- **Prefer the model's judgement to mechanism** (owner ruling 2026-09-29). The model reads the
+  owner's words and applies the choice; no mechanism infers intent from them. A mechanism keeps a choice
+  the model applied, enforces an objective limit, or observes and reports a named condition. A check,
+  hook or fixed rule (a pattern, trigger or threshold acting without judgement) earns its place only
+  where a named failure would otherwise go unnoticed by the owner, be unrecoverable or cause material
+  loss, or where it records or enforces an explicit owner decision; existing permissions, owner gates
+  and guards stay binding until the owner retires them. (Rationale: the rejected switch-parser fixes,
+  `wiki/developments/known-issues.md`, entry of 2026-09-29 09:10.)
 - **Attack a new guard before shipping it.** For any added check, script or hook, enumerate what it
   does when its own premise fails (missing file, deleted marker, zero-match pattern) and make each
   case behave sensibly — a guard that fires on its own broken premise is worse than no guard. Key a
@@ -583,15 +610,14 @@ When you change *how the system works* (this `CLAUDE.md`, a skill, the folder la
   an instance constant silently excludes the next instance that should fire it — a failure the
   premise check above will not catch. Then run it before it is reviewed: a new guard is prototyped on
   its live surface with a planted case that must fire and one that must not, since a guard judged as
-  prose costs a review round per premise the prose forgot (five rounds, 2026-09-06; the prototyped
-  draft passed). A check on a finished reply warns and logs; it does not hold
+  prose can miss a live premise. A check on a finished reply warns and logs; it does not hold
   or rewrite the reply, and no warning asks for a correction (owner ruling 2026-09-04; a hold only
-  behind an owner switch, `wiki/developments/per-reply-contract-enforcement.md`).
+  behind an owner switch).
 - **A framework-changing plan takes an independent critic review before the owner gate**, whatever
   the active role and whether or not any skill is loaded (routing: the `delegate` skill §2 table);
   findings are folded or rebutted with evidence, filed where the owner can read them, and the
   owner sees the disposition, never just a verdict. Any plan for substantial work also states the lane shape it chose — including why it
-  stays single-agent where it does (owner ruling 2026-08-29). **Adoption clause (2026-09-05):** adopting an add-on under the reviewed pattern (`wiki/developments/capability-register-design.md`) with its scripted acceptance legs clean takes the owner's report gate without a critic; an adoption that changes a contract, a hook or a skill takes the critic like any other plan.
+  stays single-agent where it does (owner ruling 2026-08-29). **Adoption clause (2026-09-05):** adopting an add-on under the reviewed pattern with its scripted acceptance legs clean takes the owner's report gate without a critic; an adoption that changes a contract, a hook or a skill takes the critic like any other plan.
 - **Consult and record in `wiki/developments/`** — the framework's own self-upgrade memory. **Before**
   a framework change, read the relevant `developments/` docs (build on prior decisions, never
   re-derive or contradict them); **after**, file the design/plan/rollout there (`type: development`,

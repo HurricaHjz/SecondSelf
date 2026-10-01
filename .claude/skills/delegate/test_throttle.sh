@@ -23,12 +23,18 @@
 # the code against the same file the code reads.
 #
 # Run:  sh test_throttle.sh          (last line: PASS n/n or FAIL k/n; exit 0 only when clean)
+#       VAULT_DIR=<vault root> sh test_throttle.sh     from a copy staged outside the vault (L56)
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 S="$HERE/throttle.py"
 R="$HERE/routing.json"
-VAULT=$(cd "$HERE/../../.." && pwd)      # .claude/skills/delegate -> vault root
+# The vault the live-definition legs read (the definitions every fixture copies, L34, L47-L48).
+# Derived three directories above this file, which is a vault only where the skill sits in one;
+# from a staged copy that derivation lands outside any vault and 13 legs read red on a premise
+# they never meant to test, so VAULT_DIR names it — the escape test_publish_guard.sh carries,
+# and test_handsoff.sh's HOOKS_DIR is. Leg L56 runs a staged copy through it.
+VAULT=${VAULT_DIR:-$(cd "$HERE/../../.." && pwd)}      # .claude/skills/delegate -> vault root
 PY="${PYTHON:-python3}"
 PASS=0
 FAIL=0
@@ -42,6 +48,8 @@ cleanup() { chmod -R u+w "$W" >/dev/null 2>&1; rm -rf "$W"; }
 trap cleanup EXIT
 [ -f "$S" ] || { echo "PROBE FAILED: no throttle.py at $S"; echo "FAIL 1/1"; exit 2; }
 [ -f "$R" ] || { echo "PROBE FAILED: no routing.json at $R"; echo "FAIL 1/1"; exit 2; }
+# A VAULT_DIR naming nothing is a broken premise, never 13 silent reds (L56b is its leg).
+[ -n "$VAULT" ] && [ -d "$VAULT" ] || { echo "PROBE FAILED: no vault directory at '$VAULT' (set VAULT_DIR)"; echo "FAIL 1/1"; exit 2; }
 
 run() { "$@" >"$OUT" 2>&1; RC=$?; }
 has() { grep -qF -- "$2" "$OUT" && ok "$1" || no "$1 (stdout lacks '$2')"; }
@@ -146,8 +154,8 @@ for role, spec in rows.items():
 MKFIX_SCRIPT_END
 
 # The schema-1 record every v1 leg runs against. Embedded, never read from the installed file:
-# the installed record moved to schema 2 on 2026-09-04, and a v1 leg pointed at it grades the v1
-# rules against a record that no longer has them (12 legs failed exactly that way).
+# the installed record moved to schema 2 on 2026-09-04, and a v1 leg pointed at it would grade the
+# v1 rules against a record that no longer has them.
 V1="$W/routing.v1.json"
 cat >"$V1" <<'V1_RECORD_PAYLOAD_END'
 {"order": {"model": ["haiku", "sonnet", "opus", "fable"], "effort": ["low", "medium", "high", "xhigh", "max"]},
@@ -189,11 +197,12 @@ pins() { # $1 throttle -> "role model effort" triples, one per line
 	cheap-fast) printf 'critic opus xhigh\ngate-judge opus max\nwiki-compile sonnet medium\nbuilder sonnet high\n' ;;
 	esac
 }
+# The head line reads opus under every throttle since the owner's ruling of 2026-09-29 (fable before).
 headline() {
 	case "$1" in
-	auto | top | default) echo "head: fable · max" ;;
-	cheap | cheap-fast) echo "head: opus · max recommended" ;;
-	fast) echo "head: fable · high recommended" ;;
+	auto | top | default) echo "head: opus · max" ;;
+	cheap | cheap-fast) echo "head: opus · xhigh recommended" ;;
+	fast) echo "head: opus · high recommended" ;;
 	esac
 }
 
@@ -209,7 +218,7 @@ eq "L01a show exits 0" "$RC" "0"
 has "L01b show reports the absent Settings line as auto (the default preset from 2026-09-08)" "throttle: auto (no throttle line: treated as auto)"
 eq "L01c show prints the pinned default row for wiki-compile" \
 	"$(awk '$1=="wiki-compile"{print $2, $3}' "$OUT")" "opus max"
-has "L01d show prints the head recommendation" "head: fable · max"
+has "L01d show prints the head recommendation" "head: opus · max"
 seen=0
 for r in $ROLES; do
 	awk -v r="$r" '$1==r{f=1} END{exit !f}' "$OUT" && seen=$((seen + 1))
@@ -538,7 +547,7 @@ PLANT_NONTIER_END
 run "$PY" "$S" check --root "$d"
 eq "L30a a non-tier word after the separator does not fire" "$RC" "0"
 hasnot "L30b and no DESCRIPTION-TIER line is printed" "DESCRIPTION-TIER"
-# Live miss 2026-09-02: the reflector wording names a tier without the word "effort".
+# The reflector wording names a tier without the word "effort".
 "$PY" - "$d/.claude/agents/critic.md" <<'PLANT_REFL_END'
 import re, sys
 p = sys.argv[1]
@@ -615,7 +624,7 @@ eq "L34d control: an allowlist that names Skill is caught" "$(skill_off "$d/plan
 
 # ======================================================= 17 · schema 2: the record ===
 # The v2 record under test is the suite's own hand-written copy of the design page's class
-# table (thin-lanes-design.md, "The class table"), so the code is never graded against the
+# table (the routing contract class table), so the code is never graded against the
 # same file it reads. `ROUTING_V2=<path> sh test_throttle.sh` swaps in a candidate record —
 # how a proposed or freshly installed routing.json is graded against the same hand-derived
 # pins before it goes live. 2026-09-08: the record pins the design's TARGET effort defaults,
@@ -706,6 +715,60 @@ eq "L37a resolve gate-judge under 'top'" "$(rgot)" "$(rpins gate-judge top)"
 run "$PY" "$S" resolve --class gate-judge --throttle cheap-fast --root "$D2"
 eq "L37b resolve gate-judge under 'cheap-fast' (single-option row)" "$(rgot)" "$(rpins gate-judge cheap-fast)"
 
+# ======================================================= 17p · preset_model ===========
+# The owner's ruling of 2026-09-29: `top` and `cheap` both resolve every class's model to opus until a
+# stronger Claude model (fable 5.5 or later) arrives and he says so. The record carries it as
+# `preset_model`; the effort axis keeps the table's rule. The suite's own v2 record gains the block in a
+# copy; L35 to L37 above, on the record without it, are the control that the order-based picks hold
+# wherever no block is present.
+V2P="$W/routing.v2p.json"
+"$PY" - "$V2" "$V2P" <<'PRESET_PAYLOAD_END'
+import json, sys
+rec = json.load(open(sys.argv[1]))
+rec["preset_model"] = {"top": "opus", "cheap": "opus", "_": "fixture: the owner ruling of 2026-09-29"}
+json.dump(rec, open(sys.argv[2], "w"), indent=2)
+PRESET_PAYLOAD_END
+D2P="$W/v2p"
+mkfix v2p "$V2P"
+run "$PY" "$S" resolve --class verifier --throttle top --root "$D2P"
+eq "L37p1 preset_model: verifier under 'top' resolves to opus, the effort ceiling kept" "$(rgot)" "opus max"
+run "$PY" "$S" resolve --class verifier --throttle cheap --root "$D2P"
+eq "L37p2 verifier under 'cheap' resolves to opus, the effort ceiling kept" "$(rgot)" "opus max"
+run "$PY" "$S" resolve --class wiki-compile --throttle top --root "$D2P"
+eq "L37p3 wiki-compile under 'top' resolves to opus" "$(rgot)" "opus max"
+run "$PY" "$S" resolve --class wiki-compile --throttle cheap-fast --root "$D2P"
+eq "L37p4 control: a preset the block does not name keeps the table's pick (cheap-fast)" "$(rgot)" "sonnet medium"
+run "$PY" "$S" resolve --class verifier --throttle auto --root "$D2P"
+eq "L37p5 control: auto keeps the anchors" "$(rgot)" "sonnet xhigh"
+d="$W/v2pbad"
+mkfix v2pbad "$V2P"
+RJP="$d/.claude/skills/delegate/routing.json"
+preset_plant() { # $1 = the new block, as JSON
+	"$PY" - "$RJP" "$1" <<'PRESET_PLANT_END'
+import json, sys
+p = sys.argv[1]
+rec = json.load(open(p))
+rec["preset_model"] = json.loads(sys.argv[2])
+json.dump(rec, open(p, "w"), indent=2)
+PRESET_PLANT_END
+}
+preset_plant '{"top": "fable", "cheap": "opus"}'
+run "$PY" "$S" check --root "$d"
+eq "L37p6 a preset model a class does not list is a broken premise, exit 2" "$RC" "2"
+has "L37p7 it names the preset, the model and the class" "names 'fable', which class"
+preset_plant '{"turbo": "opus"}'
+run "$PY" "$S" check --root "$d"
+eq "L37p8 a preset_model key naming no preset is a broken premise, exit 2" "$RC" "2"
+preset_plant '{"top": "gpt-6-astra"}'
+run "$PY" "$S" check --root "$d"
+eq "L37p9 a preset_model value outside order.model is a broken premise, exit 2" "$RC" "2"
+preset_plant '["opus"]'
+run "$PY" "$S" check --root "$d"
+eq "L37p10 a preset_model that is not an object is a broken premise, exit 2" "$RC" "2"
+run "$PY" "$S" check --root "$D2P"
+eq "L37p11 control: the same probe on the well-formed block is no broken premise" \
+	"$(if [ "$RC" = "2" ]; then echo probe-failed; else echo ran; fi)" "ran"
+
 # ======================================================= 18 · resolve's whole row =====
 run "$PY" "$S" resolve --class wiki-compile --throttle default --root "$D2"
 eq "L38a resolve exits 0" "$RC" "0"
@@ -740,7 +803,7 @@ has "L39d and its control line names the schema-2 probes too" \
 	"Skill and tools probes caught 2/2 planted definitions"
 # `set` first, so the fixture's definitions hold the v1 record's own values: without it this leg
 # would be reading whatever the installed record last wrote to the live definitions it copied,
-# and it failed exactly that way in a simulated post-gate vault.
+# which a post-gate vault would expose.
 run "$PY" "$S" set default --root "$W/v1read"
 "$PY" - "$W/v1read/.claude/skills/delegate/routing.json" <<'SCHEMA_ONE_END'
 import json, sys
@@ -891,17 +954,21 @@ if [ "$LIVE_SCHEMA" = "1" ]; then
 else
 	# Option sets, pinned as literals hand-derived from the design page's class table. A gate
 	# moves a DEFAULT within its set; it never edits the set, so these hold across the phase-3
-	# moves. An install that quietly narrowed a class is exactly what this catches.
+	# moves. An install that quietly narrowed a class is exactly what this catches. Fable left
+	# every set but the writer's under the owner rulings of 2026-09-22 and 2026-09-29 (fable only on
+	# the owner's word; the writer keeps it for an important check), and the gate-judge's fixed
+	# effort moved to xhigh under the first.
 	opts() { # $1 class -> "models|efforts"
 		case "$1" in
-		verifier) echo "sonnet,opus,fable|high,xhigh,max" ;;
+		verifier) echo "sonnet,opus|high,xhigh,max" ;;
 		memory-hunter) echo "sonnet,opus|high,xhigh,max" ;;
-		wiki-compile) echo "sonnet,opus,fable|medium,high,xhigh,max" ;;
-		builder) echo "sonnet,opus,fable|high,xhigh,max" ;;
-		critic) echo "opus,fable|xhigh,max" ;;
-		planner) echo "opus,fable|high,xhigh,max" ;;
-		reflector) echo "opus,fable|high,xhigh,max" ;;
-		gate-judge) echo "opus|max" ;;
+		wiki-compile) echo "sonnet,opus|medium,high,xhigh,max" ;;
+		builder) echo "sonnet,opus|high,xhigh,max" ;;
+		writer) echo "opus,fable|xhigh,max" ;;
+		critic) echo "opus|xhigh,max" ;;
+		planner) echo "opus|high,xhigh,max" ;;
+		reflector) echo "opus|high,xhigh,max" ;;
+		gate-judge) echo "opus|xhigh" ;;
 		*) echo "NO-PIN" ;;
 		esac
 	}
@@ -938,9 +1005,16 @@ ROWOPTS_END
 		"Skill and tools probes caught 2/2 planted definitions"
 	# Extremes: `top` and `cheap-fast` read the ends of the option sets, which no gate moves.
 	run "$PY" "$S" resolve --class wiki-compile --throttle top --root "$VAULT"
-	eq "L47f the installed record resolves wiki-compile under 'top'" "$(rgot)" "fable max"
+	eq "L47f the installed record resolves wiki-compile under 'top'" "$(rgot)" "opus max"
 	run "$PY" "$S" resolve --class wiki-compile --throttle cheap-fast --root "$VAULT"
 	eq "L47g and under 'cheap-fast'" "$(rgot)" "sonnet medium"
+	# The owner's ruling of 2026-09-29 (`preset_model`): `top` and `cheap` resolve every class to opus.
+	run "$PY" "$S" resolve --class writer --throttle top --root "$VAULT"
+	eq "L47h the installed record resolves the writer under 'top' to opus (fable stays an option)" "$(rgot)" "opus max"
+	run "$PY" "$S" resolve --class verifier --throttle cheap --root "$VAULT"
+	eq "L47i and the verifier under 'cheap' to opus (sonnet stays an option)" "$(rgot)" "opus max"
+	eq "L47j the installed record's preset_model names opus for top and cheap" \
+		"$("$PY" -c 'import json,sys; b=json.load(open(sys.argv[1])).get("preset_model", {}); print(b.get("top"), b.get("cheap"))' "$R")" "opus opus"
 	# Consistency: what the wrapper would spawn under the vault's own throttle is what the
 	# definitions hold. Expected values are read from disk, never pinned, so a gate-driven move
 	# of a carried default keeps this green once `set` has run.
@@ -1056,7 +1130,7 @@ run "$PY" "$S" show --root "$d"
 eq "L51b show's first line is exactly throttle: auto (no fallback note once the line is set)" "$(head -1 "$OUT")" "throttle: auto"
 eq "L51c the table header carries the anchors annotation, on one line" \
 	"$(grep -c 'role .*model .*effort  (anchors: the head picks per call within the options)$' "$OUT")" "1"
-eq "L51d the head line under auto" "$(grep -F 'head: ' "$OUT")" "head: fable · max"
+eq "L51d the head line under auto" "$(grep -F 'head: ' "$OUT")" "head: opus · max"
 has "L51e the check summary names the throttle auto" "match throttle 'auto'"
 run "$PY" "$S" show --root "$D2"
 hasnot "L51f control — under default the header carries no anchors annotation" "(anchors:"
@@ -1125,6 +1199,41 @@ eq "L55b control — the target fixture did change" \
 printf 'planted\n' >>"$W/wn_sibling/CUSTOMISATION.md"
 eq "L55c control — a planted write into the sibling makes the same probe fire" \
 	"$(if [ "$(manifest "$W/wn_sibling")" = "$SIB_BEFORE" ]; then echo unchanged; else echo changed; fi)" "changed"
+
+# ======================================== L56 · a staged copy, through VAULT_DIR ============
+# (2026-09-13, register entry of 2026-09-08 22:26.) From a copy staged outside the vault this
+# suite would fail whatever the change under test, because the vault it derives three
+# directories up is no vault. L56a runs such a copy once with VAULT_DIR naming the vault this run
+# reads, and its last line must be PASS. The copy skips this section (THROTTLE_SUITE_NESTED), so
+# the nesting is one level deep and costs one further run of the suite.
+# Controls: L56b, a VAULT_DIR naming no directory is a broken premise (exit 2), never a silent
+# red; L56c, the copy's own three-up holds no definitions, so the green is the escape's; L56d,
+# the nested run did read the live definitions through the escape.
+if [ -z "${THROTTLE_SUITE_NESTED:-}" ]; then
+	STAGED="$W/staged/a/b/delegate"
+	mkdir -p "$STAGED"
+	cp "$S" "$R" "$HERE/test_throttle.sh" "$STAGED/"
+	NESTED_OUT="$W/nested.txt"
+	env THROTTLE_SUITE_NESTED=1 VAULT_DIR="$VAULT" sh "$STAGED/test_throttle.sh" >"$NESTED_OUT" 2>&1
+	NESTED_RC=$?
+	NESTED_LAST=$(tail -n 1 "$NESTED_OUT")
+	case "$NESTED_LAST" in
+	PASS*)
+		if [ "$NESTED_RC" = "0" ]; then ok "L56a a copy staged outside the vault runs green through VAULT_DIR ($NESTED_LAST)"
+		else no "L56a the staged copy printed '$NESTED_LAST' but exited $NESTED_RC"; fi ;;
+	*)
+		no "L56a a copy staged outside the vault runs green through VAULT_DIR (last line '$NESTED_LAST', exit $NESTED_RC; first failure: $(grep -m 1 '^FAIL' "$NESTED_OUT"))" ;;
+	esac
+	env THROTTLE_SUITE_NESTED=1 VAULT_DIR="$W/no-such-vault" sh "$STAGED/test_throttle.sh" >"$W/nested-bad.txt" 2>&1
+	BAD_RC=$?
+	eq "L56b control: a VAULT_DIR naming no directory exits 2 with PROBE FAILED" \
+		"$BAD_RC $(grep -c 'PROBE FAILED: no vault directory' "$W/nested-bad.txt")" "2 1"
+	eq "L56c control: the staged copy's own three-up holds no definitions" \
+		"$(if [ -d "$W/staged/.claude/agents" ]; then echo present; else echo absent; fi)" "absent"
+	if grep -qF -- "L34b the live definitions directory was non-empty" "$NESTED_OUT"; then
+		ok "L56d the nested run read the live definitions through VAULT_DIR"
+	else no "L56d the nested run never read the live definitions (no L34b line in its output)"; fi
+fi
 
 # ================================================================== tally =============
 TOTAL=$((PASS + FAIL))

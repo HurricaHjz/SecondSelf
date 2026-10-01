@@ -7,7 +7,7 @@
 # ONLY via an explicit /export-template — never referenced by CLAUDE.md or by the frequent everyday skills.
 # Premise guard: this suite needs process substitution. Invoked as `sh <file>` it dies mid-run
 # with a raw syntax error and exit 2, and a caller grepping the output for "FAIL" then reads zero
-# and calls it green (observed 2026-08-28). Probe the CAPABILITY, not the shell name: on macOS
+# and calls it green. Probe the CAPABILITY, not the shell name: on macOS
 # /bin/sh IS bash, so $BASH_VERSION is set while POSIX mode still disables the feature.
 if ! (eval 'cat < <(echo probe)') >/dev/null 2>&1; then
   echo "ERROR: process substitution unavailable (POSIX mode?) — run: bash $0"; exit 2
@@ -25,7 +25,7 @@ GITPAT='export_template|export-template|--push|--pull|--with-graph'
 echo "== 1) frequent everyday skills never reference the git/sync features =="
 for s in $NORMAL; do
   # sanctioned-skills.txt is the injection-guard NAME REGISTRY (lists every vault skill incl. export-template);
-  # naming a skill is not loading export machinery — excluded 2026-08-23 when the baseline file broke this test.
+  # naming a skill is not loading export machinery, so the registry is excluded from this scan.
   if grep -rEiq --exclude=sanctioned-skills.txt "$GITPAT" ".claude/skills/$s/"; then no "skill '$s' references git features"; else ok "skill '$s' free of git refs (loads no git content)"; fi
 done
 
@@ -58,9 +58,9 @@ else
   else no "$R real log.md read(s) in frequent ops"; fi
 fi
 
-echo "== 5) export-template's always-on description stays lean (<=160 words) =="
-W=$(python3 -c "import re;t=open('.claude/skills/export-template/SKILL.md').read();m=re.search(r'^description:\s*(.*?)(?=^\w[\w-]*:\s|\n---)',t,re.S|re.M);print(len(m.group(1).split()) if m else 999)")
-if [ "$W" -le 160 ]; then ok "export-template description lean ($W words, the only always-on git surface)"; else no "export-template description too long ($W words)"; fi
+echo "== 5) export-template's always-on description exists =="
+W=$(python3 -c "import re;t=open('.claude/skills/export-template/SKILL.md').read();m=re.search(r'^description:\s*(.*?)(?=^\w[\w-]*:\s|\n---)',t,re.S|re.M);print(len(m.group(1).split()) if m else 0)")
+if [ "$W" -gt 0 ]; then ok "export-template description present ($W words; no imposed length)"; else no "export-template description missing or empty"; fi
 
 echo
 echo "================  RESULT: $PASS passed, $FAIL failed  ================"

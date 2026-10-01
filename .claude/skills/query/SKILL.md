@@ -37,10 +37,8 @@ One question can.)
 
 ### Step 1 — Read the global index (always first)
 Read `wiki/index.md` **whole** — `route` mode, CLAUDE.md §5 — and locate candidate pages across **every**
-`## ` section. Do not scope the read to a few sections: the four this step once named (Sources, Entities,
-Concepts, Syntheses) hold 79 of the 111 pages real syntheses turned out to cite, so the other six carried
-29 % of the answer (wiki/developments/registry-read-policy.md, 2026-09-06). Grepping the index instead of reading it finds
-49 % of them.
+`## ` section. Read the whole catalogue before choosing pages: lexical search or a hand-picked list
+can omit pages relevant to the answer.
 
 ### Step 2 — Deep-read the targets (triage by confidence)
 Open the most relevant pages in full with the read tool (or `obsidian-cli`). Follow `## Related`
@@ -70,13 +68,11 @@ Judge only the pages you have ALREADY read for this answer — never read extra 
   line in the reply + offer the fix now; if not fixed on the spot, record it on the page as
   frontmatter `flagged: YYYY-MM-DD <one-phrase reason>` so `/deep-lint` reconciles it later.
 - Flags are annotations, not logged ops — the reconciling `deep-lint` run logs their resolution.
-  (Design: `wiki/developments/deeplint-scalable-maintenance-design.md`.)
 - **The freshness line — a completion gate.** Every reply that read wiki pages ends with one line,
   whatever the active style:
   `Freshness: <N> pages read · oldest [[page]] (updated YYYY-MM-DD) · <k> flagged`
   (`k` = flags placed or staleness fixes made this run; usually 0). The answer is **not done** until
-  the line has appeared — duties fire when they gate the done-declaration (measured 88% gated vs 4%
-  ungated: `wiki/developments/ingest-auto-mode-design.md`). Naming the oldest page is the locator —
+  the line has appeared. Naming the oldest page is the locator —
   the line cannot be written without looking at the `updated:` dates already in hand. A reply that
   read no wiki pages (general-knowledge fallback) skips the line and says so.
 
@@ -98,11 +94,10 @@ public web sources** (not owner-only knowledge); and **not explicitly declined**
 most ONE proposal per reply, surfaced whatever the active style, formatted why (gap + evidence) ·
 what (source kinds, rough count) · how (the literal `/gather` command with its page budget — never
 `--yes`) · cost. Only the owner's explicit yes runs it — that run-spec only; gather's own gates
-unchanged. Consent ledger: explicit **no** → dead this session (a one-line gap note at most) ·
+unchanged. Consent ledger: explicit **no** → dead this session (a concise gap note) ·
 **unaddressed** → one compact reminder while the task is live, then quiet (a later re-fire on a new
-task references the earlier brief in one line, never a full re-brief) · **"later"** → one re-offer at
+task references the earlier brief concisely, never a full re-brief) · **"later"** → one re-offer at
 the natural point. Non-interactive runs never propose — state the gap in the report.
-(Design: `wiki/developments/agent-initiated-gather-design.md`.)
 
 ### Step 5 — File high-value answers back
 If the answer is more than ~2 paragraphs or is comparative/analytical, ask:

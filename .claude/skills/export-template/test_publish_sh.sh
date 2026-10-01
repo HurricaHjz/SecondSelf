@@ -17,8 +17,7 @@ set -uo pipefail
 # `pwd -P`, never `pwd`: the fixture copies this directory into a throwaway vault and then writes
 # inside that copy (an allowlist entry, a renamed gate script). Reached through a symbolic link the
 # logical path would copy the LINK, and every one of those writes would land in the real skill
-# directory instead — observed 2026-09-08, when a sibling suite's pull-apply leg wrote through such
-# a link. The physical path cannot do that, and the premise below refuses to run if it ever could.
+# directory instead. The physical path avoids that, and the premise below refuses an unsafe fixture.
 SKILL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"  # the export-template skill under test
 PUB="$SKILL/publish.sh"
 # A staged copy names the vault it borrows two things from: the delegate skill's throttle.py (the

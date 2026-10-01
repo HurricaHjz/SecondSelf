@@ -3,19 +3,27 @@
 
 Reads the manifest run.sh wrote (`tag sid` per line), opens each session's transcript in the Claude
 Code project directory, takes the session's main reply and writes it to <out>/<tag>.full.txt. Prints
-one line per reply: the tag, the session id, the session's refusal and turn counts (read from the CLI
-result run.sh saved beside the reply, `absent` when the file or field is missing, never 0), whether the
-reply opens with the status line, the number of assistant texts and of corrections left out, and the
-opening line itself. The counts let the judge mark a confounded session (register 2026-09-05: a session
-with three refused tool calls reached the judge unmarked).
+one line per reply: the tag, the session id, the session's refusal and tool-use turn counts (read from
+the CLI result run.sh saved beside the reply, `absent` when the file or field is missing, never 0),
+whether the reply opens with the status line, the number of assistant texts, of corrections left out
+and of harness-fed turns, a `confound=` verdict, and the opening line itself. The counts let the judge
+mark confounded sessions.
+# References: register 2026-09-05.
 
 The main reply is the longest assistant text of the session by character count, leaving out a
 post-warning correction: an assistant text that answers a harness record opening `Stop hook
-feedback:` (the Stop verifier's hold of 2026-09-02 to 2026-09-04, fed back as an isMeta user
-record; observed in the live transcripts of 2026-09-04). The exclusion is keyed on that record,
+feedback:` in an isMeta user record. The exclusion is keyed on that record,
 never on the text's size or wording. Nothing here counts words: length is never a measure of a
 reply (owner ruling 2026-09-05); character length serves only to pick the reply out from the
 progress lines around it.
+
+The confound fields are kept apart from the turn count (register 2026-09-09): a kit session answers
+by reading pages with tools, so it is multi-turn by construction and `turns=` separates nothing.
+`harness_fed=` counts the records the harness fed into the session after the model began: a user
+record opening `Stop hook feedback:`, or any other isMeta user record after the first assistant
+record (a tool result is neither). `confound=yes` when the session had a refusal (denials above 0),
+a correction or a harness-fed turn; `unknown` when none of those was seen and the denials count is
+absent; `no` otherwise. The turn count never enters it.
 
   extract.py --out DIR [--manifest FILE] [--transcripts DIR] [--vault DIR]
 
@@ -24,7 +32,7 @@ progress lines around it.
   --manifest     the manifest to read (default <out>/manifest.txt)
   --transcripts  the transcript directory; default derived from --vault the way Claude Code
                  derives it: ~/.claude/projects/<absolute vault path with every character outside
-                 A-Za-z0-9 replaced by '-'> (checked against the live directory, 2026-09-05)
+                 A-Za-z0-9 replaced by '-'>
   --vault        the vault root the sessions ran from (default: the current directory)
 
 A missing or empty manifest, a missing transcript directory, or a row whose transcript is missing
@@ -68,19 +76,25 @@ def text_of(rec):
 
 
 def main_reply(recs):
-    """(main text, assistant texts seen, corrections left out). A correction is the first assistant
-    text after a user record opening with the Stop hook's feedback; a harness-written assistant
-    record (isApiErrorMessage) is never a candidate."""
-    candidates, seen, corrections, answering_feedback = [], 0, 0, False
+    """(main text, assistant texts seen, corrections left out, harness-fed turns). A correction is
+    the first assistant text after a user record opening with the Stop hook's feedback; a
+    harness-written assistant record (isApiErrorMessage) is never a candidate; a harness-fed turn is
+    that feedback record, or any other isMeta user record once the model has begun."""
+    candidates, seen, corrections, fed = [], 0, 0, 0
+    answering_feedback, begun = False, False
     for rec in recs:
         if not isinstance(rec, dict):
             continue
         if rec.get("type") == "user":
             if text_of(rec).lstrip().startswith(FEEDBACK):
                 answering_feedback = True
+                fed += 1
+            elif rec.get("isMeta") and begun:
+                fed += 1
             continue
         if rec.get("type") != "assistant" or rec.get("isApiErrorMessage"):
             continue
+        begun = True
         text = text_of(rec).strip()
         if not text:
             continue
@@ -90,7 +104,14 @@ def main_reply(recs):
             answering_feedback = False
             continue
         candidates.append(text)
-    return (max(candidates, key=len) if candidates else ""), seen, corrections
+    return (max(candidates, key=len) if candidates else ""), seen, corrections, fed
+
+
+def confound(denials, corrections, fed):
+    """yes · unknown · no, as the module docstring defines it; the turn count never enters."""
+    if (denials.isdigit() and int(denials) > 0) or corrections or fed:
+        return "yes"
+    return "unknown" if not denials.isdigit() else "no"
 
 
 def opening_line(text):
@@ -146,14 +167,15 @@ def main(argv=None):
             print("PROBE FAILED: %s has no transcript at %s" % (tag, path))
             failed += 1
             continue
-        text, seen, corrections = main_reply(records(path))
+        text, seen, corrections, fed = main_reply(records(path))
         os.makedirs(a.out, exist_ok=True)
         with open(os.path.join(a.out, tag + ".full.txt"), "w", encoding="utf-8") as fh:
             fh.write(text)
         first = opening_line(text)
         denials, turns = result_fields(a.out, tag)
-        print("%-24s sid=%s denials=%s turns=%s opens_status=%s texts=%d corrections=%d opening=%r"
-              % (tag, sid, denials, turns, "yes" if SHAPE.match(first) else "no", seen, corrections, first[:80]))
+        print("%-24s sid=%s denials=%s turns=%s opens_status=%s texts=%d corrections=%d harness_fed=%d confound=%s opening=%r"
+              % (tag, sid, denials, turns, "yes" if SHAPE.match(first) else "no", seen, corrections, fed,
+                 confound(denials, corrections, fed), first[:80]))
     return 2 if failed else 0
 
 

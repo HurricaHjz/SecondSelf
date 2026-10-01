@@ -7,10 +7,9 @@
 # what a fresh head prints under the shipped texts. The session id is chosen here so extract.py can
 # find the transcript afterwards. Written into --out: <tag>.json (the CLI's JSON result), <tag>.err,
 # manifest.txt (`tag sid` per line), progress.log, questions.txt (a copy) and rubric.md (rendered by
-# render-rubric.py from the live style definition, so the judge's rubric never goes stale).
+# render-rubric.py from the live style definition, so the judge's rubric never goes stale) and defs/ (the rule texts).
 #
-# Nothing here counts, logs or judges words: length is never a measure of a reply (owner ruling
-# 2026-09-05); the judge reads content and plainness.
+# The judge evaluates content and plainness rather than reply length.
 #
 #   run.sh [--questions FILE] [--style NAME] [--model ID] [--out DIR] [--record FILE]
 #          [--vault DIR] [--run-id ID] [--dry-run]
@@ -18,7 +17,7 @@
 #   --questions  default: ~/.llm-wiki/style-rerun/questions.txt if present (this vault's real questions,
 #                machine-local), else questions.txt beside this script (a generic example)
 #   --style      default: shortest
-#   --model      default: claude-fable-5-1
+#   --model      default: claude-opus-5-5 (the default Claude model since the owner's ruling of 2026-09-29)
 #   --out        default: $HOME/.llm-wiki/style-rerun/<YYYYMMDD-HHMMSS>/
 #   --record     a spawn-record file: a probe-open and a probe-closed line per session (optional)
 #   --vault      the vault root the sessions run from (default: the current directory)
@@ -30,13 +29,11 @@
 # reads as done. Exit 1 when a session's claude call returned non-zero (named in progress.log).
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
-# The questions file: the machine-local one wins (this vault's real questions, never shipped with the
-# public template), else the generic example beside this script (owner ruling 2026-09-05: vault-specific
-# content stays out of the skill folder, which the export copies whole).
+# Prefer machine-local questions; otherwise use the generic example shipped beside this script.
 export PYTHONDONTWRITEBYTECODE=1   # never leave bytecode beside the shipped kit (known-issues 2026-09-03)
 LOCALQ="$HOME/.llm-wiki/style-rerun/questions.txt"
 if [ -f "$LOCALQ" ]; then QUESTIONS="$LOCALQ"; else QUESTIONS="$HERE/questions.txt"; fi
-STYLE=shortest; MODEL=claude-fable-5-1
+STYLE=shortest; MODEL=claude-opus-5-5
 OUT=""; REC=""; VAULT="$PWD"; RUN_ID=""; DRY=0
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -90,6 +87,12 @@ fi
 command -v claude >/dev/null 2>&1 || { echo "PROBE FAILED: claude is not on PATH"; exit 2; }
 mkdir -p "$OUT" || { echo "PROBE FAILED: cannot create $OUT"; exit 2; }
 python3 "$HERE/render-rubric.py" --style "$STYLE" --vault "$VAULT" --out "$OUT" >/dev/null || { echo "PROBE FAILED: rubric not rendered into $OUT"; exit 2; }
+# The judge's rule texts, staged as the rubric is: a file grant reaches its whole parent directory, so a judge granted
+# the vault's CUSTOMISATION files in place would read the whole vault (register 2026-09-08); the judge is granted $OUT alone.
+mkdir -p "$OUT/defs" && cp "$VAULT/CUSTOMISATION.md" "$OUT/defs/CUSTOMISATION.md" || { echo "PROBE FAILED: the rule texts were not staged into $OUT/defs"; exit 2; }
+if [ -f "$VAULT/CUSTOMISATION-definitions.md" ]; then
+	cp "$VAULT/CUSTOMISATION-definitions.md" "$OUT/defs/CUSTOMISATION-definitions.md" || { echo "PROBE FAILED: CUSTOMISATION-definitions.md was not staged into $OUT/defs"; exit 2; }
+fi
 [ "$(cd "$(dirname "$QUESTIONS")" && pwd)/$(basename "$QUESTIONS")" = "$OUT/questions.txt" ] || cp "$QUESTIONS" "$OUT/questions.txt"
 : >"$OUT/manifest.txt"
 failed=0; n=0
@@ -102,7 +105,7 @@ while IFS='	' read -r tag role question; do
 	fi
 	echo "[$(date +%H:%M:%S)] start $tag sid=$sid" >>"$OUT/progress.log"
 	# stdin from /dev/null: `claude -p` reads a non-terminal stdin as part of its prompt, and inside this loop
-	# stdin is the remaining plan lines (the first live run, 2026-09-05, sent every session the other rows too)
+	# stdin is the remaining plan lines, so the child must read from /dev/null.
 	(cd "$VAULT" && claude -p "$role, $STYLE. $question" --model "$MODEL" --session-id "$sid" --allowedTools "Read,Grep,Glob" --output-format json </dev/null) >"$OUT/$tag.json" 2>"$OUT/$tag.err"
 	rc=$?
 	[ "$rc" -eq 0 ] || failed=$((failed + 1))
@@ -115,12 +118,29 @@ while IFS='	' read -r tag role question; do
 done <"$OUT/.plan.tsv"
 rm -f "$OUT/.plan.tsv"
 echo "ALL DONE $(date +%H:%M:%S)" >>"$OUT/progress.log"
-# The run stamp (critic CRIT-3 F4): machine-local, never inside the skill folder (which the export copies
+# The run stamp (critic review F4): machine-local, never inside the skill folder (which the export copies
 # whole). One line per successful run: date · style · sha256 of the rendered Test, so deep-lint's step 7b
 # can skip a re-run when the Test has not changed (compare `render-rubric.py --style <s> --test-only | shasum -a 256`).
 if [ "$failed" -eq 0 ]; then
 	STAMPDIR="$HOME/.llm-wiki/style-rerun"; mkdir -p "$STAMPDIR"
-	TESTHASH=$(/usr/local/bin/python3 "$HERE/render-rubric.py" --style "$STYLE" --vault "$VAULT" --test-only 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+	STAMP_INPUT=$(mktemp "$OUT/.style-test.XXXXXX") || exit 2
+	if ! "${PYTHON:-python3}" "$HERE/render-rubric.py" --style "$STYLE" --vault "$VAULT" --test-only > "$STAMP_INPUT"; then
+		rm -f "$STAMP_INPUT"
+		echo "PROBE FAILED: cannot render the style Test for the run stamp" >&2
+		exit 2
+	fi
+	if [ ! -s "$STAMP_INPUT" ]; then
+		rm -f "$STAMP_INPUT"
+		echo "PROBE FAILED: empty style Test for the run stamp" >&2
+		exit 2
+	fi
+	if ! TESTHASH=$(shasum -a 256 "$STAMP_INPUT"); then
+		rm -f "$STAMP_INPUT"
+		echo "PROBE FAILED: cannot hash the style Test for the run stamp" >&2
+		exit 2
+	fi
+	rm -f "$STAMP_INPUT"
+	TESTHASH=${TESTHASH%% *}
 	[ -n "$TESTHASH" ] && printf '%s %s %s %s\n' "$(date +%Y-%m-%d)" "$STYLE" "$TESTHASH" "$OUT" >> "$STAMPDIR/last-run.txt"
 fi
 echo "style-rerun: $n session(s) on the $STYLE style; out=$OUT; manifest=$OUT/manifest.txt; non-zero exits=$failed"

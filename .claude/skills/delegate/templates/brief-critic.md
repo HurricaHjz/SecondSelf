@@ -16,6 +16,10 @@ SCOPE
 - Reading list (pre-scoped): {{artefact + contract files + directly load-bearing pages}}
 - If the artefact proposes a writing rule, the head's reply that proposed it joins the reading list and is scored against that rule (cross-reflection XR-1, written 2026-09-05 18:54 BST).
 - File whitelist: NONE — read-only lane. Any needed change is returned as a proposed diff.
+- A returned diff is dry-run on a flat copy (no `.claude` path component: the fence refuses one
+  under /tmp). The head stages the flat copy and the brief names its path: {{flat copy path | n/a}}.
+  Run `patch -p<depth> --dry-run` inside it, `<depth>` the leading components to strip (4 for
+  `a/.claude/skills/<skill>/<file>`).
 - Boundary: report off-scope findings without fixing them.
 - Contracts from disk: cite `CLAUDE.md`, `CUSTOMISATION.md` and the skill files as they are on disk
   now, never from the copy injected into your context, which is the head's session-start snapshot
@@ -44,10 +48,12 @@ REPORT
 ## Confirmations · ## Controls
 ```
 
-<!-- Spawner: do NOT state your own view of the artefact anywhere in the brief. A fable lane
-takes any source the task needs; a refusal in the lane is handled reactively (CLAUDE.md §11:
-that task falls back one model step, the owner is notified once). Grep every positive-control
-phrase you name in the brief against the artefact before spawning (live miss 2026-09-02).
+<!-- Spawner: do NOT state your own view of the artefact anywhere in the brief. A lane
+takes any source the task needs; a refusal in the lane, or a safeguard fallback the wrapper
+detects on the close line, is handled reactively (CLAUDE.md §11: that task's remaining work
+moves to GPT-6 Astra at the same effort rung and the owner is told once; owner rulings 2026-09-22
+and 2026-09-29). Grep every positive-control
+phrase you name in the brief against the artefact before spawning.
 Keep the `CONTROL+` line bare — the path ends it, no prose after it: `lane.py`'s `CONTROL_RE`
 (line 838) matches the marker anywhere on a line, takes everything after it to the end of that
 line and splits on the LAST " in ", so trailing prose lands inside the path and the spawn is

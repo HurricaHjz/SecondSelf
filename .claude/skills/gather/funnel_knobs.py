@@ -4,8 +4,7 @@
 Given the page budget and the brief's sub-question count (plus optional overrides), it fixes
 every Discover-round knob — queries, menu (shortlist), pool, date-check policy, remainder
 display — clamps out-of-range values, and reports every clamp. The rendered block is echoed
-VERBATIM at the Discover gate, so the knobs a run actually used are always auditable (the
-2026-08-13 pilot showed prose-only bands drift). v3.1: --advice N (the agent's judged
+VERBATIM at the Discover gate, so every knob is auditable. v3.1: --advice N (the agent's judged
 worth-capturing count) widens the one-liner display, never what a rule may buy; --ledger-id
 reads pages-captured AND the audited budget from the run ledger instead of trusting supplied
 numbers (a raise-budget amendment flows through automatically; an override is declared). Pure stdlib,

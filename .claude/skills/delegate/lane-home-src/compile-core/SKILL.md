@@ -49,7 +49,7 @@ record. Where you cannot name the evidence, take the lower rung.
 
 What each depth changes:
 - **standard** (the usual outcome) — articles, blogs, posts, docs. Sections 2–4 as written.
-- **concise** — thin or fully redundant sources: a one-to-three-sentence summary, minimal bullets,
+- **concise** — thin or fully redundant sources: a concise summary, minimal bullets,
   new pages only for genuinely new entities or concepts.
 - **research** — primary material the owner will need to reuse exactly. Preserve exact figures (no
   rounding), quote critical claims verbatim with section or page references, mark anything not
@@ -86,7 +86,7 @@ updated: <YYYY-MM-DD>
 ---
 
 ## Summary
-[3–5 sentence core summary.]
+[The core summary, with the detail its claims need.]
 
 ## Key Takeaways
 - ...
@@ -169,11 +169,11 @@ Add the links the source warrants, and only the pages the schema warrants.
 - **A product name is a model mention.** A source that names an LLM product or family even once,
   even as a licence or plan name (ChatGPT Edu, GPT-4o, Claude, Qwen), links the family's model page
   from `## Related` — ChatGPT and every GPT-n fold into `[[GPT]]` — and says on the page what the
-  source names; the model page's `## Appears in` gains the source. No individual model needs naming
-  for the link to be warranted (schema §4.5; G3-thin attempt 1, 2026-09-04: both thin arms missed it).
+  source names; the model page's `## Appears in` gains the source. The link does not require
+  an individually named model (schema §4.5).
 - **Reuse, never duplicate.** Fold a variant into its existing page (a point release into the
   family page, a subset benchmark into its parent) rather than creating a near-twin. Canonicalise
-  every name against `wiki/index.md` in `name` mode (`grep -o '^- \[\[[^]|]*' wiki/index.md | sed 's/^- \[\[//'`, ≈18 kB) before you write it — never a whole read.
+  every name against `wiki/index.md` in `name` mode (`grep -o '^- \[\[[^]|]*' wiki/index.md | sed 's/^- \[\[//'`) before you write it — never a whole read.
 - **A page exists** → read it and merge incrementally. Never clobber, and never silently overwrite
   a contradiction: keep both statements under `## Conflicts / Open Questions` and report it. A
   conflict never pauses you.
@@ -187,7 +187,7 @@ Add the links the source warrants, and only the pages the schema warrants.
 
 ## 5 · Registries: propose, do not write
 
-A log entry stays near 600 bytes (the §5 shape: the title line, `- **Changed**:`, `- **Conflicts**:`);
+A log entry stays concise (the §5 shape: the title line, `- **Changed**:`, `- **Conflicts**:`);
 detail belongs on the pages, never in the entry. Frontmatter carries values only: no run id, lane id or
 evidence in a comment — your depth and confidence evidence goes in the report.
 
@@ -202,14 +202,71 @@ read-modify-write, which commits a stale snapshot and erases a concurrent writer
 either write back with a grep and show the grep. Any model or effort value you write into a
 registry entry is copied from your brief's first line or omitted — never inferred.
 
-**Shared-type pages under a parallel run.** Where your brief says other lanes are compiling
-alongside you, do not create or edit entity, concept, model or benchmark pages at all: the head
-merges them. Emit a claim per page instead, in your report and in full wherever the brief tells you
-to mirror it:
+**Shared-type pages under a parallel run.** Where your brief says other lanes are compiling alongside you, do not create or edit entity, concept, model or benchmark pages. Emit a claim and an anchored unified diff per target into the diff directory your brief explicitly grants. The head plans and applies the accepted diffs. Mirror each complete claim under `claims` in the `claims_emitted` ledger checkpoint as well as your report:
 
 `{name · type · kind: create|update · target (canonicalised against index.md — a variant arrives as
 an update to the family page) · facts[] with a per-fact source locator · links[] · appears_in[] ·
-confidence · from: source-page}`
+confidence · from: source-page · source: raw identity · diff: absolute path · base: sha256 prefix · diff_hash: sha256 prefix}`
+
+An update diff is against the page exactly as read, with `base` the first 16 sha256 hex digits (the `source_hash` length used by de-dup). A create is a new-file diff carrying the schema's frontmatter and sections and `aliases:` with acronym and expansion wherever the source gives both. Record the diff's own sha256 prefix in `diff_hash`. Never apply the diff yourself. The lane's `lane_open` carries `role: compile` and the same lane id as the spawn record for metering.
+
+
+Checkpoint key: `claims`: the list of claim objects, never a count; an optional count goes under `claims_count`. Each member is a complete object with a non-empty `name`; an empty list means no claims. Never use `claim_objects` as a substitute key. Shape-only example for a source with no claims (add the run and write-time timestamp):
+
+`{"event":"checkpoint","stage":"claims_emitted","lane":"<lane>","source":"<raw identity>","claims":[],"claims_count":0}`
+
+**Mandatory post-checkpoint assertion.** After every `claims_emitted` append, run the following read-only Python through `python3 -B -` with three quoted arguments: the literal ledger path, this lane id, and this checkpoint's exact source identity. Its stdin is the code below. Record the `claims-shape:` and `controls:` lines in the lane's final report under a `## Controls` heading, with one unquoted line `claims-shape: checkpoints N · objects M · invalid 0`. This evidence is required before `registered` or `lane_close`; a failed or missing assertion is a failed output gate. The verifier consumes these report lines. The check reads all matching checkpoints, so a later good append cannot conceal an earlier malformed one; it checks list shape, not factual accuracy or the full claim schema.
+
+```python
+# claims-shape assertion: kept executable for the brief suite.
+import json
+import sys
+
+
+def stop(message):
+    print("PROBE FAILED: " + message)
+    raise SystemExit(2)
+
+
+def valid(event):
+    claims = event.get("claims")
+    return (isinstance(claims, list)
+            and all(isinstance(c, dict) and isinstance(c.get("name"), str)
+                    and c["name"].strip() for c in claims)
+            and ("claims_count" not in event
+                 or (type(event["claims_count"]) is int
+                     and event["claims_count"] == len(claims))))
+
+
+if (valid({"claims": 1, "claim_objects": [{"name": "Example"}]})
+        or valid({"claims": [{}]})
+        or not valid({"claims": [{"name": "Example"}], "claims_count": 1})
+        or not valid({"claims": [], "claims_count": 0})):
+    stop("claims-shape controls did not discriminate")
+print("controls: integer claims rejected; unnamed object rejected; object list and empty list accepted")
+if len(sys.argv) != 4 or not all(sys.argv[1:]):
+    stop("claims-shape needs ledger, lane and source")
+ledger, lane, source = sys.argv[1:]
+matched = objects = 0
+try:
+    with open(ledger, encoding="utf-8") as handle:
+        for number, line in enumerate(handle, 1):
+            event = json.loads(line)
+            if not isinstance(event, dict):
+                stop("ledger line %d is not an object" % number)
+            if (event.get("event") == "checkpoint"
+                    and event.get("stage") == "claims_emitted"
+                    and event.get("lane") == lane and event.get("source") == source):
+                if not valid(event):
+                    stop("line %d: claims must be a list of named objects; claims_count must equal its length" % number)
+                matched += 1
+                objects += len(event["claims"])
+except (OSError, ValueError) as error:
+    stop("cannot check ledger: %s" % error)
+if not matched:
+    stop("no claims_emitted checkpoint for this lane and source")
+print("claims-shape: checkpoints %d · objects %d · invalid 0" % (matched, objects))
+```
 
 Mark a shaky fact `unverified`. A claim's facts each carry the locator they came from; a fact
 without one does not go in the claim.

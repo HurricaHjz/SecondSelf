@@ -42,8 +42,7 @@ truth:** deliverable defaults live *only* in that Customisation section — re-r
 never copy its values into this skill, any config, or the deliverable itself (beyond applying them).
 
 ### Step 2 — Ground in the wiki (read first, like `query`)
-Read `wiki/index.md` **whole**, across every `## ` section (`route` mode, CLAUDE.md §5 — a grep over the
-index finds 49 % of the pages real syntheses cited, the measured stand-in for what a deliverable needs), then deep-read the relevant pages (follow `## Related`
+Read `wiki/index.md` **whole** (`route` mode, CLAUDE.md §5), then deep-read the relevant pages (follow `## Related`
 one hop, which widens a shortlist route already produced and never replaces it). Collect the
 facts you will use **together with the page each comes from** (for citation). The deliverable is built
 from compiled knowledge — *not guessed*. Consult `wiki/user/` for personal context when the deliverable
@@ -87,12 +86,11 @@ pages, add a "maintained derivative" line to each source page's `## Related` so 
 propagate.
 
 ### Step 6 — Report + grounding note
-State the path written, then a 2–3-line **grounding note**: which wiki pages it draws on, what (if
+State the path written, then a concise **grounding note**: which wiki pages it draws on, what (if
 anything) is labelled general-knowledge, and any gaps flagged or questions still open — closing with
 the freshness line (`query` Step 3b's gate, style-invariant):
 `Freshness: <N> pages read · oldest [[page]] (updated YYYY-MM-DD) · <k> flagged`
-**A completion gate: the report is not done without it** (duties fire when they gate done — measured
-88% vs 4%, `wiki/developments/ingest-auto-mode-design.md`). A run that read no wiki pages says so instead.
+**A completion gate: the report is not done without it.** A run that read no wiki pages says so instead.
 
 ## Hard constraints
 - **Follow the instruction exactly** — format, length, scope, inclusions/exclusions. Use defaults only

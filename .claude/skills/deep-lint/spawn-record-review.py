@@ -15,12 +15,17 @@ Carries two guards from one read of the spawn records, and never calls the meter
 
 Inputs: the records directory (`~/.llm-wiki/spawn-records/*.jsonl`), `routing.json`, and the
 log (for the window: records whose run-open is on or after the last `deep-lint |` entry's date;
-no such entry → every record, said once). Baselines come from each line's `row_default` field
+no such entry → every record, said once). A record with no `run-open` is an ATTENDED run (the
+plain-lane shape of an attended session: `lane.py spawn` writes `lane-open` and no hands-off
+`run-open` ever runs; known-issues 2026-09-08): its earliest dated `lane-open` stands in for the
+run-open, it is labelled `attended`, and the window and every check apply to it like any other
+run. A file with neither is skipped and said so. Baselines come from each line's `row_default` field
 (written by lane.py and by the head from 2026-09-06); an older line is re-resolved from today's
 routing.json and labelled "re-resolved". The phrase checks apply from RULE_FROM, the ship instant
 carried by the ship's `framework` log entry title; the letter check from LETTER_FROM, the
 instrument rule's date. Premise failures print one `PROBE FAILED: …` line and exit 2, never a
-clean report. Report-only: this script writes nothing.
+clean report. A record line that parses but is not a JSON object is counted as a bad line.
+Report-only: this script writes nothing.
 """
 import argparse, glob, io, json, os, re, sys
 from datetime import datetime, timezone, timedelta
@@ -92,21 +97,34 @@ def main():
     if a.since and since is None: die("--since does not parse")
     files = sorted(glob.glob(os.path.join(a.records, "*.jsonl")))
     out = {"files": len(files), "window_start": since.isoformat() if since else None, "note": note,
-           "runs": [], "totals": {"runs": 0, "lanes": 0, "findings": 0, "no_run_open": 0, "bad_lines": 0}}
+           "runs": [], "totals": {"runs": 0, "lanes": 0, "findings": 0, "no_run_open": 0, "attended": 0,
+                                  "skipped": 0, "bad_lines": 0}}
     for f in files:
         evs, bad = [], 0
         for line in io.open(f, encoding="utf-8", errors="replace"):
             line = line.strip()
             if not line: continue
-            try: evs.append(json.loads(line))
-            except ValueError: bad += 1
+            try: ev = json.loads(line)
+            except ValueError: bad += 1; continue
+            if isinstance(ev, dict): evs.append(ev)
+            else: bad += 1
         out["totals"]["bad_lines"] += bad
         ro = next((e for e in evs if e.get("event") == "run-open"), None)
-        if ro is None:
-            out["totals"]["no_run_open"] += 1; out["runs"].append({"file": os.path.basename(f), "skipped": "no run-open", "bad_lines": bad}); continue
+        attended = ro is None
+        if attended:
+            # No run-open: an attended run. Its earliest dated lane-open stands in for the run-open,
+            # so the window and every per-lane check apply as they do to a hands-off run.
+            out["totals"]["no_run_open"] += 1
+            dated = [(parse_ts(e.get("ts")), e) for e in evs if e.get("event") == "lane-open" and parse_ts(e.get("ts"))]
+            if not dated:
+                out["totals"]["skipped"] += 1
+                out["runs"].append({"file": os.path.basename(f), "skipped": "no run-open and no dated lane-open", "bad_lines": bad}); continue
+            first = min(dated, key=lambda d: d[0])[1]
+            ro = {"ts": first.get("ts"), "run": first.get("run")}
         ro_ts = parse_ts(ro.get("ts")); last_ts = max([parse_ts(e.get("ts")) for e in evs if parse_ts(e.get("ts"))] or [None], default=None)
         if since and ro_ts and ro_ts < since and not (last_ts and last_ts >= since): continue
-        run = {"run": ro.get("run") or os.path.basename(f), "resumed": bool(since and ro_ts and ro_ts < since), "bad_lines": bad,
+        if attended: out["totals"]["attended"] += 1
+        run = {"run": ro.get("run") or os.path.basename(f), "attended": attended, "resumed": bool(since and ro_ts and ro_ts < since), "bad_lines": bad,
                "lanes": 0, "letters": {}, "findings": [], "notes": [], "throttle_unrecorded": 0}
         opens = [e for e in evs if e.get("event") == "lane-open"]
         closes = {}
@@ -120,6 +138,14 @@ def main():
             if m: run["letters"][m.group(1)] = run["letters"].get(m.group(1), 0) + 1
             elif opened >= letter_from: run["findings"].append("%s: no instrument-rule letter in reason" % lane)
             cls = e.get("class") or e.get("agent")
+            if e.get("harness") == "codex":
+                # A Codex lane (codex-lane.py, 2026-09-09): no routing row anchors its pick, so
+                # model_src/effort_src read `explicit` by design and the letter check above is
+                # the review it takes; the pick's reason is `choice_reason` on the same line.
+                run["notes"].append("%s: codex lane (%s·%s; choice_reason %s)" % (
+                    lane, e.get("model"), e.get("effort"), "present" if e.get("choice_reason") else "MISSING"))
+                if not e.get("choice_reason"): run["findings"].append("%s: codex lane without a choice_reason" % lane)
+                continue
             if cls not in classes: run["notes"].append("%s: unknown class %r" % (lane, cls)); continue
             thr = e.get("throttle")
             if thr is None: run["throttle_unrecorded"] += 1; thr = "default"
@@ -172,12 +198,12 @@ def main():
         out["runs"].append(run)
     if a.json: print(json.dumps(out, ensure_ascii=False, indent=1)); return
     t = out["totals"]
-    print("spawn-record review: %d files · window from %s%s · %d runs · %d lanes · %d findings · %d files without run-open · %d bad lines"
-          % (out["files"], out["window_start"] or "the start", (" (%s)" % note) if note else "", t["runs"], t["lanes"], t["findings"], t["no_run_open"], t["bad_lines"]))
+    print("spawn-record review: %d files · window from %s%s · %d runs (%d attended: no run-open, dated by the first lane-open) · %d lanes · %d findings · %d files skipped (no run-open, no dated lane-open) · %d bad lines"
+          % (out["files"], out["window_start"] or "the start", (" (%s)" % note) if note else "", t["runs"], t["attended"], t["lanes"], t["findings"], t["skipped"], t["bad_lines"]))
     if t["lanes"] == 0: print("no lanes this window (control: %d record files read)" % out["files"])
     for r in out["runs"]:
         if r.get("skipped"): print("  %s: skipped (%s, %d bad lines)" % (r["file"], r["skipped"], r["bad_lines"])); continue
-        print("  %s%s: %d lanes · letters %s%s" % (r["run"], " (resumed, re-reviewed)" if r["resumed"] else "", r["lanes"],
+        print("  %s%s%s: %d lanes · letters %s%s" % (r["run"], " (attended)" if r.get("attended") else "", " (resumed, re-reviewed)" if r["resumed"] else "", r["lanes"],
               json.dumps(r["letters"], sort_keys=True), (" · throttle unrecorded on %d" % r["throttle_unrecorded"]) if r["throttle_unrecorded"] else ""))
         for x in r["findings"]: print("    FINDING " + x)
         for x in r["notes"]: print("    note " + x)

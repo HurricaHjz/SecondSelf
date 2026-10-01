@@ -66,8 +66,8 @@ prev_hour() { "$PY" -B -c 'import time; print("%02d" % ((time.localtime().tm_hou
 # safe at every minute of the hour when k mod 24 is neither 0 (the clock's own hour) nor 23
 # (the hour the grace forgives). plant_hour takes k=+3 and this takes k=+5: both are outside
 # the tolerance at every minute, and the two differ, so the two tokens are distinct hours and
-# the leg's two warning lines do not depend on the clock. (`$(prev_hour):45` was k=-1 here
-# until 2026-09-08 and went silent whenever the run began at a minute under ten.)
+# the leg's two warning lines do not depend on the clock. (A `$(prev_hour):45` stamp would go
+# silent whenever the run began at a minute under ten.)
 other_hour() { "$PY" -B -c 'import time; print("%02d" % ((time.localtime().tm_hour + 5) % 24))'; }
 # Streams kept apart: the warning is specified as a stderr line, and stdout stays the one
 # line a head reads. $SOUT and $SERR hold them.
@@ -571,13 +571,17 @@ now = time.struct_time((2026, 9, 8, 9, 30, 0, 0, 0, -1))   # 09:30, mid-hour
 print(",".join(mod.clock_tokens(now, [
     "twice at 21:3x and again 21:3x",   # caught once: the rounded Mx form, deduplicated
     "at 19:52:29 exactly",              # caught once: 19:52, and 52:29 is not a second token
-    "at 8:07 this morning",             # caught: a one-digit hour
-    "at 9:30 now", "at 9:05 too",       # silent: the clock own hour
+    "at 08:07 this morning",            # caught: a zero-padded morning hour
+    "at 8:07 this morning",             # silent since 2026-09-13: a one-digit hour (K58-K60)
+    "at 09:30 now", "at 09:05 too",     # silent: the clock own hour
     "PASS 139/139", "1300 hours",       # silent: no token at all
-    "at 25:00", "x9:30x",               # silent: not an hour, and not a token in a word
+    "at 25:00", "x09:30x",              # silent: not an hour, and not a token in a word
 ])))
 ' "$S")
-eq "K54 the token regex catches what it must and skips what it must not" "$TOKENS" "21:3x,19:52,8:07"
+# Updated 2026-09-13: the hour is anchored on two digits (K58-K60), so `8:07` is silent;
+# `08:07` now carries the morning case, and the own-hour and in-a-word cases are zero-padded so
+# each stays silent for its own reason rather than for the one-digit rule.
+eq "K54 the token regex catches what it must and skips what it must not" "$TOKENS" "21:3x,19:52,08:07"
 
 GRACE=$("$PY" -B -c '
 import importlib.util, sys
@@ -615,6 +619,92 @@ elif [ "$M0" -ge 10 ] && [ "$M1" -ge 10 ]; then
 else
 	eq2 "K57 the grace boundary turned during the call (minute $M0 to $M1)" "$GOT" "0" "1"
 fi
+
+echo "== the clock: a meter's model count is not a clock (2026-09-13) =="
+
+# The register entry of 2026-09-09 15:27: a Mechanism bullet carrying a meter's model count
+# `claude-opus-5:88` must not print `clock: the note names 5:88`. K58 replays such a meter
+# segment; K59 is its control on the same text, a real wrong clock beside it.
+fixture "$W/fix"
+METER_TEXT='fable share: head 12,345 out · lanes 23,456 out (claude-opus-5:88) · share 34.5%; billed (list) head $1.23 · lanes $2.34 · session $3.57'
+vws log-append --vault "$VAULT" --action ingest --title "model count" --changed "c" --conflicts "none" --extra "Mechanism: $METER_TEXT" --date 2026-09-05
+eq "K58 the meter's model count claude-opus-5:88 warns about nothing" "$(nlines "$SERR")" "0"
+eq "K58b and the entry was written" "$(count "$LOG" "(claude-opus-5:88)")" "1"
+PLANT="$(plant_hour):3x"
+vws log-append --vault "$VAULT" --action ingest --title "model count" --changed "written at $PLANT" --conflicts "none" --extra "Mechanism: $METER_TEXT" --date 2026-09-05
+eq "K59 control: a real wrong clock beside the same meter text still warns, once" "$(nlines "$SERR")" "1"
+fhas "K59b and the warning names the clock, not the model count" "$SERR" "clock: the note names $PLANT,"
+
+# K60 — the meter's other line shapes, through the module with the clock passed in (09:30, an
+# hour every token below disagrees with, so a silent one is silent on its shape alone). K60c
+# runs the same silent list through the pattern shipped until 2026-09-13: it must catch some,
+# or K60 proves nothing.
+SHAPES=$("$PY" -B -c '
+import importlib.util, re, sys, time
+spec = importlib.util.spec_from_file_location("vwmod", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+now = time.struct_time((2026, 9, 8, 9, 30, 0, 0, 0, -1))
+silent = [
+    "lanes 123,456 out (claude-opus-5:88)",                   # a meter model count
+    "(<synthetic>:4, claude-fable-5-1:35, claude-opus-5:956)", # counts on three id shapes
+    "tool uses/call head 1.87 lanes 1.37",                    # ratios carry no colon
+    "models opus-15:30, gpt-5.10:12 · efforts high:12, max:20",
+    "window: 2026-09-10T12:00:00+01:00 -> 2026-09-10T13:44:05-05:00",
+    "at 5:88 and 7:30",                                       # one-digit hours, a minute over 59
+    "rewrites 3 ($23.08) · picks: verifier m a9 r0 l0 · e a9 r0 l0",
+]
+caught = ["at 22:58-23:04 BST", "(13:44)", "at 21:3x"]
+old = re.compile(r"(?<![0-9A-Za-z:])([0-9]{1,2}):([0-9][0-9x])(?![0-9A-Za-z])")
+print("silent=" + ",".join(mod.clock_tokens(now, silent)))
+print("caught=" + ",".join(mod.clock_tokens(now, caught)))
+print("old=%d" % sum(len(old.findall(text)) for text in silent))
+' "$S")
+eq "K60 every meter line shape names no clock token" "$(printf '%s\n' "$SHAPES" | sed -n 's/^silent=//p')" ""
+eq "K60b control: the same call catches both ends of a range, a bracketed time and a rounded one" "$(printf '%s\n' "$SHAPES" | sed -n 's/^caught=//p')" "22:58,23:04,13:44,21:3x"
+eq "K60c control: the pattern shipped until 2026-09-13 reads 8 clocks in the same silent list" "$(printf '%s\n' "$SHAPES" | sed -n 's/^old=//p')" "8"
+
+echo "== the payload: a shell's traces (2026-09-13) =="
+
+# A shell substitution can remove a backticked token from a double-quoted payload.
+# Check odd backtick counts and captured shell errors; a clean loss leaves neither trace.
+# See register entry of 2026-09-10 19:59.
+fixture "$W/fix"
+vws log-append --vault "$VAULT" --action lint --title "t" --changed "control \`Bregman\` 7 hits" --conflicts "none" --date 2026-09-05
+eq "B1 a balanced code span warns about nothing" "$(nlines "$SERR")" "0"
+vws log-append --vault "$VAULT" --action lint --title "t" --changed "control \`Bregman 7 hits" --conflicts "none" --date 2026-09-05
+eq "B2 control: one backtick left open earns one line" "$(nlines "$SERR")" "1"
+fhas "B2b it names the argument and the count" "$SERR" "payload: --changed carries 1 backtick, an odd count"
+eq "B2c a warning is not a refusal" "$RC" "0"
+eq "B2d the write proceeded" "$(count "$LOG" "control \`Bregman 7 hits")" "1"
+vws log-append --vault "$VAULT" --action lint --title "t" --changed "c" --conflicts "none" --extra "Probe: control zsh: command not found: Bregman 7 hits" --date 2026-09-05
+eq "B3 a captured 'command not found' earns one line" "$(nlines "$SERR")" "1"
+fhas "B3b it names the extra by its key" "$SERR" "payload: --extra Probe carries 'command not found'"
+eq "B3c and the write proceeded" "$RC$(count "$LOG" "Probe**: control zsh: command not found")" "01"
+vws log-append --vault "$VAULT" --action lint --title "t" --changed "the grep found nothing, and the file was not found" --conflicts "none" --date 2026-09-05
+eq "B4 ordinary prose saying 'not found' warns about nothing" "$(nlines "$SERR")" "0"
+vws log-append --vault "$VAULT" --action lint --title "odd \`title" --changed "one \` here" --conflicts "and \`\`\` there" --extra "K: \`a\` and \`b\` and \`c" --date 2026-09-05
+eq "B5 each odd argument earns its own line (title, changed, conflicts, extra)" "$(nlines "$SERR")" "4"
+
+fixture "$W/fix"
+cp "$LOG" "$W/log.payloaddry"
+vws log-append --vault "$VAULT" --action lint --title "t" --changed "control \`Bregman 7 hits" --conflicts "none" --date 2026-09-05 --dry-run
+eq "B6 a dry run warns the same way" "$(nlines "$SERR")" "1"
+if cmp -s "$W/log.payloaddry" "$LOG"; then ok "B6b the warned dry run wrote nothing"; else no "B6b the warned dry run changed the log"; fi
+
+# B7 — the 2026-09-10 text itself, double-quoted through a POSIX shell as the caller wrote it.
+# The token and both backticks are gone before the script runs, so its stderr stays silent: the
+# clean loss is the caller discipline's case, and this leg pins that limit rather than hiding it.
+# Controls on the same run: the shell reported the unknown command on its own stderr, and the
+# entry shipped the double space the register quotes.
+fixture "$W/fix"
+cat >"$W/replay.sh" <<'REPLAY_PAYLOAD_END'
+"$1" -B "$2" log-append --vault "$3" --action lint --title "replay" --changed "control `Bregman` 7 hits" --conflicts "none" --date 2026-09-05 2>"$4"
+REPLAY_PAYLOAD_END
+sh "$W/replay.sh" "$PY" "$S" "$VAULT" "$SERR" >"$SOUT" 2>"$W/shell-stderr.txt"
+eq "B7 the clean loss leaves no trace the script can read: its stderr is silent" "$(nlines "$SERR")" "0"
+eq "B7b control: the entry shipped the double space where the token was" "$(count "$LOG" "control  7 hits")" "1"
+fhas "B7c control: the shell itself reported the unknown command" "$W/shell-stderr.txt" "not found"
 
 echo "== what the primitives may touch =="
 

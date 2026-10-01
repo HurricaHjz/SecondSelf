@@ -5,14 +5,13 @@ effort set per call, and its spawn record written before the process starts.
 An in-session lane inherits the whole contract, the whole tool set and the skills listing. A
 thin lane is a headless session started from a LANE HOME — a directory outside the vault
 holding the lane-side settings, the fence hook and the contract slices, and no CLAUDE.md —
-whose context is its brief plus exactly the directories the head grants. Design records:
-wiki/developments/thin-lanes-design.md (phase 2) and wiki/developments/hands-off-mode-design.md
-(the hands-off additions: file grants, controls, the watchdog, watch, resume, detach, limit).
+whose context is its brief plus exactly the directories the head grants.
 
     lane.py init   [--home DIR]                    build or refresh the base lane home
-    lane.py spawn  --run ID --lane ID --class CLASS --brief FILE --reason "(a) WHY" [options]
+    lane.py spawn  --run ID --lane ID --class CLASS --brief FILE --expect-usd USD --reason "(a) WHY" [options]
     lane.py watch  --run ID --lane ID [--silence-s N] [--max-wait-s N]
-    lane.py resume --run ID --lane ID --brief FILE   (the spawn's reason is carried forward)
+    lane.py resume --run ID --lane ID --brief FILE [--detach [--no-wait]]   (the spawn's reason is carried forward)
+    lane.py resume --run ID --lane ID --beat                                (the held-lane beat: no brief, no report)
 
 The commands and what they guarantee
 ------------------------------------
@@ -22,9 +21,20 @@ thin classes read by path instead of inheriting: `contract/schema-s4.md` (the sc
 of the vault contract) and `contract/confidence-rubric.md` (the confidence design page, body
 only). Each is written to a temporary file and renamed into place, and regenerated only when
 its source's hash changes, so two concurrent spawns can never read a half-written slice. It
-also materialises the skill slices found under the delegate skill's `lane-home-src/` and
-symlinks the memory-hunter's memory directory to the vault's, and prints what it created,
-kept or regenerated.
+also lists the skill slices found under the delegate skill's `lane-home-src/` (each spawn reads
+them there; init installs no `skills/` link and removes one an earlier init left), makes
+the memory directory of every class whose definition declares `memory: local` (the
+memory-hunter's) a real directory under the home synced from the vault's copy, and prints what
+it created, kept or regenerated.
+
+The memory directory (register 2026-09-04). `--restricted` resolves a symlink before it confines
+Write and Edit to the working directories; a link into the vault cannot authorise a memory edit.
+A real directory inside the home passes. `init` removes a link an
+earlier init left (the link alone, never the vault directory behind it) and copies the vault's
+files in; every `lane-closed` of such a class copies back the files the lane changed. Neither
+direction overwrites a file the other side changed since the last sync (the hashes both sides held
+then sit in the home's state file): `init` keeps such a home copy and names it; the close leaves
+such a vault file as it is, lists it under `memory_sync.conflicts` and prints one line.
 
 A row's literal grants name the live vault, so a fixture-bound lane takes `--grants-only`:
 the literals are dropped (and recorded), the row's per-call slots are still filled from the
@@ -34,12 +44,12 @@ call, and `--grant`/`--write` become the lane's whole scope — plus the lane ho
 `spawn` resolves the class row from `routing.json` (schema 2) under the active throttle,
 builds the class's THIN definition from the vault's `.claude/agents/<class>.md` — the same
 body, frontmatter rewritten to the row's tools and skills, with no `effort:` field, since the
-definition's effort is ignored on the headless path (probe 2026-09-04) and `--effort` is what
+definition's effort is ignored on the headless path and `--effort` is what
 applies — and passes it INLINE with `--agents`, so parallel spawns never share a definition
 file. It writes the `lane-open` record line BEFORE starting the process, a `lane-spawned`
 line carrying the session id once it has started (the meter matches headless lanes by that
 id), and a `lane-closed` line carrying the metered figures at the end, with the class's
-soft-cap check (`soft_usd`, `soft_src`, `soft_exceeded`: the two-tier caps below).
+soft-cap check (`soft_usd`, `soft_src`, `soft_exceeded`: the soft line and the hard cap below).
 
 `--reason` is required at the spawn and names the instrument-rule letter CLAUDE.md section 2.2
 asks for; omitted, whitespace-only and letterless take one refusal (exit 2), before any record
@@ -48,9 +58,23 @@ carries the reason its `lane-open` recorded, and `--reason` there is an override
 whose reason carries no letter (one written before the check) and is refused against a record
 that carries one.
 
-The per-call pick (owner ruling 2026-09-07 17:0x; built 2026-09-08): under the throttle `auto` —
-the default preset, and the fallback for a missing Settings line — the row's marked defaults are
-ANCHORS, and the head picks `--model` and `--effort` per call within the row's options. The
+The per-call pick (owner ruling 2026-09-07 17:0x; built 2026-09-08; the tier rules of 2026-09-22
+19:0x): under the throttle `auto` — the default preset, and the fallback for a missing Settings
+line — the row's marked defaults are ANCHORS, and the head picks `--model` and `--effort` per call
+within the row's options. Task kind decides the model: opus (Opus 5.5) for closed work, Astra
+through codex-lane.py for open work, opus 5.5 on every Claude seat and fable only on the owner's word
+(a by-name `--model fable` is recorded as outside the options, never refused); the `top` and `cheap`
+presets resolve the model to opus through the table's `preset_model` (owner rulings 2026-09-22 and
+2026-09-29). Effort on opus: xhigh the anchor, max only after a failed
+xhigh or for a genuinely hard or very extensive task. Every close carries `fallback`, read from the
+result's modelUsage ids against the alias map in prices.json (`models`): a second non-helper id,
+or one other than the alias's recorded resolution, is a transparent safeguard fallback (Opus 5.5
+re-routes some tasks with no refusal to see); the wrapper then moves the task's remaining work to
+Astra itself — a derived brief, one detached `codex-lane.py spawn` of `<lane>-astra` with the same
+class, write scope, effort and regime, a `lane-swapped` line — and the summary and stderr say
+FALLBACK with the new lane; `--no-swap` opts out; the run console alerts on the close and the
+swap, and the head tells the owner once (owner ruling 2026-09-29: the owner is told of every refused
+or re-routed task, which falls back to GPT-6 Astra at the same effort rung). The
 `lane-open` line records where each axis came from: `model_src`/`effort_src` read `anchor` (no
 override, or one equal to the anchor), `auto: <text>` (a departure, carrying `--choice-reason`'s
 text), `throttle <name>` (a hand-set preset's own value) or `explicit` (a departure from a
@@ -68,8 +92,7 @@ the head's per-run resolution under delegation `auto`) and where it came from in
 line `- **delegation**:` (the pre-rename `- **mode**:` line as a fallback) supplies a
 `single`/`multi` word with source `owner`, and `auto`, an absent line or any other value is
 a premise failure: the head resolves the run first (`role-style-anchor.py set-delegation`)
-and passes the resolution, so a record never carries a regime nobody chose (design record:
-wiki/developments/delegation-mode-auto-design.md, the critic's F5 fold).
+and passes the resolution, so a record never carries a regime nobody chose.
 
 Grants (hands-off D17, D18)
 ---------------------------
@@ -85,12 +108,23 @@ root itself (a lane may then read root files such as MANUAL.md without a copy). 
 settings file `<store>/<run>-settings-<lane>.json` carries the home's hooks plus
 `permissions.allow` rules `Edit(//path)` / `Write(//path)` for every write grant; whether
 that list beats the harness's sensitive-path guard under `.claude/` is recorded beside
-`settings_for` below.
+`settings_for` below. A FILE grant whose parent is the vault root or a home directory earns one
+stderr warning naming that parent, since the grant reaches the whole directory (register
+2026-09-08, the judge-brief entry); a warning, never a refusal.
 
 Controls (D19): a brief line `CONTROL+: <phrase> in <file>` is a positive control the wrapper
 checks before the spawn — the phrase as a fixed string in that file (a relative file resolves
 against the vault). A zero match, a missing file or a malformed line refuses the spawn (exit 2,
 no record written); the matches are recorded as `controls_checked`.
+
+Brief paths and closed runs. A brief line carrying a doubled root refuses the spawn or the resume
+(exit 2, the line quoted, before any record line; register 2026-09-09 19:03): a root path (led by
+`~`, a `$VARIABLE`, a hidden directory name, or an absolute path of the home, temporary or system
+families) that embeds a second absolute path, whatever its lead (`embedded_root` says what counts),
+or the vault root twice inside one path token. A spawn onto a closed run, whose record holds a
+`run-close` with no later `run-open` or `run-resume` whatever else follows it, prints one warning
+naming the close and proceeds (register 2026-09-03, two head processes on one session id). Both run
+in the caller before any detach.
 
 The watchdog (D20)
 ------------------
@@ -110,11 +144,13 @@ passed to `watch` itself. When the recorded wrapper is gone and no `lane-closed`
 waits for the lane process (bounded by the recorded deadline) and then closes the lane from
 its transcript: `exit_class: watch-closed`, `cost_src: transcript-estimate`, `denials:
 unknown`. It returns `still-running` (exit 8) after `--max-wait-s` so a head can re-issue it
-as a bounded blocking call.
+as a bounded blocking call. A watch that finds the lane already closed waits up to `--appear-s`
+for a newer `lane-resumed` before it refuses: a resume issued with `--detach --no-wait` writes that
+line a moment after it returns, and the close that counts is the one after the latest open or
+resume, never the previous call's (the rule codex-lane.py's watch shares).
 
-`kill --run --lane --reason` is the deliberate stop, and the reason it exists is that a lane
-killed by hand from another terminal wrote no `lane-closed` at all and every reader went on
-drawing it as running. It signals the recorded wrapper first (so the wrapper cannot race it to
+`kill --run --lane --reason` deliberately stops a lane and records its close so readers can
+distinguish a stopped lane from a running one. It signals the recorded wrapper first (so the wrapper cannot race it to
 a close of its own) and then the lane process, SIGTERM and then SIGKILL after the kill grace
 for each, and writes the close the wrapper never wrote: `exit_class: killed`, the reason, and
 the cost estimated from the transcript the way `watch-closed` estimates it. A pid already gone
@@ -126,33 +162,81 @@ nothing. `watch` stays the interim path for a lane whose wrapper has simply gone
 exit) runs the lane and writes every record line, and the foreground stays as the watch over
 it, exiting with the worker's exit code once `lane-closed` appears; `--detach --no-wait`
 prints `detached pid N session S` and exits 0 at once. `lane-spawned` carries `wrapper_pid`,
-the process that will write the close.
+the process that will write the close. `resume` takes the same two flags (register 2026-09-10
+15:22). The caller, not the worker, opens the run's console, before the worker starts, and hands
+the worker `--viewer none` (appended, so it wins over any `--viewer` the command carried).
+(register 2026-09-09 11:21; the opener itself is handsoff.py's).
 
 `resume` (D25) re-enters a finished lane's session (`--resume <session id>`, the follow-up
 brief on standard input) with the model, effort, tools, grants and settings its `lane-open`
 recorded, refusing when the lane's last call (`lane-closed.ts`) is older than the resume
 window, since the cache has lapsed by then and a fresh spawn costs less. It records
-`lane-resumed` and a new `lane-closed`.
+`lane-resumed` BEFORE the process starts, as a spawn records `lane-open`, then `lane-respawned`
+carrying the process's `pid` and `wrapper_pid`, and a new `lane-closed` (2026-09-13: the pid moved
+from `lane-resumed` to `lane-respawned`, the pair codex-lane.py already writes).
 D29: after a `limit` close the window is WAIVED — one cold re-read is the accepted token loss —
 and `lane-resumed` carries `after_limit` and `age_s`; a lane whose transcript cannot be found is
-re-spawned, never resumed (exit 2).
+re-spawned, never resumed (exit 2). The window's reference is the lane's last call: its
+`lane-closed.ts`, or a later successful `hold-beat` (below), whichever is later, and
+`lane-resumed.age_src` names which.
+
+`resume --beat` (the held-lane beat, 2026-09-17) is the no-work resume handsoff.py's
+supervisor issues for a held lane: the same command line as a resume — the lane-open's model,
+effort, tools, grants, settings and appended file, `--resume <session id>` in place of the
+spawn's `--session-id` — with the fixed line BEAT_PROMPT on standard input in place of a brief.
+It writes no report, no `-pass<n>` file and no `lane-resumed` or `lane-closed` line; its one
+record line is `hold-beat`, carrying the call's usage from the harness result (`modelUsage`,
+this invocation's own calls: input, output, cache read and cache write tokens), the cost, the
+exit class and `config_sha256`. That hash is the resolved command line's configuration — every
+token but the session flag pair and the two wrapper-side bounds (`--max-budget-usd`,
+`--max-turns`), plus the bytes of the appended system-prompt file and the settings file — and is
+recorded on `lane-open` and `lane-resumed` too; a beat whose hash differs from the lane-open's
+is refused before any process starts (`config_match false`), since a changed configuration is
+a rewrite, not a beat. A beat also refuses, exit 2 and nothing written: a brief beside `--beat`,
+a lane still running, a close outside BEAT_EXITS (a limit or budget close is the head's own
+resume decision), a lapsed window, a missing transcript. The beat runs in the foreground under
+BEAT_TIMEOUT_S with the spawn's own cap, never `--detach`. A beat that fails — a non-zero exit,
+a limit, a refusal — is recorded with `ok false` and its exit class; the supervisor never
+retries it within its tick.
+While a beat or a real resume runs, it holds an ADVISORY LOCK on `<run>-<lane>-beat.pid.lock`
+beside the record (`fcntl.flock`, LOCK_EX|LOCK_NB, taken for the length of the call), and any
+other entry to that lane's session — a real resume, a second beat, through either wrapper — is
+refused while that lock is held (critic F4, 2026-09-17: the beat's own record line lands only
+when the call returns, so nothing else told a resume the session was busy). The lock, not the
+existence of a file, is the claim (critic finding 2 of review, 2026-09-18): it is taken
+atomically before the file has any content, so no second entrant can read an empty claim as
+stale; the kernel releases it when the holder dies, so a crashed call wedges no lane shut and no
+reader removes anything; and a real resume claims it immediately before it writes or starts
+anything, so two calls arriving in either order cannot both pass. A call that cannot claim the
+session refuses and starts nothing, a body it cannot write included. The locked file's body
+(`<pid> <kind> <timestamp>`) is the diagnostic a refusal quotes, never the claim.
+`advise` reads the same reference as `resume` — the close, or a later successful beat — and
+names it on its line.
 After a `budget` close — the CLI's own `--max-budget-usd` stop, `error_max_budget_usd` — the
 recorded cap is NOT re-used: resume refuses (exit 2, no record line) unless `--budget-usd` is
-given and is above the cap the lane-open recorded (`hard_usd`, or `budget_usd` for a record from
-before the class caps). Either the CLI's running total survives the resume and the same cap kills
+given and is above the cap of the pass that stopped (`hard_usd`, or legacy `budget_usd`):
+the latest `lane-resumed` before that close, else `lane-open` (critic F2, 2026-09-15). Either the CLI's running total survives the resume and the same cap kills
 the lane on its first turn, or it does not and the lane silently gets a second full helping of it;
 neither is a resume. Raised, `hard_src` reads `explicit --budget-usd (raised over a budget close
 from $<cap>)` and `lane-resumed` carries `after_budget: true` beside `after_limit`. Its premise
-cases, each exit 2: a `budget` close whose lane-open carries neither `hard_usd` nor `budget_usd`
+cases, each exit 2: a `budget` close whose pass start carries neither `hard_usd` nor `budget_usd`
 (a torn or pre-class-caps record) refuses because the cap it stopped at is unknown; a
 `--budget-usd` equal to the recorded cap refuses, since equal is not above; a non-numeric recorded
-cap refuses as a broken premise. Every other close class resumes exactly as before, and there
+cap refuses as a broken premise. Every other close class resumes from its recorded estimate, and there
 `--budget-usd` is raise-only against the cap the resume composed (owner ruling, 2026-09-07):
 at or below it the composed cap is kept, `hard_src` says so and the resume prints one line.
 
-The report cut (D8): stdout carries at most `--report-words` words of the report (default 800)
-plus `(N of M words shown; full text: <path>)`; the full text is persisted; `lane-closed`
-records `report_words` and `report_cut`.
+The report (D8): stdout carries the complete report by default. An explicit preview
+preview request uses `--report-words N` and names the full persisted text in its pointer.
+The record carries `report_words` and `report_cut`. Since 2026-09-15 the first report keeps its filename;
+resumes use `<run>-report-<lane>-pass<n>.md`, starting at n=2. Watch reads the latest close
+and uses the same pass numbering when recovering a report from an orphaned transcript.
+Spawn reserves only numeric `-pass<n>` lane-id endings
+in any letter case, and refuses case-equivalent lane ids in the run record. Historical
+`-r<n>` and `-resume-<n>` lane-id endings remain legal; follow-up briefs use `-pass<n>`.
+Spawn and resume check destination directory listings case-insensitively before writing,
+including directories and dangling symlinks; spawn also checks before starting a detached worker. A resumed response with no
+report text is `empty` (exit 3); an earlier transcript message cannot supply its report.
 
 Exit codes: 0 the lane completed; 2 a premise failed before the spawn (no record written), or
 `watch` names a lane that is unknown or already closed; 3 the lane ended in error, refusal,
@@ -164,94 +248,55 @@ reported on the summary line, and the head reads them as a re-brief signal.
 
 Numbers that decide, each with its derivation
 ---------------------------------------------
-  - deadline, default 3600 s: the longest lane in the run store ran 1,750 s wall
-    (2026-09-04), so the default is a shade over twice the longest observed lane. A bound
-    with headroom, not a budget; `--deadline-s` sets it per call.
-  - cost caps, two tiers per class from the `cost` block of the class row in `routing.json`
-    (the rule itself is `cost_caps` below). SOFT: the lane's soft line — the head's own
-    `--expect-usd` where the call gives one (`soft_src: expect`), else `soft_usd`, the class's
-    completed maximum plus 25 % headroom over the run store's completed `lane-closed` events
-    (`soft_src: class`; token-efficiency findings 2026-09-07, proposal T3: a bound over the
-    completed maximum kills no lane of its class, where a fitted percentile would have killed
-    a $14.91 reflector that completed); logged on the close line and in `lane-closed`, never a
-    stop, and read back by handsoff.py's waste table at the run's close. HARD: what the CLI
-    gets as `--max-budget-usd` — the smaller of the class base and the run's envelope
-    remainder, else the base alone, and then an explicit `--budget-usd` where it RAISES that
-    figure (owner ruling, 2026-09-07: `--budget-usd` may raise a lane's stop, never lower it,
-    since a cap read as a sizing guess put a builder at $6 under its class's $18.22 soft
-    threshold — known-issues, 2026-09-07). The base is max(HARD_MULTIPLIER × `usual_usd`,
-    `soft_usd`): the multiplier 5 replaces the unmeasured 10 on the owner's ruling of
-    2026-09-07 — over the run store folded that day no completed lane costs more than about
-    twice its class's usual cost (the widest ratios: verifier 12.7 ×, memory-hunter 3.2 ×,
-    reflector 2.9 ×, builder 2.2 × — and every one of those maxima still sits under its class
-    base, because the max() term below is the maximum × 1.25) — and the max() keeps the hard
-    stop off its own class's history, since the median and the maximum are unrelated
-    statistics and a small median times the multiplier can sit under a maximum a lane of that
-    class completed at (the verifier's 5 × $0.77 = $3.85 against a completed maximum of $9.78,
-    critic finding F1). A class without figures — fewer than three completed lanes, a floor
-    set by judgement, unmeasured — keeps the `breadth` knob's value (light $2 · standard $5 ·
-    max $15, the delegate skill's section 2a, anchored to metered gate lanes at $0.35–0.96 and
-    compile lanes at $1–3), composed with the envelope remainder in the same way, and takes an
-    `--expect-usd` as its soft line where the call gives one. `resume` applies the same
-    composition, and the same raise-only rule, to the hard stop the lane-open recorded.
-    Premise cases, each exit 2 before any record line: an `--expect-usd` above the lane's hard
-    stop (a line the lane would be killed before reaching), and a non-positive `--expect-usd`.
-    A `--budget-usd` equal to the class cap is not a premise failure: the class cap is kept and
-    the spawn prints one line saying so. An envelope with nothing left still refuses every
-    spawn, and an explicit `--budget-usd` is still that one case's override. `cost-figures` re-derives every class's figures from the run store
-    and `cost-figures --check` compares them with the table (exit 1 on drift), which is what
-    keeps the blocks and the floor of three honest; `cost-figures --fold` then writes the
-    drifted blocks back into that table, at the file's own indent and in its own key order, so
-    a fold touches the fields it changes and nothing else; nothing schedules either — the head
-    runs them, by the delegate skill's instruction.
+  - deadline, default 14400 s (4 h): a compatibility bound, set by judgement, unmeasured for
+    a new workload. The cost cap bounds spend; `--deadline-s` sets wall time per call.
+    Review this allowance against completed runtimes and unfinished healthy work.
+  - cost caps: every spawn supplies the head's own positive,
+    finite --expect-usd. It is the soft line (soft_src: expect), logged at close, never enforced
+    itself. The hard base is HARD_MULTIPLIER × that estimate, rounded to cents. The multiplier
+    is 5, set by judgement and unmeasured for a new installation. The hard stop is the
+    smaller of this base and the run's envelope remainder, or the base alone when unmetered;
+    hard_src names the deciding term. An explicit --budget-usd raises only; an exhausted envelope
+    still refuses unless that explicit override is given.
+    The class median (usual_usd) is an advisory reference: above 3 × it or below it ÷ 3 prints
+    one comparison and records estimate_advisory; exact decimal comparison keeps equality
+    quiet, with no division or rounding (estimate × 3 is compared with the median). The factor 3 is
+    an advisory sanity band, set by judgement, unmeasured. A class without figures
+    records "no class figures" and uses the estimate in the same composition.
+    Resume composes from lane-open expect_usd with today's remainder, applying raise-only;
+    a budget close still needs an explicit cap above the recorded cap. A resume --expect-usd
+    changes its soft line alone. A missing or invalid recorded estimate is a broken premise,
+    never a guess from the old class cap. The envelope may sit below the estimate; the soft
+    line stays recorded even then. Missing, non-positive or non-finite estimates exit 2 before
+    any record line, including a dry run. cost-figures and --check retain their dated medians
+    and maximum-plus-25-percent figures; --fold still refreshes those routing blocks only when
+    explicitly requested. The floor of three completed lanes is set by judgement, unmeasured.
   - kill grace, 5 s between SIGTERM and SIGKILL to the process group: set by judgement,
     unmeasured — long enough for the CLI to flush its transcript, short enough that a hung
     lane does not hold the head.
-  - silence threshold, default 900 s: the longest healthy silence observed in run
-    run-20260905-handsoff was 12.3 min inside one fable·max call (lane B1, 04:24–04:36 BST,
-    2026-09-05, process alive, then resumed), so the earlier 480 s by judgement would have
-    killed a healthy lane; 900 s sits over it with headroom. `--baseline-lane` raises it to
-    1.5 × the predecessor's runtime when that is larger (the factor set by judgement,
-    unmeasured).
+  - silence threshold, default 900 s: a compatibility bound, set by judgement, unmeasured for
+    a new workload. `--baseline-lane` raises it to 1.5 × the predecessor's runtime when larger;
+    the multiplier is set by judgement, unmeasured.
   - no-transcript bound, 120 s: the harness writes the transcript file on the first user
     message, seconds after the spawn; 120 s is generous headroom, set by judgement.
   - resume window, 55 min: the 1-hour cache tier minus 5 min headroom (D25).
-  - report cut, 800 words: the delegate skill's report cap.
+  - reports print in full unless the caller explicitly requests a preview.
   - limit text guard, 60 words: a limit stop is a sentence, a report is hundreds of words, so
     a successful result mentioning "limit" and "usage" counts only under that length or on an
     error; set by judgement, unmeasured.
   - watch bound, 570 s: the shell tool's 600 s cap less 30 s so the wrapper returns before
     the tool kills it; set by judgement.
-  - core injection shape: measured, see below.
+  - doubled-root depth, 2 path components: a vault root of fewer (`/`, `/tmp`) sits inside every
+    path, so the repeated-root pattern is skipped for it; set by judgement, unmeasured.
+  - core injection shape: an appended system-prompt file, verified with a marker control below.
 
-Core injection: measured, not assumed
--------------------------------------
-The lane core (conduct, controls, shell pitfalls, the gap-report format) can reach a lane as
-a skill preloaded through the definition's `skills:` or as `--append-system-prompt-file`.
-Three live sonnet spawns on the brief "reply ok", first-call context read from the
-transcript (input + cache creation + cache read of the first assistant record), 2026-09-04:
-
-      A  bare thin lane, no core                      8,395 tokens · marker NONE
-      B  core preloaded as `skills: [lane-core]`       8,395 tokens · marker NONE
-      C  core as `--append-system-prompt-file`         9,877 tokens · marker quoted back
-
-    A 4,644-byte stand-in core carrying a marker line; the brief asked the lane to quote the
-    marker or say NONE. Shape B cost nothing and delivered nothing: the `skills` key of the
-    inline `--agents` JSON is silently ignored — identical context to bare, marker absent —
-    and a control run WITHOUT `--restricted` behaved the same way, so the cause is the inline
-    definition, not the restricted mode. Shape C is therefore the only one of the three that
-    puts the core in front of the lane, at +1,482 tokens (+18%) over bare. The core comes
-    from `--append-core FILE`, else the lane home's own copy, else the shipped
-    `templates/lane-core.md`; `--no-core` drops the core and keeps the slices. Every spawn
-    records what it carried: `appended: [lane-core, compile-core]` with `appended_bytes`.
-
-    The same measurement settles the skill route, and the answer is negative: a restricted
-    headless lane asked to list its skills named only the user-level ones, with a lane-home
-    skill installed at `<home>/.claude/skills/<name>/SKILL.md` — as a symlinked directory, as
-    a real directory, and with `--setting-sources project` — absent from the list every time
-    (three probes, 2026-09-04). The inline definition therefore carries NO `skills:` key: it
-    was measured never to load (2026-09-04), and a field that does nothing is worse than no
-    field, since it reads like a guarantee.
+Core injection
+--------------
+The appended system-prompt file carries the lane core and skill slices. Do not assume that
+an inline agent definition preloads skills: verify the selected harness path with a marker
+control. The core comes from `--append-core FILE`, then the lane-home copy, then the shipped
+`templates/lane-core.md`. `--no-core` drops the core and keeps the slices. Every spawn records
+`appended` and `appended_bytes` so its actual context remains auditable.
 
     So the appended file is the single carrier. Per spawn the wrapper concatenates the lane
     core, then every slice the class row's `skills.default` names, then any `--skill` extra it
@@ -261,8 +306,10 @@ transcript (input + cache creation + cache read of the first assistant record), 
     copy — so the audit shows exactly what the lane carried — and passes that one file with
     `--append-system-prompt-file`. `lane-core` in a row's slice list IS the core, so it is
     never concatenated twice; `--no-core` drops the core and keeps the slices; a class whose
-    DEFAULT slice cannot be resolved is a premise failure. `init`'s `skills/` links stay: they
-    are the source listing the wrapper reads, not a load path.
+    DEFAULT slice cannot be resolved is a premise failure. `init` installs no `skills/` links: each
+    slice is read from the delegate skill's `lane-home-src/`, and a link an earlier init left is
+    removed (register 2026-09-06: a lane's Glob does not traverse a directory link, so the links
+    can read as absent slices; every spawn reads the slice source directly).
 
 Reading the transcript
 ----------------------
@@ -279,14 +326,18 @@ assistant text when the result field came back empty, and the limit-stop shape.
 import argparse
 import contextlib
 import datetime
+from decimal import Decimal, InvalidOperation, localcontext
+import fcntl
 import glob as globmod
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -296,26 +347,48 @@ SCHEMA = 2                      # routing.json schema this wrapper speaks
 CORE_NAME = "lane-core.md"      # the core's filename in templates/ and the home
 CORE_SLICE = "lane-core"        # its name in a class row's skills.default
 KILL_GRACE_S = 5                # SIGTERM -> SIGKILL, see the derivation above
-DEFAULT_DEADLINE_S = 3600       # see the derivation above
-BREADTH_BUDGET = {"light": 2.0, "standard": 5.0, "max": 15.0}   # delegate skill section 2a; the fallback for a class without cost figures
+DEFAULT_DEADLINE_S = 14400      # see the derivation above (raised from 3600 on 2026-09-16)
 DEFAULT_BREADTH = "standard"
-HARD_MULTIPLIER = 5             # hard stop = 5 × the class's usual cost; owner ruling 2026-09-07, replacing the unmeasured 10: in the classes that carry the run (builder, critic, reflector) no completed lane costs more than about three times its class's usual cost (the ruling said about twice; the reflector reads 2.93 ×), and max(5 × usual, soft) covers the two whose history exceeds it (verifier, memory-hunter) (see the derivation above)
+ESTIMATE_SANITY_FACTOR = 3       # advisory factor; set by judgement, unmeasured
+HARD_MULTIPLIER = 5             # hard stop = 5 × the head's estimate; set by judgement, unmeasured for a new installation
 SOFT_HEADROOM = 1.25            # soft = the class's completed maximum × 1.25 (token-efficiency findings 2026-09-07, proposal T3: a bound over the completed maximum kills no lane of its class)
 COST_FLOOR_N = 3                # fewest completed lanes a class needs before it carries a cost block; set by judgement, unmeasured (see the derivation above). `cost-figures` spells this number out as `three`
 THROTTLES = ("auto", "top", "default", "cheap", "fast", "cheap-fast")   # `auto` first: the default preset, and the fallback for a missing Settings line (owner ruling 2026-09-07 17:0x, built 2026-09-08)
 REGIMES = ("single", "multi")   # what a run actually runs under; `auto` is resolved to one per run
-DEFAULT_SILENCE_S = 900         # longest healthy silence observed 12.3 min (see the derivation above)
+DEFAULT_SILENCE_S = 900         # compatibility default; set by judgement, unmeasured for a new workload
 BASELINE_FACTOR = 1.5           # --baseline-lane multiplier, set by judgement, unmeasured
 POLL_S = 30                     # the watchdog's tick (design D20)
 NO_TRANSCRIPT_S = 120           # see the derivation above
-REPORT_WORDS = 800              # the delegate skill's report cap (design D8)
+REPORT_WORDS = None             # The default report is complete; previews require an explicit request.
 RESUME_WINDOW_S = 55 * 60       # the 1-hour cache tier less 5 min headroom (design D25)
+ORIENTATION_TOKENS = 85000      # fallback only when first_call_context is absent; set by judgement, unmeasured for a new deployment
+ADVISE_REPORT_MIN_BYTES = 400   # a wrapper placeholder report is shorter; a lane's real report is longer (set by judgement, unmeasured)
 LIMIT_TEXT_WORDS = 60           # see the derivation above
 WATCH_MAX_WAIT_S = 570          # see the derivation above
-WATCH_APPEAR_S = 5              # a detached worker records within ~1 s; headroom set by judgement, unmeasured
+WATCH_APPEAR_S = 5              # record-appearance wait; set by judgement, unmeasured for a new installation
+MIN_ROOT_DEPTH = 2              # the doubled-root check skips a shallower vault root: see the derivation above
+MEMORY_STATE_KEY = "memory-sync:%s"   # the home state file's key for one memory directory's last-synced hashes
 EXIT_CODES = {"completed": 0, "stall": 5, "limit": 6}    # every other class exits 3
 EXIT_STILL_RUNNING = 8
 STALL_ACTION = "SIGTERM process group, %d s, SIGKILL" % KILL_GRACE_S
+# The held-lane beat (2026-09-17): the fixed no-work line, the bound on one beat, the
+# close classes a beat re-enters (handsoff.py's HOLDABLE_EXITS, the same tuple), who issued it,
+# and the flag pairs the configuration hash leaves out — the session flag, which differs between
+# a spawn and its resume by design, and the two wrapper-side bounds, which never reach the model.
+BEAT_PROMPT = "beat: reply with the single word ok"
+BEAT_TIMEOUT_S = 600            # a cached one-word reply answers in seconds; the shell tool's own cap (set by judgement, unmeasured)
+BEAT_EXITS = ("completed", "empty", "watch-closed")
+BEAT_BY_ENV = "AIMYTH_BEAT_BY"
+CONFIG_DROP_PAIRS = ("--session-id", "--resume", "--max-budget-usd", "--max-turns")
+# A beat in flight is announced on disk, not only at its end (critic F4, 2026-09-17): the beat's
+# own record line is written when the call returns, so without this marker, between a beat's start
+# and its end, nothing would have
+# told a second `resume` that the session was busy, and two processes on one session can be one
+# command apart. The marker names the pid, and a resume of either wrapper
+# refuses while that pid is alive; a marker whose pid is gone is stale and removed, so a crashed
+# beat blocks nothing.
+BEAT_MARKER_SUFFIX = "-beat.pid"
+SESSION_LOCK_SUFFIX = ".lock"   # the advisory lock beside it: the claim on a lane's session
 
 
 # ----------------------------------------------------------------- premise and paths -------
@@ -395,11 +468,277 @@ def store_paths(run, lane, record_override=None):
             "detach_log": os.path.join(store, "%s-detached-%s.log" % (run, lane))}
 
 
+def require_lane_id(lane_id):
+    """Reserve report and prompt pass endings in any letter case (critic fold, 2026-09-16).
+    Reports and follow-up prompts use -pass<n>; historical lane endings remain legal."""
+    match = re.search(r"-pass[0-9]+$", lane_id, re.IGNORECASE)
+    if match:
+        die("--lane %r ends in reserved per-pass suffix %s (-pass<n>); "
+            "choose a lane id without that ending" % (lane_id, match.group()))
+
+
+def require_absent_paths(paths, empty_dirs=()):
+    """Refuse case-equivalent artefacts, including directories and dangling symlinks.
+    Directory listings keep the same rule on case-sensitive and insensitive filesystems.
+    Only explicitly named, exactly spelt empty directories may be reused as staging paths.
+    Symlinks and case-equivalent spellings never qualify.
+    This read-only check precedes spawn/resume writes, staging and detached workers."""
+    reusable = {os.path.abspath(path) for path in empty_dirs}
+    for path in paths:
+        parent, name = os.path.split(os.path.abspath(path))
+        try:
+            names = os.listdir(parent)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            die("cannot check per-pass path %s: %s" % (path, exc))
+        for existing in (entry for entry in names if entry.casefold() == name.casefold()):
+            if os.path.abspath(path) in reusable and existing == name:
+                try:
+                    empty = stat.S_ISDIR(os.lstat(path).st_mode) and not os.listdir(path)
+                except OSError as exc:
+                    die("cannot check empty stage directory %s: %s" % (path, exc))
+                if empty:
+                    continue
+            die("per-pass path already exists: %s (case-equivalent destination %s) — "
+                "no existing artefact is overwritten" % (path, os.path.join(parent, existing)))
+
+
+def require_new_lane_id(lane_id, record_path):
+    """A spawn cannot reuse any case-equivalent lane identity in its run record.
+    Missing and empty records are valid; an unreadable or malformed record cannot prove absence."""
+    try:
+        with open(record_path, "r", encoding="utf-8") as handle:
+            for number, line in enumerate(handle, 1):
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError as exc:
+                    die("cannot check lane ids in %s at line %d: %s" % (record_path, number, exc))
+                if not isinstance(event, dict):
+                    die("cannot check lane ids in %s at line %d: event is not an object"
+                        % (record_path, number))
+                existing = event.get("lane")
+                if isinstance(existing, str) and existing.casefold() == lane_id.casefold():
+                    die("--lane %r is case-equivalent to existing lane %r in %s — "
+                        "spawn needs a fresh lane id" % (lane_id, existing, record_path))
+    except FileNotFoundError:
+        return
+    except (OSError, UnicodeError) as exc:
+        die("cannot check lane ids in %s: %s" % (record_path, exc))
+
+
+def pass_report_path(first_path, pass_n):
+    """Keep pass one unsuffixed; the first resume is pass two (2026-09-15)."""
+    if pass_n == 1:
+        return first_path
+    stem, suffix = os.path.splitext(first_path)
+    return "%s-pass%d%s" % (stem, pass_n, suffix)
+
+
 def progress_path(run, lane):
     """The lane's liveness file: /tmp by design (the fence sanctions it for every lane); the
     directory is overridable so a suite can keep its fixtures inside one temporary root."""
     return os.path.join(os.environ.get("LLM_WIKI_PROGRESS_DIR") or "/tmp",
                         "%s-%s.progress" % (run, lane))
+
+
+# ------------------------------------------------------------ the caller's own checks -------
+# Check embedded absolute roots and repeated vault prefixes, regardless of the root spelling.
+# (register 2026-09-09
+# 19:03). The check is keyed on that property, whatever the path's lead or the store's name.
+# `embedded_root` defines every accepted root shape.
+ROOT_FAMILIES = ("Users", "home", "tmp", "private", "var", "opt")   # the first segment of an absolute path on macOS and Linux: the homes, the temporary roots and the system roots
+HOME_FAMILIES = ("Users", "home")          # a home is one of these followed by a name
+FIRMLINK_CHILDREN = ("tmp", "var", "etc")  # macOS keeps these under /private, so /private/tmp is one absolute path; set by judgement from the platform layout, unmeasured here
+PATH_TOKEN_CHARS = r"[^\s\"'`<>()\[\]{},;:|=]"   # what a path token holds: never a space, a quote, a bracket or a list separator (a colon joins two paths, as in a PATH list)
+PATH_TOKEN_RE = re.compile(PATH_TOKEN_CHARS + "+")
+PATH_TOKEN_GAP = PATH_TOKEN_CHARS + "*?"   # what may sit between two roots in one path
+
+
+def root_lead(segments, absolute):
+    """How many leading `segments` are the token's own root, or 0 when it is not a root path. A
+    root path is led by `~`, a `$VARIABLE`, a hidden directory name (`.name`), or an absolute path
+    whose first segment is one of ROOT_FAMILIES; any other token (a relative path, a path on
+    another volume, a sed expression, a word pair such as `local/private`) is never judged. A
+    home's lead is its family and name; a macOS firmlink root's is `private` and its child."""
+    first = segments[0] if segments else ""
+    if not first:
+        return 0
+    if not absolute:
+        return 1 if re.match(r"~|\$\w|\.[^./]", first) else 0
+    if first not in ROOT_FAMILIES:
+        return 0
+    second = segments[1] if len(segments) > 1 else ""
+    if (first in HOME_FAMILIES and second) or (first == "private" and second in FIRMLINK_CHILDREN):
+        return 2
+    return 1
+
+
+def embedded_root(token):
+    """What makes `token` a root path that embeds a second absolute path, or None. Past the
+    token's own lead (`root_lead`), a segment of ROOT_FAMILIES begins a second absolute path when
+    it is observably the start of one:
+      - a home: `Users` or `home` followed by a name (`~/.store/Users/name`, `/private/Users/name`);
+      - a macOS firmlink root: `private` followed by tmp, var, etc or another family;
+      - a join mark: the segment follows an empty one (`~/.store//tmp/x`), what joining a root
+        and an absolute path as strings leaves;
+      - the path's own first two segments repeated from it (`/tmp/k/stage/tmp/k`).
+    A bare tmp, var or opt meeting none of these is read as an ordinary directory of that name
+    (`~/tmp`, a Homebrew prefix's `opt` and `var`) and never scores: set by judgement, unmeasured.
+    The converse limit: an ordinary directory named `home` or `Users` with a child, inside a root
+    path, reads as a home and scores."""
+    absolute = token.startswith("/")
+    segments = token.lstrip("/").split("/")
+    lead = root_lead(segments, absolute)
+    if not lead:
+        return None
+    own = [part for part in segments if part]
+    if absolute and len(own) > 1 and own[0] == "private" and own[1] in FIRMLINK_CHILDREN:
+        own = own[1:]
+    for i in range(lead, len(segments)):
+        segment = segments[i]
+        if segment not in ROOT_FAMILIES:
+            continue
+        after = segments[i + 1] if i + 1 < len(segments) else ""
+        if segment in HOME_FAMILIES and after:
+            return "the home /%s/%s embedded in a root path" % (segment, after)
+        if segment == "private" and (after in FIRMLINK_CHILDREN or after in ROOT_FAMILIES):
+            return "the absolute path /private/%s embedded in a root path" % after
+        if segments[i - 1] == "":
+            return "an absolute path joined into a root path at //%s" % segment
+        if absolute and len(own) > 1 and [part for part in segments[i:] if part][:2] == own[:2]:
+            return "the path's own root /%s repeated inside it" % "/".join(own[:2])
+    return None
+
+
+def doubled_root_hits(text, roots):
+    """(line number, line, what) for each line of `text` carrying a doubled root: one of `roots`
+    twice inside one path token, or a path token that is a root path embedding a second absolute
+    path (`embedded_root`). A root of fewer than MIN_ROOT_DEPTH components is skipped by the first
+    check, never matched, since it sits inside every path; a URL is never judged."""
+    patterns = []
+    for root in sorted({str(r).rstrip(os.sep) for r in roots or [] if r}):
+        if len([part for part in root.split(os.sep) if part]) < MIN_ROOT_DEPTH:
+            continue
+        patterns.append(("the vault root %s twice in one path" % root,
+                         re.compile(re.escape(root) + PATH_TOKEN_GAP + re.escape(root))))
+    hits = []
+    for number, line in enumerate((text or "").splitlines(), 1):
+        what = next((label for label, pattern in patterns if pattern.search(line)), None)
+        if what is None:
+            for match in PATH_TOKEN_RE.finditer(line):
+                token = match.group(0)
+                if token.startswith("//") and line[max(0, match.start() - 1):match.start()] == ":":
+                    continue                    # a URL's authority and path, not a filesystem path
+                what = embedded_root(token)
+                if what:
+                    break
+        if what:
+            hits.append((number, line, what))
+    return hits
+
+
+def refuse_doubled_root(brief_path, text, vault):
+    """Exit 2, quoting the first offending line, when a brief carries a doubled root; called before
+    any record line (a spawn's caller, a resume, codex-lane.py's prepare)."""
+    hits = doubled_root_hits(text, [vault, vault_given()])
+    if hits:
+        number, line, what = hits[0]
+        die("brief %s line %d carries a doubled root (%s): %s%s — its paths were mangled before "
+            "the spawn; rewrite them and spawn again"
+            % (brief_path, number, what, line.strip()[:240],
+               "" if len(hits) == 1 else " (and %d more line(s))" % (len(hits) - 1)))
+
+
+def grant_parent_warnings(values, vault, flag):
+    """One stderr line per FILE grant whose parent is the vault root or a home directory: the file
+    tools can only be widened by directory, so such a grant hands the lane that whole directory
+    (register 2026-09-08, the judge-brief entry; delegate skill section 3, slot 2). A warning,
+    never a refusal; a path that does not exist is left to the spawn's own check. A home directory
+    is the caller's own home or any directory beside it, unless the home's parent is the
+    filesystem root."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    homes = os.path.dirname(home)
+    vault_real = os.path.realpath(vault)
+    lines = []
+    for value in values or []:
+        given = os.path.expanduser(str(value))
+        if not os.path.isabs(given):
+            given = os.path.join(vault, given)
+        real = os.path.realpath(given)
+        if not os.path.isfile(real):
+            continue
+        parent = os.path.dirname(real)
+        if parent == vault_real:
+            what = "the vault root"
+        elif parent == home or (homes != os.sep and os.path.dirname(parent) == homes):
+            what = "a home directory"
+        else:
+            continue
+        line = ("lane.py: warning: %s %s is a file, and a file grant reaches its whole parent %s "
+                "(%s) through --add-dir; stage the file in a directory of its own (delegate skill "
+                "section 3, slot 2)" % (flag, os.path.abspath(given), parent, what))
+        sys.stderr.write(line + "\n")
+        lines.append(line)
+    return lines
+
+
+REOPEN_EVENTS = ("run-open", "run-resume")   # what a head writes on taking a run; handsoff.py refuses a second run-open, so a closed run is taken again by run-resume
+
+
+def closed_run_warning(record_path, who="lane.py"):
+    """One stderr line when the run is closed: the record holds a `run-close` and no `run-open` or
+    `run-resume` after the latest one, whatever else follows it (observations, lane lines, a
+    heartbeat). A spawn onto a closed run is how a second head on one session shows itself
+    (register 2026-09-03). The key is the close left
+    standing, not the close being the last line. Later events do not reopen a closed run. A
+    warning, never a refusal, since a deliberate lane after the close is legitimate; a missing,
+    empty or unreadable record, or one with no parseable run-close, says nothing."""
+    close, since = None, 0
+    try:
+        with open(record_path, "r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle:
+                try:
+                    event = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                name = event.get("event")
+                if name == "run-close":
+                    close, since = event, 0
+                elif name in REOPEN_EVENTS:
+                    close, since = None, 0
+                elif close is not None:
+                    since += 1
+    except (OSError, TypeError):
+        return None
+    if close is None:
+        return None
+    line = ("%s: warning: run %s is closed: its run-close at %s has no later run-open or "
+            "run-resume (%d event(s) since), so a spawn onto it may be a second head on one "
+            "session (known-issues 2026-09-03); proceeding"
+            % (who, close.get("run") or "?", close.get("ts") or "no ts", since))
+    sys.stderr.write(line + "\n")
+    return line
+
+
+def caller_checks(args):
+    """What a spawn checks in the caller's own terminal before any detach (a detached worker skips
+    them): the brief is there and carries no doubled root, and the two warnings — a file grant
+    reaching a whole vault or home directory, a spawn onto a closed run."""
+    vault = vault_root()
+    if not os.path.isfile(args.brief):
+        die("brief file not found: %s" % args.brief)
+    brief = read_text(args.brief, "the brief")
+    if not brief.strip():
+        die("brief file is empty: %s" % args.brief)
+    refuse_doubled_root(args.brief, brief, vault)
+    grant_parent_warnings(args.grant, vault, "--grant")
+    grant_parent_warnings(args.write, vault, "--write")
+    closed_run_warning(store_paths(args.run, args.lane, args.record)["record"])
 
 
 def config_home(config_dir):
@@ -412,6 +751,71 @@ def projects_root_for(override, config_dir):
         return override
     base = config_home(config_dir) or os.path.join(os.path.expanduser("~"), ".claude")
     return os.path.join(base, "projects")
+
+
+def config_argv(command, drop_pairs=CONFIG_DROP_PAIRS, drop_tail=0):
+    """The command line's configuration: every token but the named flag pairs (each flag and
+    the value after it) and the last `drop_tail` tokens (a prompt argument, a marker)."""
+    parts = list(command)[:len(command) - drop_tail] if drop_tail else list(command)
+    out, skip = [], False
+    for part in parts:
+        if skip:
+            skip = False
+            continue
+        if part in drop_pairs:
+            skip = True
+            continue
+        out.append(part)
+    return out
+
+
+def config_sha256(command, extra_texts=(), drop_pairs=CONFIG_DROP_PAIRS, drop_tail=0):
+    """The hash a spawn, a resume and a beat record: the configuration argv NUL-joined, then the
+    bytes of each extra text (the files the command names whose content reaches the harness).
+    Two calls whose hashes agree run the model under one configuration."""
+    digest = hashlib.sha256()
+    for part in config_argv(command, drop_pairs, drop_tail):
+        digest.update(str(part).encode("utf-8"))
+        digest.update(b"\0")
+    for text in extra_texts:
+        digest.update(b"\0file\0")
+        digest.update(text if isinstance(text, bytes) else str(text).encode("utf-8"))
+    return digest.hexdigest()
+
+
+def read_bytes(path):
+    """A file's bytes, or None when it cannot be read (the hash then says so)."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def beat_usage(result):
+    """The beat's own usage from the harness result's modelUsage (this invocation's calls,
+    summed over models): input, output, cache read and cache write tokens, the models named.
+    An absent or malformed modelUsage reads as None, never as zero tokens."""
+    usage = result.get("modelUsage") if isinstance(result, dict) else None
+    if not isinstance(usage, dict) or not usage:
+        return None
+    out = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
+           "cache_creation_input_tokens": 0, "models": sorted(str(k) for k in usage)}
+    keys = (("inputTokens", "input_tokens"), ("outputTokens", "output_tokens"),
+            ("cacheReadInputTokens", "cache_read_input_tokens"),
+            ("cacheCreationInputTokens", "cache_creation_input_tokens"))
+    for per_model in usage.values():
+        if not isinstance(per_model, dict):
+            continue
+        for theirs, ours in keys:
+            value = per_model.get(theirs)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                out[ours] += int(value)
+    context = out["input_tokens"] + out["cache_read_input_tokens"] + out["cache_creation_input_tokens"]
+    # a reading, not a verdict: the share of the call's context that was read from the cache;
+    # the closing meter's rewrite causes decide (a beat that hits shows no rewrite)
+    out["cache_read_share"] = round(out["cache_read_input_tokens"] / context, 2) if context else None
+    return out
 
 
 def sha(text):
@@ -443,7 +847,7 @@ def write_atomic(path, text):
 
 def dashed(path):
     """The harness's project-directory encoding: every non-alphanumeric character becomes a
-    dash (checked against the live projects root, 2026-09-04)."""
+    dash."""
     return re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(path))
 
 
@@ -520,8 +924,9 @@ def core_source(vault):
 
 
 def resolve_slice(name, home, vault):
-    """A slice's text, from the lane home first (what init materialised) then the shipped
-    source. Returns (source path, body with its frontmatter stripped) or (None, None)."""
+    """A slice's text, from the lane home first (a slice placed there by hand; init installs none)
+    then the shipped source. Returns (source path, body with its frontmatter stripped) or (None,
+    None)."""
     for candidate in (os.path.join(home, "skills", name, "SKILL.md"),
                       os.path.join(slice_sources(vault), name, "SKILL.md"),
                       os.path.join(home, "skills", "%s.md" % name)):
@@ -559,8 +964,7 @@ def extract_schema_section(vault):
 def extract_confidence_rubric(vault):
     path = os.path.join(vault, "wiki", "developments", "wiki-confidence-levels.md")
     if not os.path.exists(path):
-        # A fresh clone: the rubric page is vault knowledge and never ships (found by the export suite on
-        # 2026-09-04). The slice is optional: lanes then rely on the schema slice's section 4.6 summary.
+        # A fresh clone lacks the vault-local rubric; lanes rely on the schema slice's section 4.6 summary.
         return path, None
     return path, strip_frontmatter(read_text(path, "the confidence rubric page")).rstrip() + "\n"
 
@@ -663,22 +1067,25 @@ def cmd_init(args):
             entry = os.path.join(source_dir, name)
             if not os.path.isdir(entry):
                 continue          # only a directory holding a SKILL.md is a slice
-            target = os.path.join(skills_dir, name)
-            if os.path.islink(target) or os.path.exists(target):
-                if os.path.islink(target) and os.path.realpath(target) == os.path.realpath(entry):
-                    report.append(("kept", os.path.join("skills", name)))
-                    installed.append(name)
-                    continue
-                os.remove(target) if os.path.islink(target) else None
-            if not os.path.exists(target):
-                os.symlink(entry, target)
-                report.append(("created", os.path.join("skills", name)))
             installed.append(name)
     else:
         missing.append(os.path.relpath(source_dir, vault))
+    # No `skills/` links (register 2026-09-06, owner-gated). They were installed for a skills preload
+    # that is no longer used. A lane's Glob does not traverse a directory link; every spawn reads a
+    # slice from `lane-home-src/` itself (resolve_slice). A link an earlier init left is removed — the
+    # link alone, never the slice it points at — when it points at a `lane-home-src/<name>`; anything
+    # else under `skills/` is left alone.
+    if os.path.isdir(skills_dir) and not os.path.islink(skills_dir):
+        for name in sorted(os.listdir(skills_dir)):
+            target = os.path.join(skills_dir, name)
+            if os.path.islink(target) and \
+                    os.readlink(target).rstrip(os.sep).endswith(os.path.join("lane-home-src", name)):
+                os.unlink(target)
+                report.append(("removed", os.path.join("skills", name)
+                               + " (a link into lane-home-src; the slice is read there)"))
 
-    # A memory directory per class whose definition declares `memory: local`, mirrored at the
-    # relative path the vault uses. Keyed on the declaration, so a future memory class is
+    # A memory directory per class whose definition declares `memory: local`, a real directory at
+    # the relative path the vault uses. Keyed on the declaration, so a future memory class is
     # covered without editing this list.
     agents_dir = os.path.join(vault, ".claude", "agents")
     memory_classes = []
@@ -696,13 +1103,23 @@ def cmd_init(args):
             missing.append(mem_rel)
             continue
         os.makedirs(os.path.dirname(home_mem), exist_ok=True)
-        if os.path.islink(home_mem) and os.path.realpath(home_mem) == os.path.realpath(vault_mem):
-            report.append(("kept", mem_rel))
-        elif not os.path.exists(home_mem):
-            os.symlink(os.path.realpath(vault_mem), home_mem)
-            report.append(("created", mem_rel))
-        else:
-            report.append(("kept", mem_rel + " (not a symlink to the vault's; left alone)"))
+        # A real directory, never a link into the vault: `--restricted` resolves a link before it
+        # confines Write and Edit to the working directories; a link cannot widen the grant for the
+        # hunter's own MEMORY.md edit (register 2026-09-04). A link an earlier init left is
+        # removed — the link alone, never the vault directory behind it — and replaced.
+        if os.path.islink(home_mem):
+            os.unlink(home_mem)
+            report.append(("replaced", mem_rel + " (a symlink into the vault; now a real directory)"))
+        elif os.path.exists(home_mem) and not os.path.isdir(home_mem):
+            report.append(("kept", mem_rel + " (a file, not a directory: left alone, not synced)"))
+            continue
+        os.makedirs(home_mem, mode=0o700, exist_ok=True)
+        recorded = state.setdefault(MEMORY_STATE_KEY % mem_rel, {})
+        copied, kept, unchanged = sync_memory_down(vault_mem, home_mem, recorded)
+        report.append(("synced", "%s (from the vault: %d copied, %d unchanged%s)" % (
+            mem_rel, len(copied), len(unchanged),
+            (", %d kept: changed in the home since the last sync: %s" % (len(kept), ", ".join(kept)))
+            if kept else "")))
     if not memory_classes:
         missing.append("a class declaring `memory: local`")
 
@@ -739,10 +1156,10 @@ def trust_state(home, config_dir=None):
 
 # ------------------------------------------------------------------------ routing ----------
 
-def load_routing(path):
+def load_routing(path, parse_float=float):
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+            data = json.load(handle, parse_float=parse_float)
     except OSError as exc:
         die("routing table unreadable (%s): %s" % (path, exc))
     except ValueError as exc:
@@ -780,6 +1197,25 @@ def pick(order, options, default, throttle):
             "fast": None, "cheap-fast": None}.get(throttle, default), weakest, strongest
 
 
+def preset_model(routing, throttle):
+    """The model a preset resolves to on every class, from the routing table's optional
+    `preset_model` block (owner ruling 2026-09-29: `top` and `cheap` both resolve to opus until a
+    stronger Claude model arrives and the owner says so), or None. A block that is not an object,
+    or a named value that is not a model in `order.model`, is a premise failure, never a guess;
+    throttle.py validates the same block, so the two resolvers agree on every preset."""
+    block = routing.get("preset_model")
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        die("routing `preset_model` is not an object")
+    value = block.get(throttle)
+    if value is None:
+        return None
+    if not isinstance(value, str) or value not in routing["order"]["model"]:
+        die("routing `preset_model.%s` value %r is not a model in `order.model`" % (throttle, value))
+    return value
+
+
 def resolve_tier(routing, row, cls, throttle):
     """(model, effort, model options, effort options): the row's tier under the throttle. `auto`
     and `default` both return the row's marked defaults; under `auto` they are the ANCHORS the
@@ -792,6 +1228,12 @@ def resolve_tier(routing, row, cls, throttle):
     model_order = routing["order"]["model"]
     effort_order = routing["order"]["effort"]
     model, model_weak, _ = pick(model_order, model_opts, model_default, throttle)
+    pinned = preset_model(routing, throttle)   # owner ruling 2026-09-29: `top` and `cheap` resolve to opus
+    if pinned is not None:
+        if pinned not in model_opts:
+            die("routing `preset_model.%s` names %r, which class `%s` does not list among its model "
+                "options %r" % (throttle, pinned, cls, model_opts))
+        model = pinned
     effort, effort_weak, effort_strong = pick(effort_order, effort_opts, effort_default, throttle)
     if throttle == "cheap":
         effort = effort_strong   # cheap constrains spend on the model axis; effort stays the ceiling (throttle.py's table, 2026-09-06)
@@ -805,12 +1247,9 @@ def resolve_tier(routing, row, cls, throttle):
 # ------------------------------------------------------------------- cost caps -------------
 
 def class_cost(row, cls):
-    """The row's `cost` block — `soft_usd` (the class's completed maximum plus 25 % headroom:
-    logged at close, never a stop) and `usual_usd` (the class median, the hard stop's base) —
-    or None for a row without one, which takes the breadth tier. A block that is present but
-    malformed is a premise failure: a table that half-states a cap is worse than one that
-    states none. A row with fewer than three completed lanes carries no block (the floor is
-    applied where the table is built, and is set by judgement, unmeasured)."""
+    """The dated class figures, used as an advisory reference since 2026-09-15.
+    A present but malformed block is a broken premise; a missing block is valid.
+    cost-figures retains the floor of three completed lanes (set by judgement, unmeasured)."""
     cost = row.get("cost")
     if cost is None:
         return None
@@ -818,7 +1257,7 @@ def class_cost(row, cls):
         die("routing class `%s` has a `cost` field that is not an object" % cls)
     for key in ("soft_usd", "usual_usd"):
         value = cost.get(key)
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        if isinstance(value, bool) or not isinstance(value, (int, float, Decimal)) or not math.isfinite(value) or value <= 0:
             die("routing class `%s` has a `cost` block whose `%s` is not a positive number (%r)"
                 % (cls, key, value))
     return cost
@@ -845,7 +1284,9 @@ def envelope_remainder(run, record_path):
     events, _ = handsoff.read_record(record_path)
     if handsoff.last_index(events, ("run-open",)) < 0:
         return None, "no run-open event in the run record", None
-    envelope = handsoff.run_open(events).get("envelope_usd")
+    envelope_of = getattr(handsoff, "envelope_of", None)   # the latest figure: raise-envelope (2026-09-13)
+    envelope = (envelope_of(events)[0] if envelope_of
+                else handsoff.run_open(events).get("envelope_usd"))
     start = handsoff.last_index(events, handsoff.SESSION_EVENTS)
     remainder, reason = handsoff.envelope_left(events, run, None, start)
     if remainder is None:
@@ -853,54 +1294,66 @@ def envelope_remainder(run, record_path):
     return float(remainder), reason, float(envelope)
 
 
-def hard_base(cost, cls, breadth):
-    """(base, src, below, unmetered_fmt): the hard stop's base before the run's envelope
-    composes with it, and the three phrasings `hard_src` needs for it.
+def require_estimate(expect, source="--expect-usd"):
+    """A positive finite estimate, with no silent fallback to class figures."""
+    if expect is None:
+        die("%s is required: the estimate is the head's own figure" % source)
+    # Validate the numeric record/cap schema separately; the caller retains its original
+    # Decimal for the exact advisory. Signalling NaNs and oversized integers also refuse.
+    try:
+        numeric = float(expect) if not isinstance(expect, bool) and isinstance(expect, (int, float, Decimal)) else float("nan")
+    except (ValueError, OverflowError):
+        numeric = float("nan")
+    if not math.isfinite(numeric) or numeric <= 0:
+        die("%s %r is not a positive dollar figure (finite required) — the estimate is the "
+            "head's own figure" % (source, expect))
+    expect = numeric
+    if not math.isfinite(HARD_MULTIPLIER * expect) or round(HARD_MULTIPLIER * expect, 2) <= 0:
+        die("%s %r cannot produce a positive finite hard stop rounded to cents" % (source, expect))
+    return float(expect)
 
-    For a class with figures the base is max(HARD_MULTIPLIER × usual, soft), rounded to two
-    decimals. The median and the maximum are unrelated statistics, so nothing makes the
-    multiple exceed the observed maximum: on the figures folded 2026-09-07 the verifier's
-    5 × $0.77 = $3.85 sits under its own completed maximum of $9.78 and under its soft
-    threshold of $12.22, so the plain multiple would kill a working lane below its class's
-    own history (critic finding F1, 2026-09-07). Taking the larger term keeps hard ≥ soft
-    whenever both exist; since soft is the completed maximum × SOFT_HEADROOM, the base sits
-    above every completed lane of the class whatever the multiplier is, which is what lets
-    the multiplier fall to 5 without stopping a lane the store has seen finish. Only the
-    envelope remainder may now pull the cap under the soft threshold, and it names itself in
-    `hard_src`; an explicit `--budget-usd` raises only (`cost_caps`).
 
-    A class without figures takes the `breadth` knob's tier. `src` is `hard_src` where the
-    base itself decides, `below` the phrase the envelope-remainder line puts after `below `,
-    and `unmetered_fmt` a format string with one `%s` slot for the reason no remainder could
-    be read (unused on the no-figures branch, which never reports an unmetered envelope)."""
+def decimal_estimate(text):
+    """Keep CLI decimal text intact for the advisory; validation remains a spawn premise."""
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        raise argparse.ArgumentTypeError("not a decimal dollar figure: %s" % text)
+
+
+def estimate_advisory(expect, cost, cls):
+    """Compare the original decimal text exactly; equality at either boundary is quiet."""
     if cost is None:
-        tier = BREADTH_BUDGET.get(breadth, BREADTH_BUDGET[DEFAULT_BREADTH])
-        return (tier, "breadth-tier (no class figures)", "the breadth tier $%.2f" % tier,
-                "breadth-tier (no class figures)")
-    usual, soft = float(cost["usual_usd"]), float(cost["soft_usd"])
-    multiple = round(HARD_MULTIPLIER * usual, 2)
-    if soft > multiple:
-        return (round(soft, 2),
-                "soft $%.2f (class %s; %d × usual $%.2f below it)"
-                % (soft, cls, HARD_MULTIPLIER, multiple),
-                "the soft threshold $%.2f" % soft,
-                "soft $%.2f (class %s; %d × usual $%.2f below it; envelope unmetered: %%s)"
-                % (soft, cls, HARD_MULTIPLIER, multiple))
-    return (multiple, "%d × usual $%.2f (class %s)" % (HARD_MULTIPLIER, usual, cls),
-            "%d × usual $%.2f" % (HARD_MULTIPLIER, multiple),
-            "%d × usual $%.2f (envelope unmetered: %%s)" % (HARD_MULTIPLIER, usual))
+        return "no class figures"
+    estimate, usual = Decimal(str(expect)), Decimal(str(cost["usual_usd"]))
+    # Decimal multiplication is context-bound. A product needs at most the sum of its
+    # operands' digit counts, so preserve every accepted digit rather than rounding at 28.
+    with localcontext() as context:
+        context.prec = max(len(estimate.as_tuple().digits), len(usual.as_tuple().digits)) + len(str(ESTIMATE_SANITY_FACTOR))
+        above = estimate > ESTIMATE_SANITY_FACTOR * usual
+        below = estimate * ESTIMATE_SANITY_FACTOR < usual
+    # Keep cents padded for ordinary figures; expose extra decimals when the comparison uses them.
+    dollars = lambda value: format(value, ".2f") if value.as_tuple().exponent >= -2 else format(value, "f")
+    if above:
+        return "estimate $%s above %d × class %s median $%s" % (
+            dollars(estimate), ESTIMATE_SANITY_FACTOR, cls, dollars(usual))
+    if below:
+        return "estimate $%s below class %s median $%s ÷ %d" % (
+            dollars(estimate), cls, dollars(usual), ESTIMATE_SANITY_FACTOR)
+    return None
 
 
-def raise_only(explicit, class_hard, class_src, term="class"):
-    """(hard_usd, hard_src) after the raise-only rule of the owner ruling of 2026-09-07:
-    `--budget-usd` may raise a lane's hard stop over the value its class composed, never set
-    it below. Below or equal, the class value is kept and `hard_src` records the refusal, so
-    the record shows both figures. The defect it closes: an explicit cap read as a sizing
-    guess put a builder's hard stop at $6 under its class's $18.22 soft threshold, the same
-    head-estimated sizing that had killed three builders (known-issues, 2026-09-07). A head
-    that wants to state its own expectation passes `--expect-usd`, which is a logged line and
-    never a stop. `term` names the value raised over — the `class` cap on a spawn, the `resumed`
-    cap on a resume. Nothing here prints; the caller does, so the note reaches stdout once."""
+def hard_base(expect):
+    """The head's estimate times HARD_MULTIPLIER, in cents."""
+    expect = require_estimate(expect)
+    base = round(HARD_MULTIPLIER * expect, 2)
+    return base, "%d × estimate $%.2f" % (HARD_MULTIPLIER, expect)
+
+
+def raise_only(explicit, class_hard, class_src, term="composed"):
+    """Raise the composed cap only.
+    An explicit figure at or below it keeps the cap and records both figures.
+    `term` names the composed spawn cap or the resumed cap; the caller prints the note."""
     if explicit is None:
         return class_hard, class_src
     if float(explicit) > float(class_hard):
@@ -910,70 +1363,37 @@ def raise_only(explicit, class_hard, class_src, term="class"):
                         % (explicit, term, class_hard, term, class_src))
 
 
-def cost_caps(explicit, cost, cls, breadth, run, record_path):
-    """(hard_usd, hard_src, soft_usd): the two-tier cap for one spawn.
-
-    SOFT is the class's `soft_usd` (None without figures): logged at close, never a stop, and
-    replaced by the head's `--expect-usd` where one is given (`soft_line` below).
-    HARD is what `--max-budget-usd` gets: the class value — the smaller of `hard_base` above
-    (max(HARD_MULTIPLIER × usual, soft), or the breadth tier for a class without figures) and
-    the run's envelope remainder, when the run record carries an envelope and `envelope_left`
-    returns a number; else the base alone, with the reason no remainder was had — and then an
-    explicit `--budget-usd` where it RAISES that value (`raise_only`). `hard_src` names which
-    of those decided. An envelope with nothing left refuses the spawn (exit 2, no record),
-    whether or not the class has figures: a lane cannot run on a cap of nothing, and an
-    explicit `--budget-usd` is still the override for that one case — there is no class value
-    to raise over when the run has nothing left, so the explicit figure stands alone and
-    `hard_src` says which envelope it overrode."""
-    soft = float(cost["soft_usd"]) if cost else None
-    base, base_src, below, unmetered_fmt = hard_base(cost, cls, breadth)
+def cost_caps(explicit, expect, run, record_path, term="composed"):
+    """(hard_usd, hard_src): min(5 × estimate, envelope remainder), then raise-only.
+    Without a metered remainder the estimate decides and the source names the missing
+    premise. An exhausted envelope requires the existing explicit override (2026-09-07)."""
+    if explicit is not None and (not math.isfinite(explicit) or explicit <= 0):
+        die("--budget-usd must be a positive finite dollar figure")
+    base, base_src = hard_base(expect)
     remainder, reason, envelope = envelope_remainder(run, record_path)
     if remainder is None:
-        # A no-figures spawn has nothing to compose with, so it reports the tier alone.
-        class_hard = base
-        class_src = base_src if cost is None else unmetered_fmt % reason
+        hard, src = base, "%s (envelope unmetered: %s)" % (base_src, reason)
     elif remainder <= 0:
         if explicit is None:
             die("run %s: the envelope has nothing left (remainder $%.2f of $%.2f: %s) — no lane "
-                "spawns on a cap of nothing; raise the envelope or pass --budget-usd with a reason"
+                "runs on a cap of nothing; raise the envelope or pass --budget-usd with a reason"
                 % (run, remainder, envelope, reason))
         return (float(explicit),
                 "explicit --budget-usd (override of an exhausted envelope $%.2f, remainder $%.2f)"
-                % (envelope, remainder), soft)
+                % (envelope, remainder))
     elif remainder < base:
-        class_hard = remainder
-        class_src = ("envelope remainder $%.2f (envelope $%.2f, spent $%.2f; below %s)"
-                     % (remainder, envelope, envelope - remainder, below))
+        hard = remainder
+        src = ("envelope remainder $%.2f (envelope $%.2f, spent $%.2f; below %s = $%.2f)"
+               % (remainder, envelope, envelope - remainder, base_src, base))
     else:
-        class_hard, class_src = base, base_src
-    hard, hard_src = raise_only(explicit, class_hard, class_src)
-    return hard, hard_src, soft
+        hard, src = base, base_src
+    return raise_only(explicit, hard, src, term=term)
 
 
-def soft_line(expect, soft, hard_usd):
-    """(soft_usd, soft_src): the line a close is measured against, owner ruling 2026-09-07.
-
-    `--expect-usd` is the head's own cost estimate for this lane. Where it is given it BECOMES
-    the soft line (`soft_src: expect`), so the close says whether the head's estimate held;
-    where it is not, the class's `soft_usd` is the line (`soft_src: class`), and a class
-    without figures has neither (both None). It is logged, never a stop — the hard stop is
-    the only thing that ends a lane on cost.
-
-    Two premise failures, each exit 2 before any record line: a non-positive estimate, which
-    is not a dollar figure; and an estimate above the lane's own hard stop, which is a line
-    the lane cannot cross without being killed first — a soft line that can never fire is a
-    silent no-op, and the two figures are named so the caller sees which to move."""
-    if expect is None:
-        return soft, ("class" if soft is not None else None)
-    expect = float(expect)
-    if not expect > 0:
-        die("--expect-usd $%.2f is not a positive dollar figure — the head's estimate is what "
-            "it expects the lane to bill, and a lane cannot bill nothing or less" % expect)
-    if expect > float(hard_usd):
-        die("--expect-usd $%.2f is above this lane's hard stop $%.2f — the lane would be killed "
-            "before it reached the line, so the soft line could never fire; raise the cap with "
-            "--budget-usd or lower the estimate" % (expect, float(hard_usd)))
-    return round(expect, 2), "expect"
+def soft_line(expect, soft=None, hard_usd=None):
+    """The estimate is the soft line (2026-09-15), even when the envelope caps below it.
+    The optional positional arguments keep older callers compatible; neither sets the line."""
+    return require_estimate(expect), "expect"
 
 
 def soft_check(cost, soft):
@@ -1089,8 +1509,6 @@ def cost_source_text():
 def file_indent(raw, path):
     """The indent the file itself keeps, read from its own first indented line.
 
-    The fold used to re-dump the table at a width of its own choosing, so every line of the
-    file changed on every fold and the real change — two numbers — was unfindable in the diff.
     Reading the indent from the file means a fold touches the fields it changes and nothing
     else. A file with no indented line at all is a premise failure: there is no width to keep."""
     found = re.search(r"^([ \t]+)\S", raw, re.M)
@@ -1199,7 +1617,7 @@ def thin_definition(vault, cls, tools, description_fallback):
     fields, body = parse_frontmatter(text)
     if not body.strip():
         die("definition %s has an empty body" % path)
-    # No `skills:` key: measured never to load through the inline --agents JSON (2026-09-04).
+    # Do not depend on a `skills:` key in the inline --agents JSON.
     # The slices travel in the appended system-prompt file instead.
     agent = {"description": fields.get("description") or description_fallback,
              "prompt": body.rstrip() + "\n",
@@ -1238,6 +1656,115 @@ def memory_dir(home, cls):
     on a class name or a placeholder's wording, so a future memory class is covered."""
     path = os.path.join(home, ".claude", "agent-memory-local", cls)
     return path if os.path.isdir(path) else None
+
+
+def file_sha(path):
+    """The sha256 of a file's bytes, or None when it cannot be read."""
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 16), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def memory_files(directory):
+    """Every regular file under a memory directory, relative to it; links are skipped, since the
+    sync copies content and never follows a link somewhere else."""
+    out = []
+    for base, dirs, names in os.walk(directory):
+        dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(base, d)))
+        for name in sorted(names):
+            path = os.path.join(base, name)
+            if os.path.isfile(path) and not os.path.islink(path):
+                out.append(os.path.relpath(path, directory))
+    return out
+
+
+def copy_atomic(source, target):
+    """Copy a file's bytes to `target` through a temporary name beside it and a rename, so no
+    reader of either copy ever sees half a file."""
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    temp = "%s.%d.lane-sync.tmp" % (target, os.getpid())
+    shutil.copyfile(source, temp)
+    os.replace(temp, target)
+
+
+def sync_memory_down(vault_mem, home_mem, recorded):
+    """`init`'s direction, the vault's copy to the home's: (copied, kept, unchanged). A home file
+    that differs from the vault's is replaced only while it still holds what the last sync left
+    there (`recorded`: relative path -> sha); one changed since — a lane's write whose close never
+    synced it back — is kept and named, never overwritten."""
+    copied, kept, unchanged = [], [], []
+    for rel in memory_files(vault_mem):
+        source, target = os.path.join(vault_mem, rel), os.path.join(home_mem, rel)
+        vault_sha = file_sha(source)
+        if vault_sha is None:
+            continue
+        if os.path.isdir(target) or os.path.islink(target):
+            kept.append(rel)
+            continue
+        home_sha = file_sha(target) if os.path.exists(target) else None
+        if home_sha == vault_sha:
+            recorded[rel] = vault_sha
+            unchanged.append(rel)
+        elif home_sha is None or home_sha == recorded.get(rel):
+            copy_atomic(source, target)
+            recorded[rel] = vault_sha
+            copied.append(rel)
+        else:
+            kept.append(rel)
+    return copied, kept, unchanged
+
+
+def sync_memory_back(home, cls, vault):
+    """A memory class's close, the home's copy to the vault's: each file the lane changed since the
+    last sync is copied to the vault, unless the vault's own file changed since then too — a
+    conflict left for the head, both copies kept as they are. None for a class with no real memory
+    directory in the home (every class but a memory one, and a home still holding the old link). A
+    failure is recorded on the result, never raised: the close line is written whatever happens."""
+    if not cls:
+        return None
+    rel_dir = os.path.join(".claude", "agent-memory-local", cls)
+    home_mem, vault_mem = os.path.join(home, rel_dir), os.path.join(vault, rel_dir)
+    if not os.path.isdir(home_mem) or os.path.islink(home_mem):
+        return None
+    out = {"dir": rel_dir, "copied": [], "conflicts": [], "error": None}
+    if not os.path.isdir(vault_mem):
+        out["error"] = "the vault has no %s to sync to" % rel_dir
+    else:
+        try:
+            state = load_state(home)
+            recorded = state.setdefault(MEMORY_STATE_KEY % rel_dir, {})
+            for rel in memory_files(home_mem):
+                source, target = os.path.join(home_mem, rel), os.path.join(vault_mem, rel)
+                home_sha = file_sha(source)
+                if home_sha is None:
+                    continue
+                vault_sha = file_sha(target) if os.path.isfile(target) else None
+                last = recorded.get(rel)
+                if home_sha == vault_sha:
+                    recorded[rel] = home_sha
+                elif home_sha == last:
+                    continue      # the lane left it alone; the vault's newer copy comes down at the next init
+                elif vault_sha == last and not os.path.isdir(target):
+                    copy_atomic(source, target)   # the vault's copy is as the last sync left it (or absent on both sides then)
+                    recorded[rel] = home_sha
+                    out["copied"].append(rel)
+                else:
+                    out["conflicts"].append(rel)
+            write_atomic(state_path(home), json.dumps(state, indent=1, sort_keys=True) + "\n")
+        except OSError as exc:
+            out["error"] = str(exc)
+    if out["copied"] or out["conflicts"] or out["error"]:
+        sys.stderr.write("lane.py: memory sync to the vault's %s: %d copied%s%s\n" % (
+            rel_dir, len(out["copied"]),
+            (" · conflict (changed on both sides since the last sync, both kept): %s"
+             % ", ".join(out["conflicts"])) if out["conflicts"] else "",
+            (" · error: %s" % out["error"]) if out["error"] else ""))
+    return out
 
 
 def entry_for(value, vault, what, files_ok):
@@ -1300,14 +1827,14 @@ def add_unique(target, items):
 def add_dirs_for(entries):
     """The `--add-dir` values: each entry's directory (a file's parent) in every spelling,
     real path first. The harness compares the spelling a tool call uses, so a symlinked path
-    granted in one spelling alone refuses the other (session A residue, 2026-09-05)."""
+    granted in one spelling alone cannot authorise the other."""
     out = []
     for entry in entries:
         real_dir = os.path.dirname(entry["real"]) if entry["file"] else entry["real"]
         given_dir = os.path.dirname(entry["given"]) if entry["file"] else entry["given"]
         add_unique(out, spellings(given_dir, real_dir))
         # a grant given as the real path still gets the symlinked spelling a brief may use
-        # (residual of 2026-09-05, seen on lane G6bR-H1 2026-09-06)
+        # Resolve both path spellings so a symlink cannot make an authorised grant unreachable.
         for root in SYMLINK_ROOTS:
             if os.path.islink(root):
                 real_root = os.path.realpath(root)
@@ -1326,10 +1853,8 @@ def allow_pattern(path, is_dir):
 
 def settings_for(home, write_entries):
     """The per-spawn settings: the home's hooks plus Edit and Write allow rules for every
-    write grant, in both spellings (design D18). PROBE RESULT 2026-09-05 (test_lane.sh
-    --live-handsoff, a haiku lane, a fixture SKILL.md under a .claude directory on the allow
-    list): the sensitive-path guard WINS - the harness answered `requested permissions to edit
-    ... which is a sensitive file` and no edit landed; the shell stays the write channel there."""
+    write grant, in both spellings (design D18). Sensitive-path restrictions still bind;
+    use the authorised shell write channel when structured edits cannot reach a granted path."""
     base_path = os.path.join(home, "lane-settings.json")
     try:
         with open(base_path, "r", encoding="utf-8") as handle:
@@ -1352,7 +1877,7 @@ def settings_for(home, write_entries):
 
 # ---------------------------------------------------------------------- controls -----------
 
-CONTROL_RE = re.compile(r"^.*?\bCONTROL\+:\s*(.+?)\s*$")   # anywhere on the line: a control after a label (`VERIFICATION: CONTROL+: …`) ran unchecked in rehearsal R2 (2026-09-05)
+CONTROL_RE = re.compile(r"^.*?\bCONTROL\+:\s*(.+?)\s*$")   # Accept a control after a label as well as at the start of a line.
 
 
 def unwrap(text):
@@ -1524,17 +2049,20 @@ def open_console_for_spawn(run, viewer=None):
     """Put the run's console on screen when none is alive, right after the lane's record lines
     exist, so every run that spawns a lane is watched whatever its shape: a hands-off run
     (`run-open` opens it first), an attended run's headless lanes (here), an in-session Agent
-    lane (the spawn-record guard's allow path). Owner ruling 2026-09-08, after an attended
-    deep-lint's six lanes ran unwatched. One window per run: handsoff.open_console_if_dark
+    lane (the spawn-record guard's allow path). One window per run (owner ruling 2026-09-08):
+    handsoff.open_console_if_dark
     refuses while a console is alive or was opened within its grace window, so a second lane, a
     re-spawn or a detached worker never doubles it, and the live console shows the new lane
     itself. Opt-outs: `--viewer none`, AIMYTH_VIEWER=none, or `viewer: none` in the run's
     grants file. The opener's lines go to stderr (stdout is this wrapper's report channel) and
     any failure is one stderr line: a viewer failure never fails a spawn (SystemExit included:
     handsoff's token check exits on a malformed run id, critic F1). Placement: after the
-    `lane-open` line and before the child starts, so the opener's worst case (three 10 s bounds,
-    pgrep, the viewer and its fallback: handsoff VIEWER_TIMEOUT_S) delays the start, never the
-    child's own brief clock (critic F6)."""
+    `lane-open` line and before the child starts, so the opener's worst case (pgrep, two `open`
+    attempts and the console's confirmation: handsoff VIEWER_TIMEOUT_S three times plus
+    CONSOLE_START_GRACE_S) delays the start, never the child's own brief clock (critic F6). The
+    opener is `/usr/bin/open` (handsoff OPEN_BIN, the owner's absolute path; AIMYTH_OPEN_BIN
+    overrides it for a suite's stub) on the run's `<run>-console.command` file, confirmed by a
+    live `watch` process (2026-09-18); no AppleScript is run on this path."""
     viewer = viewer or os.environ.get("AIMYTH_VIEWER") or None
     if viewer not in (None, "terminal", "none"):
         sys.stderr.write("lane.py: viewer %r is neither terminal nor none · the grants file decides\n" % viewer)
@@ -1581,7 +2109,7 @@ def load_record(path):
 
 
 def lane_state(records, lane, session_id=None):
-    """The lane's latest open, its latest spawn-ish event (lane-spawned or lane-resumed) and
+    """The lane's latest open, its latest spawn-ish event (lane-spawned, lane-resumed or lane-respawned) and
     the lane-closed that follows it, if any; with a session id, only that session's lines,
     so a re-spawn of a lane id never reads its predecessor's close as its own."""
     opened = spawned = closed = None
@@ -1593,7 +2121,7 @@ def lane_state(records, lane, session_id=None):
         event = record.get("event")
         if event == "lane-open":
             opened, spawned, closed = record, None, None
-        elif event in ("lane-spawned", "lane-resumed"):
+        elif event in ("lane-spawned", "lane-resumed", "lane-respawned"):
             spawned, closed = record, None
         elif event == "lane-closed":
             closed = record
@@ -1616,8 +2144,11 @@ def parse_ts(ts):
 
 def cut_words(text, limit):
     """The first `limit` words with their line structure kept: (shown, shown count, total,
-    cut?). A limit of 0 shows nothing and leaves the pointer line to name the file."""
+    cut?). A limit of None shows the whole text (the default: no cut); 0 shows nothing and
+    leaves the pointer line to name the file."""
     total = len(text.split())
+    if limit is None:
+        return text.rstrip(), total, total, False
     if limit <= 0:
         return "", 0, total, total > 0
     if total <= limit:
@@ -1668,6 +2199,161 @@ def classify(killed, stall, parsed, result, subtype, returncode, parse_error, st
     if failed or parse_error:
         return "error", None
     return "completed", None
+
+
+def beat_marker_path(record, run, lane_id):
+    """The base name of one lane's session claim, beside its record: `<run>-<lane>-beat.pid`.
+    It sits beside the record rather than in a fixed directory so a run under `--record` (a
+    suite, a rehearsal on a copy) claims its own lane and never a live run's. The claim itself
+    is the advisory lock on `<this>.lock` (session_lock_path); a file of this bare name, left by
+    the earlier pid-marker form, holds nothing."""
+    return os.path.join(os.path.dirname(os.path.abspath(record)),
+                        "%s-%s%s" % (run, lane_id, BEAT_MARKER_SUFFIX))
+
+
+def session_lock_path(marker):
+    """The lock file whose advisory lock IS the claim on a lane's session."""
+    return marker + SESSION_LOCK_SUFFIX
+
+
+def read_session_body(fd):
+    """(pid, kind) from a held lock's body `<pid> <kind> <timestamp>`. A body that is empty or
+    unreadable — the instant between a holder's lock and its write — still belongs to a holder,
+    so the pid reads -1 rather than None and no reader mistakes a live claim for a stale one."""
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        parts = os.read(fd, 96).decode("utf-8", "replace").strip().split()
+    except OSError:
+        parts = []
+    try:
+        pid = int(parts[0]) if parts else -1
+    except ValueError:
+        pid = -1
+    kind = parts[1] if len(parts) > 1 and parts[1] in ("beat", "resume") else "beat"
+    return (pid if pid > 0 else -1), kind
+
+
+def holder_text(pid):
+    """How a refusal names the holder of a lane's session."""
+    return ("pid %d" % pid if isinstance(pid, int) and pid > 0
+            else "a pid the lock's body does not name yet")
+
+
+def session_holder(marker):
+    """(pid, kind) of the live call holding the lane's session, else (None, "").
+
+    The claim is an advisory lock, never the presence of a file, so this reader decides by
+    ATTEMPTING the same lock non-blocking: the attempt fails → the session is held, and the
+    lock file's body names the holder for the diagnostic; it succeeds → nothing holds the
+    session, and the probe's own lock is released at once. A reader creates nothing and removes
+    nothing, so the read-then-remove race and the empty-file window of the pid-marker form are
+    both gone by construction (review finding 2, 2026-09-18). A bare `<run>-<lane>-beat.pid`
+    of the earlier form, with no lock file beside it, holds nothing and is ignored; a dead
+    holder's lock is released by the kernel, so there is no stale state to clear.
+
+    The probe's own lock is the one cost: a claim arriving during that instant is refused rather
+    than admitted, which fails closed — the caller retries — and never lets two calls in."""
+    lock = session_lock_path(marker)
+    if not os.path.exists(lock):
+        return None, ""
+    try:
+        fd = os.open(lock, os.O_RDWR)
+    except OSError:
+        return None, ""
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return read_session_body(fd)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return None, ""
+    finally:
+        os.close(fd)
+
+
+def beat_in_flight(marker):
+    """The pid holding the lane's session, -1 where one holds it but its body names no pid yet,
+    else None (the kind dropped)."""
+    return session_holder(marker)[0]
+
+
+def hold_session(marker, kind, refusal):
+    """A context manager holding the lane's session for the length of one call, releasing it
+    after, whatever the call did. `refusal` is the caller's own words, printed after the reason
+    when the session cannot be claimed: a call that cannot claim it does not run.
+
+    The claim is an ADVISORY LOCK the kernel holds and releases — `fcntl.flock(fd, LOCK_EX |
+    LOCK_NB)` on `<marker>.lock` — rather than a file whose existence is the claim (review
+    finding 2, 2026-09-18). Three faults of the marker form go with it:
+    - the lock is taken atomically before any file content exists, so there is no window in
+      which a second entrant sees an empty file and reads it as stale;
+    - the kernel releases the lock when the holder dies, so a crashed call wedges no lane shut
+      and no reader has to remove anything, which is what the read-then-remove race needed;
+    - the check and the claim are one operation, so two callers in either order cannot both pass.
+
+    The body `<pid> <kind> <timestamp>` is written into the locked file for the DIAGNOSTIC
+    alone — what a refusal names. A body that cannot be written refuses the call and releases
+    the lock: the previous fold's ruling stands (a call that cannot claim the session never
+    continues), and a claim whose body is empty for good would leave every later refusal naming
+    nobody.
+
+    The one exposure that stays: the descriptor is non-inheritable (PEP 446), so the lock dies
+    with this wrapper rather than with a harness child the wrapper leaves behind. That is the
+    exposure a pid marker carries too — it records the wrapper's pid, not the harness's — and
+    what closes it is the wrapper's own bound (BEAT_TIMEOUT_S) and its process-group kill."""
+    lock = session_lock_path(marker)
+    try:
+        os.makedirs(os.path.dirname(lock) or ".", exist_ok=True)
+    except OSError:
+        pass
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as exc:
+        die("this %s cannot take the lane's session: the lock %s could not be opened (%s) — %s"
+            % (kind, lock, exc, refusal))
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        pid, held = read_session_body(fd)
+        os.close(fd)
+        die("this %s cannot take the lane's session: a held-lane %s is in flight (%s, lock %s) "
+            "— %s" % (kind, held, holder_text(pid), lock, refusal))
+    try:
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, ("%d %s %s\n" % (os.getpid(), kind, now())).encode("utf-8"))
+        os.fsync(fd)
+    except OSError as exc:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+        die("this %s cannot take the lane's session: the lock %s was taken and released again "
+            "because its body could not be written (%s), so any refusal it caused would name "
+            "nobody — %s" % (kind, lock, exc, refusal))
+
+    class _Held(object):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            return False
+    return _Held()
+
+
+def hold_beat_marker(marker):
+    """The beat's own session hold (the name codex-lane.py calls)."""
+    return hold_session(marker, "beat", "a second call on one session is the "
+                                        "two-processes-on-one-session fault; wait for the call in flight, or end the "
+                                        "process that holds it — the kernel releases its lock")
 
 
 def pid_alive(pid):
@@ -1776,6 +2462,314 @@ def stall_event(run, lane, session_id, silent_s, threshold_s, reason, by):
             "action": STALL_ACTION, "by": by}
 
 
+ALIAS_RE = re.compile(r"^[a-z][a-z-]*$")     # an alias is a bare word: opus, fable, sonnet; an id carries a digit
+
+
+def load_model_facts(path=None):
+    """The `models` block of prices.json beside this script: the ids the harness aliases resolve
+    to on this account and the helper families the harness calls beside every lane. Returns
+    (facts, None) or (None, reason): a missing file, a missing block, an alias that is not a bare
+    word, an id that is not a non-empty string, or a helper list that is empty or carries a blank
+    entry is a premise failure reported by its reason, never a fallback flag or a silent pass."""
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "prices.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            table = json.load(handle)
+    except (OSError, ValueError) as exc:
+        return None, "prices.json unreadable or not JSON (%s)" % exc
+    block = table.get("models") if isinstance(table, dict) else None
+    if not isinstance(block, dict):
+        return None, "prices.json carries no `models` block (aliases and helpers)"
+    aliases, helpers = block.get("aliases"), block.get("helpers")
+    if not isinstance(aliases, dict) or not aliases:
+        return None, "prices.json `models.aliases` is missing or empty"
+    for key, value in aliases.items():
+        if not isinstance(key, str) or not ALIAS_RE.match(key):
+            return None, "prices.json `models.aliases` key %r is not a bare alias word" % (key,)
+        if not isinstance(value, str) or not value.strip() or ALIAS_RE.match(value):
+            return None, "prices.json `models.aliases[%s]` is not a model id: %r" % (key, value)
+    if not isinstance(helpers, list) or not helpers:
+        return None, "prices.json `models.helpers` is missing or empty"
+    if any(not isinstance(h, str) or not h.strip() for h in helpers):
+        return None, "prices.json `models.helpers` carries a blank or non-string entry"
+    return {"aliases": dict((k, v.strip()) for k, v in aliases.items()),
+            "helpers": [h.strip().lower() for h in helpers]}, None
+
+
+def fallback_check(model_usage, requested, facts):
+    """The transparent-fallback read of one close (owner ruling 2026-09-22, rule 3). The ids the
+    result's modelUsage names, minus the helper families, must be exactly the id the requested
+    alias resolves to: a second id, or a different one, is a safeguard fallback (Opus 5.5
+    re-routes some tasks to another model with no refusal to see; the vendor names Opus 4.8 for
+    cyber work). `detected` is True, False, or None when nothing can be read, with `reason`
+    saying which: no modelUsage on the result (an error close), no non-helper id, or no `models`
+    block in prices.json (the premise), never a guess. A requested model the alias map does not
+    know takes the count rule alone and says so in `rule`."""
+    out = {"detected": None, "models": [], "non_helper": [], "expected": None, "rule": None,
+           "reason": None}
+    if not isinstance(model_usage, dict) or not model_usage:
+        out["reason"] = "no modelUsage on the result"
+        return out
+    ids = sorted(str(k) for k in model_usage)
+    out["models"] = ids
+    if isinstance(facts, tuple):                  # the (facts, reason) pair load_model_facts returns
+        facts, facts_reason = facts
+    else:
+        facts_reason = "prices.json carries no usable `models` block (aliases and helpers)"
+    if facts is None:
+        out["reason"] = facts_reason
+        return out
+    seen = [i for i in ids if not any(h in i.lower() for h in facts["helpers"])]
+    out["non_helper"] = seen
+    if not seen:
+        out["reason"] = "only helper-family ids reported"
+        return out
+    requested = str(requested or "")
+    if requested in facts["aliases"]:
+        expected, rule = facts["aliases"][requested], "alias map and count"
+    elif requested and not ALIAS_RE.match(requested):
+        # An explicit id (it carries a digit or a dot: claude-opus-5, claude-opus-5-5) is its own
+        # expectation whether or not the map lists it (critic finding 3, 2026-09-22).
+        expected, rule = requested, "explicit id and count"
+    else:
+        expected, rule = None, "count only (alias %r unprobed in prices.json)" % requested
+    out["expected"], out["rule"] = expected, rule
+    out["detected"] = len(seen) > 1 or (expected is not None and seen != [expected])
+    return out
+
+
+FALLBACK_LINE = ("lane.py: FALLBACK on lane %s/%s (%s): the result names %s where %s was expected "
+                 "— a transparent safeguard fallback (owner ruling 2026-09-22): %s; warn the owner once; "
+                 "never re-run it on the same model to see, and re-read the brief for anything cyber- "
+                 "or biology-shaped")
+STALE_LINE = ("lane.py: STALE MAP on lane %s/%s: the alias %r now resolves to %s, not %s; no fallback — "
+              "update the `models` block of prices.json (a re-probe on this account) and nothing else")
+SWAP_CMD_ENV = "AIMYTH_SWAP_CMD"    # a suite stub in place of `python3 codex-lane.py spawn`; records its argv
+SWAP_TIMEOUT_S = 180                # bound with headroom: a detached Codex spawn returns in seconds (set by judgement)
+SWAP_OPEN_WAIT_S = 20               # bound with headroom: a detached spawn writes its lane-open within a second or two
+PROBE_PROMPT = "Reply with the single word ok."
+PROBE_TIMEOUT_S = 90                # bound with headroom: a one-word call answers in seconds; a limit stop is read as a failed probe
+
+
+def probe_alias(ctx, alias):
+    """One one-word call through the same harness and environment as the lane, to learn what the
+    alias resolves to NOW: returns (non-helper ids, None) or (None, reason). The call is the same
+    shape as a minimal alias-resolution request."""
+    facts = ctx.get("model_facts") or {}
+    helpers = facts.get("helpers") or []
+    cmd = ["claude", "-p", "--model", alias, "--output-format", "json", "--max-turns", "1"]
+    try:
+        done = subprocess.run(cmd, input=PROBE_PROMPT, capture_output=True, text=True,
+                              timeout=PROBE_TIMEOUT_S, env=ctx.get("env") or None, cwd=ctx.get("home") or None)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, "probe did not run: %s" % exc
+    if done.returncode != 0:
+        return None, "probe exit %d: %s" % (done.returncode, (done.stderr or done.stdout).strip()[-200:])
+    try:
+        result = json.loads(done.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError) as exc:
+        return None, "probe result unreadable: %s" % exc
+    if not isinstance(result, dict):
+        return None, "probe result is not an object"
+    if result.get("is_error"):
+        return None, "probe result is an error (%s)" % (str(result.get("result") or "")[:120] or "no text")
+    usage = result.get("modelUsage")
+    if not isinstance(usage, dict) or not usage:
+        return None, "probe result carries no modelUsage"
+    ids = sorted(str(k) for k in usage if not any(h in str(k).lower() for h in helpers))
+    if not ids:
+        return None, "probe reported only helper-family ids"
+    if len(ids) != 1:
+        # A one-word call answers on one model; a probe that names two non-helper ids proves nothing
+        # about the alias (critic round 3, finding 4) and never yields a stale-map verdict.
+        return None, "probe reported %d non-helper ids (%s): unusable" % (len(ids), ",".join(ids))
+    return ids, None
+
+
+def fallback_decide(ctx, fallback):
+    """Turn a detection into a verdict by probing the alias live (critic round 2, finding 5): the
+    lane's ids all among what the alias resolves to now → the map is stale, not a fallback
+    (`detected` false, `stale_map` true, a distinct warning, no swap); the probe fails → the
+    detection stands `unconfirmed` and nothing swaps by itself; otherwise `fallback`, confirmed."""
+    requested = str((ctx.get("open_line") or {}).get("model") or ctx.get("model") or "")
+    alias = requested if ALIAS_RE.match(requested) else requested
+    ids, why = probe_alias(ctx, alias)
+    fallback["probe"] = {"alias": alias, "ids": ids, "ok": ids is not None, "reason": why}
+    if ids is None:
+        fallback["verdict"] = "unconfirmed"
+        return fallback
+    if set(fallback.get("non_helper") or []) <= set(ids):
+        fallback["detected"] = False
+        fallback["stale_map"] = True
+        fallback["verdict"] = "stale-map"
+        fallback["reason"] = "the alias %r now resolves to %s, not the map's %s: update prices.json" % (
+            alias, ",".join(ids), fallback.get("expected"))
+        return fallback
+    fallback["verdict"] = "fallback"
+    return fallback
+
+
+def unused_name(existing, base):
+    """base, base2, base3 …: the first not in `existing`, compared case-blind (the wrappers refuse a
+    lane id that is case-equivalent to one already opened)."""
+    taken = set(str(e).casefold() for e in existing)
+    name, n = base, 1
+    while name.casefold() in taken:
+        n += 1
+        name = "%s%d" % (base, n)
+    return name
+
+
+def record_lane_ids(record_path):
+    """Every lane id the record has opened (lane-open lines of any harness)."""
+    out = set()
+    try:
+        with open(record_path, encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and row.get("event") == "lane-open" and row.get("lane"):
+                    out.add(str(row["lane"]))
+    except OSError:
+        pass
+    return out
+
+
+def successor_started(record_path, to_lane, wait_s):
+    """(True, None) once the record carries a `lane-spawned` line for the successor (the pid line
+    the wrapper writes after the process started) and no close for it; (False, why) when a close
+    appears first (a spawn that failed at once) or the wait runs out. A `lane-open` alone proves
+    nothing: the Codex wrapper writes it before the process starts (critic round 3, finding 3)."""
+    deadline = time.time() + wait_s
+    while True:
+        spawned, closed = False, None
+        try:
+            with open(record_path, encoding="utf-8") as handle:
+                for line in handle:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(row, dict) or str(row.get("lane") or "") != to_lane:
+                        continue
+                    if row.get("event") == "lane-spawned":
+                        spawned = True
+                    elif row.get("event") == "lane-closed":
+                        closed = str(row.get("exit_class") or "closed")
+        except OSError:
+            pass
+        if closed is not None:
+            return False, "the successor closed at once (%s)" % closed
+        if spawned:
+            return True, None
+        if time.time() >= deadline:
+            return False, "no lane-spawned for %s within %d s" % (to_lane, int(wait_s))
+        time.sleep(0.5)
+
+
+def fallback_swap(ctx, close_line, record_path):
+    """Move a probe-confirmed fallen-back task's remaining work to Astra (rule 3, owner ruling
+    2026-09-22): a derived brief (the swap notice, then the CURRENT pass's brief verbatim), one
+    detached `codex-lane.py spawn` of `<lane>-astra` (a name the record has not opened) with the
+    same class, write scope, effort, regime and record, confirmed by the successor's own lane-spawned
+    line (its pid; a lane-open alone proves nothing). Returns (summary, record line): the caller appends the close line first, then the
+    `lane-swapped` line, so the close carries the outcome. Never raises: a brief that cannot be
+    written spawns nothing; a spawn that fails, returns without opening, or cannot run is
+    recorded with its error and the warning names the command to run by hand. The Astra lane
+    closes through codex-lane.py, which has no swap of its own, so a swap never loops."""
+    open_line = ctx.get("open_line") or {}
+    run, lane, cls = ctx["run"], ctx["lane"], ctx["cls"]
+    fallback = close_line.get("fallback") or {}
+    ids = ",".join(fallback.get("non_helper") or []) or "?"
+    expected = fallback.get("expected") or "one id"
+    to_lane = unused_name(record_lane_ids(record_path), "%s-astra" % lane)
+    writes = [w for w in (open_line.get("writes") or []) if isinstance(w, str) and w]
+    store = os.path.join(store_root(), "spawn-records")     # the run store, never beside a custom record path
+    out = {"to": to_lane, "harness": "codex", "ok": False, "brief": None, "command": None, "error": None,
+           "stderr_tail": None}
+    line = {"ts": None, "run": run, "lane": lane, "event": "lane-swapped", "to": to_lane, "harness": "codex",
+            "ok": False, "ids": ids, "expected": expected, "brief": None, "writes": writes,
+            "effort": ctx.get("effort") or "xhigh", "command": None, "stdout_tail": None,
+            "stderr_tail": None, "error": None, "wrapper_pid": os.getpid()}
+
+    def finish():
+        line.update({"ts": now(), "ok": out["ok"], "brief": out["brief"], "command": out["command"],
+                     "error": out["error"], "stderr_tail": out["stderr_tail"]})
+        return out, line
+
+    src = ctx.get("brief_current") or open_line.get("brief_copy") or open_line.get("brief")
+    if not (isinstance(src, str) and os.path.isfile(src)):
+        out["error"] = "the current brief is not on disk (%r)" % (src,)
+        return finish()
+    try:
+        with open(src, encoding="utf-8", errors="replace") as handle:
+            original = handle.read()
+    except OSError as exc:
+        out["error"] = "current brief unreadable: %s" % exc
+        return finish()
+    try:
+        os.makedirs(store, exist_ok=True)
+        names = set(os.listdir(store))
+    except OSError as exc:
+        out["error"] = "run store unreadable: %s" % exc
+        return finish()
+    stems = set(n[:-3] for n in names if n.endswith(".md"))     # compared without the suffix (verifier review, claim 4)
+    brief = os.path.join(store, unused_name(stems, "%s-brief-%s-astra" % (run, lane)) + ".md")
+    notice = ("SWAP NOTICE (lane.py, owner ruling 2026-09-22): this lane continues lane %s of run %s, whose "
+              "Claude-side result named %s where %s was expected — a transparent safeguard fallback confirmed "
+              "by a live probe of the alias. Its work so far sits under %s; continue from what is on disk, do "
+              "not redo what is complete, and if any part of the task reads as cyber or biology work, report "
+              "that in your findings rather than proceed. The brief of the pass that fell back follows, "
+              "verbatim.\n\n" % (lane, run, ids, expected, ", ".join(writes) or "no write directory"))
+    try:
+        write_atomic(brief, notice + original)      # the wrapper's one write path (temp file, then rename)
+        out["brief"] = brief
+    except OSError as exc:
+        out["error"] = "derived brief not written: %s" % exc
+        return finish()                             # nothing is spawned on a brief that is not there
+    codex = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-lane.py")
+    effort = line["effort"]                         # effort carries across the swap (owner ruling 2026-09-14)
+    argv = ["--run", run, "--lane", to_lane, "--class", cls, "--brief", brief, "--record", record_path,
+            "--reason", "(a) fallback swap: lane %s fell back to %s; the task's remaining work moves to Astra "
+                        "(owner ruling 2026-09-22)" % (lane, ids),
+            "--choice-reason", "gpt-6-astra %s: the Claude lane's result named %s where %s was expected; "
+                               "effort carried across the swap" % (effort, ids, expected),
+            "--effort", effort, "--delegation", open_line.get("mode") or "single",
+            "--delegation-src", open_line.get("mode_src") or "head", "--detach", "--no-wait"]
+    if writes:
+        argv += ["--cwd", writes[0]]
+        for w in writes:
+            argv += ["--write", w]
+    else:
+        argv += ["--cwd", vault_root()]
+    stub = os.environ.get(SWAP_CMD_ENV)
+    try:
+        prefix = shlex.split(stub) if stub else [sys.executable, codex, "spawn"]
+    except ValueError as exc:
+        out["error"] = "%s is not a shell command: %s" % (SWAP_CMD_ENV, exc)
+        return finish()
+    cmd = prefix + argv
+    out["command"] = " ".join(shlex.quote(part) for part in cmd)
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=SWAP_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        out["error"] = "codex-lane.py spawn did not run: %s" % exc
+        return finish()
+    line["stdout_tail"] = (done.stdout or "").strip()[-300:]
+    out["stderr_tail"] = (done.stderr or "").strip()[-300:] or None
+    if done.returncode != 0:
+        out["error"] = "codex-lane.py spawn exit %d: %s" % (done.returncode, (done.stderr or done.stdout).strip()[-300:])
+        return finish()
+    started, why = successor_started(record_path, to_lane, SWAP_OPEN_WAIT_S)
+    if not started:
+        out["error"] = "the spawn returned 0 but %s" % why
+        return finish()
+    out["ok"] = True
+    return finish()
+
+
 def summary_of(run, lane, cls, model, effort, close):
     cost = close.get("total_cost_usd")
     denials = close.get("denials") or {}
@@ -1803,12 +2797,28 @@ def summary_of(run, lane, cls, model, effort, close):
         line += " · soft-cap: $%.2f over $%.2f (%s)" % (
             cost, close.get("soft_usd"),
             "expect" if close.get("soft_src") == "expect" else "class %s" % cls)
+    fallback = close.get("fallback")
+    if isinstance(fallback, dict) and fallback.get("stale_map"):
+        line += " · stale alias map: %s now resolves to %s (no fallback)" % (
+            (fallback.get("probe") or {}).get("alias"), ",".join((fallback.get("probe") or {}).get("ids") or []))
+    elif isinstance(fallback, dict) and fallback.get("detected"):
+        verdict = fallback.get("verdict") or "unverified"
+        line += " · FALLBACK (%s): ran on %s, expected %s" % (
+            "confirmed" if verdict == "fallback" else "unconfirmed, probe failed" if verdict == "unconfirmed" else verdict,
+            ",".join(fallback.get("non_helper") or []), fallback.get("expected") or "one id")
+        swap = close.get("swap") or {}
+        if verdict == "fallback":
+            line += (" · swapped to %s" % swap["to"]) if swap.get("ok") else (
+                " · swap not done (%s)" % (swap.get("error") or "not attempted"))
+    elif isinstance(fallback, dict) and fallback.get("detected") is None and fallback.get("reason"):
+        # A check that could not run is said, never hidden (critic finding 3, 2026-09-22).
+        line += " · fallback unread: %s" % fallback["reason"]
     return line
 
 
 def emit(summary, close, report_words, fmt, open_line=None, text=None):
-    """The wrapper's stdout: the summary line, the report pointer, and the report's first
-    `report_words` words with the `(N of M words shown; full text: <path>)` line (design D8)."""
+    """Print the summary, full-text pointer and complete report by default.
+    An explicitly requested preview keeps the pointer to the complete report (D8)."""
     report_path = close.get("report")
     if text is None:
         text = ""
@@ -1874,6 +2884,15 @@ def run_lane(ctx):
     except OSError:
         pass          # the lane's own append will report it; /tmp exists on every platform
     open_console_for_spawn(run, ctx.get("viewer"))   # before the child: its clocks start below
+    if ctx.get("pre_event"):
+        # A resume records itself BEFORE its process starts, as a spawn records lane-open before its
+        # own: a start that fails still follows its lane-resumed, and a watch finds the resume at
+        # once; lane-respawned below then carries the process (register 2026-09-10 15:22).
+        pre = {"ts": now(), "run": run, "lane": lane, "event": None, "session_id": ctx["session_id"],
+               "wrapper_pid": os.getpid(), "class": ctx["cls"], "detached": ctx.get("detached", False),
+               "mechanism": "lane.py headless, model %s, effort %s" % (ctx["model"], ctx["effort"])}
+        pre.update(ctx["pre_event"])
+        append_record(record_path, pre)
     started = time.time()
     try:
         process = subprocess.Popen(
@@ -1886,6 +2905,7 @@ def run_lane(ctx):
                                     "error": str(exc), "exit_code": 3,
                                     "soft_usd": ctx.get("soft_usd"),
                                     "soft_src": ctx.get("soft_src"), "soft_exceeded": None,
+                                    "fallback": fallback_check(None, ctx["model"], load_model_facts()),
                                     "wrapper_pid": os.getpid()})
         sys.stderr.write("lane.py: could not start the lane process: %s\n" % exc)
         return 3
@@ -1920,7 +2940,11 @@ def run_lane(ctx):
     transcript = locate()
     parsed = parse_transcript(transcript)
 
-    report_text = (result.get("result") or "").strip() or parsed["last_text"]
+    response_text = (result.get("result") or "").strip()
+    resumed = (ctx.get("pre_event") or {}).get("event") == "lane-resumed"
+    # A resumed pass must not borrow an earlier transcript message as its new report.
+    report_text = response_text if resumed else response_text or parsed["last_text"]
+    empty_response = resumed and not response_text
     if not report_text:
         report_text = "(no report text: exit %s%s%s)" % (
             process.returncode, ", deadline reached" if killed else "",
@@ -1938,6 +2962,8 @@ def run_lane(ctx):
     subtype = result.get("subtype") or ""
     exit_class, limit_text = classify(killed, stall, parsed, result, subtype,
                                       process.returncode, parse_error, stderr or "")
+    if exit_class == "completed" and empty_response:
+        exit_class = "empty"
     exit_code = EXIT_CODES.get(exit_class, 3)
 
     close_line = {
@@ -1963,14 +2989,127 @@ def run_lane(ctx):
         "limit_signal": limit_text, "silence_s": ctx["silence"],
         "stall": stall, "wrapper_pid": os.getpid(),
         "stderr_tail": (stderr or "").strip()[-400:] or None,
-        "parse_error": parse_error}
+        "parse_error": parse_error,
+        "fallback": fallback_check(result.get("modelUsage"), ctx["model"], ctx.setdefault("model_facts_pair", load_model_facts()))}
+    ctx["model_facts"] = ctx["model_facts_pair"][0]
     close_line.update(ctx.get("close_extra") or {})
+    memory = sync_memory_back(ctx["home"], ctx["cls"], vault_root())
+    if memory is not None:
+        close_line["memory_sync"] = memory     # a memory class's files synced back (register 2026-09-04)
+    swapped_line = None
+    fallback = close_line.get("fallback") or {}
+    if fallback.get("detected"):
+        fallback_decide(ctx, fallback)                # the live alias probe: confirmed, stale map, or unconfirmed
+    if fallback.get("verdict") == "fallback":
+        if ctx.get("no_swap"):
+            close_line["swap"] = {"to": None, "ok": False, "error": "swap off (--no-swap)", "command": None}
+        else:
+            close_line["swap"], swapped_line = fallback_swap(ctx, close_line, record_path)
     append_record(record_path, close_line)
+    if swapped_line:
+        append_record(record_path, swapped_line)
+    ids_text = ",".join(fallback.get("non_helper") or [])
+    if fallback.get("verdict") == "stale-map":
+        sys.stderr.write((STALE_LINE + "\n") % (run, lane, (fallback.get("probe") or {}).get("alias"),
+                                                ",".join((fallback.get("probe") or {}).get("ids") or []),
+                                                fallback.get("expected")))
+    elif fallback.get("verdict") == "unconfirmed":
+        sys.stderr.write((FALLBACK_LINE + "\n") % (
+            run, lane, "unconfirmed: the alias probe failed, %s" % (fallback.get("probe") or {}).get("reason"),
+            ids_text, fallback.get("expected") or "one id",
+            "no swap was attempted; if the brief was not cyber- or biology-shaped, swap by hand with "
+            "codex-lane.py spawn --class %s --brief <the pass's brief>" % ctx["cls"]))
+    elif fallback.get("verdict") == "fallback":
+        swap = close_line.get("swap") or {}
+        where = ("swapped to lane %s on Astra%s" % (swap.get("to"), (" (%s)" % swap["stderr_tail"]) if swap.get("stderr_tail") else "")
+                 if swap.get("ok") else
+                 "swap NOT done: %s; run it by hand: %s" % (swap.get("error"), swap.get("command") or "codex-lane.py spawn … (see the lane-swapped line)"))
+        sys.stderr.write((FALLBACK_LINE + "\n") % (run, lane, "confirmed by a live probe of the alias",
+                                                   ids_text, fallback.get("expected") or "one id", where))
 
     summary = summary_of(run, lane, ctx["cls"], ctx["model"], ctx["effort"], close_line)
     emit(summary, close_line, ctx["report_words"], ctx["format"], ctx.get("open_line"),
          text=report_text)
     return exit_code
+
+
+def run_beat(ctx):
+    """The held-lane beat (handsoff.py hold, 2026-09-17): the resumed session asked for one word
+    under the spawn's own configuration and cap. No report, no pass file, no lane-resumed or
+    lane-closed line; the one record line is `hold-beat`, carrying the call's usage from the
+    harness result, so the closing meter's rewrite causes can show whether the cache held. The
+    call is bounded by BEAT_TIMEOUT_S and killed past it; a non-zero exit, a limit or a refusal
+    is recorded with ok false and its exit class, and never retried here."""
+    record_path, run, lane = ctx["record"], ctx["run"], ctx["lane"]
+    started = time.time()
+    by = os.environ.get(BEAT_BY_ENV) or "hand"
+    base = {"run": run, "lane": lane, "event": "hold-beat", "harness": "claude",
+            "session_id": ctx["session_id"], "class": ctx["cls"], "model": ctx["model"],
+            "effort": ctx["effort"], "n": ctx["beat_n"], "by": by, "prompt": BEAT_PROMPT,
+            "config_sha256": ctx["config_sha256"], "config_src": ctx["config_src"],
+            "config_match": ctx["config_match"], "budget_usd": ctx["budget"],
+            "hard_src": ctx["hard_src"], "last_call_age_s": ctx["age_s"],
+            "last_call_src": ctx["age_src"], "wrapper_pid": os.getpid()}
+    try:
+        process = subprocess.Popen(
+            ctx["command"], cwd=ctx["home"], env=ctx["env"], start_new_session=True, text=True,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        line = dict(base, ts=now(), ok=False, exit_class="spawn-failed", exit_code=3,
+                    process_exit=None, duration_s=0.0, usage=None, total_cost_usd=None,
+                    error=str(exc))
+        append_record(record_path, line)
+        sys.stderr.write("lane.py: the beat could not start the lane process: %s\n" % exc)
+        return 3
+    timed_out = False
+    try:
+        stdout, stderr = process.communicate(input=BEAT_PROMPT + "\n", timeout=BEAT_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        stdout, stderr = kill_group(process)
+        timed_out = True
+    duration = round(time.time() - started, 1)
+    result, parse_error = None, None
+    if stdout and stdout.strip():
+        try:
+            result = json.loads(stdout)
+        except ValueError as exc:
+            parse_error = "result JSON unparseable: %s" % exc
+    if not isinstance(result, dict):
+        result = {} if result is None else {"result": str(result)}
+    parsed = parse_transcript(find_transcript(ctx["projects_root"], ctx["home"], ctx["session_id"]))
+    subtype = result.get("subtype") or ""
+    exit_class, limit_text = classify(timed_out, None, parsed, result, subtype,
+                                      process.returncode, parse_error, stderr or "")
+    ok = exit_class == "completed"
+    reply = (result.get("result") or "").strip()
+    line = dict(base, ts=now(), session_id=result.get("session_id") or ctx["session_id"],
+                ok=ok, exit_class=exit_class, exit_code=0 if ok else EXIT_CODES.get(exit_class, 3),
+                process_exit=process.returncode, duration_s=duration, subtype=subtype,
+                is_error=bool(result.get("is_error")), num_turns=result.get("num_turns"),
+                total_cost_usd=result.get("total_cost_usd"), cost_src="result",
+                usage=beat_usage(result),
+                usage_src="result modelUsage (this invocation's own calls)",
+                peak_context=parsed["peak"], cache_write_tier=parsed["tiers"] or None,
+                reply=reply[:80], limit_signal=limit_text, timed_out=timed_out,
+                parse_error=parse_error, stderr_tail=(stderr or "").strip()[-400:] or None)
+    append_record(record_path, line)
+    usage = line["usage"] or {}
+    summary = ("beat %s/%s: %s %s·%s · %s · $%s · %.1f s · cache read %s · write %s · input %s · "
+               "output %s · config %s · %s"
+               % (run, lane, ctx["cls"], ctx["model"], ctx["effort"],
+                  "ok" if ok else "FAILED (%s)" % exit_class,
+                  ("%.4f" % line["total_cost_usd"])
+                  if isinstance(line["total_cost_usd"], (int, float)) else "?",
+                  duration, usage.get("cache_read_input_tokens", "?"),
+                  usage.get("cache_creation_input_tokens", "?"), usage.get("input_tokens", "?"),
+                  usage.get("output_tokens", "?"),
+                  {True: "match", False: "MISMATCH", None: "unrecorded"}[ctx["config_match"]],
+                  by))
+    if ctx["format"] == "json":
+        print(json.dumps({"summary": summary, "beat": line}, indent=1))
+    else:
+        print(summary)
+    return line["exit_code"]
 
 
 def close_from_transcript(record_path, run, lane, opened, spawned, home, projects_root,
@@ -1981,7 +3120,9 @@ def close_from_transcript(record_path, run, lane, opened, spawned, home, project
     session_id = spawned.get("session_id") or opened.get("session_id")
     transcript = find_transcript(projects_root, home, session_id)
     parsed = parse_transcript(transcript)
-    report_path = store_paths(run, lane)["report"]
+    pass_n = 1 + sum(1 for event in load_record(record_path)
+                     if event.get("lane") == lane and event.get("event") == "lane-resumed")
+    report_path = pass_report_path(store_paths(run, lane)["report"], pass_n)
     report_text = parsed["last_text"] or "(no report text: closed by watch, wrapper gone)"
     try:
         write_atomic(report_path, report_text.rstrip() + "\n")
@@ -2006,6 +3147,7 @@ def close_from_transcript(record_path, run, lane, opened, spawned, home, project
                   "calls": parsed.get("calls", 0),
                   "first_call_context": parsed.get("first_call_context"),
                   "tokens": parsed.get("tokens")},
+        "fallback": fallback_check(None, opened.get("model"), load_model_facts()),
         "effort_applied": sorted(set(parsed["efforts"])) or None,
         "cache_write_tier": parsed["tiers"] or None,
         "denials": "unknown", "fence_denials_transcript": parsed["fence_denials"],
@@ -2014,6 +3156,9 @@ def close_from_transcript(record_path, run, lane, opened, spawned, home, project
         "report_cut": cut, "limit_signal": None, "note": note,
         "wrapper_pid": spawned.get("wrapper_pid"), "stderr_tail": None, "parse_error": None}
     close_line.update(extra or {})
+    memory = sync_memory_back(home, opened.get("class"), vault_root())
+    if memory is not None:
+        close_line["memory_sync"] = memory     # a memory class's files synced back (register 2026-09-04)
     append_record(record_path, close_line)
     return close_line
 
@@ -2027,7 +3172,8 @@ def log_tail(path, lines=6):
 
 
 def watch_lane(run, lane, record_path, home, projects_root, silence, poll, no_transcript_s,
-               max_wait, report_words, fmt, session_id=None, worker=None, log_path=None):
+               max_wait, report_words, fmt, session_id=None, worker=None, log_path=None,
+               since=None):
     """The shared waiting loop of `watch` and the `--detach` foreground. Never kills a live
     wrapper's lane for silence unless `silence` is set; closes an orphaned lane (wrapper gone,
     no lane-closed) from its transcript once its process is gone or its recorded deadline
@@ -2039,6 +3185,9 @@ def watch_lane(run, lane, record_path, home, projects_root, silence, poll, no_tr
     while True:
         records = load_record(record_path) if os.path.isfile(record_path) else []
         opened, spawned, closed = lane_state(records, lane, session_id)
+        if since is not None and not any(r.get("lane") == lane and r.get("event") == "lane-resumed"
+                                         for r in records[since:]):
+            spawned = closed = None     # a detached resume has written nothing yet: the close in view is the previous call's
         if closed:
             cls = closed.get("class") or (opened or {}).get("class")
             summary = summary_of(run, lane, cls, (opened or {}).get("model"),
@@ -2139,14 +3288,29 @@ def watch_lane(run, lane, record_path, home, projects_root, silence, poll, no_tr
 # ------------------------------------------------------------------------ spawn -------------
 
 def detach_spawn(args):
-    """The double fork: a worker (its own session) runs the whole spawn and writes every
-    record line; the foreground watches it, or with --no-wait returns at once."""
+    """The double fork for a spawn: the session id is chosen here and handed to the worker, which
+    runs the whole spawn and writes every record line."""
     session_id = args.session_id or str(uuid.uuid4())
+    extra = [] if args.session_id else ["--session-id", session_id]
+    home = os.path.realpath(os.path.expanduser(args.home or default_home()))
+    projects_root = projects_root_for(args.projects_root, args.config_dir)
+    return detach_worker(args, session_id, extra, home, projects_root)
+
+
+def detach_worker(args, session_id, extra, home, projects_root, since=None):
+    """The double fork shared by spawn and resume: a worker (its own session) re-runs this command
+    and writes every record line; the foreground watches it, or with --no-wait returns at once.
+
+    The caller opens the run's console first, in its own context, and the worker gets `--viewer
+    none`, appended so it wins over any --viewer the command carried.
+    (register 2026-09-09 11:21, update
+    2026-09-12). `since`, for a resume, is the record's
+    event count before the detach, so the foreground waits for a lane-resumed after it and never
+    takes the previous call's close for this one's."""
     argv = [a for a in sys.argv[1:] if a not in ("--detach", "--no-wait")]
-    if not args.session_id:
-        argv += ["--session-id", session_id]
-    argv.append("--as-worker")
+    argv += list(extra) + ["--viewer", "none", "--as-worker"]
     paths = store_paths(args.run, args.lane, args.record)
+    open_console_for_spawn(args.run, args.viewer)
     try:
         os.makedirs(os.path.dirname(paths["detach_log"]), exist_ok=True)
         fd = os.open(paths["detach_log"], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
@@ -2163,12 +3327,11 @@ def detach_spawn(args):
     if args.no_wait:
         print("detached pid %d session %s" % (worker.pid, session_id))
         return 0
-    home = os.path.realpath(os.path.expanduser(args.home or default_home()))
-    projects_root = projects_root_for(args.projects_root, args.config_dir)
     # The worker runs the silence watch itself; the foreground never kills for silence.
     return watch_lane(args.run, args.lane, paths["record"], home, projects_root, None,
                       args.poll_s, args.no_transcript_s, 0, args.report_words, args.format,
-                      session_id=session_id, worker=worker, log_path=paths["detach_log"])
+                      session_id=session_id, worker=worker, log_path=paths["detach_log"],
+                      since=since)
 
 
 # ------------------------------------------------------------- the per-call pick ------------
@@ -2215,7 +3378,7 @@ def resolve_spawn_pick(args):
     refused before the detach, before --dry-run prints and before any record line."""
     routing_path = args.routing or os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                 "routing.json")
-    routing = load_routing(routing_path)
+    routing = load_routing(routing_path, parse_float=Decimal)
     cls = getattr(args, "class")
     if cls not in routing["classes"]:
         die("unknown class `%s` (routing table has: %s)"
@@ -2249,12 +3412,27 @@ def resolve_spawn_pick(args):
 
 
 def cmd_spawn(args):
-    # `--reason` is required, and the check is the first thing this command does: an omitted, an
+    require_lane_id(args.lane)
+    require_estimate(args.expect_usd)
+    paths = store_paths(args.run, args.lane, args.record)
+    require_new_lane_id(args.lane, paths["record"])
+    destinations = [paths[key] for key in ("definition_copy", "appended", "report", "settings", "input_dir")]
+    if args.detach and not args.as_worker:
+        destinations.append(paths["detach_log"])
+    require_absent_paths(destinations)
+    # After the estimate, `--reason` is checked: an omitted, an
     # empty and a letterless reason take one refusal, before any record line and before --dry-run
     # prints anything (register, 2026-09-07). The per-call pick is resolved next, so that an
     # unreasoned departure under `auto` is refused the same way, before the detach (2026-09-08).
     require_reason_letter(args.reason)
     routing, row, cls, pick = resolve_spawn_pick(args)
+    cost = class_cost(row, cls)
+    advisory = estimate_advisory(args.expect_usd, cost, cls)
+    args.expect_usd = require_estimate(args.expect_usd)
+    if advisory is not None and not args.as_worker:
+        sys.stderr.write("estimate advisory: %s\n" % advisory)
+    if not args.as_worker:
+        caller_checks(args)      # the doubled-root refusal and the two warnings, in the caller's terminal
     if args.detach and not args.dry_run:
         return detach_spawn(args)
     if args.no_wait:
@@ -2310,8 +3488,8 @@ def cmd_spawn(args):
         if call_writes:
             continue
         if own_memory and not args.grants_only:
-            # Under --grants-only the home's memory directory is a symlink into the vault, so
-            # the auto-resolution is off and the slot takes a --write like any other.
+            # Under --grants-only the call is the lane's whole scope, so the class's own memory
+            # directory is not added by itself and the slot takes a --write like any other.
             add_entry(writes, dir_entry(own_memory))
             continue
         die("class `%s` leaves `%s` to the call: needs --write for %s"
@@ -2410,16 +3588,11 @@ def cmd_spawn(args):
     paths = store_paths(args.run, args.lane, args.record)
     record_path = paths["record"]
     silence, silence_src = resolve_silence(args, record_path)
-    # The two-tier caps: the hard stop the CLI enforces, the soft line the close logs. An
-    # explicit --budget-usd raises the hard stop and never lowers it; --expect-usd, the head's
-    # own estimate, becomes the soft line (owner ruling, 2026-09-07).
-    hard_usd, hard_src, class_soft = cost_caps(args.budget_usd, class_cost(row, cls), cls,
-                                               breadth, args.run, record_path)
-    if "class cap kept" in hard_src:
-        sys.stderr.write("lane cap: --budget-usd $%.2f is at or below this class's cap $%.2f, so the class "
-                         "cap is kept (--budget-usd raises only, 2026-09-07); pass --expect-usd to state "
-                         "your estimate as the lane's soft line\n" % (args.budget_usd, hard_usd))
-    soft_usd, soft_src = soft_line(args.expect_usd, class_soft, hard_usd)
+    # The estimate sets both lines; its sanity note was printed in the caller before detach.
+    hard_usd, hard_src = cost_caps(args.budget_usd, args.expect_usd, args.run, record_path)
+    if "cap kept" in hard_src:
+        sys.stderr.write("lane cap: %s\n" % hard_src)
+    soft_usd, soft_src = soft_line(args.expect_usd)
     budget = hard_usd
     projects_root = projects_root_for(args.projects_root, config_dir)
     progress = progress_path(args.run, args.lane)
@@ -2436,6 +3609,7 @@ def cmd_spawn(args):
     grants_env = os.pathsep.join(reals(grants) + [input_entry["real"], home, "/tmp"])
     writes_env = os.pathsep.join(reals(writes))
     settings, settings_allow = settings_for(home, writes)
+    settings_text = json.dumps(settings, indent=2) + "\n"   # the bytes written below, hashed above them
     env = dict(os.environ)
     env.update({"LLM_WIKI_LANE": "1", "LLM_WIKI_LANE_RUN": args.run, "LLM_WIKI_LANE_ID": args.lane,
                 "LLM_WIKI_LANE_GRANTS": grants_env, "LLM_WIKI_LANE_WRITES": writes_env,
@@ -2485,7 +3659,7 @@ def cmd_spawn(args):
         "cache_tier_expected": row.get("cache", "unstated"),
         "session_id": session_id, "budget_usd": budget, "breadth": breadth,
         "hard_usd": hard_usd, "hard_src": hard_src, "soft_usd": soft_usd,
-        "soft_src": soft_src, "expect_usd": args.expect_usd,
+        "soft_src": soft_src, "expect_usd": args.expect_usd, "estimate_advisory": advisory,
         "max_turns": args.max_turns, "deadline_s": deadline,
         "silence_s": silence, "silence_src": silence_src, "poll_s": args.poll_s,
         "progress_file": progress, "report_words_cap": args.report_words,
@@ -2494,6 +3668,11 @@ def cmd_spawn(args):
         "mode_from": mode_from, "baseline": args.baseline,
         "baseline_lane": args.baseline_lane or None,
         "cwd": home, "workspace_trust": trust,
+        # the configuration a resume or a beat must carry byte for byte (the held-lane beat,
+        # 2026-09-17): the command line minus the session flag and the wrapper-side bounds,
+        # plus the appended file's and the settings file's bytes, as written below
+        "config_sha256": config_sha256(command, (appended_text, settings_text),
+                                       drop_tail=1 if args.prompt_arg else 0),
         "mechanism": "lane.py headless (claude -p --agents/--agent, --restricted, "
                      "lane-side fence hook, per-spawn settings, silence watch)"}
     if outside:
@@ -2517,7 +3696,7 @@ def cmd_spawn(args):
         print("hard cap: $%.2f (%s) · soft line: %s"
               % (hard_usd, hard_src,
                  ("$%.2f (%s)" % (soft_usd, soft_src)) if soft_usd is not None
-                 else "none (no class figures and no --expect-usd)"))
+                 else "none"))
         print("brief delivery: %s" % ("prompt argument" if args.prompt_arg else "stdin"))
         print("appended system prompt (%s, %d bytes): %s"
               % (paths["appended"], appended_bytes, ", ".join(appended_names) or "nothing"))
@@ -2540,7 +3719,7 @@ def cmd_spawn(args):
             die("the appended system-prompt file is not writable (%s): %s"
                 % (paths["appended"], exc))
     try:
-        write_atomic(paths["settings"], json.dumps(settings, indent=2) + "\n")
+        write_atomic(paths["settings"], settings_text)
     except OSError as exc:
         die("the per-spawn settings file is not writable (%s): %s" % (paths["settings"], exc))
     try:
@@ -2562,7 +3741,8 @@ def cmd_spawn(args):
            "projects_root": projects_root, "session_id": session_id, "progress": progress,
            "report_words": args.report_words, "format": args.format,
            "spawn_event": "lane-spawned", "detached": bool(args.as_worker), "viewer": args.viewer,
-           "open_line": open_line, "soft_usd": soft_usd, "soft_src": soft_src}
+           "open_line": open_line, "soft_usd": soft_usd, "soft_src": soft_src,
+           "no_swap": bool(getattr(args, "no_swap", False)), "brief_current": brief_abs}
     return run_lane(ctx)
 
 
@@ -2587,8 +3767,18 @@ def cmd_watch(args):
         die("lane %s/%s is unknown in %s (no lane-open and lane-spawned)"
             % (args.run, args.lane, paths["record"]))
     if closed:
-        print(summary_of(args.run, args.lane, closed.get("class") or opened.get("class"),
-                         opened.get("model"), opened.get("effort"), closed))
+        # A resume issued with --detach --no-wait writes its lane-resumed a moment after it returns,
+        # and a watch issued in that moment still sees the previous call's close: wait up to
+        # --appear-s for a newer lane-resumed before calling the lane closed.
+        waited = 0.0
+        while closed and waited < args.appear_s:
+            time.sleep(0.5)
+            waited += 0.5
+            opened, spawned, closed = lane_state(load_record(paths["record"]), args.lane)
+    if closed:
+        summary = summary_of(args.run, args.lane, closed.get("class") or opened.get("class"),
+                             opened.get("model"), opened.get("effort"), closed)
+        emit(summary, closed, args.report_words, args.format, opened)
         die("lane %s/%s is already closed (%s at %s)"
             % (args.run, args.lane, closed.get("exit_class"), closed.get("ts")))
     home = os.path.realpath(os.path.expanduser(args.home or opened.get("cwd") or default_home()))
@@ -2605,9 +3795,7 @@ def cmd_watch(args):
 def cmd_kill(args):
     """Stop a running lane deliberately and close its record, so no lane is ever killed by hand.
 
-    A lane killed from another terminal wrote no `lane-closed`, and every reader of the record
-    — the console above all — went on drawing it as running for ever. This is the deliberate
-    path: it signals the recorded processes, then writes the close the wrapper never got to
+    This deliberate path signals the recorded processes, then writes the close the wrapper did not
     write, with `exit_class: killed`, the `--reason` the caller gave and the cost estimated
     from the transcript exactly as the `watch-closed` path estimates it (token totals, no
     dollar figure: the wrapper holds no price table).
@@ -2616,9 +3804,8 @@ def cmd_kill(args):
     a close of its own, then the lane process, which the wrapper started in a session of its
     own and which a signal to the wrapper therefore never reaches. The wrapper is signalled as
     ONE PROCESS and the lane by process GROUP: a wrapper shares its group with whoever started
-    it, so a group signal there would kill the caller too (the suite's kill legs, all in one
-    process group, exited 143 until this was split), while the lane is a session leader and its
-    group holds nothing but the lane and its children.
+    it, so a group signal there would kill the caller too. The lane is a session leader and
+    its group holds nothing but the lane and its children.
 
     The bound: each of the two is SIGTERM, then up to KILL_GRACE_S (5 s) of waiting, then
     SIGKILL — `kill_pid_group`, the same sequence the stall path uses — so the close is written
@@ -2686,7 +3873,126 @@ def cmd_kill(args):
 
 # ---------------------------------------------------------------------- resume --------------
 
+def cmd_advise(args):
+    """The head's resume-or-restart recommendation for a closed lane, computed from the record
+    (2026-09-14): the stop reason first, then the cost. Prints one
+    line `advise: <resume|restart|family-fallback|unknown> · <the inputs>` and exits 0; a lane
+    with no close, or a close with no usable figures, reads `unknown` with the reason (never a
+    guess). D29's window in `resume` stays the enforced rule; this is the head's counsel. The
+    age is measured from the lane's last call on `resume`'s own reference — the close, or a later
+    successful `hold-beat` — and the line names which (critic F8, 2026-09-17)."""
+    paths = store_paths(args.run, args.lane, args.record)
+    if not os.path.isfile(paths["record"]):
+        die("no spawn record at %s" % paths["record"])
+    records = load_record(paths["record"])
+    opened, spawned, closed = lane_state(records, args.lane)
+    if not closed:
+        print("advise: unknown · lane %s/%s has no lane-closed yet (watch it first)" % (args.run, args.lane))
+        return 0
+    cls = str(closed.get("exit_class") or "unstated")
+    last = parse_ts(closed.get("ts"))
+    # The lane's last call, on the same reference `resume` enforces (critic F8, 2026-09-17): a
+    # successful held-lane beat after the close IS the last call, so counsel on a held lane reads
+    # its real age instead of ageing it from a close the beats have outlived. A failed beat moved
+    # nothing and is not counted, as in `resume` and in `hold`.
+    age_src = "lane-closed ts"
+    if last is not None:
+        close_index = next((i for i, r in enumerate(records) if r is closed), len(records))
+        for r in records[close_index + 1:]:
+            if r.get("lane") != args.lane or r.get("event") != "hold-beat" or \
+                    r.get("ok") is not True:
+                continue
+            t = parse_ts(r.get("ts"))
+            if t is not None and t > last:
+                last, age_src = t, "hold-beat ts"
+    age = (time.time() - last) if last is not None else None
+    usage = closed.get("usage") if isinstance(closed.get("usage"), dict) else {}
+    memory = usage.get("peak_context")          # the wrapper's memory at close (never a sum over calls)
+    if not isinstance(memory, int):
+        memory = None
+    orientation = usage.get("first_call_context")
+    if not isinstance(orientation, int) or orientation <= 0:
+        orientation = ORIENTATION_TOKENS
+    report = args.report or closed.get("report") or paths.get("report")
+    on_disk = []
+    if report and os.path.isfile(report) and os.path.getsize(report) > ADVISE_REPORT_MIN_BYTES:
+        on_disk.append("report")
+    if args.stage and os.path.isdir(args.stage) and any(
+            os.path.getsize(os.path.join(r, f)) > 0 for r, _, fs in os.walk(args.stage) for f in fs):
+        on_disk.append("stage")
+    inputs = "exit %s · age %s (%s) · memory at close %s · on disk %s" % (
+        cls, "unknown" if age is None else "%.0f s" % age, age_src,
+        "unknown" if memory is None else format(memory, ","),
+        ", ".join(on_disk) if on_disk else "nothing")
+    if cls == "refusal":
+        print("advise: family-fallback · %s · a refusal is never resumed (CLAUDE.md section 11)" % inputs)
+        return 0
+    if cls in ("deadline", "stall", "error", "spawn-failed", "killed", "max-turns"):
+        print("advise: restart · %s · a %s close restarts from the partial output, never a resume "
+              "(the skill's rule: re-spawned once with a changed brief and the failure note)" % (inputs, cls))
+        return 0
+    if cls == "budget":
+        print("advise: restart · %s · a budget close is re-spawned with a changed brief, or resumed only "
+              "through `resume` with a raised --budget-usd inside its window" % inputs)
+        return 0
+    if cls == "completed":
+        print("advise: restart · %s · a completed lane is re-spawned with a follow-up brief, or resumed through "
+              "`resume` inside its window for a follow-up only" % inputs)
+        return 0
+    if age is None:
+        print("advise: unknown · %s · the close carries no parseable ts" % inputs)
+        return 0
+    warm = age <= RESUME_WINDOW_S
+    if warm:
+        print("advise: resume · %s · the cache is warm (under %d min)" % (inputs, RESUME_WINDOW_S // 60))
+        return 0
+    if memory is None:
+        print("advise: resume · %s · the memory at close is unknown, so the stop-reason rule alone applies: "
+              "a limit close resumes (D29)" % inputs)
+        return 0
+    if not on_disk:
+        print("advise: resume · %s · the cache is cold but nothing of the lane's work is on disk, so one cold "
+              "re-read beats re-running the whole task (D29)" % inputs)
+        return 0
+    if memory is not None and memory <= orientation:
+        print("advise: resume · %s · the cache is cold but the memory is under the lane's own orientation "
+              "cost (%s, its first call)" % (inputs, format(orientation, ",")))
+        return 0
+    print("advise: restart · %s · the cache is cold, the work is on disk and the memory is %s: a re-spawn from "
+          "the partial output is the cheaper path" % (inputs, "large" if memory is not None else "unknown"))
+    return 0
+
+
+def stopped_pass_cap(records, lane_id, closed):
+    """The cap of the pass that closed: its latest start, never an earlier pass's cap.
+    A resumed start with missing cap fields is a broken premise, not a fallback estimate."""
+    start = None
+    for event in records:
+        if event.get("lane") != lane_id:
+            continue
+        if event.get("event") in ("lane-open", "lane-resumed"):
+            start = event
+        if event is closed:
+            break
+    if start is None:
+        die("budget close has no preceding lane-open or lane-resumed")
+    source = start["event"]
+    value, key = start.get("hard_usd"), "hard_usd"
+    if value is None:
+        value, key = start.get("budget_usd"), "budget_usd"
+    if value is None:
+        die("budget close: %s records neither hard_usd nor budget_usd; the cap it stopped at is unknown"
+            % source)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        die("budget close: %s %s is %r, not a number" % (source, key, value))
+    if not math.isfinite(value) or value <= 0:
+        die("budget close: %s %s is not a positive finite cap" % (source, key))
+    return float(value), "%s %s" % (source, key)
+
+
 def cmd_resume(args):
+    if args.no_wait and not args.detach:
+        die("--no-wait goes with --detach")
     vault = vault_root()
     paths = store_paths(args.run, args.lane, args.record)
     if not os.path.isfile(paths["record"]):
@@ -2701,19 +4007,58 @@ def cmd_resume(args):
             "first" % (args.run, args.lane))
     if closed.get("exit_class") == "spawn-failed":
         die("lane %s/%s never started (spawn-failed); re-spawn it" % (args.run, args.lane))
+    # Nothing else may enter the session while a beat is in flight (critic F4, 2026-09-17): the
+    # beat's own record line lands only when its call returns, so the session claim is what a
+    # resume — a real one or a second beat — can see meanwhile. This is the early reading, for a
+    # refusal in the caller's own terms; the claim itself is taken below, immediately before this
+    # call writes or starts anything. The exposure is seconds normally and the beat's whole bound
+    # at worst; the alternative is two processes on one session.
+    beat_marker = beat_marker_path(paths["record"], args.run, args.lane)
+    holder, holder_kind = session_holder(beat_marker)
+    if holder is not None:
+        die("lane %s/%s: a held-lane %s is in flight (%s, lock %s): a second call on one "
+            "session is the two-processes-on-one-session fault — wait for the call (bounded by %d s) or, if "
+            "that process is wedged, end it and the kernel releases its lock"
+            % (args.run, args.lane, holder_kind, holder_text(holder),
+               session_lock_path(beat_marker), BEAT_TIMEOUT_S))
+    # The held-lane beat (2026-09-17): a no-work resume with a fixed prompt, refused with a brief,
+    # a worker or a close a beat cannot re-enter; a plain resume needs its brief.
+    beat = bool(getattr(args, "beat", False))
+    if beat and args.brief:
+        die("--beat takes no --brief: the beat's prompt is the fixed line %r" % BEAT_PROMPT)
+    if not beat and not args.brief:
+        die("--brief is required: a resume carries a follow-up brief (the no-work form is --beat)")
+    if beat and args.detach:
+        die("--beat runs in the foreground: one bounded call, no worker")
+    if beat and closed.get("exit_class") not in BEAT_EXITS:
+        die("lane %s/%s closed %s: a beat re-enters only a close in %s (a limit or budget close "
+            "is resumed by the head's own decision, never beaten)"
+            % (args.run, args.lane, closed.get("exit_class") or "unstated", "/".join(BEAT_EXITS)))
     last = parse_ts(closed.get("ts"))
     if last is None:
         die("lane %s/%s: lane-closed carries no parseable ts (%r)"
             % (args.run, args.lane, closed.get("ts")))
+    # The window's reference is the lane's last call: the close, or a later successful beat,
+    # which is what a hold buys (the held-lane mechanism, 2026-09-17).
+    age_src = "lane-closed ts"
+    close_index = next((i for i, r in enumerate(records) if r is closed), len(records))
+    for r in records[close_index + 1:]:
+        if r.get("lane") != args.lane or r.get("event") != "hold-beat" or r.get("ok") is not True:
+            continue
+        t = parse_ts(r.get("ts"))
+        if t is not None and t > last:
+            last, age_src = t, "hold-beat ts"
     age = time.time() - last
     # D29: the window is a cost rule, not a safety rule, and a lane stopped by the account limit
     # is resumed after the reset however long that took — one cold re-read of its context, once
     # per lane, against the whole task re-run that a re-spawn would cost.
     after_limit = closed.get("exit_class") == "limit"
     if age > RESUME_WINDOW_S and not after_limit:
-        die("lane %s/%s: last call %.0f min ago, over the %d-minute resume window — the cache "
-            "has lapsed; re-spawn with the finding in the brief instead"
-            % (args.run, args.lane, age / 60.0, RESUME_WINDOW_S // 60))
+        die("lane %s/%s: last call %.0f min ago (%s), over the %d-minute resume window — the "
+            "cache has lapsed; %s"
+            % (args.run, args.lane, age / 60.0, age_src, RESUME_WINDOW_S // 60,
+               "nothing is warm to beat" if beat
+               else "re-spawn with the finding in the brief instead"))
     if after_limit and age > RESUME_WINDOW_S:
         print("lane %s/%s: closed on a limit %.0f min ago — the %d-minute cache window is waived "
               "(D29); expect a cold re-read of the lane's context on this first call"
@@ -2729,30 +4074,24 @@ def cmd_resume(args):
     after_budget = closed.get("exit_class") == "budget"
     recorded_cap = None
     if after_budget:
-        recorded, cap_field = opened.get("hard_usd"), "hard_usd"
-        if recorded is None:
-            recorded, cap_field = opened.get("budget_usd"), "budget_usd"
-        if recorded is None:
-            die("lane %s/%s closed on its budget cap, but its lane-open records neither hard_usd "
-                "nor budget_usd, so the cap it stopped at is unknown and no --budget-usd can be "
-                "shown to clear it — re-spawn the lane instead" % (args.run, args.lane))
-        if isinstance(recorded, bool) or not isinstance(recorded, (int, float)):
-            die("lane %s/%s: lane-open %s is %r, not a number — a budget close cannot be resumed "
-                "against a cap that cannot be read" % (args.run, args.lane, cap_field, recorded))
-        recorded_cap = float(recorded)
+        recorded_cap, cap_source = stopped_pass_cap(records, args.lane, closed)
         if args.budget_usd is None or args.budget_usd <= recorded_cap:
-            die("lane %s/%s closed on its budget cap of $%.2f (lane-open %s)%s: a budget close "
+            die("lane %s/%s closed on its budget cap of $%.2f (%s)%s: a budget close "
                 "resumes only with an explicit --budget-usd ABOVE that figure, since the recorded "
                 "cap either kills the lane again at once or gives it a second full helping"
-                % (args.run, args.lane, recorded_cap, cap_field,
+                % (args.run, args.lane, recorded_cap, cap_source,
                    "" if args.budget_usd is None
                    else ", and --budget-usd $%.2f is not above it" % args.budget_usd))
-    if not os.path.isfile(args.brief):
-        die("brief file not found: %s" % args.brief)
-    brief = read_text(args.brief, "the follow-up brief")
-    if not brief.strip():
-        die("brief file is empty: %s" % args.brief)
-    controls_checked = check_controls(parse_controls(brief), vault)
+    if beat:
+        brief, controls_checked = None, None    # the beat's prompt is BEAT_PROMPT, below
+    else:
+        if not os.path.isfile(args.brief):
+            die("brief file not found: %s" % args.brief)
+        brief = read_text(args.brief, "the follow-up brief")
+        if not brief.strip():
+            die("brief file is empty: %s" % args.brief)
+        refuse_doubled_root(args.brief, brief, vault)
+        controls_checked = check_controls(parse_controls(brief), vault)
 
     # The lane's reason has not changed, so the resumed call is tallied under the letter its spawn
     # gave: `lane-resumed` records the reason carried from lane-open, and the command needs no flag
@@ -2801,52 +4140,29 @@ def cmd_resume(args):
     if appended and not os.path.isfile(appended):
         die("lane %s/%s: appended file %s is gone" % (args.run, args.lane, appended))
     definition_path, definition_sha, agent = thin_definition(vault, cls, tools, "thin %s lane" % cls)
-    # The same two-tier rule as spawn: an explicit --budget-usd, else the hard stop the
-    # lane-open recorded (its budget_usd for a record from before the class caps, the breadth
-    # knob's tier for a record with neither), composed with the run's envelope remainder where
-    # that is smaller — a resumed lane may no more spend what the run no longer has than a
-    # fresh one, and the earlier resume read neither the envelope nor the knob (critic findings
-    # F5/F9, 2026-09-07).
-    # Raise-only applies to the recorded cap as it does to the class cap on spawn (owner ruling,
-    # 2026-09-07): an explicit --budget-usd below what the lane already ran under is not a
-    # resume decision, it is a sizing guess, and the recorded cap is kept.
-    if opened.get("hard_usd") is not None:
-        budget, hard_src = opened["hard_usd"], "lane-open hard_usd"
-        label = "the lane-open hard_usd"
-    elif opened.get("budget_usd") is not None:
-        budget, hard_src = opened["budget_usd"], "lane-open budget_usd (a record without hard_usd)"
-        label = "the lane-open budget_usd"
+    if beat:
+        # A beat carries the spawn's own cap and composes none: no estimate, no envelope read,
+        # no meter — a beat is cheap by construction and must stay so.
+        recorded_cap = opened.get("hard_usd")
+        if recorded_cap is None:
+            recorded_cap = opened.get("budget_usd")
+        if isinstance(recorded_cap, bool) or not isinstance(recorded_cap, (int, float)) \
+                or not math.isfinite(recorded_cap) or recorded_cap <= 0:
+            die("lane %s/%s: lane-open records no positive cap (hard_usd or budget_usd): a beat "
+                "carries the spawn's own cap and composes none" % (args.run, args.lane))
+        budget, hard_src = float(recorded_cap), "lane-open cap (a beat carries the spawn's own)"
+        expect, soft_usd, soft_src = None, None, None
     else:
-        breadth = customisation_value("breadth", DEFAULT_BREADTH)
-        budget = BREADTH_BUDGET.get(breadth, BREADTH_BUDGET[DEFAULT_BREADTH])
-        hard_src = "breadth-tier (a lane-open without hard_usd or budget_usd)"
-        label = "the breadth tier"
-    remainder, reason, envelope = envelope_remainder(args.run, paths["record"])
-    if remainder is not None and remainder <= 0:
-        if args.budget_usd is None:
-            die("run %s: the envelope has nothing left (remainder $%.2f of $%.2f: %s) — no lane "
-                "resumes on a cap of nothing; raise the envelope or pass --budget-usd with a "
-                "reason" % (args.run, remainder, envelope, reason))
-        budget = float(args.budget_usd)
-        hard_src = ("explicit --budget-usd (override of an exhausted envelope $%.2f, "
-                    "remainder $%.2f)" % (envelope, remainder))
-    else:
-        if remainder is not None and remainder < float(budget):
-            budget, hard_src = remainder, (
-                "envelope remainder $%.2f (envelope $%.2f, spent $%.2f; below %s $%.2f)"
-                % (remainder, envelope, envelope - remainder, label, float(budget)))
-        if args.budget_usd is not None and float(args.budget_usd) > float(budget) and after_budget:
-            budget = float(args.budget_usd)
-            hard_src = ("explicit --budget-usd (raised over a budget close from $%.2f)"
-                        % recorded_cap)
-        else:
-            budget, hard_src = raise_only(args.budget_usd, budget, hard_src, term="resumed")
-            if "cap kept" in hard_src:
-                sys.stderr.write("lane cap: --budget-usd $%.2f is at or below the cap this lane already ran "
-                                 "under, $%.2f, so that cap is kept (--budget-usd raises only, 2026-09-07); "
-                                 "pass --expect-usd to state your estimate as the lane's soft line\n"
-                                 % (args.budget_usd, budget))
-    soft_usd, soft_src = soft_line(args.expect_usd, opened.get("soft_usd"), budget)
+        # Resume uses the spawn's estimate (2026-09-15), never the former class-median cap.
+        recorded_expect = require_estimate(opened.get("expect_usd"), "lane-open expect_usd (--expect-usd)")
+        budget, hard_src = cost_caps(args.budget_usd, recorded_expect, args.run, paths["record"],
+                                     term="resumed")
+        if after_budget and hard_src.startswith("explicit --budget-usd (raised over resumed"):
+            hard_src = "explicit --budget-usd (raised over a budget close from $%.2f)" % recorded_cap
+        if "cap kept" in hard_src:
+            sys.stderr.write("lane cap: %s\n" % hard_src)
+        expect = args.expect_usd if args.expect_usd is not None else recorded_expect
+        soft_usd, soft_src = soft_line(expect)
     deadline = args.deadline_s or opened.get("deadline_s") or DEFAULT_DEADLINE_S
     if args.silence_s is None:
         silence = opened.get("silence_s")
@@ -2858,9 +4174,14 @@ def cmd_resume(args):
     progress = progress_path(args.run, args.lane)
     resume_n = 1 + sum(1 for r in records
                        if r.get("lane") == args.lane and r.get("event") == "lane-resumed")
-    brief_abs = os.path.abspath(args.brief)
-    brief_copy = os.path.join(paths["input_dir"], "%s-brief-%s-resume-%d.md"
-                              % (args.run, args.lane, resume_n))
+    if beat:
+        brief_abs = brief_copy = None    # no pass file of any kind: a beat is not a pass
+    else:
+        paths["report"] = pass_report_path(paths["report"], resume_n + 1)
+        brief_abs = os.path.abspath(args.brief)
+        brief_copy = os.path.join(paths["input_dir"], "%s-brief-%s-pass%d.md"
+                                  % (args.run, args.lane, resume_n + 1))
+        require_absent_paths((paths["report"], brief_copy))
 
     grants_env = opened.get("grants_env") or os.pathsep.join(
         list(opened.get("grants") or []) + [home, "/tmp"])
@@ -2887,6 +4208,38 @@ def cmd_resume(args):
     if writes:
         command += ["--permission-mode", "acceptEdits"]
 
+    # The configuration this call runs under, hashed as the spawn hashed its own (the held-lane
+    # beat, 2026-09-17): a beat whose hash differs from the lane-open's would rewrite the
+    # context, so it is refused before any process starts; a resume records the comparison.
+    config_sha = config_sha256(command, ((read_bytes(appended) if appended else b"") or b"",
+                                         read_bytes(settings) or b""))
+    recorded_sha = opened.get("config_sha256")
+    config_src = "lane-open" if isinstance(recorded_sha, str) and recorded_sha else \
+        "unrecorded (a lane-open from before config_sha256)"
+    config_match = (config_sha == recorded_sha) if isinstance(recorded_sha, str) and recorded_sha \
+        else None
+    if beat and config_match is False:
+        die("lane %s/%s: the resolved configuration differs from the lane-open's (config_sha256 "
+            "%s against the recorded %s): a beat carries the spawn's configuration byte for byte "
+            "or it is a rewrite, not a beat — nothing started; resume by hand or re-spawn"
+            % (args.run, args.lane, config_sha[:12], str(recorded_sha)[:12]))
+    if beat:
+        ctx = {"run": args.run, "lane": args.lane, "cls": cls, "model": model, "effort": effort,
+               "command": command, "env": env, "home": home, "record": paths["record"],
+               "projects_root": projects_root, "session_id": session_id, "format": args.format,
+               "config_sha256": config_sha, "config_src": config_src, "config_match": config_match,
+               "budget": budget, "hard_src": hard_src, "age_s": round(age, 1), "age_src": age_src,
+               "beat_n": 1 + sum(1 for r in records
+                                 if r.get("lane") == args.lane and r.get("event") == "hold-beat")}
+        with hold_beat_marker(beat_marker):
+            return run_beat(ctx)
+
+    if args.detach:
+        # Every premise above ran in the caller's terminal; the worker repeats them and writes
+        # every record line, lane-resumed first (register 2026-09-10 15:22).
+        return detach_worker(args, session_id, [], home, projects_root,
+                             since=len(load_record(paths["record"])))
+
     try:
         os.makedirs(paths["input_dir"], exist_ok=True)
         shutil.copyfile(brief_abs, brief_copy)
@@ -2899,14 +4252,19 @@ def cmd_resume(args):
            "record": paths["record"], "report_path": paths["report"],
            "projects_root": projects_root, "session_id": session_id, "progress": progress,
            "report_words": args.report_words, "format": args.format,
-           "spawn_event": "lane-resumed", "detached": False, "open_line": opened,
-           "spawn_extra": {"reason": lane_reason, "reason_src": lane_reason_src,
+           "spawn_event": "lane-respawned", "detached": bool(args.as_worker),
+           "viewer": args.viewer, "open_line": opened, "spawn_extra": {"resume_n": resume_n},
+           "no_swap": bool(getattr(args, "no_swap", False)), "brief_current": brief_abs,
+           "pre_event": {"event": "lane-resumed", "reason": lane_reason, "reason_src": lane_reason_src,
                            "brief": brief_abs, "brief_copy": brief_copy, "resume_n": resume_n,
+                           "report": paths["report"],
                            "resumes_close_ts": closed.get("ts"), "age_s": round(age, 1),
+                           "age_src": age_src, "config_sha256": config_sha,
+                           "config_src": config_src, "config_match": config_match,
                            "after_limit": after_limit, "after_budget": after_budget,
                            "controls_checked": controls_checked, "budget_usd": budget,
                            "hard_usd": budget, "hard_src": hard_src, "soft_usd": soft_usd,
-                           "soft_src": soft_src, "expect_usd": args.expect_usd,
+                           "soft_src": soft_src, "expect_usd": expect,
                            "deadline_s": deadline, "silence_s": silence,
                            "silence_src": silence_src, "definition_sha256": definition_sha,
                            # No new pick on a resume: the open's pick fields are copied, and a
@@ -2917,7 +4275,14 @@ def cmd_resume(args):
                                              if isinstance(opened.get("choice_reason"), str) else None)},
            "close_extra": {"resumed": True, "resume_n": resume_n},
            "soft_usd": soft_usd, "soft_src": soft_src}
-    return run_lane(ctx)
+    # The session is claimed HERE, immediately before the first thing this resume writes or
+    # starts, and not only checked at the top (critic finding 2 of review): a beat that took the
+    # session while this call was preparing must turn it back at the door, whichever of the two
+    # arrived first. The detach path above returned already, so the claim is the worker's own.
+    with hold_session(beat_marker, "resume",
+                      "a beat holds the lane's session; wait for it (bounded by %d s) and resume "
+                      "again" % BEAT_TIMEOUT_S):
+        return run_lane(ctx)
 
 
 # ------------------------------------------------------------------ cost-figures ------------
@@ -2933,8 +4298,7 @@ def cmd_cost_figures(args):
     script). It writes at the file's own indent and never sorts its keys, so the diff of a fold
     is the fields that changed and nothing else; a fold with nothing drifted writes nothing at
     all and says so; and a second fold of an already-folded file is a no-op, since every class
-    then reads `same`. The re-fold used to be a hand step of the head, and a hand step that
-    re-dumped the file at a different width made every line change on every fold.
+    then reads `same`.
 
     Exit 0 when nothing drifts, 1 when `--check` alone finds a drift or a class due its first
     block (with `--fold` the drift has been closed, so a successful fold exits 0), 2 on a broken
@@ -2987,8 +4351,8 @@ def add_wait_flags(parser):
                         help="seconds without a transcript that count as a stall (default %d)"
                              % NO_TRANSCRIPT_S)
     parser.add_argument("--report-words", type=int, default=REPORT_WORDS,
-                        help="words of the report printed to stdout (default %d; 0 prints the "
-                             "pointer line only)" % REPORT_WORDS)
+                        help="optional preview: print the first N words (default: the whole "
+                             "report; 0 prints the pointer line only)")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--record", help="spawn record path (default: the run store)")
     parser.add_argument("--projects-root")
@@ -3006,7 +4370,7 @@ def build_parser():
 
     spawn = sub.add_parser("spawn", help="spawn one lane and record it")
     spawn.add_argument("--run", required=True)
-    spawn.add_argument("--lane", required=True)
+    spawn.add_argument("--lane", required=True, help="fresh lane id; only -pass<n> endings are reserved, in any letter case; existing destinations refuse")
     spawn.add_argument("--class", required=True, dest="class")
     spawn.add_argument("--brief", required=True)
     spawn.add_argument("--model")
@@ -3029,6 +4393,8 @@ def build_parser():
     spawn.add_argument("--tools", help="comma-separated override of the class tool set")
     spawn.add_argument("--skill", action="append", default=[])
     spawn.add_argument("--mcp-config")
+    spawn.add_argument("--no-swap", action="store_true",
+                       help="do not move a fallen-back task to Astra at the close (probes, suites); the close still records the fallback")
     spawn.add_argument("--no-core", action="store_true",
                        help="leave the lane core out of the appended file (slices still go in)")
     spawn.add_argument("--append-core", metavar="FILE",
@@ -3048,18 +4414,14 @@ def build_parser():
     spawn.add_argument("--plant", default="")
     spawn.add_argument("--reading-list", default="")
     spawn.add_argument("--budget-usd", type=float,
-                       help="RAISE the hard stop passed as --max-budget-usd above the class's "
-                            "cap from routing.json (the smaller of the run's envelope "
-                            "remainder and the larger of %d x its usual cost and its soft "
-                            "threshold, else the breadth tier's value); a value at or below "
-                            "the class cap is not applied: the class cap is kept and one line says so "
-                            "(2026-09-07). To state your own estimate, use --expect-usd"
-                            % HARD_MULTIPLIER)
-    spawn.add_argument("--expect-usd", type=float,
-                       help="the head's own cost estimate for this lane: it becomes the lane's "
-                            "soft line (logged at the close as soft_usd with soft_src expect, "
-                            "over the class figure), and it is NEVER a stop. Refused above the "
-                            "lane's hard stop, or at or below zero")
+                       help="RAISE the hard stop above the smaller of 5 x --expect-usd and the "
+                            "run's envelope remainder; at or below it the composed cap is kept "
+                            "and noted (raise-only, 2026-09-07)")
+    spawn.add_argument("--expect-usd", type=decimal_estimate,
+                       help="REQUIRED: the head's own positive finite dollar estimate; the soft "
+                            "line (soft_src expect) and the base for a 5 x hard stop. Outside "
+                            "the class median's factor-3 band prints an advisory only; exact decimal "
+                            "comparison keeps equality quiet (2026-09-16)")
     spawn.add_argument("--max-turns", type=int)
     spawn.add_argument("--deadline-s", type=int)
     spawn.add_argument("--baseline-lane", default="",
@@ -3109,8 +4471,7 @@ def build_parser():
                            "written into the close line and printed. REQUIRED: a kill with no "
                            "reason on the record is the hand kill this command replaces")
     kill.add_argument("--report-words", type=int, default=REPORT_WORDS,
-                      help="words of the lane's last report printed to stdout (default %d)"
-                           % REPORT_WORDS)
+                      help="optional preview of the lane's last report (default: the whole report)")
     kill.add_argument("--record", help="spawn record path (default: the run store)")
     kill.add_argument("--projects-root")
     kill.add_argument("--home")
@@ -3120,21 +4481,28 @@ def build_parser():
                                            "brief (D29: after a `limit` close the cache window is "
                                            "waived and `lane-resumed` records after_limit and "
                                            "age_s; after a `budget` close only a raised "
-                                           "--budget-usd resumes the lane)")
+                                           "--budget-usd resumes the lane; existing per-pass report or brief paths refuse before writes)")
     resume.add_argument("--run", required=True)
     resume.add_argument("--lane", required=True)
-    resume.add_argument("--brief", required=True)
+    resume.add_argument("--brief", default=None,
+                        help="the follow-up brief, on standard input to the resumed session; "
+                             "REQUIRED unless --beat")
+    resume.add_argument("--beat", action="store_true",
+                        help="the held-lane beat (handsoff.py hold): the same command line as "
+                             "a resume, the fixed line %r on standard input, no report, no "
+                             "pass file, one hold-beat record line with the call's usage; "
+                             "refused when the resolved configuration differs from the "
+                             "lane-open's config_sha256" % BEAT_PROMPT)
     resume.add_argument("--budget-usd", type=float,
                         help="RAISE the hard stop for the resumed call above the cap the resume "
-                             "composed (the hard_usd the lane-open recorded, or the run's "
+                             "composed (5 x the lane-open expect_usd, or the run's "
                              "envelope remainder where that is smaller); a value at or below it "
                              "is not applied: that cap is kept and one line says so (2026-09-07). "
-                             "REQUIRED, and above the recorded cap, after a `budget` close, "
+                             "REQUIRED, and above the stopped pass's recorded cap, after a `budget` close, "
                              "which never resumes on the cap that stopped it")
     resume.add_argument("--expect-usd", type=float,
-                        help="the head's own cost estimate for the resumed call: the lane's "
-                             "soft line, logged at the close and never a stop (same rule as "
-                             "spawn)")
+                        help="optional soft-line estimate for this pass; defaults to lane-open "
+                             "expect_usd. The hard base always uses the lane-open estimate")
     resume.add_argument("--reason", default="",
                         help="NOT needed in the ordinary case: `lane-resumed` carries the reason "
                              "the lane-open recorded. Pass it only where that record names no "
@@ -3143,9 +4511,30 @@ def build_parser():
     resume.add_argument("--max-turns", type=int)
     resume.add_argument("--deadline-s", type=int)
     resume.add_argument("--baseline-lane", default="")
+    resume.add_argument("--no-swap", action="store_true",
+                        help="as on spawn: no Astra swap at this pass's close")
+    resume.add_argument("--viewer", choices=("terminal", "none"),
+                        help="the run's console window, as on spawn; a detached resume's caller "
+                             "opens it and runs its worker under none")
+    resume.add_argument("--detach", action="store_true",
+                        help="run the resumed call in a worker that survives the caller; the "
+                             "foreground watches it and returns on the resumed call's close")
+    resume.add_argument("--no-wait", action="store_true",
+                        help="with --detach: print `detached pid N session S` and return at once")
+    resume.add_argument("--as-worker", action="store_true", help=argparse.SUPPRESS)
     add_wait_flags(resume)
     resume.set_defaults(func=cmd_resume)
 
+    advise = sub.add_parser("advise", help="the head's resume-or-restart counsel for a closed lane, "
+                                           "from its close record: the stop reason first, then the "
+                                           "cost (cache age, memory at close, work on disk); prints "
+                                           "one line, writes nothing")
+    advise.add_argument("--run", required=True)
+    advise.add_argument("--lane", required=True)
+    advise.add_argument("--record", default=None, help="spawn record path (default: the run store)")
+    advise.add_argument("--stage", default=None, help="the lane's stage directory, if it has one")
+    advise.add_argument("--report", default=None, help="the lane's report file (default: latest close report, else the first-pass path)")
+    advise.set_defaults(func=cmd_advise)
     figures = sub.add_parser("cost-figures",
                              help="fold the run store's completed lane costs per class and "
                                   "print them (writes nothing without --fold); --check "

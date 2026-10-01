@@ -101,11 +101,11 @@ dump(os.path.join(proj, "sess2", "subagents", "agent-L1.jsonl"), l1)
 
 tasks = os.path.join(root, "tmp", "claude-1", "proj", "sess", "tasks")
 os.symlink(os.path.join(proj, "sess", "subagents", "agent-L1.jsonl"),
-           os.path.join(tasks, "L1sym.output"))          # the observed volatile-to-durable symlink
+           os.path.join(tasks, "L1sym.output"))          # a volatile-to-durable symlink fixture
 dump(os.path.join(tasks, "L1copy.output"), l1)            # a real copy: same agent id, different inode
 dump(os.path.join(tasks, "L3.output"), l3)                # volatile-only lane, no durable twin
 with open(os.path.join(tasks, "junk.output"), "w", encoding="utf-8") as fh:
-    fh.write("not a transcript at all\njust text\n")      # observed: some .output files are plain text
+    fh.write("not a transcript at all\njust text\n")      # a plain-text output fixture
 
 # --- a transcript torn by a write in progress: the final line is half a record --------------
 dump(os.path.join(proj, "torn.jsonl"),
@@ -205,11 +205,11 @@ def tool(name, ident):
 #     t1 fable  in 1,000 · read 400,000 · w5 150,000 · w1 50,000 · out 50,000
 #        0.01 + 400000*10*0.025/1e6 (0.10) + 150000*10*1.25/1e6 (1.875) + 50000*10*2/1e6 (1.00)
 #        + 50000*50/1e6 (2.50)                                                     = 5.485
-#     t2 opus   in 500 · read 800,000 · w5 0 · w1 100,000 · out 20,000
-#        0.0025 + 800000*5*0.1/1e6 (0.40) + 100000*5*2/1e6 (1.00) + 20000*25/1e6 (0.50) = 1.9025
+#     t2 opus   in 500 · read 800,000 · w5 0 · w1 100,000 · out 20,000   (Opus 5.5 list, 2026-09-22)
+#        0.002 + 800000*4*0.05/1e6 (0.16) + 100000*4*2/1e6 (0.80) + 20000*20/1e6 (0.40) = 1.362
 #     t3 fable, NO cache_creation sub-object: its 80,000 write falls back to the 5-minute rate
 #        0.001 + 80000*10*1.25/1e6 (1.00) + 100*50/1e6 (0.005)                     = 1.006
-#     fable 5.485 + 1.006 = 6.491 -> $6.49 · opus $1.90 · head 8.3935 -> $8.39
+#     fable 5.485 + 1.006 = 6.491 -> $6.49 · opus $1.36 · head 7.853 -> $7.85
 #     No call rewrites the previous context (100,000 < 0.9*601,000; 80,000 < 0.9*900,500).
 dump(os.path.join(proj, "tiered.jsonl"), [
     user("2026-01-01T00:00:00Z", "MARK"),
@@ -237,8 +237,8 @@ dump(os.path.join(proj, "rewrite.jsonl"), [
 #     g2 w5 200,000 · read 100,000            200,000 >= 0.9*101,000 (previous) but only
 #                                             0.667 of its own 300,000            NOT a rewrite
 #     g3 w5 300,000 · read 0                  300,000 >= 0.9*300,000 both ways        REWRITE
-#     g4 every usage field zero               a call recording no context at all (the observed
-#                                             shape: four zeros) · context 0
+#     g4 every usage field zero               a synthetic call recording no context at all
+#                                             shape: four zeros · context 0
 #     g5 w5 140,000 · read 0                  1.00 of its own context and >= 0.9*0 previous:
 #                                             the rewrite the truthy guard dropped    REWRITE
 #     g6 w5 132,000 · read 140,000            132,000 >= 0.9*140,000 (previous) but only
@@ -273,8 +273,10 @@ dump(os.path.join(proj, "longturn.jsonl"), [
 #     c5 00:14:00 fable max · w5 100,000              nothing changed, gap 60 s       unknown
 #     rewrites 4 · causes switch 1 lapse 1 limit 1 unknown 1 · the four writes priced alone:
 #       opus 2 x 100,000*5*1.25/1e6 (1.25) + fable 2 x 100,000*10*1.25/1e6 (2.50)      = $3.75
-#     head: c1 0.01+1.25+0.005 (1.265) · c2 0.625+0.0025 (0.6275) · c3 0.6275 ·
-#           c4 1.25+0.005 (1.255) · c5 1.255                                           = $5.03
+#     head: c1 0.01+1.25+0.005 (1.265) · c2 0.500+0.002 (0.502) · c3 0.502 ·
+#           c4 1.25+0.005 (1.255) · c5 1.255                                           = $4.78
+#     (opus writes at the Opus 5.5 list of 2026-09-22: 100,000*4*1.25/1e6 = 0.500 each;
+#      rewrites 4 = 0.500 + 0.500 + 1.25 + 1.25 = $3.50)
 #     Without the record (no limit stop) c4 falls to its next cause, switch: causes
 #     switch 2 lapse 1 limit 0 unknown 1, and the total stays 4.
 dump(os.path.join(proj, "causes.jsonl"), [
@@ -326,8 +328,8 @@ dump(os.path.join(proj, "tier1h.jsonl"), [
 #     The head writes nothing large (th2's 10-token write is 0.08 of its own 120 context, so no
 #     rewrite of its own); the lane rewrites once across a 600 s gap. Whether that is a lapse
 #     depends on the lane's tier, which only the record carries.
-#     k2's write priced alone: 100,000*5*1.25/1e6 = 0.625, which prints $0.62: an exact half in
-#     binary, and the two-decimal format rounds it to even, as it does everywhere else here.
+#     k2's write priced alone: 100,000*4*1.25/1e6 = 0.500 (the Opus 5.5 list of 2026-09-22),
+#     which prints $0.50.
 dump(os.path.join(proj, "tierhead.jsonl"), [
     user("2026-01-01T00:00:00Z", "MARK"),
     call("2026-01-01T00:01:00Z", "th1", FAB, usage(10, 10, 0, 0, 10)),
@@ -403,13 +405,16 @@ dump(os.path.join(root, "record-nosession.jsonl"), [
 #     lane-resumed event, the same lane session id): two calls before the resume, two from it.
 #     Both heads' windows (MARK 00:00 to END 00:04) cover all four calls, so the window alone
 #     would bill the whole lane to spawn and nothing to spawn2; the resume's timestamp splits it.
-#     v1 opus in 2,000 (0.010) · w5 96,000 (0.600) · out 10,000 (0.250)                  = 0.860
-#     v2 opus in 2,000 (0.010) · read 200,000 (0.100) · out 10,000 (0.250)               = 0.360
-#     v3 opus in 2,000 (0.010) · read 200,000 (0.100) · w5 200,000 (1.250) · out 20,000 (0.500) = 1.860
-#     v4 opus in 2,000 (0.010) · read 400,000 (0.200) · out 20,000 (0.500)               = 0.710
-#     spawn's share v1+v2 = 1.220 -> $1.22 · spawn2's share v3+v4 = 2.570 -> $2.57 · the whole
-#     lane 3.790 -> $3.79, which the two shares sum to. No call rewrites its predecessor (v3's
-#     200,000 write is under 0.9 of its own 402,000 context).
+#     (the Opus 5.5 list of 2026-09-22: $4 in, $20 out, reads 0.05x, 5-minute writes 1.25x)
+#     v1 opus in 2,000 (0.008) · w5 96,000 (0.480) · out 10,000 (0.200)                  = 0.688
+#     v2 opus in 2,000 (0.008) · read 200,000 (0.040) · out 10,000 (0.200)               = 0.248
+#     v3 opus in 2,000 (0.008) · read 200,000 (0.040) · w5 200,000 (1.000) · out 20,000 (0.400) = 1.448
+#     v4 opus in 2,000 (0.008) · read 400,000 (0.080) · out 20,000 (0.400)               = 0.488
+#     spawn's share v1+v2 = 0.936 -> $0.94 · spawn2's share v3+v4 = 1.936 -> $1.94 · the whole
+#     lane 2.872 -> $2.87, which the two shares sum to. No call rewrites its predecessor (v3's
+#     200,000 write is under 0.9 of its own 402,000 context). Beside them the in-session lane
+#     INS1 (in 10 · w5 2,000 · out 200) is 0.01404 -> $0.01 and the headless lane (in 10 ·
+#     w5 3,000 · out 300) 0.02104 -> $0.02.
 dump(os.path.join(other, "resumed-1.jsonl"), [
     call("2026-01-01T00:01:30Z", "v1", OPU, usage(2000, 96000, 0, 0, 10000)),
     call("2026-01-01T00:02:00Z", "v2", OPU, usage(2000, 0, 0, 200000, 10000)),
@@ -490,7 +495,7 @@ dump(os.path.join(root, "record-picks.jsonl"), picks)
 # A recorded event whose model value the order cannot place: counted under unplaced, never guessed.
 dump(os.path.join(root, "record-picks-unplaced.jsonl"), picks[:1] + [
     opened("P-X1", "builder", "some-other-model", "xhigh", "opus", "xhigh", "auto: probe", "anchor", "probe")])
-# The pre-fields shape: the field set of a real lane-open as lane.py wrote it on 2026-09-08 00:26,
+# The pre-fields shape: the field set of a real lane-open as lane.py wrote it,
 # before the pick fields (paths, ids and hashes replaced by fixture values); no model_src anywhere.
 def prefield(lane, model, effort):
     return {"ts": "2026-01-01T00:01:00Z", "run": "fixture-run", "lane": lane, "event": "lane-open",
@@ -567,9 +572,28 @@ dump(os.path.join(root, "record-seed.jsonl"), [
 dump(os.path.join(root, "record-head.jsonl"),
      [{"ts": "2026-01-01T00:00:00Z", "event": "run-open", "run": "fixture-run",
        "session": "spawn", "session_kind": "head"}] + record)
-# A record whose only events are unparseable or carry no lane-open: a broken premise.
+# A record with a marker naming no session and no lane-open. A broken premise until 2026-09-13;
+# now a run before its first lane (leg 40g), since its zero is the record's own count.
 with open(os.path.join(root, "record-empty.jsonl"), "w", encoding="utf-8") as fh:
     fh.write(json.dumps({"event": "run-open", "run": "fixture-run"}) + "\n")
+# The shape of a hands-off record at its first boundary (register entry of 2026-09-10 13:44): a
+# seed run-open, the head's run-resume, a gate, an observation and a phase boundary, no lane-open.
+# One copy names `tiered` (no lane on disk), one `spawn` (an in-session lane on disk).
+laneless = [
+    {"ts": "2026-01-01T00:00:00Z", "event": "run-open", "run": "fixture-run", "session": "fixture-seed"},
+    {"ts": "2026-01-01T00:00:01Z", "event": "head-exit", "run": "fixture-run"},
+    {"ts": "2026-01-01T00:00:02Z", "event": "run-resume", "run": "fixture-run"},
+    {"ts": "2026-01-01T00:00:03Z", "event": "gate", "run": "fixture-run"},
+    {"ts": "2026-01-01T00:00:04Z", "event": "observation", "run": "fixture-run"},
+    {"ts": "2026-01-01T00:00:05Z", "event": "phase-boundary", "run": "fixture-run", "from": "item1", "to": "item2"},
+]
+for head in ("tiered", "spawn"):
+    dump(os.path.join(root, "record-laneless-%s.jsonl" % head),
+         [dict(event, session=head) if event["event"] == "run-resume" else event for event in laneless])
+# A record holding no parseable event at all: still a broken premise (leg 40h).
+open(os.path.join(root, "record-blank.jsonl"), "w", encoding="utf-8").close()
+with open(os.path.join(root, "record-garbage.jsonl"), "w", encoding="utf-8") as fh:
+    fh.write('not json\n[1, 2]\n{"torn": \n')
 
 # --- unknown: a model id no family matches -> unbilled, never a zero -------------------------
 dump(os.path.join(proj, "unknown.jsonl"), [
@@ -596,6 +620,23 @@ def dump_json(path, obj):
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(obj, fh)
 dump_json(os.path.join(root, "prices-corrupt.json"), priced({"input": 12.0}))
+# --- the exact-id row (2026-09-22): a table without `ids` and one whose ids row has a zero rate
+noids = json.loads(json.dumps(shipped)); noids.pop("ids", None); noids["prices_date"] = "2099-01-02"   # re-dated: the anchors must not bind on a table without the id row
+dump_json(os.path.join(root, "prices-noids.json"), noids)
+idzero = json.loads(json.dumps(shipped)); idzero["ids"]["claude-opus-5"]["output"] = 0
+dump_json(os.path.join(root, "prices-idzero.json"), idzero)
+idnan = json.loads(json.dumps(shipped)); idnan["ids"]["claude-opus-5"]["input"] = float("nan")   # NaN passes a `<= 0` test
+dump_json(os.path.join(root, "prices-idnan.json"), idnan)
+#     idrow: one call on claude-opus-5 (the Opus 5 id row: in 100,000*5/1e6 = 0.50 + out
+#     10,000*25/1e6 = 0.25 -> $0.75) and one on claude-opus-5-5 (the family row: 0.40 + 0.20 ->
+#     $0.60); head 1.35 -> $1.35. Without the ids block both take the family row: $0.60 each,
+#     head $1.20. The id row must win by full-id equality: claude-opus-5-5 starts with the
+#     other id's text.
+dump(os.path.join(proj, "idrow.jsonl"), [
+    user("2026-01-01T00:00:00Z", "MARK"),
+    call("2026-01-01T00:01:00Z", "d1", "claude-opus-5", usage(100000, 0, 0, 0, 10000)),
+    call("2026-01-01T00:02:00Z", "d2", "claude-opus-5-5", usage(100000, 0, 0, 0, 10000), text="END"),
+])
 dump_json(os.path.join(root, "prices-redated.json"), priced({"input": 12.0}, "2099-01-01"))
 dump_json(os.path.join(root, "prices-zeroed.json"), priced({"output": 0}))
 with open(os.path.join(root, "prices-notjson.json"), "w", encoding="utf-8") as fh:
@@ -1031,23 +1072,23 @@ TB=("--project-dir" "$F/proj" "--session" "tiered" "--start" "MARK" "--end" "END
 
 # 28 — the billed line in text, tier-correct, with the per-model rows and the fallback report.
 run "${TB[@]}"
-if [ "$RC" = 0 ] && has "billed (list, prices 2026-09-03): head \$8.39 · lanes not scanned · session \$8.39" \
+if [ "$RC" = 0 ] && has "billed (list, prices 2026-09-22): head \$7.85 · lanes not scanned · session \$7.85" \
    && line "  claude-test-fable-a (fable): 2 calls · in 1,100 · read 400,000 · write 5m 230,000 / 1h 50,000 · out 50,100 · tools 0 · \$6.49" \
-   && line "  claude-test-opus-b (opus): 1 call · in 500 · read 800,000 · write 5m 0 / 1h 100,000 · out 20,000 · tools 0 · \$1.90"; then
+   && line "  claude-test-opus-b (opus): 1 call · in 500 · read 800,000 · write 5m 0 / 1h 100,000 · out 20,000 · tools 0 · \$1.36"; then
   ok "billed line and per-model rows: 5-minute and 1-hour writes priced apart, tokens printed beside dollars"
 else no "tiered billed line  [exit $RC] $OUT"; fi
 if [ "$RC" = 0 ] && has "1 call with no cache_creation tier, counted at the 5-minute rate" \
-   && has "fixture \$17.10 matches the hand-computed anchor for 2026-09-03"; then
+   && has "fixtures \$17.10, \$6.88, \$8.70 match the hand-computed anchors for 2026-09-22"; then
   ok "the untiered-write fallback is counted and reported, and the price control ran"
 else no "untiered fallback report  [exit $RC] $OUT"; fi
 
 # 29 — the tier fields are load-bearing: pricing every write at the 5-minute rate must change
 #      the figure (control for leg 28; without it leg 28 could pass on an unrelated sum).
 #      Both 1-hour writes drop a tier: fable 50,000 (1.00 -> 0.625) and opus 100,000
-#      (1.00 -> 0.625), so 8.3935 - 0.75 = 7.6435 -> $7.64.
+#      (0.80 -> 0.50), so 7.853 - 0.675 = 7.178 -> $7.18.
 runx "$F/mutant-tier.py" "${TB[@]}"
-if [ "$RC" = 0 ] && has "head \$7.64" && ! has "head \$8.39"; then
-  ok "tier mutation control: writes all at the 5-minute rate yield \$7.64, so leg 28 binds the tier fields"
+if [ "$RC" = 0 ] && has "head \$7.18" && ! has "head \$7.85"; then
+  ok "tier mutation control: writes all at the 5-minute rate yield \$7.18, so leg 28 binds the tier fields"
 else no "tier mutation control  [exit $RC] $OUT"; fi
 
 # 30 — the same figures in JSON, under billed and per_agent.
@@ -1056,9 +1097,9 @@ if [ "$RC" = 0 ] && printf '%s' "$OUT" | "$PY" -c '
 import json, sys
 d = json.load(sys.stdin)
 b = d["billed"]
-assert b["prices_date"] == "2026-09-03", b["prices_date"]
-assert abs(b["head_usd"] - 8.3935) < 1e-9, b["head_usd"]
-assert b["lanes_usd"] is None and abs(b["session_usd"] - 8.3935) < 1e-9, b
+assert b["prices_date"] == "2026-09-22", b["prices_date"]
+assert abs(b["head_usd"] - 7.853) < 1e-9, b["head_usd"]
+assert b["lanes_usd"] is None and abs(b["session_usd"] - 7.853) < 1e-9, b
 assert b["untiered_write_records"] == 1, b["untiered_write_records"]
 assert b["rewrites"] == 0 and b["rewrites_usd"] == 0.0, b
 assert b["delegation"] == "unstated" and b["delegation_src"] is None and b["baseline"] == "none", b
@@ -1080,8 +1121,8 @@ SP=("--project-dir" "$F/proj" "--session" "spawn" "--start" "MARK" "--end" "END"
 run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-clean.jsonl" --per-agent
 if [ "$RC" = 0 ] \
    && line "  head  · claude-test-fable-a:2 · 2 calls · prefix 1,010 · peak 1,010 · out 150 · tools 0 · rewrites 0 (switch 0 lapse 0 limit 0 unknown 0) · \$0.02" \
-   && line "  L-INS · claude-test-opus-b:1 · 1 call · prefix 2,010 · peak 2,010 · out 200 · tools 0 · rewrites 0 (switch 0 lapse 0 limit 0 unknown 0) · \$0.02" \
-   && line "  L-HDL · claude-test-opus-b:1 · 1 call · prefix 3,010 · peak 3,010 · out 300 · tools 0 · rewrites 0 (switch 0 lapse 0 limit 0 unknown 0) · \$0.03"; then
+   && line "  L-INS · claude-test-opus-b:1 · 1 call · prefix 2,010 · peak 2,010 · out 200 · tools 0 · rewrites 0 (switch 0 lapse 0 limit 0 unknown 0) · \$0.01" \
+   && line "  L-HDL · claude-test-opus-b:1 · 1 call · prefix 3,010 · peak 3,010 · out 300 · tools 0 · rewrites 0 (switch 0 lapse 0 limit 0 unknown 0) · \$0.02"; then
   ok "--per-agent prints the head and every lane with label, models, calls, first-call prefix, peak, output, tool uses, rewrites by cause and dollars"
 else no "--per-agent rows  [exit $RC] $OUT"; fi
 run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-clean.jsonl"
@@ -1156,6 +1197,32 @@ run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty"
 if [ "$RC" = 0 ] && has "metered 1 of n/a recorded" && has "(reasons: n/a)" && ! has "MISMATCH"; then
   ok "without a spawn record the tally and the recorded count read n/a and nothing is flagged (control)"
 else no "no spawn record  [exit $RC] $OUT"; fi
+
+# 35c-35e (2026-09-13, register entry of 2026-09-10 17:43) — a plan-usage lane (a Codex lane:
+#      harness codex on its lane-open, no Claude transcript by design) is counted and named on
+#      the line, never flagged. Must not fire: the clean record plus one Codex lane reads metered
+#      2 of 3 with the plan clause and no MISMATCH. Must fire: the gap record plus the same Codex
+#      lane still flags the one Claude lane whose transcript is missing (1 unmatched, not 2).
+cp "$F/record-clean.jsonl" "$F/record-codex.jsonl"
+cp "$F/record-gap.jsonl" "$F/record-codex-gap.jsonl"
+for rec in "$F/record-codex.jsonl" "$F/record-codex-gap.jsonl"; do
+  printf '%s\n' '{"event": "lane-open", "lane": "L-CODEX", "harness": "codex", "model": "gpt-fixture-1", "reason": "instrument rule (c): a second model family"}' \
+    '{"event": "lane-closed", "lane": "L-CODEX", "harness": "codex", "exit_class": "completed", "total_cost_usd": null}' >> "$rec"
+done
+run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-codex.jsonl"
+if [ "$RC" = 0 ] && has "metered 2 of 3 recorded (1 plan-usage lane(s): a Codex lane is counted, never priced)" \
+   && ! has "MISMATCH"; then
+  ok "35c a Codex lane is counted and named on the line, never flagged: metered 2 of 3 with the plan clause and no MISMATCH (must not fire)"
+else no "35c plan-usage lane on a clean record  [exit $RC] $OUT"; fi
+run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-codex-gap.jsonl"
+if [ "$RC" = 0 ] && has "metered 2 of 4 recorded (1 plan-usage lane(s): a Codex lane is counted, never priced) [MISMATCH: 1 recorded lane(s) unmatched]"; then
+  ok "35d beside a Codex lane, a Claude lane with no transcript still flags MISMATCH with 1 unmatched, the Codex lane named and left out of the count (must fire)"
+else no "35d plan-usage lane beside a missing transcript  [exit $RC] $OUT"; fi
+run "${SP[@]}" --lanes none --spawn-record "$F/record-codex.jsonl"
+if [ "$RC" = 0 ] && has "metered n/a of 3 recorded (1 plan-usage lane(s): a Codex lane is counted, never priced)" \
+   && ! has "MISMATCH"; then
+  ok "35e under --lanes none the Codex lane is named on the n/a clause as well (control: the mode that expects no transcript)"
+else no "35e plan-usage lane under --lanes none  [exit $RC] $OUT"; fi
 
 # 35b — the reason forms heads write live (register, 2026-09-06): a leading `a:`, `b —`, `C -`
 #       (the letter's case ignored) and the bracketed `(d)` each tally under their letter; a
@@ -1303,14 +1370,38 @@ else no "mixed unpriced JSON  [exit $RC] $OUT"; fi
 
 # 39 — the built-in price control, and what it does when its own premise moves.
 run "${TB[@]}" --prices "$F/prices-corrupt.json"
-if [ "$RC" = 2 ] && has "billed: unbilled (control fixture priced at \$" \
-   && has "against the hand-computed \$17.10 for the table dated 2026-09-03"; then
+if [ "$RC" = 2 ] && has "billed: unbilled (control fixture claude-fable-5-1 priced at \$" \
+   && has "against the hand-computed \$17.10 for the table dated 2026-09-22"; then
   ok "the known-positive control catches a corrupted rate in a table still carrying the anchor date, exit 2"
 else no "price control on a corrupted table  [exit $RC] $OUT"; fi
 run "${TB[@]}" --prices "$F/prices-redated.json"
 if [ "$RC" = 0 ] && has "anchor \$17.10 not applicable (table dated 2099-01-01" && has "invariants checked"; then
   ok "a re-priced, re-dated table is billed with the anchor stated as not applicable rather than failing a legitimate re-pricing"
 else no "price control, re-dated table  [exit $RC] $OUT"; fi
+# 39b — the exact-id row (2026-09-22): claude-opus-5 takes its own row, claude-opus-5-5 the family
+#       row, by full-id equality; without the block both take the family row; a zero rate in an
+#       ids row is refused like a family's.
+IDR=("--project-dir" "$F/proj" "--session" "idrow" "--start" "MARK" "--end" "END"
+     "--lanes" "none" "--vault" "$F")
+run "${IDR[@]}" --prices "$PRICES"
+if [ "$RC" = 0 ] && has "head \$1.35" \
+   && line "  claude-opus-5 (id row): 1 call · in 100,000 · read 0 · write 5m 0 / 1h 0 · out 10,000 · tools 0 · \$0.75" \
+   && line "  claude-opus-5-5 (opus): 1 call · in 100,000 · read 0 · write 5m 0 / 1h 0 · out 10,000 · tools 0 · \$0.60"; then
+  ok "an exact id in the table's ids block is priced on its own row and labelled so; the longer id that starts with it takes the family row"
+else no "id row  [exit $RC] $OUT"; fi
+run "${IDR[@]}" --prices "$F/prices-noids.json"
+if [ "$RC" = 0 ] && has "head \$1.20" \
+   && line "  claude-opus-5 (opus): 1 call · in 100,000 · read 0 · write 5m 0 / 1h 0 · out 10,000 · tools 0 · \$0.60"; then
+  ok "control: without the ids block the same id takes the family row, so the id row above binds"
+else no "id row control  [exit $RC] $OUT"; fi
+run "${IDR[@]}" --prices "$F/prices-idzero.json"
+if [ "$RC" = 2 ] && has "billed: unbilled (price table field output of family claude-opus-5 is not a positive number: 0)"; then
+  ok "a zero rate in an ids row is a broken premise like a family's, exit 2"
+else no "id row zero rate  [exit $RC] $OUT"; fi
+run "${IDR[@]}" --prices "$F/prices-idnan.json"
+if [ "$RC" = 2 ] && has "billed: unbilled (price table field input of family claude-opus-5 is not a positive number: nan)"; then
+  ok "a non-finite rate is refused before any figure (NaN passes a <= 0 test; critic finding 4 of 2026-09-22), exit 2"
+else no "id row NaN rate  [exit $RC] $OUT"; fi
 run "${TB[@]}" --prices "$F/prices-zeroed.json"
 if [ "$RC" = 2 ] && has "billed: unbilled (price table field output of family fable is not a positive number: 0)"; then
   ok "a rate of zero is refused by the table check, so no column of the bill can silently price at nothing"
@@ -1321,10 +1412,46 @@ run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/no-such
 if [ "$RC" = 2 ] && line "fable share: unmetered (spawn record not found: $F/no-such-record.jsonl)"; then
   ok "a missing spawn record is a broken premise, not a silent n/a"
 else no "missing spawn record  [exit $RC] $OUT"; fi
+# 40b-40h (2026-09-13, register entry of 2026-09-10 13:44) — a record with no lane-open is a run
+# before its first lane: the head is metered alone, `lanes 0`, under both lane modes, never a
+# premise failure.
+run "${TB[@]}" --spawn-record "$F/record-laneless-tiered.jsonl"
+if [ "$RC" = 0 ] && has "· lanes 0 (reasons: (a)×0 (b)×0 (c)×0 (d)×0, none×0) ·" \
+   && has "metered n/a of 0 recorded under run-resume tiered" \
+   && line "lanes: 0 by the spawn record (it holds no lane-open event); not scanned (--lanes none), so the share is not asserted" \
+   && has "billed (list, prices" && ! has "unmetered"; then
+  ok "40b --lanes none over a record with no lane-open meters the head alone and bills it with lanes 0, exit 0"
+else no "40b lane-less record, --lanes none  [exit $RC] $OUT"; fi
+TA=("--project-dir" "$F/proj" "--session" "tiered" "--start" "MARK" "--end" "END" "--prices" "$PRICES" "--vault" "$F")
+run "${TA[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-laneless-tiered.jsonl"
+if [ "$RC" = 0 ] && has "· lanes 0 (reasons: (a)×0 (b)×0 (c)×0 (d)×0, none×0) ·" \
+   && has "lanes: 0 in window (the spawn record holds no lane-open event)" \
+   && has "metered 0 of 0 recorded under run-resume tiered" && ! has "MISMATCH"; then
+  ok "40c --lanes auto over the same record: a scan reaching nothing is the record's own zero, lanes 0, exit 0"
+else no "40c lane-less record, --lanes auto  [exit $RC] $OUT"; fi
+run "${TA[@]}" --lanes auto --tmp-root "$F/tmp-empty"
+if [ "$RC" = 2 ] && has "fable share: unmetered (no readable lane transcript found"; then
+  ok "40d control: the same scan with no record is still a broken premise, so the green of 40c is the record's"
+else no "40d lane-less control, no record  [exit $RC] $OUT"; fi
+run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-laneless-spawn.jsonl"
+if [ "$RC" = 0 ] && has "· lanes 1 (reasons: (a)×0 (b)×0 (c)×0 (d)×0, none×0) ·" \
+   && has "1 metered lane(s) not in the record"; then
+  ok "40e the scan still runs over a lane-less record: an in-session lane on disk is metered and flagged as not in the record"
+else no "40e lane-less record with an unrecorded lane  [exit $RC] $OUT"; fi
+run "${TB[@]}" --spawn-record "$F/record-laneless-tiered.jsonl" --format json
+if [ "$RC" = 0 ] && has '"lanes_recorded": 0' && has '"spawn_record_laneless": true'; then
+  ok "40f the JSON payload carries the record's zero and says the record holds no lane-open"
+else no "40f lane-less record JSON  [exit $RC] $OUT"; fi
 run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-empty.jsonl"
-if [ "$RC" = 2 ] && line "fable share: unmetered (spawn record holds no lane-open event: $F/record-empty.jsonl)"; then
-  ok "a spawn record with no lane-open event cannot support the tally it was passed for"
-else no "spawn record with no lanes  [exit $RC] $OUT"; fi
+if [ "$RC" = 0 ] && has "metered 0 of 0 recorded under no partition for spawn"; then
+  ok "40g a marker naming no session and no lane-open: metered, the label saying no partition names this session"
+else no "40g marker-only record  [exit $RC] $OUT"; fi
+for bad in blank garbage; do
+  run "${TB[@]}" --spawn-record "$F/record-$bad.jsonl"
+  if [ "$RC" = 2 ] && has "fable share: unmetered (spawn record holds no parseable event: $F/record-$bad.jsonl"; then
+    ok "40h a $bad record holds no parseable event: still a broken premise, exit 2"
+  else no "40h no-event record ($bad)  [exit $RC] $OUT"; fi
+done
 
 # ======================= the record's partitions, per head session ==========================
 # A run outlives one head session, so lane events are partitioned by the run-open/run-resume
@@ -1378,43 +1505,43 @@ else no "marker with no session  [exit $RC] $OUT"; fi
 # `record-resumed.jsonl`: R-SHARED opened under head `spawn` (run-open), cut at 00:02:10,
 # resumed under head `spawn2` (run-resume) at 00:02:30 and closed at 00:03:40. Its transcript
 # holds two calls before the resume ($1.22) and two from it on ($2.57); both heads' windows
-# cover all four, so only the resume's timestamp can split them (the register case of
-# 2026-09-05, where the resumer's line read lanes $0.00 under no partition). Under --lanes
+# cover all four, so only the resume's timestamp can split them (a resumer's line would otherwise
+# read lanes $0.00 under no partition). Under --lanes
 # auto, head `spawn` also scans its durable in-session lane INS1 ($0.02, see the spawn
 # fixture), which this record never opened: its lanes figure is the share plus $0.02, and the
 # line flags that lane as not in the record. Head spawn's own calls price at $0.02.
 
 # 45b — the opener bills the first run only, with the resume's records named as excluded.
 run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-resumed.jsonl"
-if [ "$RC" = 0 ] && has "lanes \$1.24" && has "session \$1.26" \
+if [ "$RC" = 0 ] && has "lanes \$0.95" && has "session \$0.97" \
    && has "metered 1 of 1 recorded under run-open spawn [MISMATCH: 1 metered lane(s) not in the record]" \
    && has "lane R-SHARED: models claude-test-opus-b:2 · 2 calls (2 records) · 20,000 out" \
    && has "split at the resume: 2 records of another head's span excluded"; then
-  ok "a lane resumed by a later head: the opener bills the two calls before the resume (\$1.22, plus the \$0.02 in-session lane it scans) and names the two it excluded"
+  ok "a lane resumed by a later head: the opener bills the two calls before the resume (\$0.94, plus the \$0.01 in-session lane it scans) and names the two it excluded"
 else no "resumed lane, opener  [exit $RC] $OUT"; fi
 
 # 45c — the resumer bills the resume under its own partition, counts the lane as its own and
 #       tallies its reason.
 run "${SP2[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-resumed.jsonl"
-if [ "$RC" = 0 ] && has "lanes \$2.57" && has "session \$2.59" \
+if [ "$RC" = 0 ] && has "lanes \$1.94" && has "session \$1.96" \
    && has "metered 1 of 1 recorded under run-resume spawn2" && ! has "MISMATCH" \
    && has "lane R-SHARED: models claude-test-opus-b:2 · 2 calls (2 records) · 40,000 out" \
    && has "lanes 1 (reasons: (a)×1 (b)×0 (c)×0 (d)×0, none×0)"; then
-  ok "the resumer bills the two calls from the resume on (\$2.57) under run-resume spawn2, metered 1 of 1, and the two shares sum to the whole lane"
+  ok "the resumer bills the two calls from the resume on (\$1.94) under run-resume spawn2, metered 1 of 1, and the two shares sum to the whole lane"
 else no "resumed lane, resumer  [exit $RC] $OUT"; fi
 
 # 45d — the negative control: without the lane-resumed event the whole lane ($3.79 = 1.22 +
-#       2.57, plus INS1's $0.02 = $3.81) is the opener's, nothing is split, and the resumer
+#       1.94, plus INS1's $0.01 = $2.89) is the opener's, nothing is split, and the resumer
 #       reads no partition — the shape the register entry described.
 run "${SP[@]}" --lanes auto --tmp-root "$F/tmp-empty" --spawn-record "$F/record-unresumed.jsonl"
 A_OK=0; A_OUT="$OUT"
-if [ "$RC" = 0 ] && has "lanes \$3.81" && has "metered 1 of 1 recorded under run-open spawn" \
+if [ "$RC" = 0 ] && has "lanes \$2.89" && has "metered 1 of 1 recorded under run-open spawn" \
    && has "lane R-SHARED: models claude-test-opus-b:4 · 4 calls (4 records) · 60,000 out" \
    && ! has "split at the resume"; then A_OK=1; fi
 run "${SP2[@]}" --lanes auto --tmp-root "$F/tmp-empty" --expect-lanes 0 --spawn-record "$F/record-unresumed.jsonl"
 if [ "$A_OK" = 1 ] && [ "$RC" = 0 ] && has "lanes \$0.00" \
    && has "metered 0 of 0 recorded under no partition for spawn2"; then
-  ok "control: the same record without the resume bills the whole lane (\$3.79) to the opener, splits nothing, and leaves the resumer with no partition — the split is the resume event's doing"
+  ok "control: the same record without the resume bills the whole lane (\$2.87) to the opener, splits nothing, and leaves the resumer with no partition — the split is the resume event's doing"
 else no "unresumed control  [opener ok $A_OK] [exit $RC] $A_OUT $OUT"; fi
 
 # 45e — a resume with no timestamp cannot split the lane: unmetered for the resumer and
@@ -1440,7 +1567,7 @@ else no "full session stem  [exit $RC] $OUT"; fi
 #      resolved full id (tiere -> tiered, beside tier1h and tierhead which the prefix excludes).
 run --project-dir "$F/proj" --session tiere --start MARK --end END --lanes none \
     --prices "$PRICES" --vault "$F" --projects-root "$F/projects"
-if [ "$RC" = 0 ] && has "fable-share: session tiered · project-dir" && has "head \$8.39"; then
+if [ "$RC" = 0 ] && has "fable-share: session tiered · project-dir" && has "head \$7.85"; then
   ok "a short --session resolves against the project directory and the resolved full id is what the run prints"
 else no "short session, project directory  [exit $RC] $OUT"; fi
 run --project-dir "$F/proj" --session tiere --start MARK --end END --lanes none \
@@ -1478,7 +1605,7 @@ else no "short session, two matches  [exit $RC] [err $ERR] $OUT"; fi
 CA=("--project-dir" "$F/proj" "--session" "causes" "--start" "MARK" "--end" "END"
     "--lanes" "none" "--prices" "$PRICES" "--vault" "$F" "--projects-root" "$F/projects")
 run "${CA[@]}" --spawn-record "$F/record-limit.jsonl"
-if [ "$RC" = 0 ] && has "head \$5.03" && has "rewrites 4 (\$3.75)" \
+if [ "$RC" = 0 ] && has "head \$4.78" && has "rewrites 4 (\$3.50)" \
    && has "rewrite causes switch 1 lapse 1 limit 1 unknown 1"; then
   ok "rewrite causes: one switch, one lapse, one limit and one unknown over four rewrites, the total and its dollars unchanged"
 else no "rewrite causes  [exit $RC] $OUT"; fi
@@ -1502,7 +1629,7 @@ else no "rewrite causes in JSON  [exit $RC] $OUT"; fi
 # 53 — the limit cause comes from the record and outranks switch: without the record the same
 #      fixture puts c4 under its next cause, and the rewrites total does not move.
 run "${CA[@]}"
-if [ "$RC" = 0 ] && has "rewrites 4 (\$3.75)" \
+if [ "$RC" = 0 ] && has "rewrites 4 (\$3.50)" \
    && has "rewrite causes switch 2 lapse 1 limit 0 unknown 1"; then
   ok "without the record's limit stop the same four rewrites read switch 2 lapse 1 limit 0 unknown 1 — the limit cause is the record's doing and outranks the switch that also held"
 else no "limit cause control  [exit $RC] $OUT"; fi
@@ -1528,17 +1655,17 @@ TL=("--project-dir" "$F/proj" "--session" "tierhead" "--start" "MARK" "--end" "E
     "--lanes" "$F/nothing/*.jsonl" "--prices" "$PRICES" "--vault" "$F"
     "--projects-root" "$F/projects")
 run "${TL[@]}" --spawn-record "$F/record-tier1h.jsonl"
-if [ "$RC" = 0 ] && has "rewrites 1 (\$0.62)" \
+if [ "$RC" = 0 ] && has "rewrites 1 (\$0.50)" \
    && has "rewrite causes switch 0 lapse 0 limit 0 unknown 1"; then
   ok "a lane whose lane-open expected the 1-hour tier does not lapse over a 600 s gap"
 else no "lane tier from lane-open  [exit $RC] $OUT"; fi
 run "${TL[@]}" --spawn-record "$F/record-tierclosed.jsonl"
-if [ "$RC" = 0 ] && has "rewrites 1 (\$0.62)" \
+if [ "$RC" = 0 ] && has "rewrites 1 (\$0.50)" \
    && has "rewrite causes switch 0 lapse 0 limit 0 unknown 1"; then
   ok "the same lane at the 1-hour tier as its lane-closed reports it (cache_write_tier), the open carrying no expectation"
 else no "lane tier from lane-closed  [exit $RC] $OUT"; fi
 run "${TL[@]}" --spawn-record "$F/record-notier.jsonl"
-if [ "$RC" = 0 ] && has "rewrites 1 (\$0.62)" \
+if [ "$RC" = 0 ] && has "rewrites 1 (\$0.50)" \
    && has "rewrite causes switch 0 lapse 1 limit 0 unknown 0"; then
   ok "control: with no tier field on either event the same lane falls to the 5-minute tier and the same gap is a lapse — the two legs above bind the record's fields"
 else no "lane tier control  [exit $RC] $OUT"; fi
@@ -1590,6 +1717,7 @@ cp -R "$F/proj" "$RO/proj"
 cp -R "$F/projects" "$RO/projects"
 cp "$F/record-gap.jsonl" "$RO/record-gap.jsonl"
 cp "$F/record-seed.jsonl" "$RO/record-seed.jsonl"
+cp "$F/record-laneless-tiered.jsonl" "$RO/record-laneless-tiered.jsonl"
 cp -R "$F/state" "$RO/state"
 cp "$S" "$ROHOME/fable-share.py"
 cp "$HERE/prices.json" "$ROHOME/prices.json"   # the table the script resolves beside itself
@@ -1629,6 +1757,11 @@ RO_BILLED="$("${RM[@]}" --session tiered --start MARK --end END --lanes none --v
       --projects-root "$RO/projects" > /dev/null 2>&1
 "${RM[@]}" --session seed-session --lanes none --projects-root "$RO/projects" \
       --spawn-record "$RO/record-seed.jsonl" > /dev/null 2>&1
+# the path added 2026-09-13: a record holding no lane-open, metered head-alone in both modes.
+"${RM[@]}" --session tiered --start MARK --end END --lanes none \
+      --spawn-record "$RO/record-laneless-tiered.jsonl" > /dev/null 2>&1
+"${RM[@]}" --session tiered --start MARK --end END --lanes auto --tmp-root "$F/tmp-empty" \
+      --spawn-record "$RO/record-laneless-tiered.jsonl" > /dev/null 2>&1
 AFTER="$(manifest "$RO"; manifest "$ROHOME")"
 WRITES=0
 for pat in 'open\([^)]*['"'"'"][wax]' '\bwrite_text\b' '\bwritelines\b' '\.write\(' \
@@ -1641,7 +1774,7 @@ RO_PRICED=0; printf '%s\n' "$RO_BILLED" | grep -Fq "billed (list, prices" && RO_
 RO_STATE=0; printf '%s\n' "$RO_BILLED" | grep -Fq "delegation multi (head)" && RO_STATE=1
 if [ "$BEFORE" = "$AFTER" ] && [ "$WRITES" = 0 ] && [ "$CONTROL" -gt 0 ] && [ -n "$BEFORE" ] \
    && [ "$RO_PRICED" = 1 ] && [ "$RO_STATE" = 1 ]; then
-  ok "stdout-only: read-only fixture, projects root, spawn record, session state and script home (with its price table) unchanged after fourteen runs across every mode, billing, a resolved short session id and a skipped seed included; no write pattern in the source (controls: $CONTROL read-mode open calls found by the same grep; the read-only state file was read, not just present)"
+  ok "stdout-only: read-only fixture, projects root, spawn record, session state and script home (with its price table) unchanged after sixteen runs across every mode, billing, a resolved short session id, a skipped seed and a lane-less record included; no write pattern in the source (controls: $CONTROL read-mode open calls found by the same grep; the read-only state file was read, not just present)"
 else no "stdout-only proof  [manifest changed: $([ "$BEFORE" = "$AFTER" ] && echo no || echo yes); write patterns: $WRITES; control opens: $CONTROL; priced on the read-only tree: $RO_PRICED; state read: $RO_STATE]"; fi
 # The write-pattern grep must itself be able to fail: plant every banned pattern in a copy.
 PLANT="$F/planted.py"
@@ -1661,7 +1794,7 @@ SM=$(PYTHONDONTWRITEBYTECODE=1 $PY -B - "$S" <<'PYSM'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("fs", sys.argv[1]); fs = importlib.util.module_from_spec(spec); spec.loader.exec_module(fs)
 f = fs.session_matches
-print(int(f("a76a6100", "a76a6100-75cd-4b53-9478-0d35642fd074")) + int(f("a76a6100-75cd-4b53-9478-0d35642fd074", "a76a6100")) + int(not f("a76a61", "a76a6100-75cd")) + int(not f("b76a6100", "a76a6100-75cd")) + int(not f("", "a76a6100")))
+print(int(f("0000a1b2", "0000a1b2-0000-4000-8000-000000000001")) + int(f("0000a1b2-0000-4000-8000-000000000001", "0000a1b2")) + int(not f("0000a1", "0000a1b2-0000")) + int(not f("0000c3d4", "0000a1b2-0000")) + int(not f("", "0000a1b2")))
 PYSM
 )
 if [ "$SM" = "5" ]; then ok "session_matches: equal, an 8-char prefix either way; a 6-char prefix, a different id and an empty id do not match"

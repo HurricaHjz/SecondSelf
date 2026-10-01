@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # test_lint_phase2.sh — regression fixtures for the stdout-only lint scripts: check-orphans.py,
-# tier-cap-check.py, anomaly-lister.py, check-links.py's sources arm and check-index.py, plus
+# tier-cap-check.py, anomaly-lister.py, check-links.py's sources and converted_from arms, check-index.py,
+# check_flag_admissions.py, check_register.py, check-required-sections.py, check-tier-vocabulary.py and
+# check-plugins.py, plus
 # the root guard every script in this directory carries. Every fixture is built under
 # a fresh mktemp -d and removed at exit; the vault is never touched. The final leg is the
 # stdout-only proof: a read-only copy, checksum manifests of the fixture AND of the script
@@ -485,10 +487,10 @@ if [ "$r1$r2$r3" = "000" ] && grep -q 'Ada' "$W/ascii-orph.txt"; then ok "an asc
 else no "an ascii stdout does not turn a unicode page name into a traceback  [exits $r1 $r2 $r3]"; fi
 
 printf '\n--- root guard: a root that is not a vault (register entry 2026-09-06) ---\n'
-# The entry: check-links.py printed "SCANNED: 0 pages … DEAD LINKS: 0" and exited 0 on a root
-# holding no vault, so a caller reading the exit code got a clean bill of health from a probe
-# that opened no file. Every script here now applies the 2026-08-26 standard (raw/ + wiki/ or
-# refuse). Each leg asserts all three parts: exit 2, the message on stderr, nothing on stdout.
+# A probe that opens no file must never read as clean: on a root holding no vault a scan could print
+# "SCANNED: 0 pages … DEAD LINKS: 0" and exit 0, so every script here applies the 2026-08-26
+# standard (raw/ + wiki/ or refuse). Each leg asserts all three parts: exit 2, the message on
+# stderr, nothing on stdout.
 NOVAULT="$W/notavault"; rm -rf "$NOVAULT"; mkdir -p "$NOVAULT/docs"
 printf 'a directory that is not a vault\n' > "$NOVAULT/docs/readme.md"
 guard(){ local nm="$1"; shift; local gout grc
@@ -591,8 +593,8 @@ then ok "a clean fixture reports 0 dangling sources with $CP paths resolved as i
 else no "a clean fixture reports 0 dangling sources with a non-zero path count  [$CD, paths $CP, exit $rc]"; fi
 
 printf '\n--- check-links.py · out-of-vault sources (register entry 2026-09-08) ---\n'
-# The entry: a sources: entry under ~ was reported dangling although the file existed — two
-# false positives per run, growing with every hands-off run report. A ~- or /-led entry is
+# A sources: entry under ~ must not read as dangling when its file exists, or every hands-off run
+# report adds false positives. A ~- or /-led entry is
 # provenance outside the vault: resolved with expanduser under a HOME the leg redirects into
 # the fixture, reported present or missing in its own bucket, never dangling.
 OFIX="$W/outside"; rm -rf "$OFIX"; rawbase "$OFIX"; mkdir -p "$OFIX/wiki/concepts" "$W/home/store/run-1" "$W/abs"
@@ -604,7 +606,7 @@ printf -- '---\ntitle: "TildeMissing"\ntype: concept\nconfidence: medium\nsource
 printf -- '---\ntitle: "AbsolutePresent"\ntype: concept\nconfidence: medium\nsources:\n  - "%s/abs/note.md"\n---\n\n## Definition\nAn absolute path outside the vault, block form.\n' "$W" > "$OFIX/wiki/concepts/AbsolutePresent.md"
 OOUT="$(env HOME="$W/home" python3 "$LINKS" --vault "$OFIX" 2>"$ERR")"; rc=$?
 oline(){ printf '%s\n' "$OOUT" | grep -c -- "$1"; }
-eq "a ~-led entry whose file exists is present, never dangling (the 2026-09-08 false positive)" "1" "$(oline 'DANGLING SOURCES: 0')"
+eq "a ~-led entry whose file exists is present, never dangling (the out-of-vault false positive)" "1" "$(oline 'DANGLING SOURCES: 0')"
 eq "present and missing out-of-vault entries are counted in their own bucket" "1" "$(oline '^OUT-OF-VAULT SOURCES: 2 present | 1 missing')"
 eq "the missing one names the page and the path under its own label" "1" "$(oline '^  (out-of-vault missing) wiki/concepts/TildeMissing.md · ~/store/run-9/report.md')"
 eq "no out-of-vault entry is counted as a vault path" "1" "$(printf '%s\n' "$OOUT" | sed -n 's/^SOURCES SCANNED: .*| \([0-9]*\) vault paths resolved.*/\1/p')"
@@ -618,9 +620,9 @@ OOUT="$(env HOME="$W/no-such-home" python3 "$LINKS" --vault "$OFIX" 2>"$ERR")"; 
 eq "negative control: under another HOME the ~ entry is missing, still never dangling" "1-1-1" "$rc-$(oline '^OUT-OF-VAULT SOURCES: 1 present | 1 missing')-$(oline 'DANGLING SOURCES: 0')"
 
 printf '\n--- check_flag_admissions.py (register entry 2026-09-08, ingest Step 0 conversions) ---\n'
-# The entry: 14 source pages recorded a damaged conversion in prose or a frontmatter comment
-# and only 5 raised a flagged: line, so deep-lint's flag channel never saw the other 9. The
-# probe keys on the damage vocabulary, never on a named file, and only under wiki/sources/.
+# A source page can record a damaged conversion in prose or a frontmatter comment without a
+# flagged: line, which deep-lint's flag channel never sees. The probe keys on the damage
+# vocabulary, never on a named file, and only under wiki/sources/.
 AFIX="$W/admissions"; rm -rf "$AFIX"; rawbase "$AFIX"; mkdir -p "$AFIX/wiki/sources" "$AFIX/wiki/concepts"
 printf -- '---\ntitle: "Index"\ntype: index\nconfidence: high\n---\n## Sources\n- [[admits]] — a page.\n' > "$AFIX/wiki/index.md"
 printf -- '---\ntitle: "admits"\ntype: source\nconfidence: medium\nsources: [raw/2-papers/paper.md]\n---\n\n## Summary\nThe markitdown conversion collapsed inter-word spaces in the running prose, so quotations are paraphrased.\n' > "$AFIX/wiki/sources/admits.md"
@@ -712,9 +714,350 @@ if [ "$rc" = 2 ] && printf '%s' "$out" | grep -q 'registers no page'
 then ok "an index that registers nothing is a broken probe, not a vault of unindexed pages"
 else no "an index that registers nothing is a broken probe  [exit $rc: $out]"; fi
 
+printf '\n--- check-links.py · converted_from: originals (register entry 2026-09-09) ---\n'
+# A conversion whose frontmatter names a deleted local PDF must be reported at lint time. The arm
+# resolves each local value beside the conversion, then at its vault
+# path, then by basename anywhere under raw/ (a stale value, not a missing original); a URL is
+# counted and never resolved, even one that ends in .pdf.
+REG="$HOME_DIR/check_register.py"; SECT="$HOME_DIR/check-required-sections.py"
+TVOC="$HOME_DIR/check-tier-vocabulary.py"; PLUG="$HOME_DIR/check-plugins.py"
+CFIX="$W/conversions"; rm -rf "$CFIX"; rawbase "$CFIX"; mkdir -p "$CFIX/wiki/concepts" "$CFIX/raw/8-transcripts"
+printf -- '---\ntitle: "Index"\ntype: index\nconfidence: high\n---\n## Concepts\n- [[Page]] — a page.\n' > "$CFIX/wiki/index.md"
+printf -- '---\ntitle: "Page"\ntype: concept\nconfidence: medium\n---\n\n## Definition\nA page.\n\n## Related\n- [[Index]]\n' > "$CFIX/wiki/concepts/Page.md"
+printf 'pdf bytes\n' > "$CFIX/raw/2-papers/present.pdf"; printf 'pdf bytes\n' > "$CFIX/raw/2-papers/noted.pdf"; printf 'pdf bytes\n' > "$CFIX/raw/2-papers/moved.pdf"
+printf -- '---\nconverted_from: present.pdf\nconverted_by: markitdown\n---\n# present\n' > "$CFIX/raw/2-papers/present.md"
+printf -- '---\nconverted_from: "The Surprising Effectiveness of a Deleted Paper.pdf"\nconverted_by: markitdown\n---\n# gone\n' > "$CFIX/raw/2-papers/gone.md"
+printf -- '\xef\xbb\xbf---\r\nconverted_from: crlf-gone.pdf\r\n---\r\n# crlf\r\n' > "$CFIX/raw/2-papers/crlf.md"
+printf -- '---\nconverted_from: https://example.org/paper.pdf\n---\n# web\n' > "$CFIX/raw/4-webinfo/web.md"
+printf -- '---\nconverted_from: noted.pdf (arXiv:1234.5678v2)\n---\n# noted\n' > "$CFIX/raw/2-papers/noted.md"
+printf -- '---\nconverted_from: raw/2-papers/present.pdf\n---\n# vault path\n' > "$CFIX/raw/2-papers/vaultpath.md"
+printf -- '---\nconverted_from: raw/moved.pdf\n---\n# stale\n' > "$CFIX/raw/2-papers/stale.md"
+printf -- '---\nconverted_from: "old.pdf (deleted 2026-01-01)"\n---\n# deleted\n' > "$CFIX/raw/2-papers/declared.md"
+printf -- '---\nconverted_from: "an announcement email pasted in chat on 2026-01-01"\n---\n# email\n' > "$CFIX/raw/4-webinfo/email.md"
+printf -- '# no frontmatter\nconverted_from: body-line.pdf is not a key\n' > "$CFIX/raw/8-transcripts/body.md"
+COUT="$(python3 "$LINKS" --vault "$CFIX" 2>"$ERR")"; rc=$?
+cline(){ printf '%s\n' "$COUT" | grep -c -- "$1"; }
+eq "a conversion naming a deleted local original is a missing original (the deleted-original case)" "1" "$(cline '^  raw/2-papers/gone.md · The Surprising Effectiveness of a Deleted Paper.pdf$')"
+eq "  a BOM and CRLF frontmatter do not hide the key" "1" "$(cline '^  raw/2-papers/crlf.md · crlf-gone.pdf$')"
+eq "  the missing total is the two planted conversions" "1" "$(cline '^MISSING ORIGINALS: 2$')"
+eq "  a URL-valued converted_from ending in .pdf is counted, never resolved or flagged" "0-1" "$(cline 'web.md')-$(cline '| 1 URLs |')"
+eq "  an original beside its conversion, a trailing note and a vault path all resolve" "0-0-0" "$(cline 'present.md')-$(cline 'noted.md')-$(cline 'vaultpath.md')"
+eq "  a stale value whose original survives elsewhere under raw/ is listed apart, never a finding" "1" "$(cline '^  (original found elsewhere under raw/) raw/2-papers/stale.md · raw/moved.pdf$')"
+eq "  a value declaring its own deletion is listed apart, never a finding" "1" "$(cline '^  (annotated original) raw/2-papers/declared.md · old.pdf (deleted 2026-01-01)$')"
+eq "  prose provenance is counted, never resolved" "0-1" "$(cline 'email.md')-$(cline '| 1 prose |')"
+eq "  a converted_from: line in the body of a file with no frontmatter is not a key" "0" "$(cline 'body.md')"
+eq "  the scan line counts every raw .md file and every key" "1" "$(cline '^CONVERSIONS SCANNED: 21 raw .md files | 9 carry converted_from: | 6 local | 1 URLs | 1 prose | 1 annotated absences | 0 unreadable')"
+if [ "$rc" = 1 ]; then ok "  a missing original alone sets the findings exit code (1)"
+else no "  a missing original sets the findings exit code  [exit $rc]"; fi
+rm "$CFIX/raw/2-papers/gone.md" "$CFIX/raw/2-papers/crlf.md"
+COUT="$(python3 "$LINKS" --vault "$CFIX" 2>"$ERR")"; rc=$?
+eq "control: with the two planted conversions gone the same fixture is clean (exit 0, 0 missing, 4 local values read)" "0-1-1" "$rc-$(cline '^MISSING ORIGINALS: 0$')-$(cline '| 4 local |')"
+
+printf '\n--- check_flag_admissions.py · marker and negation (register entry 2026-09-09) ---\n'
+# The entry: a name-collision note ending "must not be collapsed" was a standing false finding on
+# every routine lint. A page-side marker and a negation directly before the term suppress a line;
+# both are listed, never counted, and a negation earlier in the sentence suppresses nothing.
+NFIX="$W/negation"; rm -rf "$NFIX"; rawbase "$NFIX"; mkdir -p "$NFIX/wiki/sources"
+printf -- '---\ntitle: "Index"\ntype: index\nconfidence: high\n---\n## Sources\n- [[collision]] — a page.\n' > "$NFIX/wiki/index.md"
+printf -- '---\ntitle: "collision"\ntype: source\nconfidence: medium\nsources: [raw/1-articles/a.md]\n---\n\n## Summary\n> **Name collision, stated deliberately.** `projectx` is the project described here, not the field; the near-homograph is coincidence and must not be collapsed.\n' > "$NFIX/wiki/sources/collision.md"
+printf -- '---\ntitle: "marked"\ntype: source\nconfidence: medium\nsources: [raw/1-articles/a.md]\n---\n\n## Summary\nThe two figures collapsed into one number in the authors own table. <!-- lint: not a conversion admission -->\n' > "$NFIX/wiki/sources/marked.md"
+printf -- '---\ntitle: "genuine"\ntype: source\nconfidence: medium\nsources: [raw/1-articles/a.md]\n---\n\n## Summary\nThe conversion did not keep the spacing and collapsed inter-word spaces across the prose.\n' > "$NFIX/wiki/sources/genuine.md"
+printf -- '---\ntitle: "mixed"\ntype: source\nconfidence: medium\nsources: [raw/1-articles/a.md]\n---\n\n## Summary\nThe names must not be collapsed, yet the conversion is run-together throughout.\n' > "$NFIX/wiki/sources/mixed.md"
+printf -- '---\ntitle: "emphasis"\ntype: source\nconfidence: medium\nsources: [raw/1-articles/a.md]\n---\n\n## Summary\nThe columns were **not** `collapsed` here.\n' > "$NFIX/wiki/sources/emphasis.md"
+NOUT="$(python3 "$FLAGS" --vault "$NFIX" 2>"$ERR")"; rc=$?
+nline(){ printf '%s\n' "$NOUT" | grep -c -- "$1"; }
+eq "the negated shape (must not be collapsed) is suppressed by the negation guard, not a finding" "1-0" "$(nline '^  (negation) wiki/sources/collision.md:9 · collapsed · ')-$(nline '^  wiki/sources/collision.md')"
+eq "  a line carrying the page-side marker is suppressed, not a finding" "1-0" "$(nline '^  (marker) wiki/sources/marked.md:9 · collapsed · ')-$(nline '^  wiki/sources/marked.md')"
+eq "  a negation earlier in the sentence does not suppress a genuine admission (adjacency, not the sentence)" "1" "$(nline '^  wiki/sources/genuine.md:9 · collapsed · The conversion did not keep the spacing')"
+eq "  a negated term beside an un-negated one on the same line still fires on the un-negated term" "1" "$(nline '^  wiki/sources/mixed.md:9 · run-together · ')"
+eq "  emphasis and code marks around a negation are still a negation" "1" "$(nline '^  (negation) wiki/sources/emphasis.md:9 · collapsed')"
+eq "  the SUPPRESSED count names both reasons" "1" "$(nline '^SUPPRESSED: 3 line(s) on 3 page(s) — 1 by the page-side marker, 2 by a negation before the term')"
+eq "  the findings are the two genuine pages, exit 1" "1-1" "$(nline '^ADMISSIONS WITHOUT FLAG: 2$')-$rc"
+eq "  the in-memory controls for the marker and the negation print" "1" "$(nline '; an admission line carrying the page-side marker -> suppressed; a negated term (must not be collapsed) -> suppressed, its un-negated twin -> caught$')"
+rm "$NFIX/wiki/sources/genuine.md" "$NFIX/wiki/sources/mixed.md"
+NOUT="$(python3 "$FLAGS" --vault "$NFIX" 2>"$ERR")"; rc=$?
+eq "control: the suppressed pages alone are clean (exit 0, 0 findings) with the vocabulary still matched on 3 pages" "0-1-1" "$rc-$(nline '^ADMISSIONS WITHOUT FLAG: 0$')-$(nline '| 3 match the damage vocabulary')"
+
+printf '\n--- check_register.py (register entry 2026-09-07) ---\n'
+# Fixtures model open entries with closed statuses and duplicate headings for one defect
+# at one file:line. Both shapes must be caught, alongside the controls that
+# must not fire: a dated status fact, a fenced format example, a bare file name, a Closed entry.
+RFIX="$W/register"; rm -rf "$RFIX"; rawbase "$RFIX"; mkdir -p "$RFIX/wiki/developments"
+cat > "$RFIX/wiki/developments/known-issues.md" <<'MDFIX'
+---
+title: "Known Issues"
+type: development
+confidence: medium
+---
+
+**Entry format**:
+
+```
+### [YYYY-MM-DD] <surface> — <short title> (minor)
+- **Status**: closed — an example inside the fence, never an entry: `ingest/SKILL.md:435`
+```
+
+## Open
+
+### [2026-09-04] ingest Step 0 3b — the whole-file chars/word mean (minor)
+- **Where observed**: a run · `.claude/skills/ingest/SKILL.md:435`
+- **Status**: open — fix shape: per block
+
+### [2026-09-06] publish recap — the recap line (minor)
+- **Where observed**: a run · `publish.py:12`
+- **Severity**: minor. **Status**: Closed 17:47 BST in its own text
+
+### [2026-09-03] a hook — bytecode left beside the kit (minor)
+- **Where observed**: a run · `SKILL.md:147` and `hooks/x.py:9`
+- **Status (2099-01-01; synthetic fixture)**: closed the same day, as a dated fact
+- **Status**: open — the dated fact above is not the Status line
+
+### [2026-09-01] ingest Step 3b — the whole-file chars/word mean (minor)
+- **Where observed**: a run · `ingest/SKILL.md:435`, also `delegate/SKILL.md:147`
+- **Status**: open — the same defect under a second heading
+
+## Closed
+
+### [2026-08-01] ingest — an old defect at the same locator (minor)
+- **Where observed**: `ingest/SKILL.md:435`
+- **Status**: closed 2026-08-02 — fixed
+MDFIX
+ROUT="$(python3 "$REG" --vault "$RFIX" 2>"$ERR")"; rc=$?
+rline(){ printf '%s\n' "$ROUT" | grep -c -- "$1"; }
+eq "an Open entry whose Status begins closed is a finding (the publish-recap shape)" "1-1" "$(rline '^CLOSED STATUS UNDER OPEN: 1$')-$(rline '^  wiki/developments/known-issues.md:[0-9]* · \[2026-09-06\] publish recap')"
+eq "  a dated Status fact is not the Status line" "0" "$(rline 'bytecode left beside the kit (minor) · \*\*Status\*\*')"
+eq "  two Open headings citing one file:line in two spellings are one shared locator (the ingest SKILL.md:435 pair)" "1-1" "$(rline '^SHARED LOCATORS: 1 pair')-$(rline '^  .claude/skills/ingest/SKILL.md:435 = ingest/SKILL.md:435 · ')"
+eq "  a match on the bare file name alone is POSSIBLE, never a finding" "1" "$(rline '^POSSIBLE: 1 pair')"
+eq "  a Closed entry citing the same locator is information only" "1" "$(rline '^INFO: 2 locator(s) an Open entry shares with a Closed one')"
+eq "  the fenced format example is not an entry, and the counts carry the scope" "1" "$(rline '^REGISTER: wiki/developments/known-issues.md | 4 entries under ## Open · 1 under ## Closed · 0 elsewhere | 5 \*\*Status\*\*: lines read | 6 file:line locators in Open entries')"
+eq "  findings exit 1" "1" "$rc"
+RCLEAN="$W/register-clean"; rm -rf "$RCLEAN"; cp -R "$RFIX" "$RCLEAN"
+grep -v -e 'Closed 17:47 BST' -e 'ingest/SKILL.md:435`, also' "$RFIX/wiki/developments/known-issues.md" > "$RCLEAN/wiki/developments/known-issues.md"
+ROUT="$(python3 "$REG" --vault "$RCLEAN" 2>"$ERR")"; rc=$?
+eq "control: the same register with the two defects taken out is clean (exit 0) with its counts non-zero" "0-1-1-1" "$rc-$(rline '^CLOSED STATUS UNDER OPEN: 0$')-$(rline '^SHARED LOCATORS: 0 pair')-$(rline '| 4 entries under ## Open')"
+rm -rf "$W/register-none"; rawbase "$W/register-none"; mkdir -p "$W/register-none/wiki"
+ROUT="$(python3 "$REG" --vault "$W/register-none" 2>"$ERR")"; rc=$?
+eq "no register yet is n/a, exit 0 (CLAUDE.md §12: a missing register is not an error)" "0-1" "$rc-$(rline '^register-check: n/a (no wiki/developments/known-issues.md')"
+printf -- '# not a register\n\n### [2026-01-01] an entry with no section\n- **Status**: closed\n' > "$W/register-nosection.md"
+ROUT="$(python3 "$REG" --register "$W/register-nosection.md" 2>"$ERR")"; rc=$?
+eq "a register with no ## Open heading is a broken premise (exit 2, stderr, no stdout)" "2--1" "$rc-$ROUT-$(grep -c 'PROBE FAILED: .*has no `## Open` heading' "$ERR")"
+ROUT="$(python3 "$REG" --register "$W/no-such-register.md" 2>"$ERR")"; rc=$?
+eq "a named register file that does not exist is a broken premise, never n/a" "2" "$rc"
+
+printf '\n--- check_register.py · the three closing words (review F8, 2026-09-13) ---\n'
+# A Status that opens with fixed or resolved closes an entry as surely as one that opens with closed. The fixed
+# entry replays the register's own shape, its Status after a Severity clause on one line; the cases that must not
+# fire are a closing word later in an open value, a negated closing word, and a fixed Status under ## Closed.
+RWFIX="$W/register-words"; rm -rf "$RWFIX"; rawbase "$RWFIX"; mkdir -p "$RWFIX/wiki/developments"
+cat > "$RWFIX/wiki/developments/known-issues.md" <<'MDFIX'
+---
+title: "Known Issues"
+type: development
+confidence: medium
+---
+
+## Open
+
+### [2026-09-02] publish — bytecode in the staged tree (blocking)
+- **Where observed**: a publish run
+- **Severity**: **blocking** for the next publish. **Status**: fixed same day — `__pycache__/` and `*.pyc` added to `.gitignore`, the six files untracked
+
+### [2026-09-05] a hook — a stale cache (minor)
+- **Status**: *Resolved* 2026-09-06 — the cache is rebuilt on read
+
+### [2026-09-06] a script — a closing word later in an open value (minor)
+- **Status**: open — not yet fixed or resolved
+
+### [2026-09-07] a skill — a negated closing word (minor)
+- **Status**: unresolved — fixes pending
+
+## Closed
+
+### [2026-08-01] an old surface — fixed where it belongs (minor)
+- **Status**: fixed 2026-08-02 — moved here the same day
+MDFIX
+ROUT="$(python3 "$REG" --vault "$RWFIX" 2>"$ERR")"; rc=$?
+eq "an Open entry whose Status opens fixed is a finding (the register's one fixed Status, replayed under Open)" "1" "$(rline '^  wiki/developments/known-issues.md:[0-9]* · \[2026-09-02\] publish')"
+eq "  a Status opening Resolved, in emphasis and capitals, is a finding" "1" "$(rline '^  wiki/developments/known-issues.md:[0-9]* · \[2026-09-05\] a hook')"
+eq "  a closing word later in an open value, and unresolved, are not findings" "0-0" "$(rline '\[2026-09-06\] a script')-$(rline '\[2026-09-07\] a skill')"
+eq "  a fixed Status under ## Closed is not a finding; the total is the two, exit 1" "0-1-1" "$(rline 'fixed where it belongs')-$(rline '^CLOSED STATUS UNDER OPEN: 2$')-$rc"
+RWCLEAN="$W/register-words-clean"; rm -rf "$RWCLEAN"; cp -R "$RWFIX" "$RWCLEAN"
+grep -v -e 'Status\*\*: fixed same day' -e 'Resolved\* 2026-09-06' "$RWFIX/wiki/developments/known-issues.md" > "$RWCLEAN/wiki/developments/known-issues.md"
+ROUT="$(python3 "$REG" --vault "$RWCLEAN" 2>"$ERR")"; rc=$?
+eq "control: the same register without the two closing Status lines is clean (exit 0) with 4 Open entries and 3 Status lines read" "0-1-1" "$rc-$(rline '^CLOSED STATUS UNDER OPEN: 0$')-$(rline '| 4 entries under ## Open · 1 under ## Closed · 0 elsewhere | 3 \*\*Status\*\*: lines read')"
+
+printf '\n--- check-required-sections.py (register entry 2026-09-03, CLAUDE.md §4.3) ---\n'
+QFIX="$W/sections"; rm -rf "$QFIX"; rawbase "$QFIX"
+mkdir -p "$QFIX/wiki/concepts" "$QFIX/wiki/models" "$QFIX/wiki/sources" "$QFIX/wiki/developments" "$QFIX/wiki/syntheses" "$QFIX/wiki/maps" "$QFIX/wiki/user"
+printf -- '---\ntitle: "Index"\ntype: index\nconfidence: high\n---\n- [[A]]\n' > "$QFIX/wiki/index.md"
+printf -- '---\ntitle: "Dev"\ntype: development\nconfidence: medium\n---\n\n## Design\nNo sources section.\n\n## Related\n- [[A]]\n' > "$QFIX/wiki/developments/dev-missing.md"
+printf -- '---\ntitle: "Dev fenced"\ntype: development\nconfidence: medium\n---\n\n## Design\n```\n## Sources Used\n```\n### Sources Used\n<!--\n## Sources Used\n-->\n' > "$QFIX/wiki/developments/dev-fenced.md"
+printf -- '---\ntitle: "Dev ok"\ntype: development\nconfidence: medium\n---\n\n## Design\nFine.\n\n## sources used\n- [[A]]\n' > "$QFIX/wiki/developments/dev-ok.md"
+printf -- '---\r\ntitle: "Syn"\r\ntype: synthesis\r\nconfidence: medium\r\n---\r\n\r\n## Answer\r\nNo sources.\r\n' > "$QFIX/wiki/syntheses/syn-crlf.md"
+printf -- '---\ntitle: "A"\ntype: concept\nconfidence: medium\n---\n\n## Definition\nNo related section.\n' > "$QFIX/wiki/concepts/A.md"
+printf -- '---\ntitle: "M"\ntype: model\nconfidence: medium\n---\n\n## Definition\nx\n\n## Related\n- [[A]]\n' > "$QFIX/wiki/models/M.md"
+# A research-depth page without the ingest template's ## Citation, so the template-shaped heading never takes it.
+printf -- '---\ntitle: "S"\ntype: source\ndepth: research\nconfidence: medium\n---\n\n## Methodology\nx\n\n## Related\n- [[A]]\n' > "$QFIX/wiki/sources/s-research.md"
+printf -- '---\ntitle: "S2"\ntype: source\ndepth: standard\nconfidence: medium\n---\n\n## Summary\nx\n\n## Key Takeaways\n- x\n\n## Related\n- [[A]]\n' > "$QFIX/wiki/sources/s-ok.md"
+printf -- '---\ntitle: "Map"\ntype: map\n---\n\n- [[A]]\n' > "$QFIX/wiki/maps/map.md"
+printf -- '---\ntitle: "Me"\ntype: user\nconfidence: high\n---\n\nNo sections at all.\n' > "$QFIX/wiki/user/Me.md"
+printf -- '# No frontmatter\n' > "$QFIX/wiki/concepts/Bare.md"
+QOUT="$(python3 "$SECT" --vault "$QFIX" 2>"$ERR")"; rc=$?
+qline(){ printf '%s\n' "$QOUT" | grep -c -- "$1"; }
+eq "a development page with no ## Sources Used is a finding (the missing-section shape)" "1" "$(qline '^  wiki/developments/dev-missing.md · development · ## Sources Used$')"
+eq "  the heading only inside a fence, as ###, or inside a comment does not count" "1" "$(qline '^  wiki/developments/dev-fenced.md · development · ## Sources Used$')"
+eq "  a level-2 heading in another case counts" "0" "$(qline 'dev-ok.md')"
+eq "  a CRLF synthesis page is checked too" "1" "$(qline '^  wiki/syntheses/syn-crlf.md · synthesis · ## Sources Used$')"
+eq "  a concept with no ## Related, a model with no ## Appears in" "1-1" "$(qline '^  wiki/concepts/A.md · concept · ## Related$')-$(qline '^  wiki/models/M.md · model · ## Appears in$')"
+eq "  a source page names its depth and every section it lacks" "1" "$(qline '^  wiki/sources/s-research.md · source (depth research) · ## Summary, ## Key Takeaways$')"
+eq "  a complete source page, a map, a user page and a page with no frontmatter are not findings" "0-0-0-0" "$(qline 's-ok.md')-$(qline 'map.md')-$(qline 'Me.md')-$(qline 'Bare.md')"
+eq "  the scan line counts checked, exempt and unchecked pages" "1" "$(qline '^SCANNED: 12 pages | 8 checked (concept 1 · development 3 · model 1 · source 2 · synthesis 1) | 1 maps exempt | 3 not checked (index 1 · no type 1 · user 1)')"
+eq "  the total names pages, sections and a by-type count with source depth" "1" "$(qline '^MISSING REQUIRED SECTIONS: 6 page(s) · 7 section(s) | by type: concept 1 · development 2 · model 1 · source 1 (research 1) · synthesis 1$')"
+eq "  findings exit 1, and the in-memory control prints" "1-1" "$rc-$(qline '^CONTROL: in-memory development page with no ## Sources Used -> caught')"
+rm "$QFIX/wiki/developments/dev-missing.md" "$QFIX/wiki/developments/dev-fenced.md" "$QFIX/wiki/syntheses/syn-crlf.md" \
+   "$QFIX/wiki/concepts/A.md" "$QFIX/wiki/models/M.md" "$QFIX/wiki/sources/s-research.md"
+QOUT="$(python3 "$SECT" --vault "$QFIX" 2>"$ERR")"; rc=$?
+eq "control: the complete pages alone are clean (exit 0) with 2 pages checked" "0-1-1" "$rc-$(qline '^MISSING REQUIRED SECTIONS: 0 page(s) · 0 section(s)$')-$(qline '| 2 checked (development 1 · source 1)')"
+out="$(python3 "$SECT" --vault "$W/emptywiki" 2>"$ERR")"; rc=$?
+eq "an empty wiki is a broken premise for the section check, never clean" "2-1" "$rc-$(grep -c 'PROBE FAILED' "$ERR")"
+
+printf '\n--- check-required-sections.py · research-depth pages under CLAUDE.md §4.3 (the owner clause of 2026-09-14) ---\n'
+# CLAUDE.md §4.3 (2026-09-14): a research-depth source page may carry the ingest research template's sections in place
+# of Summary and Key Takeaways; ## Related stays mandatory; the check reads depth: before judging a page's sections. The
+# key is a level-2 ## Citation on a source page at depth research (the genre variant keeps it): such a page is a finding
+# only without ## Related. Another depth, no ## Citation, a fenced one, or ## Research Question alone is checked as before.
+TFIX="$W/sections-template"; rm -rf "$TFIX"; rawbase "$TFIX"; mkdir -p "$TFIX/wiki/sources"
+printf -- '---\ntitle: "Index"\ntype: index\nconfidence: high\n---\n- the pages\n' > "$TFIX/wiki/index.md"
+printf -- '---\ntitle: "Paper"\ntype: source\ndepth: research\nconfidence: high\n---\n\n## Citation\nA reference.\n\n## Research Question\nA question.\n\n## Key Findings\n- a figure\n\n## Related\n- the hub page\n' > "$TFIX/wiki/sources/paper.md"
+printf -- '---\ntitle: "Handbook"\ntype: source\ndepth: research\nconfidence: high\n---\n\n## Citation\nA handbook, version 2.\n\n## Scope & Applicability\nWho it binds.\n\n## Related\n- the hub page\n' > "$TFIX/wiki/sources/handbook.md"
+printf -- '---\ntitle: "Complete"\ntype: source\ndepth: research\nconfidence: high\n---\n\n## Citation\nA reference.\n\n## Summary\nx\n\n## Key Takeaways\n- x\n\n## Related\n- the hub page\n' > "$TFIX/wiki/sources/research-complete.md"
+# must fire: the template shape without ## Related
+printf -- '---\ntitle: "No related"\ntype: source\ndepth: research\nconfidence: high\n---\n\n## Citation\nA reference.\n\n## Research Question\nA question.\n\n## Key Findings\n- a figure\n' > "$TFIX/wiki/sources/norelated.md"
+printf -- '---\ntitle: "Plain"\ntype: source\ndepth: research\nconfidence: high\n---\n\n## Methodology\nNo citation heading.\n\n## Related\n- the hub page\n' > "$TFIX/wiki/sources/research-plain.md"
+printf -- '---\ntitle: "Question"\ntype: source\ndepth: research\nconfidence: high\n---\n\n## Research Question\nA question.\n\n## Related\n- the hub page\n' > "$TFIX/wiki/sources/question-only.md"
+printf -- '---\ntitle: "Fenced"\ntype: source\ndepth: research\nconfidence: high\n---\n\n```\n## Citation\n```\n\n## Related\n- the hub page\n' > "$TFIX/wiki/sources/fenced-citation.md"
+printf -- '---\ntitle: "Standard"\ntype: source\ndepth: standard\nconfidence: high\n---\n\n## Citation\nA reference.\n\n## Research Question\nA question.\n\n## Related\n- the hub page\n' > "$TFIX/wiki/sources/standard-cited.md"
+TOUT="$(python3 "$SECT" --vault "$TFIX" 2>"$ERR")"; rc=$?
+tline(){ printf '%s\n' "$TOUT" | grep -c -- "$1"; }
+# mline: the findings block only (from the MISSING line to the research-depth count line).
+mline(){ printf '%s\n' "$TOUT" | awk '/^MISSING REQUIRED SECTIONS:/{f=1; next} /^RESEARCH-DEPTH TEMPLATE PAGES:/{f=0} f' | grep -c -- "$1"; }
+eq "must not fire: a research-depth source page shaped like the ingest template and carrying ## Related is conforming, never a finding, and no template-shaped listing remains" "0-0" "$(mline 'paper.md')-$(tline 'TEMPLATE-SHAPED')"
+eq "  the genre variant (## Citation, no ## Research Question) with ## Related is conforming too; a complete one as well" "0-0" "$(mline 'handbook.md')-$(mline 'research-complete.md')"
+eq "must fire: the same shape without ## Related is a finding naming ## Related alone" "1" "$(mline '^  wiki/sources/norelated.md · source (depth research) · ## Related$')"
+eq "  the count line names every research-depth page judged on ## Related alone" "1" "$(tline '^RESEARCH-DEPTH TEMPLATE PAGES: 4 source page(s) at depth research carry ## Citation and are judged on ## Related alone (CLAUDE.md section 4.3, 2026-09-14)$')"
+eq "  still findings: no ## Citation, ## Research Question alone, a fenced ## Citation and another depth" "1-1-1-1" "$(mline '^  wiki/sources/research-plain.md · source (depth research) · ## Summary, ## Key Takeaways$')-$(mline '^  wiki/sources/question-only.md · source (depth research) · ## Summary, ## Key Takeaways$')-$(mline '^  wiki/sources/fenced-citation.md · source (depth research) · ## Summary, ## Key Takeaways$')-$(mline '^  wiki/sources/standard-cited.md · source (depth standard) · ## Summary, ## Key Takeaways$')"
+eq "  the findings total counts the five findings with the research-depth one, exit 1" "1-1" "$(tline '^MISSING REQUIRED SECTIONS: 5 page(s) · 9 section(s) | by type: source 5 (research 4 · standard 1)$')-$rc"
+eq "  the control line states the three research-depth behaviours" "1" "$(tline 'a research-depth source page with ## Citation and ## Related -> clean, without ## Related -> caught, without ## Citation -> checked against the full source row$')"
+rm "$TFIX/wiki/sources/norelated.md" "$TFIX/wiki/sources/research-plain.md" "$TFIX/wiki/sources/question-only.md" "$TFIX/wiki/sources/fenced-citation.md" "$TFIX/wiki/sources/standard-cited.md"
+TOUT="$(python3 "$SECT" --vault "$TFIX" 2>"$ERR")"; rc=$?
+eq "control: the conforming research-depth pages alone are clean (exit 0, 0 findings, the count line reads 3)" "0-1-1" "$rc-$(tline '^MISSING REQUIRED SECTIONS: 0 page(s) · 0 section(s)$')-$(tline '^RESEARCH-DEPTH TEMPLATE PAGES: 3 source page(s) at depth research')"
+
+printf '\n--- lint SKILL.md Step 2: the section and register sentences (review F8, review F7 and F8, 2026-09-13) ---\n'
+SK="$HOME_DIR/SKILL.md"
+SBUL="$(grep -F 'lists every page missing a level-2 section its table requires' "$SK")"
+eq "the Structure bullet claims its table, not CLAUDE.md §4.3 whole (review F8)" "1-0" "$(printf '%s\n' "$SBUL" | grep -c .)-$(grep -cF 'section that CLAUDE.md §4.3 requires' "$SK")"
+eq "  the same bullet names what the table covers and the research-depth clause" "1-1" "$(printf '%s\n' "$SBUL" | grep -cF '`## Sources Used` for synthesis and development, exempts maps, and checks no other part of CLAUDE.md §4.3')-$(printf '%s\n' "$SBUL" | grep -cF 'is judged on `## Related` alone (CLAUDE.md §4.3, the research-depth clause of 2026-09-14)')"
+eq "  the Register bullet names the three closing words" "1" "$(grep -cF 'whose `**Status**:` begins `closed`, `fixed` or `resolved`' "$SK")"
+eq "  control: the two invocations the sentences sit on are in the skill" "1-1" "$(grep -cF 'python3 .claude/skills/lint/check-required-sections.py --vault .` lists' "$SK")-$(grep -cF 'python3 .claude/skills/lint/check_register.py --vault .` lists' "$SK")"
+
+printf '\n--- check-tier-vocabulary.py (register entry 2026-09-03) ---\n'
+# The entry: CLAUDE.md §4.6 capped agent-derived pages at high while a skill said "a synthesis caps
+# at `medium`". The canon is read from the fixture's own §4.6, wrapped across a line as the real one is.
+TVF="$W/tiervocab"; rm -rf "$TVF"; rawbase "$TVF"; mkdir -p "$TVF/wiki" "$TVF/.claude/skills/query" "$TVF/.claude/skills/ingest" "$TVF/.claude/skills/other"
+cat > "$TVF/CLAUDE.md" <<'MDFIX'
+# Fixture schema
+
+### 4.6 Confidence (every page except `map`)
+Assign by authority; on a tie pick the lower (a rule). Compiled pages (concept/entity/tool/model/benchmark) **cap at `high`** — only primary sources are `authoritative`; agent-derived pages (`synthesis`, `development`) likewise
+cap at `high` and default to `medium`.
+
+### 4.7 Next section
+Sources cap at `low` here, outside section 4.6, and never enter the canon.
+MDFIX
+printf -- '---\nname: query\n---\n\n# query\nFiling: a synthesis caps at `medium`.\n' > "$TVF/.claude/skills/query/SKILL.md"
+printf -- '---\nname: ingest\n---\n\n# ingest\nSet its confidence per the schema (compiled pages **cap at `high`**).\n- a development page\n  defaults to `medium` when nothing else applies.\n\n```\nA synthesis caps at `low` inside a fence is not a statement.\n```\n<!-- a synthesis caps at `low` inside a comment -->\n' > "$TVF/.claude/skills/ingest/SKILL.md"
+printf -- '---\nname: other\n---\n\n# other\nRules always cap at the remaining budget. A source page caps at `authoritative`. It defaults to `high`.\n' > "$TVF/.claude/skills/other/SKILL.md"
+VOUT="$(python3 "$TVOC" --vault "$TVF" 2>"$ERR")"; rc=$?
+vline(){ printf '%s\n' "$VOUT" | grep -c -- "$1"; }
+eq "a skill restating a synthesis cap other than section 4.6's is a mismatch (the query wording)" "1-1" "$(vline '^MISMATCHES: 1$')-$(vline '^  .claude/skills/query/SKILL.md:6 · synthesis cap medium (§4.6: synthesis high) · ')"
+eq "  a restatement that agrees, inside an unclosed parenthesis or wrapped under a list item, matches" "1-1" "$(vline '^  .claude/skills/ingest/SKILL.md:6 · concept/entity/tool/model/benchmark cap high · ')-$(vline '^  .claude/skills/ingest/SKILL.md:8 · development default medium · ')"
+eq "  statements inside a fence or an HTML comment are not read" "0" "$(vline 'synthesis cap low')"
+eq "  a type the canon does not cap is uncovered, a clause with no type is unattributed; neither is a finding" "1-1" "$(vline '^  .claude/skills/other/SKILL.md:6 · source cap authoritative · ')-$(vline '^  .claude/skills/other/SKILL.md:6 · (no type) default high · ')"
+eq "  section 4.7 text never enters the canon, and a wrapped section 4.6 line still does" "1" "$(vline '^CANON: benchmark cap high · concept cap high · development cap high · development default medium · entity cap high · model cap high · synthesis cap high · synthesis default medium · tool cap high$')"
+eq "  the scan line and the control print, exit 1" "1-1-1" "$(vline '^TIER VOCABULARY: CLAUDE.md §4.6 -> 9 canon (type, verb) keys from 3 statement(s) | 3 skills scanned | 5 restatement(s): 2 match · 1 mismatch · 1 uncovered · 1 unattributed')-$(vline '^CONTROL: planted "A synthesis caps at `medium`" -> mismatch')-$rc"
+printf -- '---\nname: query\n---\n\n# query\nFiling: a synthesis caps at `high`.\n' > "$TVF/.claude/skills/query/SKILL.md"
+VOUT="$(python3 "$TVOC" --vault "$TVF" 2>"$ERR")"; rc=$?
+eq "control: the same skill restating the canon's tier is clean (exit 0, 3 matches)" "0-1-1" "$rc-$(vline '^MISMATCHES: 0$')-$(vline '^MATCH: 3 (information)$')"
+cp "$TVF/CLAUDE.md" "$W/claude-46.bak"
+printf -- '# Fixture schema\n\n### 4.6 Confidence\nCompiled pages stop at high.\n' > "$TVF/CLAUDE.md"
+VOUT="$(python3 "$TVOC" --vault "$TVF" 2>"$ERR")"; rc=$?
+eq "a section 4.6 reworded past the vocabulary is a broken premise (exit 2), never a clean diff of nothing" "2-1" "$rc-$(grep -c 'PROBE FAILED: CLAUDE.md §4.6 yields no' "$ERR")"
+printf -- '# Fixture schema\n\n### 4.6 Confidence\nA synthesis caps at `high`. A synthesis caps at `medium`.\n' > "$TVF/CLAUDE.md"
+VOUT="$(python3 "$TVOC" --vault "$TVF" 2>"$ERR")"; rc=$?
+eq "a section 4.6 that contradicts itself is a broken premise" "2-1" "$rc-$(grep -c 'PROBE FAILED: CLAUDE.md §4.6 contradicts itself' "$ERR")"
+printf -- '# Fixture schema\n\n### 4.5 Something else\nA synthesis caps at `high`.\n' > "$TVF/CLAUDE.md"
+VOUT="$(python3 "$TVOC" --vault "$TVF" 2>"$ERR")"; rc=$?
+eq "no section 4.6 heading is a broken premise" "2-1" "$rc-$(grep -c 'PROBE FAILED: CLAUDE.md has no' "$ERR")"
+cp "$W/claude-46.bak" "$TVF/CLAUDE.md"
+
+printf '\n--- check-plugins.py · Step 2e plugin arm (register entry 2026-09-05) ---\n'
+# The entry: an enabled plugin's skills, and a plugin's hooks.json, reach every session with no
+# baseline to catch them. Every leg points the arm at a fixture home through CLAUDE_CONFIG_DIR and
+# a fixture HOME, never the live one.
+PH_="$W/plugin-home"; PV_="$W/plugin-vault"; rm -rf "$PH_" "$PV_"; rawbase "$PV_"
+mkdir -p "$PV_/wiki" "$PV_/.claude" "$PH_/skills" "$PH_/plugins/cache/mkt/hooked/1.0.0/hooks" "$PH_/plugins/cache/mkt/plain/2.0.0/skills/s1"
+printf '{"enabledPlugins": {"plain@mkt": true, "hooked@mkt": true, "off@mkt": false}}\n' > "$PH_/settings.json"
+printf '{"hooks": {}}\n' > "$PH_/plugins/cache/mkt/hooked/1.0.0/hooks/hooks.json"
+printf '{"version": 2, "plugins": {"plain@mkt": [{"installPath": "%s"}], "hooked@mkt": [{"installPath": "%s"}]}}\n' \
+  "$PH_/plugins/cache/mkt/plain/2.0.0" "$PH_/plugins/cache/mkt/hooked/1.0.0" > "$PH_/plugins/installed_plugins.json"
+printf 'some-user-skill\nplugin:plain@mkt\n' > "$PH_/skills/.sanctioned.txt"
+plug(){ env CLAUDE_CONFIG_DIR="$PH_" HOME="$W/no-home" python3 "$PLUG" --vault "$PV_" "$@" 2>"$ERR"; }
+GOUT="$(plug)"; rc=$?
+gline(){ printf '%s\n' "$GOUT" | grep -c -- "$1"; }
+eq "an enabled plugin with no plugin: line in a seeded baseline is unsanctioned, exit 1, its hooks named" "1-1-1" "$rc-$(gline '^UNSANCTIONED PLUGINS: 1$')-$(gline '^  hooked@mkt · enabled in user settings · ships hooks (hooks/hooks.json reaches every session)$')"
+eq "  a baselined plugin is sanctioned with its hooks state; a plugin set false is not enabled" "1-0" "$(gline '^  (sanctioned) plain@mkt · no hooks$')-$(gline 'off@mkt')"
+eq "  the scope line names the enabled keys, the baseline and each settings source" "1" "$(gline '^plugins-guard: 2 enabled (hooked@mkt, plain@mkt) | baseline .*/skills/.sanctioned.txt: present, 1 plugin: line(s) | settings: user present (3 key(s)) · project absent · local absent')"
+eq "  the injected control key prints on every run" "1" "$(gline '^CONTROL: the known-absent key zzz-ctrl@nowhere injected into the enabled side -> unsanctioned$')"
+printf '{"enabledPlugins": {"hooked@mkt": false}}\n' > "$PV_/.claude/settings.local.json"
+GOUT="$(plug)"; rc=$?
+eq "  a project-local false overrides the user's true, so the same fixture is clean (exit 0)" "0-1-1" "$rc-$(gline '^UNSANCTIONED PLUGINS: 0$')-$(gline 'local present (1 key(s))')"
+rm "$PV_/.claude/settings.local.json"
+printf 'some-user-skill\n' > "$PH_/skills/.sanctioned.txt"
+GOUT="$(plug)"; rc=$?
+eq "a baseline with no plugin: line is not seeded: the enabled list is information, exit 0, never a finding" "0-1-2" "$rc-$(gline '^UNSANCTIONED PLUGINS: n/a (baseline not seeded')-$(gline '^  (enabled, not yet baselined) ')"
+printf '{"enabledPlugins": [' > "$PH_/settings.json"
+GOUT="$(plug)"; rc=$?
+eq "an unparseable settings file is a broken premise (exit 2, stderr, no stdout)" "2--1" "$rc-$GOUT-$(grep -c 'PROBE FAILED: the user settings file .* could not be parsed' "$ERR")"
+printf '{"enabledPlugins": ["plain@mkt"]}\n' > "$PH_/settings.json"
+GOUT="$(plug)"; rc=$?
+eq "an enabledPlugins that is not an object is a broken premise" "2" "$rc"
+rm -f "$PH_/settings.json"
+GOUT="$(plug)"; rc=$?
+eq "no settings file at all: 0 enabled, exit 0, the control still prints" "0-1-1" "$rc-$(gline '^plugins-guard: 0 enabled (none)')-$(gline '^CONTROL: ')"
+
+printf '\n--- root guard and unknown flags: the four scripts of 2026-09-13 ---\n'
+guard "check_register.py"          python3 "$REG"  --vault "$NOVAULT"
+guard "check-required-sections.py" python3 "$SECT" --vault "$NOVAULT"
+guard "check-tier-vocabulary.py"   python3 "$TVOC" --vault "$NOVAULT"
+guard "check-plugins.py"           env CLAUDE_CONFIG_DIR="$W/no-home" python3 "$PLUG" --vault "$NOVAULT"
+scans "check_register.py"          0 python3 "$REG"  --vault "$C"
+scans "check-required-sections.py" 0 python3 "$SECT" --vault "$C"
+scans "check-plugins.py"           0 env CLAUDE_CONFIG_DIR="$W/no-home" python3 "$PLUG" --vault "$C"
+badflag "check_register.py"          python3 "$REG"  --vault "$C" --deep
+badflag "check-required-sections.py" python3 "$SECT" --vault "$C" --deep
+badflag "check-tier-vocabulary.py"   python3 "$TVOC" --vault "$C" --deep
+badflag "check-plugins.py"           python3 "$PLUG" --vault "$C" --deep
+
 printf '\n--- stdout-only proof (must run last) ---\n'
 RO="$W/readonly"; rm -rf "$RO"; cp -R "$P" "$RO"
 RE_="$W/readonly-edge"; rm -rf "$RE_"; cp -R "$E" "$RE_"
+RC_="$W/readonly-conversions"; rm -rf "$RC_"; cp -R "$CFIX" "$RC_"
+RTV="$W/readonly-tier"; rm -rf "$RTV"; cp -R "$TVF" "$RTV"
+RRG="$W/readonly-register"; rm -rf "$RRG"; cp -R "$RFIX" "$RRG"
+RPH="$W/readonly-plugin-home"; rm -rf "$RPH"; cp -R "$PH_" "$RPH"
+printf '{"enabledPlugins": {"plain@mkt": true, "hooked@mkt": true}}\n' > "$RPH/settings.json"
+printf '{"version": 2, "plugins": {"plain@mkt": [{"installPath": "%s"}], "hooked@mkt": [{"installPath": "%s"}]}}\n' \
+  "$RPH/plugins/cache/mkt/plain/2.0.0" "$RPH/plugins/cache/mkt/hooked/1.0.0" > "$RPH/plugins/installed_plugins.json"
 cp "$W/verdicts.json" "$W/verdicts-ro.json"
 python3 - "$W/verdicts-ro.json" <<'PYFIX'
 import json, sys
@@ -722,8 +1065,8 @@ p = sys.argv[1]
 d = json.load(open(p))
 json.dump(d, open(p, "w"))
 PYFIX
-BEFORE_F="$(manifest "$RO")$(manifest "$RE_")"
-chmod -R a-w "$RO" "$RE_"
+BEFORE_F="$(manifest "$RO")$(manifest "$RE_")$(manifest "$RC_")$(manifest "$RTV")$(manifest "$RRG")$(manifest "$RPH")"
+chmod -R a-w "$RO" "$RE_" "$RC_" "$RTV" "$RRG" "$RPH"
 python3 "$ORPH" --vault "$RO" > /dev/null; r1=$?
 python3 "$ORPH" --vault "$RO" --format json > /dev/null; r2=$?
 python3 "$TIER" --vault "$RO" > /dev/null; r3=$?
@@ -741,8 +1084,18 @@ python3 "$LINKS" --vault "$RO" > /dev/null; rl1=$?
 python3 "$LINKS" --vault "$RE_" > /dev/null; rl2=$?
 python3 "$FLAGS" --vault "$RO" > /dev/null; r13=$?
 python3 "$FLAGS" --vault "$RE_" > /dev/null; r14=$?
-chmod -R u+w "$RO" "$RE_"
-AFTER_F="$(manifest "$RO")$(manifest "$RE_")"
+python3 "$LINKS" --vault "$RC_" > /dev/null; rl3=$?
+python3 "$REG" --vault "$RRG" > /dev/null; rn1=$?
+python3 "$SECT" --vault "$RO" > /dev/null; rn2=$?
+python3 "$TVOC" --vault "$RTV" > /dev/null; rn3=$?
+env CLAUDE_CONFIG_DIR="$RPH" HOME="$W/no-home" python3 "$PLUG" --vault "$RO" > /dev/null; rn4=$?
+chmod -R u+w "$RO" "$RE_" "$RC_" "$RTV" "$RRG" "$RPH"
+AFTER_F="$(manifest "$RO")$(manifest "$RE_")$(manifest "$RC_")$(manifest "$RTV")$(manifest "$RRG")$(manifest "$RPH")"
+# The four scripts of 2026-09-13 and the conversions arm, each on a read-only copy of its own fixture: the
+# register and the planted vault carry findings (exit 1), the tier fixture and the plugin home are clean (exit 0).
+if [ "$rl3" = 0 ] && [ "$rn1" = 1 ] && [ "$rn2" = 1 ] && [ "$rn3" = 0 ] && [ "$rn4" = 0 ]
+then ok "the conversions arm and the register, required-section, tier-vocabulary and plugin checks run against read-only copies"
+else no "the new checks run against read-only copies  [exits links $rl3, register $rn1, sections $rn2, tiers $rn3, plugins $rn4]"; fi
 END_H="$(manifest "$HOME_DIR")"; END_FIX="$(manifest "$P")$(manifest "$C")$(manifest "$E")"
 if [ "$r1$r2$r3$r4$r5$r6$r7$r8$r9$r10$r11$r12$r13$r14" = "00000000000000" ] && [ "$rl1" -le 1 ] && [ "$rl2" -le 1 ]
 then ok "every script and flag runs clean against a chmod -R a-w vault copy"
@@ -758,8 +1111,8 @@ else no "the three writable fixtures are byte-identical to their pre-run baselin
 # grep -c drops the filename prefix on a single file, so count matches with -o | wc -l instead.
 npat(){ local pat="$1"; shift; grep -oE -- "$pat" "$@" | wc -l | tr -d ' '; }
 # One control line per pattern, fed on stdin so the control writes nothing. A single
-# pattern's control cannot vouch for the others: an io.open() write once slipped through a
-# list whose only control was the plain open() form.
+# pattern's control cannot vouch for the others: an io.open() write can slip through a list
+# whose only control is the plain open() form.
 CTL_LINES="$(printf '%s\n' \
   'open("x", "w")' 'p.write_text(s)' 'os.remove(p)' 'os.unlink(p)' 'os.rename(a, b)' \
   'os.mkdir(d)' 'os.makedirs(d)' 'shutil.copy(a, b)' 'subprocess.run(c)' 'tempfile.mkdtemp()' \
@@ -770,11 +1123,11 @@ for pat in 'open\([^)]*["'"'"'][wax]' 'write_text' 'write_bytes' 'os\.remove' 'o
            'os\.rename' 'os\.replace' 'os\.mkdir' 'os\.rmdir' 'makedirs' 'shutil\.' \
            'subprocess' 'tempfile' 'pathlib' 'io\.open' 'os\.open' 'os\.fdopen' \
            'os\.system' 'os\.popen' 'print\(.*file=open'; do
-  hits=$((hits + $(npat "$pat" "$ORPH" "$TIER" "$ANOM" "$INDEX" "$LINKS" "$FLAGS")))
+  hits=$((hits + $(npat "$pat" "$ORPH" "$TIER" "$ANOM" "$INDEX" "$LINKS" "$FLAGS" "$REG" "$SECT" "$TVOC" "$PLUG")))
   if [ "$(printf '%s\n' "$CTL_LINES" | npat "$pat" -)" -eq 0 ]; then dead="$dead $pat"; fi
 done
 if [ -n "$dead" ]; then no "every write pattern matches its own control line  [dead:$dead]"
-elif [ "$hits" -eq 0 ]; then ok "no write pattern appears in any script source (20 patterns over six scripts, each matched on its own control line)"
+elif [ "$hits" -eq 0 ]; then ok "no write pattern appears in any script source (20 patterns over ten scripts, each matched on its own control line)"
 else no "no write pattern appears in any script source  [$hits hit(s)]"; fi
 # apply-palette.py is the one script here that writes, and only on request: it is excluded from
 # the grep above by design, so this leg keys on the property that still has to hold — a REFUSED

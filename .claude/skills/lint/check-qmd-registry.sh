@@ -2,9 +2,9 @@
 # Guard: wiki/log.md must never enter the qmd semantic index.
 #
 # Why: qmd keys embeddings on a file's whole-content hash, so every append re-embeds the entire
-# timeline, and a hit on it invites an ~80k-token whole-file read via `qmd get`. The exclusion lives
-# in ~/.config/qmd/index.yml — OUTSIDE the vault and outside both git repos — so it can vanish
-# silently (it did once, 2026-07-21, when a folder rename left 0 files indexed). This asserts it.
+# timeline, and a hit can invite an unbounded whole-file read via `qmd get`. The exclusion
+# lives in ~/.config/qmd/index.yml, outside the vault and both git repos, so it can vanish
+# silently. This check asserts that the exclusion remains in place.
 #
 # Dormant-safe: silent no-op wording when qmd is absent or disabled (CLAUDE.md §10).
 # Never reports clean on a broken probe: an empty listing or a missing positive control is a FAILURE,

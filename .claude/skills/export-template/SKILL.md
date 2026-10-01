@@ -53,7 +53,7 @@ apply with graph"). Honour any options they give; only ask for the ones they lef
 `--push` together is a hard error.
 
 **`--push <repo>` — vault → repo (publish).** Overlays the vault-owned framework (CLAUDE.md, MANUAL.md,
-`README.md`/`LICENSE.md` + `assets/`, `.claude/skills/**` (every skill, incl. export-template), `.obsidian` config,
+`README.md`/`LICENSE.md` + `assets/`, `.claude/skills/**` (every publishable skill, incl. export-template), `.obsidian` config,
 the seed demo) **plus** the build machinery from this skill's `payload/` (.gitignore/.gitattributes, setup.sh)
 into your existing clone — leaving `.git/` and all knowledge untouched. Then run the **guided publish
 flow** below. (`--sync` is a back-compat alias.)
@@ -77,6 +77,8 @@ bash .claude/skills/export-template/export_template.sh template-export
 ```
 
 ## Where the publish files live
+The professor-loop skill is excluded from public builds while its standalone prerequisites are being prepared. Build and push remove any previous generated copy of that skill from the destination. The source skill remains local. Other skills continue to be discovered automatically.
+
 - **At the vault root** — `README.md`, `LICENSE.md` + the `assets/` screenshot
   (canonical and visible; edit them in place).
 - **`payload/` (in this skill)** — the build machinery: setup.sh and `.gitignore`/`.gitattributes`
@@ -95,8 +97,8 @@ runs steps 1 and 2 as one `&&` chain — pull, overlay, stage, drift check, payl
 prints the recap, writes it to `output/publish-recap.txt` and STOPS there with nothing committed. Its last line is
 `recap-digest <digest>`: the fingerprint of that recap and of the staged tree it describes, which step 4 hands back.
 Step 3 stays yours — the script never asks. Every failed step ends it non-zero (1 = a gate refused, 2 = a broken
-premise, 3 = a git step failed), so no gate can be passed over: a hand-chained publish committed past a failed payload
-gate (known-issues 2026-09-08). A STOP leaves the clone with the overlay staged and uncommitted
+premise, 3 = a git step failed), so failed gates cannot be passed over (known-issues 2026-09-08).
+A STOP leaves the clone with the overlay staged and uncommitted
 (`git -C <repo> reset -q` clears the index). The numbered steps below are what it runs, and what to read when it stops.
 Suite: `test_publish_sh.sh`.
 1. **Pull-then-overlay:** `bash .claude/skills/export-template/export_template.sh --push <repo>`.
@@ -112,8 +114,7 @@ Suite: `test_publish_sh.sh`.
    **Drift check (2026-09-06):** before the recap, compare every staged file that also exists in the vault with its
    vault copy (`cmp -s` per path from `git diff --cached --name-only`; files the export transforms, those with
    `vault-local` blocks, differ by design) and list any other difference with both mtimes. A difference means the
-   vault changed after the overlay (a concurrent session edited a shipped file between overlay and commit on
-   2026-09-06): re-overlay and re-gate, or name the exclusion in the recap. Never commit a tree you have not compared.
+   vault changed after the overlay (a concurrent session can edit a shipped file between overlay and commit): re-overlay and re-gate, or name the exclusion in the recap. Never commit a tree you have not compared.
    `publish.sh` makes this comparison itself and derives the by-design classes from `export_template.sh` — the paths
    `apply_fixes()` rewrites and the conditional-compile marker whose blocks it strips — plus the files packaged from
    the skill's `payload/`; it names every exemption in the recap and stops on anything else.
@@ -150,8 +151,7 @@ Suite: `test_publish_sh.sh`.
    row** — `Ver | Feature | What it does | What it achieves` — verified against the actual files/tests
    (never from memory). **Derive the version number from evidence, not memory**: read
    `git -C <repo> log --oneline` AND the vault log's `export |` entries at recap time — a parallel
-   session may have published since this session last looked (v0.8.3 shipped mislabelled because a
-   same-day release was missed this way). The **full version-family table** — every release of the
+   session may have published since this session last looked. The **full version-family table** — every release of the
    current minor so far plus the candidate, each row verified — runs only at a **minor-version
    boundary** (the first release of a new minor, vX.Y.0) or when the owner asks for a "full recap".
    The user's go-ahead on the presented recap is the publish approval.
@@ -181,7 +181,7 @@ Suite: `test_publish_sh.sh`.
 7. **Private backup — gated closing step:** if the vault root is a git repo with a remote, back the
    vault up now: `git add -A && git commit -m "backup: YYYY-MM-DD (post <version> publish)" && git push`
    (owner identity, no AI attribution). Report the result in-reply; never ask for confirmation and
-   never log it in `wiki/log.md`. If the vault has no git repo or remote, say so in one line and move
+   never log it in `wiki/log.md`. If the vault has no git repo or remote, say so briefly and move
    on — the backup must never block a publish. It stays outside the publish chain: `publish.sh` writes only to the repo
    clone and its own recap file, never to this vault's own repository. That recap is an ordinary file under `output/`:
    unless this vault's `.gitignore` excludes that directory, this backup commits it, owner word included.

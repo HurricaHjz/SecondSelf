@@ -3,7 +3,7 @@
 A headless lane sees only the skills in its lane home plus the user-level ones. This directory is
 the **source** of the vault-owned slices: the wrapper copies the ones a class's `routing.json` row
 names into that spawn's lane home under `.claude/skills/`, and the wrapper appends them to the lane's system prompt (`--append-system-prompt-file`),
-the one carrier measured to reach a restricted lane; a `skills:` preload never loads there (2026-09-04).
+so the slices reach a restricted lane without depending on a `skills:` preload.
 
 A slice is a **hand-made subset** of a vault skill: the half a lane performs, with the half the
 head performs left out. It is not generated, and nothing keeps it in step automatically.

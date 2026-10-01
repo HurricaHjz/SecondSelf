@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Tests for repo_pack.py — controls per the design (repo-pack-design.md §Tests), plus the project-store
-snapshot guards of 2026-09-07 (project-store-design.md D4: dirty tree, credential URL, absolute --repo, slice)."""
+"""Tests for repo_pack.py, including the project-store snapshot guards:
+dirty tree, credential URL, absolute --repo and slice handling."""
 import os, re, shutil, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))

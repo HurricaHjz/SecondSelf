@@ -5,10 +5,9 @@
 #   pull → overlay → stage → drift check → payload gate → release gate → throttle gate → recap
 # and it STOPS there with nothing committed. Only `--publish "<word>" --message "<msg>"` — the
 # owner's go on the presented recap, passed verbatim by the caller — continues to commit and push.
-# It exists because a hand-chained publish committed past a failed gate: a `;` between two steps,
-# or an exit code eaten by a command substitution, is enough. Here every step is an explicit `&&`
-# link whose failure ends the run with a named `publish.sh: STOP <step> — …` line on stderr and a
-# non-zero code; `set -euo pipefail` is the belt, never the argument.
+# Chain every step explicitly: a semicolon or an unchecked command substitution can ignore
+# a failure. Each failed step prints a named `publish.sh: STOP <step> — …` line on stderr and
+# exits non-zero; `set -euo pipefail` is additional protection beside explicit checks.
 #
 # USAGE
 #   bash publish.sh --release <ver> [--vault <dir>] [--recap <file>] <repo-clone>

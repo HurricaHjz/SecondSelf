@@ -49,7 +49,7 @@ check whose input you cannot read is reported as `not run (grant missing)`, neve
 ## 1 — Index consistency (the one check that is not a script)
 
 Take the registered page names only — `grep -o '^- \[\[[^]|]*' <vault>/wiki/index.md | sed 's/^- \[\[//'`,
-about 18 kB against the file's 127 kB. Never read `index.md` whole for this: the check compares names, and
+Never read `index.md` whole for this: the check compares names, and
 its one-line descriptions are waste here. Glob every `.md` under `<vault>/wiki/`, excluding `index.md` and
 `log.md`. Report two lists: pages registered in the index but **missing on disk**, and pages on
 disk but **not registered**.
@@ -190,7 +190,7 @@ your brief assigns it.
 
 ## Report
 
-At most **800 words**, and every check carries its control count. Return this shape, with page
+Report every finding, and every check carries its control count. Return this shape, with page
 names in code font rather than links:
 
 ```markdown
@@ -225,8 +225,8 @@ names in code font rather than links:
 - `needs: <path> because <reason>` — one line per grant you lacked, with the check it stopped
 ```
 
-Where the report would run past 800 words, cut the enumerations, never the controls or the gaps:
-a shortened finding list with its counts intact is readable; a clean-looking report with no
+Keep enumerations concise and complete, including the controls and gaps:
+a finding list with its counts intact is readable; a clean-looking report with no
 controls is not evidence.
 
 ## Hard constraints

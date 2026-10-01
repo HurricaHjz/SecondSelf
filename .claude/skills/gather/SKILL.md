@@ -87,20 +87,33 @@ prose):
   existing paths, sanitises, stamps provenance frontmatter, appends to the ledger, runs the
   capture quality gate; `--allow-degraded '<why>'` for a declared acceptance). `check`: the
   quality gate alone on stdin — pre-write probe, no write, no
-  ledger. `dedup --urls u1,u2 --control <known-present URL>`: vault de-dup over
-  `source_url`/`converted_from` across `raw/` + `wiki/` (candidates comma- or
-  whitespace-separated; the control URL must hit or the scan aborts — proof the probe ran,
-  CLAUDE.md §11; `--allow-no-control` only for a provably fresh vault, declared).
+  ledger. `dedup --urls u1,u2 [--titles 'T1' 'T2'] --control <known-present URL>`: vault de-dup over
+  `source_url`/`converted_from` across `raw/` + `wiki/`, plus the arXiv ids and DOIs in those URLs and
+  each normalised title against `wiki/sources/` + `raw/` frontmatter, with the key code in the ingest
+  skill's `dedup_probe.py` (a paper compiled from a local PDF has no `source_url`)
+  (candidates comma- or whitespace-separated, titles one argument each; the control URL must hit or
+  the scan aborts — proof the probe ran, CLAUDE.md §11; `--allow-no-control` only for a provably
+  fresh vault, declared).
+- `capture_write.py`, the browser-rung options: `write … [--resolved-url R]` stamps `resolved_url:`
+  beside `source_url:` when the body came from an open copy, and `dedup` greps `resolved_url:` too;
+  `check [--engine E] [--url U]` adds the abstract-page rule when E names `chrome-burner`, which
+  `write` applies to such an engine as well and `--allow-degraded` never lifts.
+- `oa_resolve.py <doi|arXiv id|url|title> [--json] [--hand-fetch]` — the open-access resolver
+  (stdout only): Unpaywall, OpenAlex, the arXiv API and Europe PMC in order; prints
+  `RESOLVED <url> via <source>`, `UNRESOLVED` or `PROBE FAILED` (exit 0/1/2); `--hand-fetch`
+  prints the hand-fetch block for an unresolved row. Set `OA_CONTACT_EMAIL` to your own API
+  contact address before using the resolver. A missing or malformed value is a prerequisite
+  failure and makes no request.
 - `run_ledger.py` — `init --id <run-id> --budget N` · `add-gate` · `add-drop` · `add-round` ·
   `raise-budget --id ID --to N --reason '<why>'` (the audited budget-raise path; `init --force`
   is for genuine restarts only and refuses once the ledger records any state).
 - `repo_pack.py` — repo study: `clone` a shallow sha-pinned working copy into
   `~/.llm-wiki/repos/` (outside the vault, disposable), select paths AFTER reading, then
   `pack-and-write` one immutable commit-pinned pack through capture_write (exit-verified,
-  never a pipe; caps + fence escalation in the script; contract:
-  `wiki/developments/repo-pack-design.md`; since 2026-09-07 also the project store's snapshot path:
+  never a pipe; caps + fence escalation in the script; contract: the repo-pack design; since
+  2026-09-07 also the project store's snapshot path:
   `--repo` takes an absolute working-copy path, a dirty tree or a credential-bearing remote is refused,
-  `--allow-large` lifts the per-file cut, see `wiki/developments/project-store-design.md` D4). The resolved file list with byte totals is the
+  `--allow-large` lifts the per-file cut). The resolved file list with byte totals is the
   consent gate for a pack, and its cost line uses actual pack bytes/4, not the per-page default.
 
 **Capture chain** (type-routed, then fallback — same as ingest Step 0, carve-out included): `defuddle`
@@ -111,6 +124,7 @@ routes them, because defuddle's Markdown converter crashes on LaTeXML and silent
 `repo_pack.py` (see Scripts) · **Jina Reader** as the
 fallback when the routed engine fails (third-party routing — consented via the preflight, see the
 envelope).
+
 
 **Discovery engines & probes** (discovery informs the gate; only capture writes):
 - **WebSearch** per derived query, `--include`/`--exclude` mapped to allowed/blocked domains.
@@ -123,8 +137,7 @@ envelope).
   blog/newsletter coverage). Hits are triaged identically, metadata-only.
   Default X/Reddit posture (tier 3 inactive): login-walled — locate posts via WebSearch, read via
   the tier-1 Jina channel. A 0-result or auth failure on ANY platform engine is an engine failure:
-  report it, never a blank capture. Tier-3 governance:
-  `wiki/developments/agent-reach-adoption-design.md`.
+  report it, never a blank capture. Tier-3 governance: the agent-reach adoption design.
 - **Bounded pre-consent probes**, each declared at the gate it feeds: ≤6 throwaway WebFetch date
   checks per round on unclear finalists (never a capture path; unknown → mark "date unverified") ·
   ≤2 locate probes per round (a `gh` search, an arXiv listing lookup — when search returns only
@@ -222,7 +235,7 @@ approved at the gate, pages captured, where they landed in `raw/`, and that the 
 (`/tmp/gather-run-<id>.json`) may then be deleted — run-scoped scratch, never knowledge.
 
 ## Judgement & rationale (procedure as goal + reason — judgement chooses the HOW, never the
-WHETHER; every entry was bought by a live run)
+WHETHER)
 - **Query craft.** Goal: cover every sub-question, wide before narrow — unguided agents
   over-narrow. Derive per sub-question one WIDE and one NARROW phrasing by default; across the
   set cover the applicable expansion axes: terminology shift · entity-anchored (named
@@ -249,7 +262,7 @@ WHETHER; every entry was bought by a live run)
   auto-backfilled — offer a follow-up rule or round. An UNDATED living surface (an active repo's
   files, a vendor docs page) may pass the window on liveness evidence named in its row —
   host/repo activity (e.g. `pushed_at`) inside the window — while dated artefacts (posts,
-  announcements) pass only on publication date (precedent: the 2026-08-25 harness run).
+  announcements) pass only on publication date.
   **Backend-pain warn**: when a hard window forces ≥8 in-window verifications in one run, or the
   run's own row/drop reasons record region- or language-skew for the topic, SAY SO at the gate
   and note that an opt-in agent-grade search backend (API-side date/domain filters:
@@ -259,8 +272,8 @@ WHETHER; every entry was bought by a live run)
 - **Seed inventory.** Extraction strips site navigation, so a documentation host's structure
   never reaches the classifier through body links alone. When the seed host serves
   `sitemap.xml`, fetch it as a declared discovery-only probe (one `curl`, never a capture path)
-  and put BOTH counts in the run-spec echo ("13 linked from the seed body · 97 on the host
-  sitemap"); a missing, redirected, index-style or HTML-serving sitemap falls back to ONE
+  and put BOTH counts in the run-spec echo ("<body count> linked from the seed body · <sitemap count>
+  on the host sitemap"); a missing, redirected, index-style or HTML-serving sitemap falls back to ONE
   further declared probe of `/llms.txt` (docs hosts increasingly serve it; precedent:
   developers.openai.com, 2026-08-25); only when both are absent or empty does the probe degrade
   to link-only discovery, the degradation STATED at the preview — it never aborts the run and
@@ -277,8 +290,8 @@ WHETHER; every entry was bought by a live run)
   rounds shrink naturally; every round gets the same gate under the same semantics.
 - **Engine health.** When a formerly-working engine fails on ordinary pages (rot, not a
   one-off), the run report says so; after the run, the engine's class-rule upgrade may apply
-  automatically under the trusted-release criteria
-  (`wiki/developments/agent-reach-adoption-design.md`), reported from → to — never mid-run, and
+  automatically under the trusted-release criteria of the agent-reach adoption design,
+  reported from → to — never mid-run, and
   never for a release failing the criteria (those are reported for the owner).
 
 ## Pipeline (the funnel — order and gates; duties above)
@@ -294,9 +307,10 @@ ledger**: `python3 .claude/skills/gather/run_ledger.py init --id <run-id> --budg
     echo — into the pool.
 1.2 Triage on result metadata (multiplicity, provenance, relevance, dates — the hard-window
     policy and the backend-pain warn live in the rationale); state the advice count.
-    **Routing (parity gate G5, 2026-09-02 — `wiki/developments/fable-minimising-routing.md`):** *(applies under the `multi` regime, owner-set or head-resolved for the run under delegation `auto`; in `single` the head runs the step itself unless an instrument-rule reason holds — thin-lanes phase 4, 2026-09-04; delegation `auto` 2026-09-04)* the metadata triage runs in a read-only `verifier`-shaped lane on opus, blind to any expected shortlist, handed the pool WITH each hit's title, snippet, date and URL (a bare-URL pool loses exactly the signal-less rows, the gate's one caveat), the brief's facets, the declared provenance frame and the budget; it returns keep (ranked, one-line ground each), drop (ground each), anomalies (pool contamination, unverifiable rows, disclosed model priors) and its controls. The head reviews the lists, runs 1.3 and presents the Discover gate itself (1.4): the owner-facing step never routes. Gate evidence: two blind lanes kept every must-keep and no decoy.
-1.3 Vault de-dup pre-check: `capture_write.py dedup --urls … --control <known-present URL>`;
-    matches shown as "already in vault", never proposed.
+    **Routing (parity gate G5, 2026-09-02):** *(applies under the `multi` regime, owner-set or head-resolved for the run under delegation `auto`; in `single` the head runs the step itself unless an instrument-rule reason holds — thin-lanes phase 4, 2026-09-04; delegation `auto` 2026-09-04)* the metadata triage runs in a read-only `verifier`-shaped lane on opus, blind to any expected shortlist, handed the pool WITH each hit's title, snippet, date and URL (a bare-URL pool loses exactly the signal-less rows, the gate's one caveat), the brief's facets, the declared provenance frame and the budget; it returns keep (ranked, one-line ground each), drop (ground each), anomalies (pool contamination, unverifiable rows, disclosed model priors) and its controls. The head reviews the lists, runs 1.3 and presents the Discover gate itself (1.4): the owner-facing step never routes.
+1.3 Vault de-dup pre-check: `capture_write.py dedup --urls … --titles '<title>' … --control <known-present URL>`
+    (pass each hit's title, so a paper the vault compiled from a PDF still matches); matches shown as
+    "already in vault" with the key that matched, never proposed.
 1.4 Present the **Discover gate** (contents per the envelope's reporting duties; never skipped,
     even with `--yes`). Approval per the pinned semantics; record it in the ledger (`add-gate`;
     every explicit drop → `add-drop`; the round's literal queries + shown rows → `add-round`,
@@ -330,13 +344,12 @@ the envelope and rationale). Write every page through `capture_write.py write` �
 path. Then score every capture where it is written, the same line as ingest Step 0 3c:
 `python3 -B .claude/skills/ingest/conversion_score.py "raw/<path>.md"` — a capture carries
 `converted_by:`, so it is a conversion whatever its extension and is scored like one. One verdict
-line per capture with four measures and a `scope`; a web capture reads `scope: other` (a PDF, or an arXiv-HTML page taken through markitdown, reads `scope: pdf`), so a
+line per capture with five measures (four text arms and recovery) and a `scope`; a web capture reads `scope: other` (a PDF, or an arXiv-HTML page taken through markitdown, reads `scope: pdf`), so a
 `suspect` here is carried into the run report under `Suspect conversions:` with its scope and
 measures (read the line: identifiers and product names fire it, real damage — lost tables, lost
 inter-word spaces — does too) and raises no `flagged:` line by itself; the page that later compiles
 the capture takes ingest 3c's decision. The verdict is reported, not written back into the capture:
-`capture_write.py` stays the sole write path (2026-09-08: two of the three damage admissions lint
-found sat on captures no check had ever scored). For `--expand > 1`, repeat Steps 3–5 on the newly
+`capture_write.py` stays the sole write path. For `--expand > 1`, repeat Steps 3–5 on the newly
 captured pages, re-previewing each hop (unless `--yes`).
 ### 6 — Rounds (search mode, `--rounds > 1`)
 Per the rounds rationale: open gaps → the new facet list → re-enter Step 1, re-running
@@ -357,3 +370,4 @@ deliverable) — discovery + capture here, reporting there. Then log per the env
   the compiled pages. gather + ingest + query/output together replace external deep-research tools.
 
 > **Standing derivative**: `output/user-notes/gather-ingest-quick-reference.md` — a change to this skill's user-facing workflow (commands, flags, gates, report shape) updates that note in the same pass (§2 output contract).
+

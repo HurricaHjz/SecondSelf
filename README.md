@@ -1,5 +1,7 @@
 # Second Yourself
 
+Pre-release: the design changes often until v1.0. Forks are welcome; pull updates often.
+
 **Second yourself. An AI that remembers you, on an Obsidian wiki that maintains itself.**
 
 > *Tony Stark never had to reintroduce himself to Jarvis. With today's AI you do it every day: close the chat, and everything you explained is gone.*
@@ -26,7 +28,7 @@ Once populated, the wiki can:
 * **Persistent insight:** It proactively synthesises across your sources and offers to save valuable answers as permanent, linked notes, so a brilliant idea from a conversation can be preserved instead of lost when the chat ends.
 * **Self-maintenance and growth:** The system actively cross-links files, merges duplicates, and flags conflicting information or knowledge gaps. It automatically maintains your catalogue and graph as your information compounds.
 
-Reliability is built in rather than hoped for. Every answer cites the pages it drew on. Every page carries a graded trust level. Every check runs against a planted control, so a silent failure cannot pass as a clean result. Every change to the framework itself is reviewed by an independent critic agent before it lands.
+Reliability is built in rather than hoped for. Every answer cites the pages it drew on. Every knowledge page carries a graded trust level. A check that finds nothing must first show it can catch a planted case, so a silent failure is not read as a clean result. Plans that change the framework are reviewed by an independent critic agent before they are approved.
 
 We purposely designed the architecture to be universal and highly adaptable. Although it is pre-tuned for AI and machine learning research (treating models and benchmarks as primary note types), you can easily customise the repository to perfectly fit your own field or workflow. You can also personalise the agent itself in `CUSTOMISATION.md`, created on first setup: its name, tone, output styles and task roles come as starter examples, and the file is open-ended, so add whatever standing preferences you want every session to follow.
 
@@ -45,6 +47,8 @@ This is a framework rather than a plugin: it runs on an AI coding agent that rea
    ```
 
    `python3`, `curl`, and `git` are also used, and are usually already present.
+
+   Codex lanes require an installed, authenticated Codex CLI; select model and effort options supported by that installation. The delegate skill documents their invocation. The open-access resolver requires your own `OA_CONTACT_EMAIL` configuration. The professor-loop authoring workflow is not included in this release.
 
 3. **Capture skills (recommended).** Install kepano's [obsidian-skills](https://github.com/kepano/obsidian-skills). The agent uses `defuddle` for clean web capture and `obsidian-cli` for vault access. Without them, the framework falls back to `curl` and MarkItDown.
 

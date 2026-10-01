@@ -48,18 +48,10 @@ Billing definitions, each with its derivation:
     entry, rewrites the whole context at the write rate instead of reading it, so the call
     writes back what the previous call held AND reads next to none of its own context. The
     own-context half is what separates a rewrite from a long turn that reads its prefix from
-    the cache and appends a large tool result: without it — the rule shipped until 2026-09-05,
-    which tested the previous context alone — 37 of the 174 calls flagged in a sweep of one
-    harness projects directory (444 transcripts, 13,148 calls, 2026-09-05) had read most of
-    their own context back rather than rewriting it (written fraction 0.48 to 0.90), while the
-    same rule's `previous_context and` guard silently dropped 43 true rewrites, every one of
-    them following a call whose usage record carried four zeros. The 0.9 itself is set by
-    judgement: in that sweep 98% of the 12,565 non-first calls wrote under half their own
-    context and 129 wrote essentially all of it, but the tail between is continuous (nearest
-    calls either side of the line: 0.8995 and 0.9009), so the tenth of slack is a choice about
-    how much of a turn's own growth to absorb, not a gap the data draws. No token floor is
-    applied: the smallest write the rule flagged in that sweep was 45,318 tokens, so the
-    20,000-token floor of the head-side probe that opened the question would have cut nothing.
+    the cache and appends a large tool result. Require both the own-context and previous-context
+    conditions; a zero-usage predecessor must not suppress a real rewrite. The fraction 0.9
+    leaves a tenth of headroom for turn growth, set by judgement, unmeasured for a new workload.
+    No token floor is applied: the classifier labels calls without deciding what to run.
     `rewrites k ($w)` counts those calls and prices their cache writes alone (the part of the
     call the rewrite added).
   - rewrite cause — every counted rewrite carries exactly one of `switch`, `lapse`, `limit` or
@@ -87,8 +79,8 @@ Billing definitions, each with its derivation:
     per agent kind (head, lanes). Counting is by block id across every record of a message,
     because the harness writes one transcript line per content block and the final record
     carries only its own block; block ids are distinct, so no block is counted twice. The
-    ratio matches the harness's own per-lane `tool_uses` figure where a spawn record holds
-    one (checked against one lane of run 2026-09-04: 22 of 22).
+    ratio is meant to match the harness's own per-lane `tool_uses` figure where a spawn record
+    holds one.
   - reason tally — the letters (a) to (d) read out of each `lane-open` event's `reason`
     field in the run's spawn record (`--spawn-record`): the bracketed form anywhere in the
     text, or a leading bare letter with a colon or a spaced dash (`a:`, `a —`, `a -`), the
@@ -121,7 +113,12 @@ partition, which is the metered one unless the paragraph below says otherwise �
 `--lanes` finds, de-duplicated by content identity as usual, and `metered n of m recorded`
 states how many `lane-open` events were matched to a metered transcript. A mismatch is a
 flag on the line, not a premise failure: the figures printed are still real, and the exit
-code stays 0, because an unmetered lane understates the bill rather than corrupting it.
+code stays 0, because an unmetered lane understates the bill rather than corrupting it. A
+plan-usage lane — a Codex lane, whose `lane-open` carries `harness: codex` — has no Claude
+transcript by design: it stays in `m`, is named on the clause as `(k plan-usage lane(s): a
+Codex lane is counted, never priced)`, and is left out of the lanes the unmatched flag
+expects a transcript for (register entry 2026-09-10 17:43), so only a transcript lane that
+is missing raises `[MISMATCH: n recorded lane(s) unmatched]`.
 
 A run outlives one head session, so the record is partitioned before any of that is counted.
 `run-open` and `run-resume` each name the session that wrote the events after it; every lane
@@ -169,8 +166,11 @@ unreadable; a marker does not match; the window holds no assistant record; the w
 inverted; lane scanning finds no readable transcript at all; lane discovery finds a number
 of lanes other than --expect-lanes; a flag cannot yield a meaningful figure (a negative
 baseline, an expectation that cannot be checked); a spawn record that is missing, unreadable
-or holds no lane event. An unforeseen error is reported the same way, with its traceback on
-stderr, so a crash can never masquerade as a metered run.
+or holds no parseable event at all. An unforeseen error is reported the same way, with its
+traceback on stderr, so a crash can never masquerade as a metered run. A spawn record that
+holds events but no `lane-open` is not a broken premise (2026-09-13): it is a run before its
+first lane, its zero is the record's own count, and the head is metered alone with `lanes 0`
+on the billed line, under `--lanes none` and `--lanes auto` alike.
 
 Billing has the same discipline, one step later and with its own line. When the metering
 succeeded but the pricing premise fails, the `fable share:` line still prints (it needs no
@@ -184,13 +184,20 @@ carrying a non-numeric or non-positive rate; every model id matching no price fa
 id beside a priced family is priced-with-an-unpriced-list instead, 2026-09-04); the
 known-positive control failing. That control runs on every invocation before any billed
 figure is printed: the script prices one built-in fixture call (1,000,000 input, 400,000
-cache read, 200,000 5-minute write, 100,000 1-hour write, 50,000 output tokens on a Fable
-id) and asserts the table returns $17.10 — 10.00 + 0.10 + 2.50 + 2.00 + 2.50, hand-computed
-against the rates the shipped table carries at its date. The anchor is keyed to that date:
-when the table is re-priced and its `prices_date` moves, the anchor no longer binds and the
-control degrades to its table invariants (every family present and positively priced, the
-fixture priced above zero and strictly increasing in each of the five quantities), saying so
+cache read, 200,000 5-minute write, 100,000 1-hour write, 50,000 output tokens) on three
+ids and asserts the table returns the hand-computed dollars for each: a Fable id $17.10
+(10.00 + 0.10 + 2.50 + 2.00 + 2.50), claude-opus-5-5 $6.88 (4.00 + 0.08 + 1.00 + 0.80 + 1.00,
+the family row) and claude-opus-5 $8.70 (5.00 + 0.20 + 1.25 + 1.00 + 1.25, the exact-id row),
+against the rates the shipped table carries at its date (2026-09-22). The anchors are keyed to
+that date: when the table is re-priced and its `prices_date` moves, they no longer bind and
+the control degrades to its table invariants (every family present and positively priced, the
+fixtures priced above zero and strictly increasing in each of the five quantities), saying so
 on the control line rather than failing a legitimate re-pricing or passing silently.
+
+An id is priced by an exact entry in the table's `ids` block first (full-id equality, never a
+prefix), then by family substring (2026-09-22): lanes that ran on claude-opus-5 before the
+`opus` alias moved to claude-opus-5-5 keep the Opus 5 list, and the per-model row names the
+id row it took.
 
 A malformed record never crashes the run and is never guessed at: a record whose message is
 not an object, whose id is unusable, or whose usage carries a non-numeric value is counted
@@ -239,12 +246,15 @@ Usage (from anywhere; nothing is assumed about the working directory):
   marker matching more than once takes the first match and reports the others.
   --lanes auto searches both known homes for in-session lane transcripts, the durable
   <project-dir>/<session>/subagents/agent-*.jsonl and the volatile
-  <tmp-root>/claude-*/<project-basename>/<session>/tasks/*.output (observed 2026-09-02),
+  <tmp-root>/claude-*/<project-basename>/<session>/tasks/*.output,
   de-duplicated by content identity: the volatile entries are frequently symlinks to the
   durable files, and some are not transcripts at all. --lanes none meters the head alone and
   asserts no share. Scanning that reaches no readable transcript is a broken premise, since
   a zero lane total would otherwise be a claim with no control behind it; --expect-lanes 0
-  is how a run with genuinely no lanes asserts that on purpose.
+  is how a run with genuinely no lanes asserts that on purpose, and a --spawn-record holding
+  no lane-open event makes the same assertion from the record: the scan still runs (an
+  unrecorded in-session lane it finds is metered and flagged), and one reaching nothing
+  prints `lanes 0` rather than failing.
   --spawn-record adds discovery by id from a run's spawn record (see above) and turns on the
   reason tally and the recorded-lane count; --projects-root (default ~/.claude/projects) is
   where a headless lane's own session file is looked for, across every project directory
@@ -268,6 +278,7 @@ Usage (from anywhere; nothing is assumed about the working directory):
 import argparse
 import glob
 import json
+import math
 import os
 import re
 import sys
@@ -280,8 +291,7 @@ TIER_5M = "ephemeral_5m_input_tokens"
 TIER_1H = "ephemeral_1h_input_tokens"
 ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]")
 REASON_RE = re.compile(r"\(([a-dA-D])\)")
-# A leading bare letter followed by a colon or a spaced dash (`a:`, `a —`, `a -`): the forms two
-# heads wrote live, which the bracketed pattern alone read as `none` (register, 2026-09-06).
+# Accept a leading bare letter followed by a colon or a spaced dash as well as bracketed forms.
 # lane.py's REASON_LEAD_RE is the twin that refuses a reason carrying none of the forms.
 REASON_LEAD_RE = re.compile(r"^\s*([a-dA-D])\s*(?::|[\u2014-](?=\s|$))")
 DELEGATION_RE = re.compile(r"^\s*[-*]\s+\*\*delegation\*\*:\s*([A-Za-z][\w-]*)")
@@ -291,14 +301,9 @@ REGIMES = ("single", "multi")     # what a run actually runs under; `auto` is re
 # write is at least this fraction of BOTH the previous call's context and its own (input +
 # cache read + cache write) — it wrote back what the previous call held and read next to none
 # of it. The own-context half is what separates a rewrite from a long turn that reads its
-# prefix from the cache and appends a large tool result: on the previous-context test alone,
-# 37 of 174 flagged calls in a sweep of one harness projects directory (444 transcripts,
-# 13,148 calls, 2026-09-05) were ordinary writes. The fraction itself is set by judgement: in
-# that sweep 98% of non-first calls wrote under half their own context and 129 wrote
-# essentially all of it, but the tail between is continuous (0.8995 below the line, 0.9009
-# above), so the tenth of slack absorbs the turn's own growth by choice rather than by a gap
-# in the data. No token floor accompanies it: the smallest write the rule flagged in that
-# sweep was 45,318 tokens. It labels calls; it decides nothing.
+# prefix from cache and appends a tool result. Require both contexts; the 0.9 fraction leaves
+# a tenth of growth headroom, set by judgement, unmeasured for a new workload. No token floor
+# accompanies the classifier: it labels calls and makes no execution decision.
 REWRITE_FRACTION = 0.9
 # The two cache tiers the harness documents and this script has always priced apart (the
 # `ephemeral_5m_input_tokens` / `ephemeral_1h_input_tokens` fields of a usage record, and the
@@ -321,13 +326,16 @@ CAUSE_ORDER = ("switch", "lapse", "limit", "unknown")   # the order they are rep
 # is re-priced the anchor stops binding and the invariant checks below carry the control.
 CONTROL_MODEL = "claude-fable-5-1"
 CONTROL_USAGE = (1000000, 400000, 200000, 100000, 50000)   # input, read, write5m, write1h, out
-CONTROL_DATE = "2026-09-03"
-CONTROL_USD = 17.10
+CONTROL_DATE = "2026-09-22"        # the table date the anchors below were hand-computed against
+CONTROL_USD = 17.10                # the Fable anchor (unchanged since 2026-09-03: the Fable row did not move)
+# Every anchor the control checks at CONTROL_DATE: (model id, hand-computed dollars). The first is
+# the Fable anchor above; the Opus 5.5 family row and the Opus 5 exact-id row joined with the table of 2026-09-22.
+CONTROL_ANCHORS = ((CONTROL_MODEL, CONTROL_USD), ("claude-opus-5-5", 6.88), ("claude-opus-5", 8.70))
 CONTROL_TOLERANCE = 0.005          # half a cent: the line prints dollars to two places
 PRICE_FIELDS = ("input", "output", "read_mult", "write_5m_mult", "write_1h_mult")
 # A bound with headroom, not a decision threshold: the diagnostic scan of sibling project
-# directories stops here. The harness home this was written against held 6 project
-# directories (2026-09-02), so the cap leaves about two orders of magnitude of room.
+# directories stops here; set by judgement, unmeasured, with wide headroom over a typical harness
+# home.
 SIBLING_SCAN_CAP = 500
 
 
@@ -620,9 +628,8 @@ def aggregate(rows, tier_s=None, limit_stamps=()):
         # A full-context rewrite writes back what the previous call held (the second test)
         # AND reads next to none of its own context from the cache (the first). A call whose
         # usage records no context at all rewrote nothing, so it is never one; testing the
-        # previous context alone counted long turns that appended a large tool result, and
-        # guarding on a truthy previous context dropped the rewrites that followed a call
-        # recording four zeros (both measured 2026-09-05, see REWRITE_FRACTION).
+        # Require both conditions so appended tool output is not a rewrite, and a preceding
+        # zero-usage call cannot suppress a real rewrite.
         elif (context and cache_write >= REWRITE_FRACTION * context
               and cache_write >= REWRITE_FRACTION * previous_context):
             totals["rewrites"] += 1
@@ -845,27 +852,51 @@ def load_prices(path):
         return None, "price table carries no family_order: %s" % path
     if not isinstance(table.get("prices_date"), str):
         return None, "price table carries no prices_date: %s" % path
-    for name in order:
-        rates = families.get(name)
+    ids = table.get("ids", {})
+    if not isinstance(ids, dict):
+        return None, "price table carries an `ids` block that is not an object: %s" % path
+    for name, rates in list(zip(order, (families.get(n) for n in order))) + sorted(ids.items()):
         if not isinstance(rates, dict):
             return None, "price table lists family %r in family_order but carries no rates for it" % name
         for field in PRICE_FIELDS:
             value = rates.get(field)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
-                # A zero or missing rate would price real tokens at nothing, which is the one
-                # thing the billed line must never do.
+            if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                    or not math.isfinite(value) or value <= 0):
+                # A zero, missing or non-finite rate would price real tokens at nothing or at
+                # NaN, which the billed line must never do (NaN passes a `<= 0` test: critic
+                # finding 4, 2026-09-22). An `ids` row is held to the same bar.
                 return None, "price table field %s of family %s is not a positive number: %r" % (
                     field, name, value)
     return table, None
 
 
 def family_for(model, table):
-    """The price family of a model id, by substring in the table's stated order."""
+    """The price key of a model id: an exact entry in the table's `ids` block first (the key is
+    then the id itself, full equality, never a prefix: claude-opus-5-5 must not take the
+    claude-opus-5 row), else the first family name the lower-cased id contains, in the table's
+    stated order. None when neither matches."""
+    ids = table.get("ids")
+    if isinstance(ids, dict) and model in ids:
+        return model
     text = (model or "").lower()
     for name in table["family_order"]:
         if name.lower() in text:
             return name
     return None
+
+
+def rates_of(table, key):
+    """The rate row a price key names: an `ids` row when the key is an id, else the family row."""
+    ids = table.get("ids")
+    if isinstance(ids, dict) and key in ids:
+        return ids[key]
+    return table["families"][key]
+
+
+def price_label(table, key):
+    """What the per-model row prints after the id: the family, or `id row` for an exact id."""
+    ids = table.get("ids")
+    return "id row" if isinstance(ids, dict) and key in ids else key
 
 
 def price_tokens(rates, inp, read, w5, w1, out):
@@ -884,28 +915,34 @@ def price_control(table):
     when the table has been re-priced since, the anchor cannot bind and the invariants below
     carry the control instead — stated on the control line, never silently dropped.
     """
-    family = family_for(CONTROL_MODEL, table)
-    if family is None:
-        return False, "control fixture model %s matches no family in the table" % CONTROL_MODEL
-    rates = table["families"][family]
-    got = price_tokens(rates, *CONTROL_USAGE)
-    if got <= 0:
-        return False, "control fixture priced at $%.2f, which cannot be right" % got
-    for position in range(len(CONTROL_USAGE)):
-        more = list(CONTROL_USAGE)
-        more[position] += 1000
-        if price_tokens(rates, *more) <= got:
-            # Every quantity must cost something: a table that prices one of them at nothing
-            # would silently zero a whole column of the bill.
-            return False, "control fixture price does not rise with quantity %d" % position
+    priced = []
+    for model, anchor in CONTROL_ANCHORS:
+        family = family_for(model, table)
+        if family is None:
+            return False, "control fixture model %s matches no family in the table" % model
+        rates = rates_of(table, family)
+        got = price_tokens(rates, *CONTROL_USAGE)
+        if not math.isfinite(got) or got <= 0:
+            return False, "control fixture %s priced at $%.2f, which cannot be right" % (model, got)
+        for position in range(len(CONTROL_USAGE)):
+            more = list(CONTROL_USAGE)
+            more[position] += 1000
+            if price_tokens(rates, *more) <= got:
+                # Every quantity must cost something: a table that prices one of them at nothing
+                # would silently zero a whole column of the bill.
+                return False, "control fixture %s price does not rise with quantity %d" % (model, position)
+        priced.append((model, got, anchor))
     if table["prices_date"] != CONTROL_DATE:
+        got, anchor = priced[0][1], priced[0][2]
         return True, ("fixture $%.2f, anchor $%.2f not applicable (table dated %s, "
-                      "anchor %s); invariants checked"
-                      % (got, CONTROL_USD, table["prices_date"], CONTROL_DATE))
-    if abs(got - CONTROL_USD) > CONTROL_TOLERANCE:
-        return False, ("control fixture priced at $%.4f against the hand-computed $%.2f for the "
-                       "table dated %s" % (got, CONTROL_USD, CONTROL_DATE))
-    return True, "fixture $%.2f matches the hand-computed anchor for %s" % (got, CONTROL_DATE)
+                      "anchor %s); invariants checked on %d fixtures"
+                      % (got, anchor, table["prices_date"], CONTROL_DATE, len(priced)))
+    for model, got, anchor in priced:
+        if abs(got - anchor) > CONTROL_TOLERANCE:
+            return False, ("control fixture %s priced at $%.4f against the hand-computed $%.2f for the "
+                           "table dated %s" % (model, got, anchor, CONTROL_DATE))
+    return True, "fixtures %s match the hand-computed anchors for %s" % (
+        ", ".join("$%.2f" % got for _, got, _ in priced), CONTROL_DATE)
 
 
 def read_settings_delegation(vault):
@@ -962,7 +999,7 @@ def read_state_delegation(state_dir, session):
 def read_spawn_record(path):
     """The run's lanes as its spawn record has them, partitioned by head session.
 
-    Reads three lane event shapes, all observed in real records: `lane-open` (the lane's name
+    Reads three lane event shapes: `lane-open` (the lane's name
     and its reason), `lane-spawned` (one lane's `agent_id`) and `lanes-spawned` (a `lanes` map
     of name to agent id, written when several lanes go out together). A lane's transcript is
     found by `agent_id` in the session's subagents directory, or by `session_id` — a headless
@@ -976,7 +1013,9 @@ def read_spawn_record(path):
     id) adds a span to the lane it names — the lane then belongs to the resume's partition
     too, from the resume's timestamp on — so a lane resumed by a later head is billed to that
     head for the resume and to its opener for the first run. Returns (lanes, unparseable,
-    partitions, has_markers, unopened_resumes): each lane carries the index of the partition
+    partitions, has_markers, unopened_resumes, limit_stops, events) — `events` counts the
+    parseable event objects of any kind, the premise a lane-less record is read against: each
+    lane carries the index of the partition
     that opened it and its `spans` (partition and timestamp of the open and of every resume,
     in record order); a partition whose marker named no session carries None, never a guess;
     a resume naming a lane the record never opened is counted, never invented. A record with
@@ -996,6 +1035,7 @@ def read_spawn_record(path):
     by_name = {}
     limit_stops = []
     unparseable = 0
+    events = 0
     unopened_resumes = 0
     partitions = [{"kind": "none", "session": None}]
     current = 0
@@ -1012,6 +1052,7 @@ def read_spawn_record(path):
             if not isinstance(rec, dict):
                 unparseable += 1
                 continue
+            events += 1
             event = rec.get("event")
             name = rec.get("lane")
             if event in ("run-open", "run-resume"):
@@ -1026,6 +1067,7 @@ def read_spawn_record(path):
                 tier = rec.get("cache_tier_expected")
                 lane = {"name": name, "reason": reason if isinstance(reason, str) else "",
                         "agent_id": None, "session_id": None, "partition": current,
+                        "harness": rec.get("harness") if isinstance(rec.get("harness"), str) else None,
                         "cache_tier": tier if isinstance(tier, str) else None,
                         "pick": pick_fields(rec),
                         "spans": [{"partition": current, "ts": parse_ts(rec.get("ts")),
@@ -1069,7 +1111,8 @@ def read_spawn_record(path):
                         continue
                     if lane["agent_id"] is None:
                         lane["agent_id"] = value
-    return lanes, unparseable, partitions, has_markers, unopened_resumes, sorted(limit_stops)
+    return (lanes, unparseable, partitions, has_markers, unopened_resumes, sorted(limit_stops),
+            events)
 
 
 def seed_sessions(path):
@@ -1166,9 +1209,16 @@ def resolve_recorded_lanes(lanes, project_dir, session, projects_root):
     describe the partition being metered (the lanes flagged `selected`).
     """
     paths = {}
-    notes = {"in_session": 0, "headless": 0, "no_id": 0, "not_found": 0, "ambiguous": 0}
+    notes = {"in_session": 0, "headless": 0, "no_id": 0, "not_found": 0, "ambiguous": 0,
+             "codex_plan": 0}
     for lane in lanes:
         mine = lane.get("selected")
+        if lane.get("harness") == "codex":
+            # A Codex lane (codex-lane.py, 2026-09-09) has no Claude transcript: its usage sits
+            # on the ChatGPT plan and its close line carries total_cost_usd null. Counted here,
+            # never searched for, so it is neither `not_found` nor priced.
+            notes["codex_plan"] += mine
+            continue
         agent_id = lane.get("agent_id")
         session_id = lane.get("session_id")
         # An in-session lane sits under the session that spawned it, which is its partition's
@@ -1372,7 +1422,7 @@ def price_agent(totals, table):
         if family is None:
             unknown.add(model)
             continue
-        rates = table["families"][family]
+        rates = rates_of(table, family)
         usd += price_tokens(rates, per["input"], per["cache_read"],
                             per["write_5m"], per["write_1h"], per["output"])
     for model, tier in totals["rewrite_tiers"].items():
@@ -1380,7 +1430,7 @@ def price_agent(totals, table):
         if family is None:
             unknown.add(model)
             continue
-        rates = table["families"][family]
+        rates = rates_of(table, family)
         rewrite_usd += price_tokens(rates, 0, 0, tier["write_5m"], tier["write_1h"], 0)
     return usd, rewrite_usd, unknown
 
@@ -1500,18 +1550,24 @@ def main():
     record_selected, record_label, sessionless = None, None, 0
     unsplittable, unopened_resumes = 0, 0
     limit_stops, limit_stamps = [], []
+    laneless = False            # set below when a spawn record holds no lane-open event
     if args.spawn_record is not None:
         record_path = os.path.expanduser(args.spawn_record)
         if not os.path.isfile(record_path):
             die("spawn record not found: %s" % record_path)
         try:
             (record_lanes, record_unparseable, partitions, has_markers,
-             unopened_resumes, limit_stops) = read_spawn_record(record_path)
+             unopened_resumes, limit_stops, record_events) = read_spawn_record(record_path)
         except OSError as exc:
             die("spawn record unreadable: %s (%s)" % (record_path, exc))
-        if not record_lanes:
-            # A record with no lane-open event cannot support the tally it was passed for.
-            die("spawn record holds no lane-open event: %s" % record_path)
+        if not record_events:
+            # Nothing parseable at all (an empty or corrupted file) is no record of a run.
+            die("spawn record holds no parseable event: %s (%d unparseable line(s))"
+                % (record_path, record_unparseable))
+        # A record holding events but no lane-open is a run before its first lane (register
+        # entry of 2026-09-10 13:44): its zero is the record's own count, never a premise failure:
+        # the head is metered alone, the line says `lanes 0`, the tallies read zero.
+        laneless = not record_lanes
         # Only this session's partitions are expected here: a lane belongs to every partition
         # it ran under (its open and each resume), and a lane that ran under more than one
         # session is clipped to this session's spans below. Without a run marker the record
@@ -1537,6 +1593,8 @@ def main():
             if has_markers and len(sessions) > 1:
                 lane["clip"] = span_clip(lane["spans"], mine)
                 lane["unsplittable"] = lane["clip"] is None
+        if laneless and has_markers:
+            chosen = set(mine)          # no lane to place: the label names this session's markers
         record_selected = [lane for lane in record_lanes if lane["selected"]]
         unsplittable = len([lane for lane in record_selected if lane["unsplittable"]])
         if has_markers:
@@ -1587,9 +1645,10 @@ def main():
                                      sorted(path for path, lane in record_paths.items()
                                             if lane["selected"]))
         scan["unsplittable"] = 0
-        if scan["unique"] == 0 and args.expect_lanes != 0:
+        if scan["unique"] == 0 and args.expect_lanes != 0 and not laneless:
             # A zero lane total off a scan that reached nothing would be a claim with no
-            # control behind it, so it is a broken premise rather than a share of 100%.
+            # control behind it, so it is a broken premise rather than a share of 100%. A
+            # spawn record holding no lane-open event is that control, as --expect-lanes 0 is.
             die("no readable lane transcript found (%d candidate(s), %d skipped) under: %s "
                 "— use --lanes none to meter the head alone, or --expect-lanes 0 to assert there were none"
                 % (scan["candidates"], scan["skipped"], " ".join(searched)))
@@ -1730,6 +1789,15 @@ def main():
     lane_calls = sum(lane["calls"] for lane in lanes)
     lane_tools = sum(lane["tool_uses"] for lane in lanes)
     recorded_total = None if record_lanes is None else len(record_selected)
+    # A plan-usage lane (a Codex lane, `harness: codex` on its lane-open) has no Claude
+    # transcript to match and is counted, never priced (register entry 2026-09-10 17:43): it is
+    # named on the line and left out of the lanes a transcript is expected for, so the
+    # unmatched flag never fires on it by design. Every other recorded lane is still expected.
+    plan_lanes = (0 if record_lanes is None
+                  else len([lane for lane in record_selected if lane.get("harness") == "codex"]))
+    expected_total = None if recorded_total is None else recorded_total - plan_lanes
+    plan_clause = ("" if not plan_lanes else
+                   " (%d plan-usage lane(s): a Codex lane is counted, never priced)" % plan_lanes)
     matched_names = set(lane.get("recorded_name") for lane in lanes
                         if lane.get("recorded_here")) - {None}
     metered_recorded = None if record_lanes is None else len(matched_names)
@@ -1739,16 +1807,16 @@ def main():
     unrecorded_metered = (0 if record_lanes is None
                           else len([lane for lane in lanes if not lane.get("recorded_name")]))
     if mode == "none":
-        metered_clause = "metered n/a of %s %s" % (
+        metered_clause = "metered n/a of %s %s%s" % (
             "n/a" if recorded_total is None else recorded_total,
-            record_label or "recorded")
+            record_label or "recorded", plan_clause)
         mismatch = None
     else:
-        metered_clause = "metered %s of %s %s" % (
+        metered_clause = "metered %s of %s %s%s" % (
             len(lanes) if recorded_total is None else metered_recorded,
             "n/a" if recorded_total is None else recorded_total,
-            record_label or "recorded")
-        mismatch = None if recorded_total is None else (metered_recorded != recorded_total
+            record_label or "recorded", plan_clause)
+        mismatch = None if recorded_total is None else (metered_recorded != expected_total
                                                         or bool(unrecorded_metered)
                                                         or bool(other_session_metered)
                                                         or bool(sessionless)
@@ -1756,8 +1824,12 @@ def main():
                                                         or bool(unopened_resumes))
         if mismatch:
             flags = []
-            if metered_recorded != recorded_total:
-                flags.append("%d recorded lane(s) unmatched" % (recorded_total - metered_recorded))
+            if metered_recorded < expected_total:
+                flags.append("%d recorded lane(s) unmatched" % (expected_total - metered_recorded))
+            elif metered_recorded > expected_total:
+                # Only a name shared by a plan-usage lane and a transcript lane reaches here.
+                flags.append("%d metered lane name(s) beyond the %d recorded lane(s) a transcript "
+                             "is expected for" % (metered_recorded - expected_total, expected_total))
             if other_session_metered:
                 flags.append("%d metered lane(s) from another session of this run"
                              % other_session_metered)
@@ -1789,7 +1861,7 @@ def main():
                           fmt_ratio(head["tool_uses"], head["calls"]),
                           "n/a" if mode == "none" else fmt_ratio(lane_tools, lane_calls),
                           delegation_clause, baseline_label,
-                          "not scanned" if mode == "none" else len(lanes),
+                          (0 if laneless else "not scanned") if mode == "none" else len(lanes),
                           fmt_tally(tally), fmt_picks(picks, picks_unavailable), metered_clause))
         if unpriced:
             billed_line += " · unpriced %s" % ", ".join(
@@ -1800,11 +1872,11 @@ def main():
             if family is None:
                 model_lines.append("  %s: unpriced (%d calls; no price family)" % (model, row["calls"]))
                 continue
-            usd = price_tokens(table["families"][family], row["input"], row["cache_read"],
+            usd = price_tokens(rates_of(table, family), row["input"], row["cache_read"],
                                row["write_5m"], row["write_1h"], row["output"])
             model_lines.append(
                 "  %s (%s): %s · in %s · read %s · write 5m %s / 1h %s · out %s · tools %d · $%.2f"
-                % (model, family, plural(row["calls"], "call"), format(row["input"], ","),
+                % (model, price_label(table, family), plural(row["calls"], "call"), format(row["input"], ","),
                    format(row["cache_read"], ","), format(row["write_5m"], ","),
                    format(row["write_1h"], ","), format(row["output"], ","),
                    row["tool_uses"], usd))
@@ -1894,10 +1966,11 @@ def main():
                 "picks_unavailable": picks_unavailable,
                 "picks_routing": routing_path,
                 "spawn_record": args.spawn_record,
+                "spawn_record_laneless": laneless,
                 "spawn_record_resolution": record_notes,
                 "untiered_write_records": untiered,
                 "per_model": {model: dict(row, usd=(None if family_for(model, table) is None else round(price_tokens(
-                table["families"][family_for(model, table)], row["input"], row["cache_read"],
+                rates_of(table, family_for(model, table)), row["input"], row["cache_read"],
                 row["write_5m"], row["write_1h"], row["output"]), 6)))
                           for model, row in per_model.items()},
                 "control": control_note,
@@ -1925,11 +1998,16 @@ def main():
              fmt_models(head["models"]), fmt_models(head["efforts"])))
     if data_clause(head):
         print("head data: %s" % data_clause(head))
-    if mode == "none":
+    if mode == "none" and laneless:
+        print("lanes: 0 by the spawn record (it holds no lane-open event); not scanned "
+              "(--lanes none), so the share is not asserted")
+    elif mode == "none":
         print("lanes: not scanned (--lanes none), so the share is not asserted")
     else:
         expected = ("" if args.expect_lanes is None
                     else " (matches --expect-lanes %d)" % args.expect_lanes)
+        if laneless:
+            expected += " (the spawn record holds no lane-open event)"
         print("lanes: %d in window%s · %s" % (len(lanes), expected, scan_clause(scan)))
         for lane in lanes:
             extra = data_clause(lane)

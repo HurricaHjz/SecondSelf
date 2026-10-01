@@ -60,8 +60,8 @@ positive control (§11): zero findings with zero links scanned is a broken probe
   parser could not read prints as `(empty or unparsed sources)` inside the same block: read it, since it is the
   parser's own gap detector, not a dangler. A `~`- or `/`-led entry is provenance **outside the vault** (a run
   store, a home directory): resolved with `expanduser`, it prints under `OUT-OF-VAULT SOURCES: n present | m missing`
-  — a missing one is a finding in that bucket, never a dangling vault path (register entry 2026-09-08: two false
-  positives per run until then).
+  — a missing one is a finding in that bucket, never a dangling vault path (register entry 2026-09-08).
+- The same script reads the frontmatter `converted_from:` of every `raw/**/*.md` conversion and lists, under `MISSING ORIGINALS:`, a local original found neither beside the conversion, nor at its vault path, nor anywhere under `raw/` by file name, with `CONVERSIONS SCANNED:` as that arm's control; a URL or prose value is counted and never resolved, and a stale value whose original survives elsewhere under `raw/` is listed apart, never as a finding (register entry 2026-09-09).
 - Beside it, `python3 .claude/skills/lint/check_flag_admissions.py --vault .` (exit 0 = clean, 1 = findings, 2 =
   premise: not a vault root, or no `wiki/sources/`) lists every page under `wiki/sources/` whose prose or frontmatter
   comment **admits conversion damage** — the vocabulary `collapsed`, `lost inter-word spaces`, `inter-word`,
@@ -74,9 +74,9 @@ positive control (§11): zero findings with zero links scanned is a broken probe
   terminal state: a repaired conversion scored `clean` in `sources:` plus the dated Provenance sentence, which the
   probe counts under its `RESOLVED:` line (an admission that also names a `repaired conversion`), never as a finding.
   It prints its own in-memory controls (a page that must fire; its conversion-flagged twin that must not; a twin
-  flagged for something else that must; a resolved twin) and the count scanned; an ordinary use of `collapsed` in
-  prose is a false positive to read and dismiss in the report, not to silence in the script (register entry
-  2026-09-08, ingest Step 0 conversions, and the folds of the same day).
+  flagged for something else that must; a resolved twin; a marked twin and a negated twin that must not) and the
+  count scanned (register entry 2026-09-08, ingest Step 0 conversions, and the folds of the same day).
+  A line carrying `<!-- lint: not a conversion admission -->`, or whose term directly follows a negation (`must not be collapsed`), is listed under `SUPPRESSED:` and never counted as a finding (register entry 2026-09-09).
 - Every script in this directory refuses, in vault mode, a root that is not a vault (no `raw/` + `wiki/`): one `PROBE
   FAILED: <root> is not a vault root (no raw/ or wiki/)` line on stderr and exit 2, so a wrong root can
   never read as a clean vault scan (the 2026-08-26 standard; the register entry of 2026-09-06 that closed it
@@ -85,14 +85,17 @@ positive control (§11): zero findings with zero links scanned is a broken probe
   read as the root.
 - Orphans are scripted too: `python3 .claude/skills/lint/check-orphans.py --vault .` reports a page with **no inbound links** from any other page as an **orphan**, exempting `index`, `log`, and `maps/` pages (Maps of Content are navigational entry points, not orphans). It applies this directory's link rules, prints its own inbound-link control (zero orphans with a zero control is a broken probe, §11), and additionally lists the pages `index.md` alone reaches — information, not a finding.
 - Two further helpers in this directory serve deep-lint and the routing design's verify leg, not routine lint: `tier-cap-check.py` (§4.6 type caps and boundaries; a documented override on the `confidence:` line is reported separately, never as a violation) and `anomaly-lister.py` (page-visible anomalies: open conflict blocks, `flagged:` lines, thin-page notes, `unverified` markers). Suite for all three: `bash .claude/skills/lint/test_lint_phase2.sh`.
+- Structure: `python3 .claude/skills/lint/check-required-sections.py --vault .` lists every page missing a level-2 section its table requires, with each page's `depth:` beside it; the table covers `## Related` for concept, entity and tool, `## Appears in` for model and benchmark, `## Summary`, `## Key Takeaways` and `## Related` for source, and `## Sources Used` for synthesis and development, exempts maps, and checks no other part of CLAUDE.md §4.3 (register entry 2026-09-03). A research-depth source page carrying the ingest template's `## Citation` is judged on `## Related` alone (CLAUDE.md §4.3, the research-depth clause of 2026-09-14): the check reads `depth:` before judging a page's sections, and such a page is a finding only without `## Related`.
+- Restated rules: `python3 .claude/skills/lint/check-tier-vocabulary.py --vault .` extracts every `caps at` / `defaults to` plus a tier word from CLAUDE.md §4.6 and from each skill's `SKILL.md`, and lists under `MISMATCHES:` a skill statement to which §4.6 gives another tier for the same page type (register entry 2026-09-03).
+- Register: `python3 .claude/skills/lint/check_register.py --vault .` lists an entry under `## Open` in `wiki/developments/known-issues.md` whose `**Status**:` begins `closed`, `fixed` or `resolved`, and two Open entries citing one `file:line` locator, and prints `register-check: n/a` when the vault has no register yet (register entry 2026-09-07).
+- Each of those three prints its own in-memory control and its scan totals and exits 0 clean, 1 findings, 2 broken premise; they share the suite above.
 - **Routing (M0, 2026-09-02; residue closed 2026-09-07):** every lint check is a script; the agent reads reports and never re-derives a scripted count (orphans became `check-orphans.py`, Phase 2 of the routing design; Step 1's index-consistency comparison became `check-index.py`, the last hand comparison in this pipeline).
 
 ### 2b — Pending freshness flags (count only — reconciling them is deep-lint's job)
 `grep -rl "^flagged:" wiki --include='*.md' | wc -l` — with the engine control
 `grep -rl "^confidence:" wiki --include='*.md' | wc -l` (must be >0, proving the probe ran).
-Report the count; at **≥5 flagged pages**, suggest running `/deep-lint` (the adaptive-cadence
-signal from `wiki/developments/deeplint-scalable-maintenance-design.md`). Never read or resolve
-the flagged pages here — lint counts, deep-lint reconciles.
+Report the count; at **≥5 flagged pages**, suggest running `/deep-lint` (set by judgement, unmeasured).
+Never read or resolve the flagged pages here — lint counts, deep-lint reconciles.
 
 ### 2c — Attic-leak check (filenames only — attic contents are never opened)
 Live pages must never link into the attic (CLAUDE.md §2.1): Obsidian resolves wikilinks vault-wide,
@@ -107,7 +110,7 @@ re-sweeping to plain text per §2.1, or `/attic restore` if the page should live
 
 ### 2d — qmd registry guard (one scripted check; skipped silently when qmd is dormant)
 `wiki/log.md` must stay out of the semantic index (CLAUDE.md §10) — embeddings key on a file's
-whole-content hash, so every append re-embeds the whole timeline, and a hit invites an ~80k-token
+whole-content hash, so every append re-embeds the whole timeline, and a hit invites an unbounded whole-file read via
 `qmd get`. The exclusion lives in `~/.config/qmd/index.yml`, **outside the vault and outside both
 git repos**, so it can disappear silently. Run
 `sh .claude/skills/lint/check-qmd-registry.sh .` and copy its one line into the report verbatim.
@@ -118,7 +121,7 @@ restore `ignore: ["**/log.md"]` on the `wiki` collection and re-run `qmd update`
 ### 2e — Injection guard (names only — no skill or definition contents are read)
 Third-party installers write into the roots the harness auto-loads, and anything landing there reaches
 **every** session (Agent Reach's documented SKILL.md auto-install; two register incidents prove the
-class: `wiki/developments/known-issues.md` 2026-08-21/22). **Two roots, four arms.** Skills are
+class: `wiki/developments/known-issues.md` 2026-08-21/22). **Two roots, four arms, and a plugin arm (below).** Skills are
 **directories** under `.claude/skills/`; agent definitions are **files** under `.claude/agents/`, and
 each is auto-loaded — a definition names a lane's model, tools and write scope, so an unsanctioned one
 is the same exposure as an unsanctioned skill. The asymmetry is real: `ls` yields names in one case and
@@ -151,6 +154,9 @@ never a finding, never auto-seeded. Baseline entries missing on disk are info (d
 injected into the disk side (`printf 'zzz-ctrl\n'`) and confirm it prints — one arm's control does not
 vouch for another's.
 (Deep-lint inherits this via its structural pass.)
+**Plugin arm (the fifth).** `python3 .claude/skills/lint/check-plugins.py --vault .` lists every plugin that `enabledPlugins` turns on in `~/.claude/settings.json` (under `$CLAUDE_CONFIG_DIR` when it is set) and in this vault's `.claude/settings.json` and `.claude/settings.local.json`, and prints each key that has no `plugin:<name>@<marketplace>` line in the machine-local `~/.claude/skills/.sanctioned.txt` as an unsanctioned plugin (exit 1).
+A plugin can ship `hooks/hooks.json`, and its hooks reach every session just as its skills do, so the arm names each enabled plugin's hooks state beside its key.
+Its premises follow the rules above: a baseline with no `plugin:` line yet is a fresh machine (the enabled list is information and a seeding proposal, exit 0), an unparseable settings file is `PROBE FAILED` (exit 2), and a known-absent key injected into the enabled side prints on every run as the arm's own control.
 - **Throttle check (delegate skill §2, 2026-09-02):** `python3 .claude/skills/delegate/throttle.py check` — each `DRIFT` / `MISSING` / `UNROUTED` / `DESCRIPTION-TIER` line is a finding (the fix is `throttle.py set <active>` for drift, a definition or routing entry for the other two, the range wording for a description); `PROBE FAILED` (unreadable `routing.json`, unknown throttle name, absent `.claude/agents/`) never reads as clean. The script prints its own §11 control (a planted-drift comparator) on every run.
 
 **Register arm (2026-09-05; names only, both directions).** `wiki/developments/capability-register.md` lists every
@@ -199,8 +205,7 @@ from a broken premise: an empty `wiki/` (a fresh install, the published copy its
 Exit 1 = findings: the fix (owner-confirmed) is rewriting the citation in ship-safe wording — the page name
 in code font, no link — never deleting the reference. The publish gate's test suite runs the same script
 (its leg 14), so an edit-time miss here is caught there; regression fixtures live beside the script
-(`bash .claude/skills/lint/test_check_shipped_links.sh`). Design record:
-`wiki/developments/shipped-surface-wikilink-guard.md`.
+(`bash .claude/skills/lint/test_check_shipped_links.sh`).
 
 ### 3 — Conflict audit
 Find pages containing `## Conflicts / Open Questions`. List each unresolved conflict (the two sides)
@@ -252,7 +257,7 @@ never on a routine lint.
 
 ### ⏳ Flags
 - **N pages carry `flagged:`** (engine control OK) — ≥5 → consider `/deep-lint`
-- `<the qmd-registry line, verbatim from the script>` · `attic-leak: none / n/a / N leaks` · `skill-guard: clean / N unsanctioned (control OK)` · `customisation-pairing: ok / n/a / N findings` · `throttle-check: clean (N of M diffed, control OK) / N findings / PROBE FAILED` · `shipped-links: clean / n/a / N dead / PROBE FAILED`
+- `<the qmd-registry line, verbatim from the script>` · `attic-leak: none / n/a / N leaks` · `skill-guard: clean / N unsanctioned (control OK)` · `customisation-pairing: ok / n/a / N findings` · `throttle-check: clean (N of M diffed, control OK) / N findings / PROBE FAILED` · `shipped-links: clean / n/a / N dead / PROBE FAILED` · `plugins-guard: clean / not seeded (N enabled) / N unsanctioned / PROBE FAILED` · `missing-originals: 0 / N` · `required-sections: clean / N pages · T research-depth template pages (judged on ## Related alone)` · `tier-vocabulary: clean / N mismatches` · `register-check: clean / n/a / N findings`
 
 ### 🛠️ Proposed next steps
 1. Auto-register unindexed pages? (y/n)

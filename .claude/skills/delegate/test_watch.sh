@@ -20,8 +20,8 @@ if [ ! -f "$WATCH" ]; then
 fi
 
 # The locale. A bracket expression carrying a multibyte glyph — `[✓✗●]` — is a set of single
-# BYTES outside a UTF-8 locale, so under `LANG` and `LC_ALL` unset every such leg read 0 rows
-# and the suite was red through no fault of the console. The suite therefore fixes its own
+# BYTES outside a UTF-8 locale, so under `LANG` and `LC_ALL` unset every such leg would read 0
+# rows and fail through no fault of the console. The suite therefore fixes its own
 # locale rather than the caller's shell: the first UTF-8 locale this host lists wins, and a
 # host that lists none is still covered, because every multibyte class in a leg below is
 # written as an alternation of whole glyphs (`(✓|✗|●)`), which matches the same byte sequences
@@ -65,7 +65,7 @@ cat > "$T/planted/planted-strays.py" <<'PLANTED'
 # broken and its clean result over watch.py means nothing.
 VAULT = "/" + "Users/example-owner/Vaults/synthetic-vault-name-for-the-grep"   # assembled: no home-path literal in a shipped file
 ALSO = "/" + "home/example-owner/synthetic-vault-name-for-the-grep/notes"
-SESSION = "c4292553-3d9f-4541-80b8-acf317bfda86"
+SESSION = "00000000-0000-4000-8000-000000000003"
 
 
 def stray_writes(path):
@@ -108,6 +108,44 @@ PACK
 
 printf '# an empty pack (no item lines at all)\n\n## Resume prompt\n\nnothing here.\n' \
   > "$T/handoffs/empty-pack.md"
+
+# Pointer-shaped packs: run-ptr names an existing decoy pre-flight in its Resume prompt.
+# with NO item line, so the sibling <run>-preflight.md must supply the rows, in the backtick shape
+# (`item0 open` — …) a pre-flight writes. run-ptr2: the named pre-flight HAS items, so it wins
+# over the sibling (the order test).
+printf '# decoy pre-flight (no item line)\n\n## Items\n\nnothing here either.\n' \
+  > "$T/handoffs/decoy-preflight.md"
+cat > "$T/handoffs/run-ptr-handoff.md" <<'PTR'
+# hand-off (pointer-shaped fixture)
+
+## Resume prompt
+```
+Resume run run-ptr from this file, then the contract T_HANDOFFS/decoy-preflight.md, and continue.
+```
+
+## Items
+The pre-flight's `## Items` (item0 open · item1 capture) is the list; this file records progress in `## Trace`.
+
+## Trace
+PTR
+sed -i '' "s#T_HANDOFFS#$T/handoffs#" "$T/handoffs/run-ptr-handoff.md"
+cat > "$T/handoffs/run-ptr-preflight.md" <<'PTRPF'
+# pre-flight (fixture)
+
+## Items
+- `item0 open` — resume pre-flight; the boundary.
+- `item1 capture` — the sources; the boundary.
+- `item2 partition and briefs` — the briefs; the boundary.
+- `itemX not-a-number` — a decoy: the index is not a number.
+
+## Lanes
+| Lane | Class |
+PTRPF
+sed "s#decoy-preflight.md#named-preflight.md#; s#run-ptr #run-ptr2 #" "$T/handoffs/run-ptr-handoff.md" \
+  > "$T/handoffs/run-ptr2-handoff.md"
+printf '# named pre-flight (fixture)\n\n## Items\n- `item0 alpha` — the named file wins.\n' \
+  > "$T/handoffs/named-preflight.md"
+cp "$T/handoffs/run-ptr-preflight.md" "$T/handoffs/run-ptr2-preflight.md"
 
 # Two pids the liveness legs need, and the fixture record needs with them, since the console
 # now probes the pid of every open lane. LIVE_PID is this suite's own shell: certainly alive
@@ -206,6 +244,15 @@ events = [
     ev(20, "lane-closed", lane="B-ONE", exit_class="completed", total_cost_usd=1.23, num_turns=17,
        **{"class": "builder"}, duration_s=960, exit_code=0, is_error=False,
        cost_src="transcript-estimate", report_words=700, session_id="lane-sid-1"),
+    # A synthetic lane hold opens, beats once and is released: the three
+    # kinds reach the vocabulary leg, and B-ONE reads completed again once the hold has ended
+    ev(20.2, "hold", lane="B-ONE", harness="claude", cap=1, beat_after_s=3000,
+       session_id="lane-sid-1", exit_class="completed", last_call=ts(20), last_call_src="fixture"),
+    ev(20.4, "hold-beat", lane="B-ONE", harness="claude", ok=True, by="supervisor", n=1,
+       usage={"input_tokens": 5, "output_tokens": 1, "cache_read_input_tokens": 90000,
+              "cache_creation_input_tokens": 0}, total_cost_usd=0.03, config_match=True),
+    ev(20.6, "hold-ended", lane="B-ONE", reason="released", by="release", cap=1, beats=1,
+       beats_ok=1, beats_failed=0),
     ev(21, "phase-boundary", **{"from": "item1", "to": "item2"},
        disposition="the synthetic builder closed green", meter=METER,
        context="100,000 tokens (10 %)", next="item2", idle_min=1.0, denials=0,
@@ -282,11 +329,16 @@ write_jsonl("run-vocab.jsonl", events)
 write_jsonl("run-vocab-closed.jsonl", [dict(e, run="run-vocab-closed") for e in events] + [
     dict(ev(90, "run-close", items="3", lanes="3", meter=METER, reason_tally="(a)x2 (b)x1",
             trace="3 rows", commit="0000000", push="ok"), run="run-vocab-closed")])
-# the same run closed with every item done: item4 starts at a boundary just before the close, so
-# the close ends it and the verdict reads 4/4 · all done (the green case for the close's tone)
+# the same run closed with every item done: item4 starts at a boundary just before the close and
+# is then WORKED (a ledger observation carrying its phase), so the close ends it and the verdict
+# reads 4/4 · all done (the green case for the close's tone). Without that observation item4's
+# only start would be the boundary's `to`, which the close reads as skipped since 2026-09-17
+# (register 12:51; the F4 legs below).
 write_jsonl("run-vocab-alldone.jsonl", [dict(e, run="run-vocab-alldone") for e in events] + [
     dict(ev(89, "phase-boundary", **{"from": "item3", "to": "item4"},
             disposition="the synthetic verifier closed green", meter=METER), run="run-vocab-alldone"),
+    dict(ev(89, "observation", phase="item4", what="the close-out report written",
+            note="evidence: the fixture"), run="run-vocab-alldone"),
     dict(ev(90, "run-close", items="4", lanes="3", meter=METER, reason_tally="(a)x2 (b)x1",
             trace="4 rows", commit="0000000", push="ok"), run="run-vocab-alldone")])
 # the head stopped: one more stop after the last head start, so the `r` key may fire
@@ -300,12 +352,32 @@ write_jsonl("run-nowait.jsonl", [dict(e, run="run-nowait") for e in events
 # at the successor, never run to the end of the record
 write_jsonl("run-succwait.jsonl", [dict(e, run="run-succwait") for e in events
                                    if e["event"] != "head-resumed"])
+# a model-scoped limit (which limit-model, 2026-09-16): the wait must open exactly as for a
+# plain limit, and close at the successor
+write_jsonl("run-modelwait.jsonl", [dict(e, run="run-modelwait", which="limit-model")
+                                    if e["event"] == "stop-condition" else dict(e, run="run-modelwait")
+                                    for e in events if e["event"] != "head-resumed"])
 # a record whose pack yields no items and which carries no gate event
 write_jsonl("run-noitems.jsonl", [
     dict(ev(0, "run-open", session="head-sid-1", handoff=os.path.join(T, "handoffs",
                                                                      "empty-pack.md"),
             head="the fixture", regime="multi"), run="run-noitems"),
     dict(ev(1, "observation", phase="none", what="no gate here"), run="run-noitems")])
+# pointer-shaped packs: the rows come from a pre-flight (run-ptr: the sibling; run-ptr2: the named)
+for rp in ("run-ptr", "run-ptr2"):
+    write_jsonl(rp + ".jsonl", [
+        dict(ev(0, "run-open", session="head-sid-1", handoff=os.path.join(T, "handoffs",
+                                                                         rp + "-handoff.md"),
+                head="the fixture", regime="single"), run=rp),
+        dict(ev(1, "observation", phase="none", what="no gate here"), run=rp)])
+# no item line anywhere, but the run-open carries expect_items: its keys are the rows, unnamed;
+# a key that is not item<k> is refused
+write_jsonl("run-expect.jsonl", [
+    dict(ev(0, "run-open", session="head-sid-1", handoff=os.path.join(T, "handoffs",
+                                                                     "empty-pack.md"),
+            head="the fixture", regime="single",
+            expect_items={"item0": 40000, "item1": 80000, "junk": 5}), run="run-expect"),
+    dict(ev(1, "observation", phase="none", what="no gate here"), run="run-expect")])
 # The plain-lane-run shape: lane events and NO run-open, as the lane wrapper alone writes a record
 # when an attended session spawns lanes. Two lanes, one completed and one error, and a third left
 # open, so the close's counts by exit class have something to count.
@@ -336,8 +408,8 @@ write_jsonl("run-plain-closed.jsonl", [dict(e, run="run-plain-closed") for e in 
             meter="none: a plain lane run names no head session to meter"),
          run="run-plain-closed")])
 # The liveness shape: four open lanes, no close event on any of them, differing only in the pids
-# their spawn recorded. L-DEAD carries a pid that has exited and been reaped — the lane killed by
-# hand, which writes no lane-closed and which the console drew as running for ever. L-LIVE carries
+# their spawn recorded. L-DEAD carries a pid that has exited and been reaped, with no close
+# event; it must not appear as running. L-LIVE carries
 # this suite's own shell. L-MIXED carries one gone pid and one live one: a wrapper that died with
 # its lane still working is NOT dead. L-NOPID's spawn names no pid at all, which is an absence and
 # never a death. The closed variant adds a run-close so the banner's counts by exit class can be
@@ -369,6 +441,23 @@ write_jsonl("run-liveness-closed.jsonl",
             + [dict(ev(9, "run-close", shape="plain-lane-run", lanes=4,
                        meter="none: a plain lane run names no head session to meter"),
                     run="run-liveness-closed")])
+# MC: the lanes-now model cell. Four open lanes on this suite's own live pid, differing only in
+# the model and effort their spawn recorded: a long vendor name with a short effort, a recorded
+# effort carrying its reason in the same string, a plain pair as the control that must not move,
+# and a name too long to fit even shortened. An 11-character cut would print `gpt-6-astr…` and
+# drop the effort the owner reads the row for.
+modelcell_events = []
+for _n, _c, _m, _e in (("M-ASTRA", "writer", "gpt-6-astra", "ultra"),
+                       ("M-REASON", "critic", "opus", "max (definition, throttle default)"),
+                       ("M-PLAIN", "builder", "fable", "max"),
+                       ("M-LONG", "verifier", "claude-opus-4-5", "xhigh")):
+    modelcell_events += [
+        ev(0, "lane-open", lane=_n, **{"class": _c}, model=_m, effort=_e, cwd=HOMES["B-ONE"],
+           session_id="mc-sid-" + _n, budget_usd=8.0, projects_root=PROJECTS,
+           reason="(a) independence: a model-cell fixture lane"),
+        ev(0, "lane-spawned", lane=_n, session_id="mc-sid-" + _n, pid=LIVE_PID,
+           wrapper_pid=LIVE_PID, **{"class": _c})]
+write_jsonl("run-modelcell.jsonl", [dict(e, run="run-modelcell") for e in modelcell_events])
 # the plain record's own broken premise: no run-open AND no lane event
 write_jsonl("run-plain-empty.jsonl", [
     dict(ev(0, "observation", phase="", what="a record with neither a run-open nor a lane"),
@@ -382,6 +471,95 @@ write_jsonl("run-gateonly.jsonl", [
          run="run-gateonly"),
     dict(ev(9, "gate", item="item2", percent=9, decision="allow", metered=True),
          run="run-gateonly")])
+# The held lanes (2026-09-17): four finished lanes under item1 — H-ONE held with one beat of a cap
+# of two, H-TWO held with a beat that failed, H-THREE whose hold ended at the cap, H-FOUR held
+# and then resumed for real (running again, on this suite's own live pid) — plus a decision hold
+# of the older schema shape (class, what, route, no lane), which holds no lane.
+
+
+def held_lane(name, cls, model):
+    return [ev(2, "lane-open", lane=name, **{"class": cls}, model=model, effort="max",
+               cwd=HOMES["B-ONE"], session_id="held-sid-" + name, budget_usd=8.0,
+               projects_root=PROJECTS, reason="(a) independence: a held fixture lane"),
+            ev(2, "lane-spawned", lane=name, session_id="held-sid-" + name, pid=REAPED_PID,
+               wrapper_pid=REAPED_PID, **{"class": cls}),
+            ev(10, "lane-closed", lane=name, exit_class="completed", total_cost_usd=2.0,
+               num_turns=9, **{"class": cls}, session_id="held-sid-" + name),
+            ev(11, "hold", lane=name, harness="claude", cap=2 if name == "H-ONE" else 1,
+               beat_after_s=3000, session_id="held-sid-" + name, exit_class="completed",
+               last_call=ts(10), last_call_src="fixture", renew=False, beats_before=0)]
+
+
+held_events = ([ev(0, "run-open", session="head-sid-1", head="the held fixture", regime="multi",
+                   handoff=PACK, pid=1001, pid_src="arg"),
+                ev(1, "gate", item="item1", context=70000, percent=7, band=0, armed=True,
+                   decision="allow", metered=True)]
+               + held_lane("H-ONE", "builder", "fable") + held_lane("H-TWO", "critic", "opus")
+               + held_lane("H-THREE", "verifier", "sonnet") + held_lane("H-FOUR", "builder", "opus")
+               # H-ONE's beat is one minute old (its next beat lies ahead); H-TWO's failed one
+               # is 108 minutes old, past the interval, so its row reads beat due
+               + [ev(119, "hold-beat", lane="H-ONE", harness="claude", ok=True, by="supervisor", n=1,
+                     usage={"input_tokens": 5, "output_tokens": 1, "cache_read_input_tokens": 90000,
+                            "cache_creation_input_tokens": 0}, total_cost_usd=0.03),
+                  ev(12, "hold-beat", lane="H-TWO", harness="claude", ok=False, by="supervisor", n=1,
+                     exit_class="error", error="the fixture beat failed"),
+                  ev(13, "hold-ended", lane="H-THREE", reason="cap", by="supervisor", cap=1,
+                     beats=1, beats_ok=1, beats_failed=0),
+                  ev(14, "lane-resumed", lane="H-FOUR", session_id="held-sid-H-FOUR", pid=LIVE_PID,
+                     wrapper_pid=LIVE_PID, **{"class": "builder"}, resume_n=1),
+                  ev(15, "hold", **{"class": "fixture"}, what="a decision held for the owner",
+                     route="no action"),
+                  # H-FIVE: its last call is an hour old and its hold two minutes old, so its beat
+                  # is due by the supervisor's reference (the last call), never by the hold's stamp
+                  ev(50, "lane-open", lane="H-FIVE", **{"class": "builder"}, model="fable",
+                     effort="max", cwd=HOMES["B-ONE"], session_id="held-sid-H-FIVE", budget_usd=8.0,
+                     projects_root=PROJECTS, reason="(a) independence: a held fixture lane"),
+                  ev(50, "lane-spawned", lane="H-FIVE", session_id="held-sid-H-FIVE",
+                     pid=REAPED_PID, wrapper_pid=REAPED_PID, **{"class": "builder"}),
+                  ev(60, "lane-closed", lane="H-FIVE", exit_class="completed", total_cost_usd=2.0,
+                     num_turns=9, **{"class": "builder"}, session_id="held-sid-H-FIVE"),
+                  ev(118, "hold", lane="H-FIVE", harness="claude", cap=1, beat_after_s=3000,
+                     session_id="held-sid-H-FIVE", exit_class="completed", last_call=ts(60),
+                     last_call_src="fixture", renew=False, beats_before=0),
+                  # H-SIX: a reason longer than the row, and a hold that was released
+                  ev(51, "lane-open", lane="H-SIX", **{"class": "critic"}, model="opus",
+                     effort="max", cwd=HOMES["C-TWO"], session_id="held-sid-H-SIX", budget_usd=8.0,
+                     projects_root=PROJECTS,
+                     reason="(a) independence: a held fixture lane whose reason runs well past "
+                            "the width of the lanes panel, as a real spawn's reason often does, "
+                            "so that whatever follows it on the row is cut away"),
+                  ev(51, "lane-spawned", lane="H-SIX", session_id="held-sid-H-SIX",
+                     pid=REAPED_PID, wrapper_pid=REAPED_PID, **{"class": "critic"}),
+                  ev(61, "lane-closed", lane="H-SIX", exit_class="completed", total_cost_usd=2.0,
+                     num_turns=9, **{"class": "critic"}, session_id="held-sid-H-SIX"),
+                  ev(62, "hold", lane="H-SIX", harness="claude", cap=1, beat_after_s=3000,
+                     session_id="held-sid-H-SIX", exit_class="completed", last_call=ts(61),
+                     last_call_src="fixture", renew=False, beats_before=0),
+                  ev(63, "hold-ended", lane="H-SIX", reason="released", by="release", cap=1,
+                     beats=0, beats_ok=0, beats_failed=0),
+                  # H-SEVEN (critic F6, 2026-09-17): held, then resumed for real and closed again
+                  # five minutes ago. The supervisor's next beat falls due an interval after THAT
+                  # close, so the row must read `next due`, not `beat due` for the best part of
+                  # an hour. Its hold is still open (no hold-ended), and it is not running.
+                  ev(52, "lane-open", lane="H-SEVEN", **{"class": "builder"}, model="fable",
+                     effort="max", cwd=HOMES["B-ONE"], session_id="held-sid-H-SEVEN",
+                     budget_usd=8.0, projects_root=PROJECTS,
+                     reason="(a) independence: a held fixture lane resumed for real"),
+                  ev(52, "lane-spawned", lane="H-SEVEN", session_id="held-sid-H-SEVEN",
+                     pid=REAPED_PID, wrapper_pid=REAPED_PID, **{"class": "builder"}),
+                  ev(58, "lane-closed", lane="H-SEVEN", exit_class="completed",
+                     total_cost_usd=2.0, num_turns=9, **{"class": "builder"},
+                     session_id="held-sid-H-SEVEN"),
+                  ev(59, "hold", lane="H-SEVEN", harness="claude", cap=2, beat_after_s=3000,
+                     session_id="held-sid-H-SEVEN", exit_class="completed", last_call=ts(58),
+                     last_call_src="fixture", renew=False, beats_before=0),
+                  ev(100, "lane-resumed", lane="H-SEVEN", session_id="held-sid-H-SEVEN",
+                     pid=REAPED_PID, wrapper_pid=REAPED_PID, **{"class": "builder"}, resume_n=1),
+                  ev(115, "lane-closed", lane="H-SEVEN", exit_class="completed",
+                     total_cost_usd=3.0, num_turns=4, **{"class": "builder"},
+                     session_id="held-sid-H-SEVEN")])
+held_events.sort(key=lambda e: e["ts"])      # a record is written in time order; the sort is stable
+write_jsonl("run-held.jsonl", [dict(e, run="run-held") for e in held_events])
 
 
 def assistant(mins, text=None, tool=None, target=None, model="claude-fixture"):
@@ -438,13 +616,9 @@ mkdir -p "$T/projects/session-project" "$T/projects/session-project/subagents" "
 python3 -B - "$T" "$SESS_CWD" "$T/projects/session-project" "$TASKS" <<'JOBFIX_END'
 """Build the session-view fixtures: four transcripts and their job directories.
 
-Every job shape the harness writes is planted here, each one measured on a live transcript on
-2026-09-08: a Bash call flagged `run_in_background`, a foreground Bash call that outran its
-timeout and was MOVED to the background (no flag anywhere on the tool call), the Monitor tool,
-and the Agent tool. The three notification carriers are planted too — a `user` record's
-`message.content`, a `queue-operation` record's top-level `content`, and an `attachment`
-record's `attachment.prompt` — because a live session's eleven notifications sat in all three
-and reading only the user records saw one of its four notified jobs.
+Plant every supported start shape: background Bash, a foreground call moved to the background
+after timeout, Monitor, and Agent. Plant the notification carriers too: user message.content,
+queue-operation content, and attachment.prompt.
 """
 import json, os, sys
 
@@ -538,9 +712,9 @@ three = [assistant(1, [use("tu-a", "Bash", {"command": "echo one", "run_in_backg
 open(os.path.join(PROJ, "mtime-three-ccc.jsonl"), "w", encoding="utf-8").write("\n".join(three) + "\n")
 
 # ---- session four: the start sentence where it is NOT a start, and quoted script paths
-# Every decoy here was seen live on 2026-09-08: a grep over another session's transcript put a
-# phantom row on the operator's own board, and every real lane watch read `other` because the
-# command quotes the script's path. The true start is the control on the same session.
+# Every decoy here is a live shape: a grep over another session's transcript can put a phantom row
+# on the operator's own board, and a lane watch whose command quotes the script's path can read
+# `other`. The true start is the control on the same session.
 four = [
     assistant(1, [use("tu-d1", "Bash", {"command": "python3 -c 'print(1)'",
                                         "run_in_background": True})]),
@@ -620,8 +794,8 @@ open(os.path.join(three_dir, "mrun.output"), "w", encoding="utf-8").write("still
 open(os.path.join(three_dir, "mdone.output"), "w", encoding="utf-8").write("finished\n")
 # Both mtimes are set RELATIVE to the transcript's last parsed record, never to the clock: the
 # fallback compares those two numbers, so a fixture pinned to `now` would decide differently
-# depending on the hour the suite ran (it read `done` for both when the fixture stamps sat an hour
-# ahead of the wall clock, 2026-09-08).
+# depending on the hour the suite ran (it would read `done` for both with the fixture stamps an hour
+# ahead of the wall clock).
 from datetime import datetime
 cut = datetime.fromisoformat((TS % (2, 30)).replace("Z", "+00:00")).timestamp()
 os.utime(os.path.join(three_dir, "mrun.output"), (cut + 3600, cut + 3600))
@@ -672,16 +846,45 @@ else
 fi
 
 # ---------------------------------------------------------------- leg 2: the no-items premise
-out=$(run_watch --run run-noitems --once --plain 2>&1)
+# A run-open with no item row anywhere is a live run with nothing to draw yet: a warning on
+# stderr and on the board, exit 0, never a refusal (2026-09-20). The refusal stays for a record
+# with no run-open and no lane (the plain-empty leg below) and for a missing record.
+run_watch --run run-noitems --once --plain > "$T/noitems.out" 2> "$T/noitems.err"
 rc=$?
-case $out in
-  *"PROBE FAILED: no items in "*"empty-pack.md and no gate events in "*"run-noitems.jsonl"*) hit=1 ;;
-  *) hit=0 ;;
-esac
-if [ "$hit" -eq 1 ] && [ "$rc" -eq 2 ]; then
-  ok "a pack with no items and a record with no gate is a premise failure (PROBE FAILED, exit 2)"
+if [ "$rc" -eq 0 ] && grep -q 'watch.py: warning: no item line in .*empty-pack.md, none in a pre-flight beside it' "$T/noitems.err" &&
+   grep -q 'no item row yet · none in the pack' "$T/noitems.out" && ! grep -q 'PROBE FAILED' "$T/noitems.err" &&
+   ! grep -q '0/1 items done' "$T/noitems.out"; then
+  ok "a pack with no items and a record with no gate renders with a warning (exit 0, the board says no item row yet)"
 else
-  no "the no-items premise gave exit $rc and: $(printf '%s' "$out" | head -1)"
+  no "the no-items record gave exit $rc; err: $(head -1 "$T/noitems.err"); rows: $(grep -E 'overall|PROBE' "$T/noitems.out" | head -2 | tr '\n' '|')"
+fi
+
+out=$(run_watch --run run-ptr --once --plain 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qE '^│ item0 +open ' && printf '%s' "$out" | grep -qE '^│ item1 +capture ' &&
+   printf '%s' "$out" | grep -qE '^│ item2 +partition and briefs ' && ! printf '%s' "$out" | grep -q 'not-a-number' &&
+   printf '%s' "$out" | grep -q '0/3 items done'; then
+  ok "a pointer-shaped pack takes its rows from the sibling pre-flight (backtick item lines; the named decoy with no line is passed over; the non-numeric index refused)"
+else
+  no "run-ptr gave exit $rc: $(printf '%s' "$out" | grep -E '^│ item|overall|warning|PROBE' | head -4 | tr '\n' '|')"
+fi
+
+out=$(run_watch --run run-ptr2 --once --plain 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qE '^│ item0 +alpha ' && ! printf '%s' "$out" | grep -qE '^│ item1 ' &&
+   printf '%s' "$out" | grep -q '0/1 items done'; then
+  ok "a pre-flight the pack names by path wins over the sibling (the order test)"
+else
+  no "run-ptr2 gave exit $rc: $(printf '%s' "$out" | grep -E '^│ item|overall|warning|PROBE' | head -3 | tr '\n' '|')"
+fi
+
+out=$(run_watch --run run-expect --once --plain 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -qE '^│ item0 ' && printf '%s' "$out" | grep -qE '^│ item1 ' &&
+   ! printf '%s' "$out" | grep -q 'junk' && printf '%s' "$out" | grep -q '0/2 items done'; then
+  ok "with no item line anywhere the run-open's expect_items keys are the rows (unnamed; a non-item key refused)"
+else
+  no "run-expect gave exit $rc: $(printf '%s' "$out" | grep -E '^│ item|overall|warning|PROBE' | head -3 | tr '\n' '|')"
 fi
 
 out=$(run_watch --run run-gateonly --once --plain 2>&1)
@@ -776,6 +979,75 @@ if [ "$sw_wait" -eq 1 ] && [ "$sw_res" -eq 1 ] && [ "$sw_tail" -eq 0 ]; then
   ok "a limit wait that ends with a successor head closes at the successor: no hatching after the last ↻"
 else
   no "the wait ended by a successor runs to the end (wait=$sw_wait resume=$sw_res tail-hatch=$sw_tail): $succrow"
+fi
+
+# ---------------------------------------------------------------- leg 5c: a model-scoped limit (2026-09-16)
+run_watch --run run-modelwait --once --plain > "$T/modelwait.txt" 2>&1
+modelrow=$(grep -E '^\│ head {3,}' "$T/modelwait.txt")
+case $modelrow in *"░"*) mw_wait=1 ;; *) mw_wait=0 ;; esac
+case ${modelrow##*↻} in *"░"*) mw_tail=1 ;; *) mw_tail=0 ;; esac
+if [ "$mw_wait" -eq 1 ] && [ "$mw_tail" -eq 0 ]; then
+  ok "a limit-model stop opens the wait like a plain limit and closes it at the successor"
+else
+  no "a limit-model stop drew no wait or ran it past the successor (wait=$mw_wait tail-hatch=$mw_tail): $modelrow"
+fi
+
+# ------------------------------------------------ leg FBW: the owner is told of a fallback (r29)
+# The owner's ruling of 2026-09-29: a refused or re-routed task falls back to GPT-6 Astra at the same
+# effort rung, and he is told. A re-routed lane closes `completed`, so the console must alert on the
+# close's fallback verdict and on the `lane-swapped` line, and the feed must name the verdict, the
+# ids and the carried effort. Controls: a clean close (detected false), a close with no usage
+# (detected null, no verdict) and a close with no fallback block at all must not alert.
+python3 -B - "$WATCH" > "$T/fbw.txt" 2>&1 <<'PY_FBW'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("watch_under_test", sys.argv[1])
+watch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(watch)
+fb = lambda verdict, ids: {"detected": verdict != "clean", "non_helper": ids, "expected": "claude-opus-5-5",
+                           "verdict": None if verdict == "clean" else verdict}
+positives = [
+    {"event": "lane-closed", "lane": "F1", "exit_class": "completed", "fallback": fb("fallback", ["claude-opus-4-8"])},
+    {"event": "lane-closed", "lane": "F2", "exit_class": "completed", "fallback": fb("unconfirmed", ["claude-opus-4-8"])},
+    {"event": "lane-closed", "lane": "F3", "exit_class": "completed", "fallback": fb("stale-map", ["claude-opus-5-6"])},
+    {"event": "lane-swapped", "lane": "F1", "to": "F1-astra", "ok": True, "effort": "max"},
+    {"event": "lane-swapped", "lane": "F4", "to": "F4-astra", "ok": False, "effort": "xhigh", "error": "no codex binary"},
+]
+negatives = [
+    {"event": "lane-closed", "lane": "N1", "exit_class": "completed",
+     "fallback": {"detected": False, "non_helper": ["claude-opus-5-5"], "expected": "claude-opus-5-5"}},
+    {"event": "lane-closed", "lane": "N2", "exit_class": "completed",
+     "fallback": {"detected": None, "non_helper": [], "expected": "claude-opus-5-5", "reason": "no modelUsage on the result"}},
+    {"event": "lane-closed", "lane": "N3", "exit_class": "completed"},
+]
+missed = [e for e in positives if not watch.is_alert(e)]
+wrong = [e for e in negatives if watch.is_alert(e)]
+print("fbw positives %d missed %d" % (len(positives), len(missed)))
+print("fbw negatives %d wrong %d" % (len(negatives), len(wrong)))
+print("fbw treated: %s" % ("lane-swapped" in watch.TREATMENT))
+print("fbw feed close: %s" % watch.fmt_event(positives[0]))
+print("fbw feed swap: %s" % watch.fmt_event(positives[3]))
+print("fbw feed failed swap: %s" % watch.fmt_event(positives[4]))
+print("fbw feed clean: %s" % watch.fmt_event(negatives[0]))
+PY_FBW
+if grep -q 'fbw positives 5 missed 0' "$T/fbw.txt" && grep -q 'fbw negatives 3 wrong 0' "$T/fbw.txt" &&
+   grep -q 'fbw treated: True' "$T/fbw.txt"; then
+  ok "FBW1 a fallback, unconfirmed or stale-map close and every lane-swapped line alert; a clean, an unread and a plain close do not"
+else
+  no "FBW1 the fallback alert rule is wrong: $(tr '\n' '|' < "$T/fbw.txt")"
+fi
+if grep -q 'fbw feed close: .*fallback=fallback ran-on=claude-opus-4-8 expected=claude-opus-5-5' "$T/fbw.txt" &&
+   grep -q 'fbw feed swap: .*lane-swapped F1 to=F1-astra ok=True effort=max' "$T/fbw.txt" &&
+   grep -q 'fbw feed failed swap: .*effort=xhigh error=no codex binary' "$T/fbw.txt"; then
+  ok "FBW2 the feed names the verdict, the ids, the successor and the effort carried across the swap"
+else
+  no "FBW2 the fallback feed line is wrong: $(grep 'fbw feed' "$T/fbw.txt" | tr '\n' '|')"
+fi
+if grep 'fbw feed clean:' "$T/fbw.txt" | grep -q 'fallback='; then
+  no "FBW3 control: a clean close printed a fallback clause"
+else
+  ok "FBW3 control: a clean close prints no fallback clause"
 fi
 
 # ---------------------------------------------------------------- leg 6: alerts
@@ -949,8 +1221,8 @@ if grep -q 'fired quit=False msg=resume-head: exit 0' "$T/keys.txt"; then
 else
   no "\`r\` did not fire after a stop: $(grep -m1 fired "$T/keys.txt")"
 fi
-if grep -q -- '--run run-stopped --model fable --effort max' "$STUB_ARGS"; then
-  ok "the stub was invoked with --run, the model and --effort max (AIMYTH_WATCH_RESUME_CMD)"
+if grep -q -- '--run run-stopped --model opus --effort max' "$STUB_ARGS"; then
+  ok "the stub was invoked with --run, the fallback model (opus: the record names no head model) and --effort max (AIMYTH_WATCH_RESUME_CMD)"
 else
   no "the stub arguments are wrong: $(cat "$STUB_ARGS")"
 fi
@@ -1122,6 +1394,43 @@ if [ "$(grep -cE '^│ ● L-NOPID ' "$T/liveness.txt")" = "1" ]; then
 else
   no "LV05 the pid-less lane's row reads: $(grep -E '^│ . L-NOPID ' "$T/liveness.txt" | head -1)"
 fi
+# ------------------------------------------------- MC: the lanes-now model cell
+run_watch --run run-modelcell --once --plain > "$T/modelcell.txt" 2>"$T/modelcell.err"
+mcrc=$?
+if [ "$mcrc" -eq 0 ] && ! grep -q 'PROBE FAILED' "$T/modelcell.err"; then
+  ok "MC00 the model-cell record renders (exit 0, no PROBE FAILED)"
+else
+  no "MC00 the model-cell record exited $mcrc: $(head -2 "$T/modelcell.err")"
+fi
+if grep -qE '^. . M-ASTRA .* astra·ultra ' "$T/modelcell.txt" &&
+   ! grep -q 'gpt-6-astr…' "$T/modelcell.txt"; then
+  ok "MC01 a long vendor name is shortened to its own last segment: astra·ultra, never gpt-6-astr…"
+else
+  no "MC01 the astra row reads: $(grep -E '^. . M-ASTRA ' "$T/modelcell.txt" | head -1)"
+fi
+if grep -qE '^. . M-REASON .* opus·max ' "$T/modelcell.txt" &&
+   ! grep -q 'max (definition' "$T/modelcell.txt"; then
+  ok "MC02 an effort recorded with its reason shows the value alone: opus·max"
+else
+  no "MC02 the reason-carrying row reads: $(grep -E '^. . M-REASON ' "$T/modelcell.txt" | head -1)"
+fi
+if grep -qE '^. . M-PLAIN .* fable·max ' "$T/modelcell.txt"; then
+  ok "MC03 the control: a pair that already fitted is printed unchanged (fable·max)"
+else
+  no "MC03 the control row reads: $(grep -E '^. . M-PLAIN ' "$T/modelcell.txt" | head -1)"
+fi
+if grep -qE '^. . M-LONG .* opus[^ ]*·xhigh ' "$T/modelcell.txt"; then
+  ok "MC04 a name too long even shortened is cut, and the effort still survives whole (…·xhigh)"
+else
+  no "MC04 the over-long row reads: $(grep -E '^. . M-LONG ' "$T/modelcell.txt" | head -1)"
+fi
+if [ "$(grep -cE '·(ultr|xhig|ma|hig)…' "$T/modelcell.txt")" = "0" ] &&
+   [ "$(printf 'x·ma…\n' | grep -cE '·(ultr|xhig|ma|hig)…')" = "1" ]; then
+  ok "MC05 no row anywhere carries a cut effort; the probe hits its planted control"
+else
+  no "MC05 a cut effort is on screen, or the probe matched nothing: $(grep -oE '·[a-z]*…' "$T/modelcell.txt" | head -1)"
+fi
+
 run_watch --run run-liveness-closed --once --plain > "$T/liveness-closed.txt" 2>&1
 if grep -q 'lanes 4: ' "$T/liveness-closed.txt" && grep -q '1 dead' "$T/liveness-closed.txt" &&
    grep -q '3 running' "$T/liveness-closed.txt"; then
@@ -1131,7 +1440,7 @@ else
 fi
 
 # LC01: the same snapshot with the locale emptied — LANG, LC_ALL and LC_CTYPE all unset, the
-# shell the defect was found from. The console must render the same three lane rows, and the
+# shell the defect shows under. The console must render the same three lane rows, and the
 # probe must still read them: both halves of the locale fix are under test here, the exported
 # LC_ALL above (which `env -u` removes for this leg) and the glyph alternation in the pattern.
 # The control is PL04 above: the same assertion on the same fixture under the suite's locale.
@@ -1491,6 +1800,347 @@ else
   no "the console title does not follow the run's shape: $(grep -o '[a-z-]* console · run-[a-z-]*' "$T/plain-closed.txt" "$T/closed.txt" | sort -u | tr '\n' ' ')"
 fi
 
+# ---------------------------------------------------------------- KF: the recovery legs
+# Their fixtures live in a store of their own ($T/kstore), outside the manifest the write-proof legs
+# compare, so the two sanctioned timeline reports stay the only files that appear in $T/store.
+KS="$T/kstore"
+mkdir -p "$KS/spawn-records" "$T/khandoffs"
+python3 -B - "$T" "$LIVE_PID" "$REAPED_PID" <<'PY_KIFIX'
+import json
+import os
+import sys
+import time
+
+T, LIVE, REAPED = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+REC = os.path.join(T, "kstore", "spawn-records")
+HANDOFFS = os.path.join(T, "khandoffs")
+t0 = time.time() - 90 * 60
+
+
+def ts(mins):
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t0 + mins * 60))
+
+
+def ev(mins, kind, **fields):
+    payload = {"ts": ts(mins), "event": kind}
+    payload.update(fields)
+    return payload
+
+
+def write(run, rows):
+    with open(os.path.join(REC, run + ".jsonl"), "w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(dict(row, run=run), ensure_ascii=False) + "\n")
+
+
+def lane(mins, name, pid):
+    return [ev(mins, "lane-open", lane=name, model="opus", effort="xhigh", session_id="sid-" + name,
+               reason="(a) a kifix fixture lane", **{"class": "builder"}),
+            ev(mins, "lane-spawned", lane=name, session_id="sid-" + name, pid=pid, wrapper_pid=pid,
+               **{"class": "builder"})]
+
+
+nine = os.path.join(HANDOFFS, "nine.md")
+names = ["N148 · build+install", "N145 · build+critic+install", "N146 · repair+gather",
+         "N144 · build+critic+install", "N149 · build", "N150 · verify", "N151 · build",
+         "N152 · verify+close", "close-out"]
+with open(nine, "w", encoding="utf-8") as fh:
+    fh.write("# a nine-item pack (fixture)\n\n## Resume prompt\n\n")
+    for k, name in enumerate(names, 1):
+        fh.write("item%d %s — fixture item %d\n" % (k, name, k))
+two = os.path.join(HANDOFFS, "two.md")
+with open(two, "w", encoding="utf-8") as fh:
+    fh.write("# a two-item pack (fixture)\n\n## Resume prompt\n\n"
+             "item1 N1 · build — the first\nitem2 N1 · verify — the second\n")
+
+# IK: the pack's long grammar in the gate and the boundary (register 2026-09-09 11:21)
+opener = ev(0, "run-open", session="k-head-1", handoff=nine, regime="multi")
+write("run-ik-gate", [opener, ev(1, "gate", item="item1 N148 · build+install", percent=5)]
+      + lane(2, "IK-A", LIVE))
+write("run-ik-bnd", [opener, ev(1, "gate", item="item1 N148 · build+install", percent=5),
+                     ev(20, "phase-boundary", **{"from": "item1 N148 · build+install",
+                                                 "to": "item2 N145 · build+critic+install"}),
+                     ev(21, "gate", item="item2 N145 · build+critic+install", percent=9)])
+
+# RS: a lane resumed under a later item is in the running set (register 2026-09-13 03:44)
+rs = ([ev(0, "run-open", session="k-head-1", handoff=two, regime="multi"),
+       ev(1, "gate", item="item1", percent=5)] + lane(2, "RS-A", LIVE)
+      + [ev(10, "lane-closed", lane="RS-A", exit_class="completed", total_cost_usd=1.0,
+            session_id="sid-RS-A"),
+         ev(11, "phase-boundary", **{"from": "item1", "to": "item2"}),
+         ev(12, "gate", item="item2", percent=9)] + lane(13, "RS-B", LIVE)
+      + [ev(20, "lane-closed", lane="RS-B", exit_class="completed", total_cost_usd=1.0,
+            session_id="sid-RS-B")])
+resumed = ev(30, "lane-resumed", lane="RS-A", session_id="sid-RS-A", wrapper_pid=LIVE, resume_n=1)
+write("run-rs", rs + [resumed])
+write("run-rs-closed-again", rs + [resumed, ev(40, "lane-closed", lane="RS-A", exit_class="completed",
+                                               total_cost_usd=0.5, session_id="sid-RS-A")])
+# the respawn shape: a pid-less lane-resumed, then a lane-respawned naming a pid that has gone
+write("run-rs-respawn", rs + [ev(30, "lane-resumed", lane="RS-A", session_id="sid-RS-A", resume_n=1),
+                              ev(30, "lane-respawned", lane="RS-A", session_id="sid-RS-A",
+                                 pid=REAPED, wrapper_pid=REAPED)])
+
+# HM: the header's model and effort come from the latest head start alone (register 2026-09-10 20:29)
+hm = [ev(0, "run-open", session="k-head-1", handoff=two, regime="multi"),
+      ev(0, "head-successor", session_id="k-head-2", pid=REAPED, model="opus", effort="max"),
+      ev(1, "gate", item="item1", percent=5)]
+write("run-hm", hm)
+write("run-hm-later", hm + [ev(5, "head-resumed", session_id="k-head-2", pid=REAPED)])
+write("run-hm-none", [e for e in hm if e["event"] != "head-successor"])
+
+# F4: the console marks a never-run item done at the close (register 2026-09-17 12:51). A
+# six-item pack; items 0 to 2 gated and worked; the closing boundary names item3 as the bare
+# next item and the run-close says which items opened. item3's only start is that boundary,
+# item4 and item5 never started: all three read skipped, never done, and draw no elapsed time.
+six = os.path.join(HANDOFFS, "six.md")
+with open(six, "w", encoding="utf-8") as fh:
+    fh.write("# a six-item pack (fixture)\n\n## Resume prompt\n\n")
+    for k in range(6):
+        fh.write("item%d N%d · build — fixture item %d\n" % (k, k, k))
+CLOSE_ITEMS = ("3 of 6 opened (items 0 to 2); items 3 and 5 never opened; the two reports of "
+               "item4 written at the close-out")
+f4 = ([ev(0, "run-open", session="k-head-1", handoff=six, regime="multi"),
+       ev(1, "gate", item="item0", percent=3),
+       ev(10, "phase-boundary", **{"from": "item0", "to": "item1"}),
+       ev(11, "gate", item="item1", percent=8)] + lane(12, "F4-A", REAPED)
+      + [ev(20, "lane-closed", lane="F4-A", exit_class="completed", total_cost_usd=1.0,
+            session_id="sid-F4-A"),
+         ev(21, "phase-boundary", **{"from": "item1", "to": "item2"}),
+         ev(22, "gate", item="item2", percent=12),
+         ev(23, "observation", phase="item2", what="a finding of item2", note="evidence: fixture"),
+         ev(30, "phase-boundary", **{"from": "item2", "to": "item3"})])
+write("run-f4-open", f4)                                   # still open: item3 reads running
+write("run-f4-close", f4 + [ev(31, "run-close", items=CLOSE_ITEMS, lanes=1)])
+# must not fire: the boundary's target then worked — a gate, a lane, or a ledger event with
+# its phase — still reads done at the close
+write("run-f4-gated", f4 + [ev(31, "gate", item="item3", percent=13),
+                            ev(40, "run-close", items="4 of 6 opened", lanes=1)])
+write("run-f4-laned", f4 + lane(31, "F4-B", REAPED)
+      + [ev(35, "lane-closed", lane="F4-B", exit_class="completed", total_cost_usd=1.0,
+            session_id="sid-F4-B"),
+         ev(40, "run-close", items="4 of 6 opened", lanes=2)])
+write("run-f4-phased", f4 + [ev(31, "observation", phase="item3", what="the abstract drafted",
+                               note="evidence: fixture"),
+                             ev(40, "run-close", items="4 of 6 opened", lanes=1)])
+# premise cases: a run-close with no items field; a record with no boundary at all; the
+# boundary's item strings in the pack grammar
+write("run-f4-noitems", f4 + [ev(31, "run-close", lanes=1)])
+write("run-f4-nobnd", [ev(0, "run-open", session="k-head-1", handoff=six, regime="multi"),
+                       ev(1, "gate", item="item0", percent=3),
+                       ev(5, "run-close", items="1 of 6 opened", lanes=0)])
+write("run-f4-long", f4[:-1] + [ev(30, "phase-boundary", **{"from": "item2 N2 · build",
+                                                            "to": "item3 N3 · build"}),
+                                ev(31, "run-close", items=CLOSE_ITEMS, lanes=1)])
+# Fold (critic 2026-09-17): work recorded AFTER the run-close changes no verdict — a phase
+# event, a late gate and a late lane after the close leave the historical 3/6 intact.
+write("run-f4-late", f4 + [ev(31, "run-close", items=CLOSE_ITEMS, lanes=1),
+                           ev(32, "observation", phase="item3", what="a late note",
+                              note="evidence: fixture"),
+                           ev(33, "gate", item="item3", percent=14)]
+      + lane(34, "F4-C", REAPED)
+      + [ev(35, "lane-closed", lane="F4-C", exit_class="completed", total_cost_usd=1.0,
+            session_id="sid-F4-C")])
+print("kifix fixtures written")
+PY_KIFIX
+[ $? -eq 0 ] || { printf 'PROBE FAILED: the kifix fixture generator did not run\n'; exit 2; }
+kwatch() {
+  env LLM_WIKI_STORE="$KS" AIMYTH_PROJECTS_DIR="$T/projects" AIMYTH_WATCH_NOTIFY=0 \
+      COLUMNS=150 LINES=60 python3 -B "$WATCH" --vault "$T/vault" "$@"
+}
+
+# IK01-IK03: a record item string keys by its leading item<k> (register 2026-09-09 11:21)
+kwatch --run run-ik-gate --once --plain > "$T/ik-gate.txt" 2>&1
+ikrows=$(grep -cE '^│ item[0-9]+ ' "$T/ik-gate.txt")
+if [ "$ikrows" = "9" ] && grep -q ' 0/9 items done' "$T/ik-gate.txt" &&
+   grep -qE '^│ item1 +N148 · build\+install .*running' "$T/ik-gate.txt" && ! grep -qE '^│ item1 N148' "$T/ik-gate.txt"; then
+  ok "IK01 a gate keyed with the long grammar lands on the planned row: nine item rows, item1 running, overall 0/9 (no tenth row)"
+else
+  no "IK01 the long-keyed gate drew $ikrows item rows: $(grep -o ' [0-9]*/[0-9]* items done' "$T/ik-gate.txt")"
+fi
+kwatch --run run-ik-bnd --once --plain > "$T/ik-bnd.txt" 2>&1
+if [ "$(grep -cE '^│ item[0-9]+ ' "$T/ik-bnd.txt")" = "9" ] && grep -q ' 1/9 items done' "$T/ik-bnd.txt" &&
+   grep -qE '^│ item1 +.* done ' "$T/ik-bnd.txt" && grep -qE '^│ item2 +.* running ' "$T/ik-bnd.txt"; then
+  ok "IK02 a boundary keyed the long way ends item1 and starts item2 on their planned rows: 1/9 items done"
+else
+  no "IK02 the long-keyed boundary drew $(grep -cE '^│ item[0-9]+ ' "$T/ik-bnd.txt") rows: $(grep -o ' [0-9]*/[0-9]* items done' "$T/ik-bnd.txt")"
+fi
+# F4-01..F4-08: a boundary's never-worked target at the close (register 2026-09-17 12:51)
+F4_ITEMS='3 of 6 opened (items 0 to 2); items 3 and 5 never opened; the two reports of item4 written at the close-out'
+kwatch --run run-f4-close --once --plain < /dev/null > "$T/f4-close.txt" 2>&1
+if grep -qE '^│ item0 .* done ' "$T/f4-close.txt" && grep -qE '^│ item1 .* done ' "$T/f4-close.txt" &&
+   grep -qE '^│ item2 .* done ' "$T/f4-close.txt" && grep -qE '^│ item3 .* skipped ' "$T/f4-close.txt" &&
+   grep -qE '^│ item4 .* skipped ' "$T/f4-close.txt" && grep -qE '^│ item5 .* skipped ' "$T/f4-close.txt" &&
+   grep -q '3/6 items done · 3 skipped ■ RUN CLOSED' "$T/f4-close.txt"; then
+  ok "F4-01 (must fire) at the close a boundary's never-worked target reads skipped: items 0 to 2 done, 3 to 5 skipped, 3/6 items done · 3 skipped"
+else
+  no "F4-01 the closed board reads: $(grep -E '^│ item|items done' "$T/f4-close.txt" | tr '\n' '|')"
+fi
+if ! grep -qE '^│ item3 .* skipped +[0-9]+:[0-9][0-9]' "$T/f4-close.txt" &&
+   grep -qE '^│ item2 .* done +[0-9]+:[0-9][0-9]' "$T/f4-close.txt"; then
+  ok "F4-02 the skipped target draws no elapsed time (control: the done item2 row carries its clock)"
+else
+  no "F4-02 the item rows read: $(grep -E '^│ item[23] ' "$T/f4-close.txt" | tr '\n' '|')"
+fi
+if grep -qF "run-close says: $F4_ITEMS" "$T/f4-close.txt" && grep -q 'items done · 3 skipped' "$T/f4-close.txt"; then
+  ok "F4-03 the closing box quotes the run-close event's items text beside the board's own count"
+else
+  no "F4-03 the closing box lacks the run-close items text: $(grep -c 'run-close says' "$T/f4-close.txt") line(s)"
+fi
+for v in gated laned phased; do
+  kwatch --run "run-f4-$v" --once --plain < /dev/null > "$T/f4-$v.txt" 2>&1
+  if grep -qE '^│ item3 .* done ' "$T/f4-$v.txt" && grep -q '4/6 items done · 2 skipped ■ RUN CLOSED' "$T/f4-$v.txt"; then
+    ok "F4-04 (must not fire, $v) the boundary's target then worked (a $v event of its own) still reads done at the close: 4/6 items done"
+  else
+    no "F4-04 ($v) the worked target reads: $(grep -E '^│ item3 |items done' "$T/f4-$v.txt" | tr '\n' '|')"
+  fi
+done
+kwatch --run run-f4-open --once --plain < /dev/null > "$T/f4-open.txt" 2>&1
+if grep -qE '^│ item3 .* running ' "$T/f4-open.txt" && ! grep -q 'RUN CLOSED' "$T/f4-open.txt" &&
+   grep -qE '^│ item4 .* pending ' "$T/f4-open.txt"; then
+  ok "F4-05 (must not fire) a run still open reads the boundary's target as running, as before"
+else
+  no "F4-05 the open run reads: $(grep -E '^│ item[34] ' "$T/f4-open.txt" | tr '\n' '|')"
+fi
+kwatch --run run-f4-noitems --once --plain < /dev/null > "$T/f4-noitems.txt" 2>&1
+if ! grep -q 'run-close says' "$T/f4-noitems.txt" && grep -q '3/6 items done · 3 skipped' "$T/f4-noitems.txt" &&
+   grep -q '■ RUN CLOSED · run-f4-noitems' "$T/f4-noitems.txt"; then
+  ok "F4-06 (premise) a run-close with no items field: the box prints the board's count alone"
+else
+  no "F4-06 the no-items close reads: $(grep -E 'run-close says|items done' "$T/f4-noitems.txt" | tr '\n' '|')"
+fi
+kwatch --run run-f4-nobnd --once --plain < /dev/null > "$T/f4-nobnd.txt" 2>&1
+if grep -qE '^│ item0 .* done ' "$T/f4-nobnd.txt" && grep -q '1/6 items done · 5 skipped ■ RUN CLOSED' "$T/f4-nobnd.txt"; then
+  ok "F4-07 (premise) a record with no boundary at all: the gated item reads done, the rest skipped"
+else
+  no "F4-07 the boundary-less close reads: $(grep -E '^│ item0 |items done' "$T/f4-nobnd.txt" | tr '\n' '|')"
+fi
+kwatch --run run-f4-late --once --plain < /dev/null > "$T/f4-late.txt" 2>&1
+if grep -qE '^│ item3 .* skipped ' "$T/f4-late.txt" && grep -q '3/6 items done · 3 skipped ■ RUN CLOSED' "$T/f4-late.txt" &&
+   grep -qF "run-close says: $F4_ITEMS" "$T/f4-late.txt" && grep -q 'F4-C' "$T/f4-late.txt"; then
+  ok "F4-09 (fold, must fire) a phase event, a gate and a lane recorded after the run-close change no verdict: item3 stays skipped, 3/6 items done, the run-close text quoted (the late lane still listed)"
+else
+  no "F4-09 post-close evidence changed the verdict: $(grep -E '^│ item3 |items done|run-close says' "$T/f4-late.txt" | tr '\n' '|')"
+fi
+kwatch --run run-f4-long --once --plain < /dev/null > "$T/f4-long.txt" 2>&1
+if grep -qE '^│ item3 .* skipped ' "$T/f4-long.txt" && grep -qE '^│ item2 .* done ' "$T/f4-long.txt" &&
+   grep -q '3/6 items done · 3 skipped ■ RUN CLOSED' "$T/f4-long.txt"; then
+  ok "F4-08 (premise) a boundary in the pack grammar (item3 N3 · build) keys through item_key and its target reads skipped"
+else
+  no "F4-08 the long-keyed close reads: $(grep -E '^│ item[23] |items done' "$T/f4-long.txt" | tr '\n' '|')"
+fi
+python3 -B - "$WATCH" > "$T/ik-unit.txt" 2>&1 <<'PY_ITEMKEY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("watch_under_test", sys.argv[1])
+watch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(watch)
+cases = [("item1 N148 · build+install", "item1"), ("**item12** close-out", "item12"),
+         ("item3", "item3"), ("  item4 — the phase", "item4"), ("Item5 N1 · build", "item5"),
+         ("close-out", "close-out"), ("items", "items"), ("", None), ("   ", None), (None, None)]
+bad = [(value, want, watch.item_key(value)) for value, want in cases if watch.item_key(value) != want]
+print("cases %d bad %d %s" % (len(cases), len(bad), bad))
+PY_ITEMKEY
+if grep -q '^cases 10 bad 0 ' "$T/ik-unit.txt"; then
+  ok "IK03 item_key reduces a long item string to its item<k>, keeps a string with no such token as itself and reads empty or missing as no item (10 cases)"
+else
+  no "IK03 item_key: $(tr '\n' '|' < "$T/ik-unit.txt")"
+fi
+
+# RS01-RS03: a resumed lane is in the running set until its next close (register 2026-09-13 03:44)
+kwatch --run run-rs --once --plain > "$T/rs.txt" 2>&1
+rsnow=$(sed -n '/lanes now/,/timeline/p' "$T/rs.txt")
+if printf '%s\n' "$rsnow" | grep -qE '^│ ● RS-A ' && printf '%s\n' "$rsnow" | grep -qE '^│ ✓ RS-B ' &&
+   grep -qE '^│ item1 .*●RS-A' "$T/rs.txt"; then
+  ok "RS01 a lane resumed under a later item is drawn ● running in lanes now, beside the item in hand's own ✓ RS-B (the control)"
+else
+  no "RS01 lanes now reads: $(printf '%s' "$rsnow" | tr '\n' '|')"
+fi
+kwatch --run run-rs-closed-again --once --plain > "$T/rs2.txt" 2>&1
+rsnow2=$(sed -n '/lanes now/,/timeline/p' "$T/rs2.txt")
+if ! printf '%s\n' "$rsnow2" | grep -qE '^│ ● RS-A ' && printf '%s\n' "$rsnow2" | grep -qE '^│ ✓ RS-B ' &&
+   grep -qE '^│ item1 .*✓RS-A' "$T/rs2.txt"; then
+  ok "RS02 the resumed lane leaves the running set at its next lane-closed: no ● RS-A in lanes now, ✓RS-A on its item row"
+else
+  no "RS02 after the second close lanes now reads: $(printf '%s' "$rsnow2" | tr '\n' '|')"
+fi
+kwatch --run run-rs-respawn --once --plain > "$T/rs3.txt" 2>&1
+if grep -qE '^│ item1 .*✗RS-A' "$T/rs3.txt" && ! grep -qE '^│ item1 .*●RS-A' "$T/rs3.txt"; then
+  ok "RS03 lane-respawned names the resumed call's processes: its gone pid reads ✗ on the item row, where the pid-less lane-resumed alone would read ●"
+else
+  no "RS03 the respawned lane's item row reads: $(grep -E '^│ item1 ' "$T/rs3.txt")"
+fi
+
+# HM01-HM03: the header's model and effort from the latest head start (register 2026-09-10 20:29)
+kwatch --run run-hm --once --plain > "$T/hm.txt" 2>&1
+kwatch --run run-hm-later --once --plain > "$T/hm2.txt" 2>&1
+kwatch --run run-hm-none --once --plain > "$T/hm3.txt" 2>&1
+if grep -q '^│ head k-head-2 · opus·max · turn ' "$T/hm.txt"; then
+  ok "HM01 the header prints head <sid8> · opus·max from the latest head start's own model and effort keys"
+else
+  no "HM01 the header reads: $(grep -m1 '^│ head k' "$T/hm.txt")"
+fi
+if grep -q '^│ head k-head-2 · model unrecorded · turn ' "$T/hm2.txt" && ! grep -q 'opus·max' "$T/hm2.txt"; then
+  ok "HM02 a later head start without the keys reads model unrecorded, never the earlier start's opus·max"
+else
+  no "HM02 the header after a keyless head start reads: $(grep -m1 '^│ head k' "$T/hm2.txt")"
+fi
+if grep -q '^│ head k-head-1 · model unrecorded · turn ' "$T/hm3.txt"; then
+  ok "HM03 a record whose only head start (run-open) carries no keys reads model unrecorded"
+else
+  no "HM03 the header reads: $(grep -m1 '^│ head k' "$T/hm3.txt")"
+fi
+
+# RW01-RW03: a live console waits for a record its detached lane has not written yet
+# (register 2026-09-09 11:21: the caller now opens the console before the worker exists)
+RWS="$T/rwstore"
+mkdir -p "$RWS/spawn-records"
+( sleep 2
+  python3 -B -c '
+import json, os, sys, time
+path = sys.argv[1]
+now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+rows = [{"ts": now, "run": "run-late", "event": "lane-open", "lane": "LATE", "class": "builder",
+         "model": "opus", "effort": "xhigh", "session_id": "sid-late"},
+        {"ts": now, "run": "run-late", "event": "lane-closed", "lane": "LATE",
+         "exit_class": "completed", "total_cost_usd": 0.1},
+        {"ts": now, "run": "run-late", "event": "run-close", "shape": "plain-lane-run", "lanes": 1}]
+with open(path + ".part", "w", encoding="utf-8") as fh:
+    fh.write("".join(json.dumps(r) + "\n" for r in rows))
+os.replace(path + ".part", path)
+' "$RWS/spawn-records/run-late.jsonl" ) &
+latepid=$!
+env LLM_WIKI_STORE="$RWS" AIMYTH_PROJECTS_DIR="$T/projects" AIMYTH_WATCH_NOTIFY=0 COLUMNS=150 LINES=60 \
+    python3 -B "$WATCH" --vault "$T/vault" --run run-late --plain --refresh 0.2 --wait-record 30 \
+    < /dev/null > "$T/late.txt" 2>&1
+lrc=$?
+wait "$latepid"
+if [ "$lrc" -eq 0 ] && grep -q 'waiting up to 30 s for the run record' "$T/late.txt" &&
+   grep -q '■ RUN CLOSED · run-late' "$T/late.txt"; then
+  ok "RW01 a live console started before its record exists waits for it, then renders and closes the run (exit 0)"
+else
+  no "RW01 the late record: exit $lrc, $(head -3 "$T/late.txt" | tr '\n' '|')"
+fi
+env LLM_WIKI_STORE="$RWS" AIMYTH_PROJECTS_DIR="$T/projects" AIMYTH_WATCH_NOTIFY=0 COLUMNS=150 LINES=60 \
+    python3 -B "$WATCH" --vault "$T/vault" --run run-never --plain --wait-record 1 \
+    < /dev/null > "$T/never.txt" 2>&1
+nrc=$?
+if [ "$nrc" -eq 2 ] && grep -q 'waiting up to 1 s' "$T/never.txt" && grep -q 'PROBE FAILED' "$T/never.txt" &&
+   grep -q 'no run record' "$T/never.txt"; then
+  ok "RW02 a record that never appears is still the premise failure once the wait is over (exit 2)"
+else
+  no "RW02 the missing record after the wait: exit $nrc, $(tr '\n' '|' < "$T/never.txt")"
+fi
+env LLM_WIKI_STORE="$RWS" AIMYTH_PROJECTS_DIR="$T/projects" AIMYTH_WATCH_NOTIFY=0 COLUMNS=150 LINES=60 \
+    python3 -B "$WATCH" --vault "$T/vault" --run run-never --once --plain --wait-record 30 \
+    < /dev/null > "$T/never-once.txt" 2>&1
+orc=$?
+if [ "$orc" -eq 2 ] && ! grep -q 'waiting up to' "$T/never-once.txt" && grep -q 'no run record' "$T/never-once.txt"; then
+  ok "RW03 --once never waits: a missing record fails at once (the control for RW01)"
+else
+  no "RW03 --once on a missing record: exit $orc, $(tr '\n' '|' < "$T/never-once.txt")"
+fi
+
 # ---------------------------------------------------------------- leg 9: derived paths
 strays=$(grep -c -E '/Us''ers/|/ho''me/|/Vol''umes/|Cloud''Storage|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-' "$WATCH")
 control=$(grep -c -E '/Us''ers/|/ho''me/|/Vol''umes/|Cloud''Storage|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-' "$T/planted/planted-strays.py")
@@ -1572,6 +2222,388 @@ if grep -q "$T/store/spawn-records/run-vocab.jsonl" "$T/vocab.err" 2>/dev/null; 
   no "the console printed the record path as an error"
 else
   ok "the store, the projects root and the vault were taken from the environment and --vault"
+fi
+
+# ---------------------------------------------------------------- leg 9b: the live head meter
+# A synthetic transcript: message A written as two records with one id (a multi-block turn, the
+# duplicate the live meter must fold), message B once, both fable at 1,000 output tokens, and a
+# message C on an unpriced model. Expected $0.10 (two priced messages at $50/MTok), not the naive
+# $0.15; messages 3; unpriced 1; and a missing path is an error, never a zero.
+python3 -B - "$HERE" "$T" <<'LIVE' > "$T/live-meter.txt" 2>&1
+import json, os, sys
+sys.path.insert(0, sys.argv[1])
+import watch
+p = os.path.join(sys.argv[2], "live-meter-fixture.jsonl")
+def rec(mid, model, out):
+    return json.dumps({"type": "assistant", "uuid": mid + "-u", "message": {"id": mid, "model": model,
+                       "usage": {"input_tokens": 0, "output_tokens": out, "cache_read_input_tokens": 0,
+                                 "cache_creation": {"ephemeral_1h_input_tokens": 0, "ephemeral_5m_input_tokens": 0}}}})
+with open(p, "w") as fh:
+    fh.write("\n".join([rec("A", "claude-fable-5-1", 1000), rec("A", "claude-fable-5-1", 1000),
+                        rec("B", "claude-fable-5-1", 1000), rec("C", "claude-fixture", 1000)]) + "\n")
+print("RESULT", json.dumps(watch.head_live_spend(p)))
+print("MISSING", json.dumps(watch.head_live_spend(os.path.join(sys.argv[2], "no-such.jsonl"))))
+LIVE
+if grep -q '"usd": 0.1[0]*[,}]' "$T/live-meter.txt" && grep -q '"messages": 3' "$T/live-meter.txt" &&
+   grep -q '"unpriced": 1' "$T/live-meter.txt" && grep -q 'MISSING {"error": "no transcript"}' "$T/live-meter.txt"; then
+  ok "LM01 the live head meter folds a duplicated message id (0.10, not 0.15), counts the unpriced model, and errors on a missing transcript"
+else
+  no "LM01 the live head meter read: $(tr '\n' ' ' < "$T/live-meter.txt" | cut -c1-300)"
+fi
+
+# ---------------------------------------------------------------- HL: the held lanes (2026-09-17)
+# A held lane is drawn ◐ held on the lanes panel and the items panel while its hold is open and it
+# is not running again; a beat that failed alerts; a hold that ended reads closed with its reason;
+# the older decision hold (no lane) holds nothing.
+run_watch --run run-held --once --plain > "$T/held.txt" 2>"$T/held.err"
+hlrc=$?
+if [ "$hlrc" -eq 0 ] && ! grep -q 'PROBE FAILED' "$T/held.err"; then
+  ok "HL00 the held-lanes record renders (exit 0, no PROBE FAILED)"
+else
+  no "HL00 the held-lanes record exited $hlrc: $(head -2 "$T/held.err")"
+fi
+if grep -qE '^│ ◐ H-ONE .*held · beats 1/2 · last beat [0-9]{2}:[0-9]{2} ok · next due [0-9]{2}:[0-9]{2}' "$T/held.txt"; then
+  ok "HL01 a held lane with one beat of two reads ◐ held with its beat count, its last beat's time and the next beat's due time"
+else
+  no "HL01 the held row is wrong: $(grep -E 'H-ONE' "$T/held.txt" | head -1)"
+fi
+if grep -qE '^│ ◐ H-TWO .*held · beats 1/1 · last beat [0-9]{2}:[0-9]{2} FAILED · beat due' "$T/held.txt"; then
+  ok "HL02 a held lane whose beat failed 108 minutes ago reads ◐ held with the failure on its row and the beat due"
+else
+  no "HL02 the failed-beat row is wrong: $(grep -E 'H-TWO' "$T/held.txt" | head -1)"
+fi
+if grep -qE '^│ ✓ H-THREE .*completed .*hold ended \(cap\)' "$T/held.txt" && ! grep -qE '^│ ◐ H-THREE' "$T/held.txt"; then
+  ok "HL03 a lane whose hold ended at the cap reads ✓ completed again, naming the reason (the control: not ◐)"
+else
+  no "HL03 the ended-hold row is wrong: $(grep -E 'H-THREE' "$T/held.txt" | head -1)"
+fi
+if grep -qE '^│ ● H-FOUR .*' "$T/held.txt" && ! grep -qE '^│ ◐ H-FOUR' "$T/held.txt"; then
+  ok "HL04 a held lane resumed for real reads ● running, never ◐ (no beat while it runs again)"
+else
+  no "HL04 the resumed held lane is wrong: $(grep -E 'H-FOUR' "$T/held.txt" | head -1)"
+fi
+item1held=$(grep -E '^│ item1 ' "$T/held.txt")
+case $item1held in
+  *"◐H-ONE"*"◐H-TWO"*"✓H-THREE"*"●H-FOUR"*) ok "HL05 the items panel marks the two held lanes ◐, the ended one ✓ and the resumed one ●" ;;
+  *) no "HL05 the items row is wrong: $item1held" ;;
+esac
+if grep -q '◐ held' "$T/held.txt"; then
+  ok "HL06 the timeline legend names ◐ held"
+else
+  no "HL06 the legend lacks ◐ held"
+fi
+python3 -B - "$WATCH" > "$T/held-alerts.txt" 2>&1 <<'PY_HELD'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("watch_under_test", sys.argv[1])
+watch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(watch)
+print("failed beat alerts: %s" % watch.is_alert({"event": "hold-beat", "lane": "X", "ok": False}))
+print("ok beat alerts: %s" % watch.is_alert({"event": "hold-beat", "lane": "X", "ok": True}))
+print("hold alerts: %s" % watch.is_alert({"event": "hold", "lane": "X", "cap": 1}))
+print("ended alerts: %s" % watch.is_alert({"event": "hold-ended", "lane": "X", "reason": "cap"}))
+print("kinds treated: %s" % all(k in watch.TREATMENT for k in ("hold", "hold-beat", "hold-ended")))
+PY_HELD
+if grep -q 'failed beat alerts: True' "$T/held-alerts.txt" && grep -q 'ok beat alerts: False' "$T/held-alerts.txt" &&
+   grep -q 'hold alerts: False' "$T/held-alerts.txt" && grep -q 'ended alerts: False' "$T/held-alerts.txt" &&
+   grep -q 'kinds treated: True' "$T/held-alerts.txt"; then
+  ok "HL07 a failed beat is an alert, a successful one, a hold and a hold-ended are not, and the three kinds are treated"
+else
+  no "HL07 the alert rule is wrong: $(tr '\n' '|' < "$T/held-alerts.txt")"
+fi
+if grep -qE '^│ ◐ H-FIVE .*held · beats 0/1 · last beat none yet · beat due' "$T/held.txt"; then
+  ok "HL09 a lane held two minutes ago whose last call is an hour old reads beat due: the row's reference is the lane's last call as the hold recorded it, never the hold's own stamp (must fire; HL01's next due is the control)"
+else
+  no "HL09 the due time is not taken from the last call: $(grep -E '^│ . H-FIVE' "$T/held.txt" | head -1)"
+fi
+if grep -qE '^│ ✓ H-SIX .*completed · hold ended \(released\)' "$T/held.txt"; then
+  ok "HL10 a lane whose reason runs past the row still names how its hold ended: the note precedes the reason, which the width cuts (must fire)"
+else
+  no "HL10 the hold note was cut off the row: $(grep -E '^│ . H-SIX' "$T/held.txt" | head -1)"
+fi
+# HL12 (the re-base, 2026-09-17): the console's state fold carries BOTH changes that met in it —
+# the afternoon's rule that a boundary's never-worked target shows no clock, and the held lanes'
+# ◐ on the items panel. One record, one Run, one render_items call answers for both.
+mkdir -p "$T/bothfold"
+python3 -B - "$WATCH" "$T/bothfold/run-both.jsonl" > "$T/both-fold.txt" 2>&1 <<'PY_BOTH'
+import importlib.util
+import json
+import sys
+import time
+
+spec = importlib.util.spec_from_file_location("watch_both", sys.argv[1])
+watch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(watch)
+t0 = time.time() - 60 * 60
+
+
+def ts(mins):
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t0 + mins * 60))
+
+
+rows = [
+    {"ts": ts(0), "run": "run-both", "event": "run-open", "session": "s", "head": "both"},
+    {"ts": ts(1), "run": "run-both", "event": "gate", "item": "item1", "percent": 5,
+     "decision": "allow", "metered": True},
+    {"ts": ts(2), "run": "run-both", "event": "lane-open", "lane": "BL", "class": "builder",
+     "model": "fable", "effort": "max", "session_id": "both-sid"},
+    {"ts": ts(3), "run": "run-both", "event": "lane-closed", "lane": "BL",
+     "exit_class": "completed", "session_id": "both-sid", "total_cost_usd": 1.0},
+    {"ts": ts(4), "run": "run-both", "event": "hold", "lane": "BL", "harness": "claude",
+     "cap": 1, "beat_after_s": 3000, "last_call": ts(3), "session_id": "both-sid"},
+    # the boundary's target is never worked: item3 keeps a start and no work, and the gate that
+    # follows makes item2 the current one, so item3 is the pending-with-a-start case
+    {"ts": ts(5), "run": "run-both", "event": "phase-boundary", "from": "item1", "to": "item3"},
+    {"ts": ts(6), "run": "run-both", "event": "gate", "item": "item2", "percent": 6,
+     "decision": "allow", "metered": True},
+]
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    for row in rows:
+        handle.write(json.dumps(row) + "\n")
+run = watch.Run("run-both", sys.argv[2], sys.argv[1])
+print("held: %s" % run.lanes["BL"].is_held())
+print("boundary_only: %s" % ("item3" in run.boundary_only))
+print("item3 state: %s" % run.state("item3"))
+for line in watch.render_items(run, 100):
+    print("row| " + line)
+PY_BOTH
+BOTH_ITEM3=$(grep '^row| ' "$T/both-fold.txt" | grep -c 'item3.*pending')
+BOTH_CLOCK=$(grep '^row| ' "$T/both-fold.txt" | grep 'item3' | grep -cE '[0-9]+:[0-9]{2}')
+if grep -q 'held: True' "$T/both-fold.txt" && grep -q 'boundary_only: True' "$T/both-fold.txt" &&
+   grep -q '^row| .*◐BL' "$T/both-fold.txt" && [ "$BOTH_ITEM3" = "1" ] && [ "$BOTH_CLOCK" = "0" ]; then
+  ok "HL12 the state fold holds both changes that met in it: the held lane is folded to ◐ on the items panel AND a boundary's never-worked target is marked boundary_only and drawn with no clock (the re-base of 2026-09-17)"
+else
+  no "HL12 one of the two behaviours is missing: $(tr '\n' '|' < "$T/both-fold.txt" | cut -c1-400)"
+fi
+if grep -qE '^│ ◐ H-SEVEN .*held · beats 0/2 · last beat none yet · next due [0-9]{2}:[0-9]{2}' "$T/held.txt"; then
+  ok "HL11 a held lane resumed for real and closed again five minutes ago reads ◐ held with its NEXT due time, since the close that followed the hold is the lane's last call (critic F6; HL02's 'beat due' is the control)"
+else
+  no "HL11 the due time ignores the close that followed the hold: $(grep -E '^│ . H-SEVEN' "$T/held.txt" | head -1)"
+fi
+if ! grep -qE '^│ ◐ |◐B-ONE|◐C-TWO|◐V-THREE' "$T/vocab.txt" && grep -q '✓B-ONE' "$T/vocab.txt"; then
+  ok "HL08 a hold that was released and the older decision hold (no lane) leave no lane ◐ on the vocabulary record (the control for the lane-keyed reading)"
+else
+  no "HL08 a lane reads held on the vocabulary record: $(grep -E '^│ ◐ |◐B-ONE|◐C-TWO|◐V-THREE' "$T/vocab.txt" | head -1)"
+fi
+# HL13 (review finding 1, 2026-09-18): what an open hold's row may PROMISE depends on the run's
+# hold service, because a beat comes from the supervisor's tick and from nowhere else. Five
+# records, one state each, all with the same lane, the same cap and the same due beat, rendered
+# through render_lanes with the colour off: only a live service says `beat due`.
+mkdir -p "$T/holdsvc"
+python3 -B - "$WATCH" "$T/holdsvc" > "$T/hold-service.txt" 2>&1 <<'PY_HOLDSVC'
+import importlib.util
+import json
+import os
+import sys
+import time
+
+spec = importlib.util.spec_from_file_location("watch_holdsvc", sys.argv[1])
+watch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(watch)
+watch.USE_COLOUR = False
+t0 = time.time() - 3 * 60 * 60
+
+
+def ts(mins):
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t0 + mins * 60))
+
+
+# the common prefix: a run, a supervisor that ticks, a lane closed 80 minutes ago and held, so
+# the beat is due under the recorded 3,000 s interval in every one of the five records
+def base(name):
+    return [
+        {"ts": ts(0), "run": name, "event": "run-open", "session": "s", "head": "svc"},
+        {"ts": ts(1), "run": name, "event": "gate", "item": "item1", "percent": 5,
+         "decision": "allow", "metered": True},
+        {"ts": ts(2), "run": name, "event": "supervise", "mode": "attached", "pid": 1,
+         "services_holds": True},
+        {"ts": ts(3), "run": name, "event": "lane-open", "lane": "SV", "class": "builder",
+         "model": "fable", "effort": "max", "session_id": "svc-sid"},
+        {"ts": ts(100), "run": name, "event": "lane-closed", "lane": "SV",
+         "exit_class": "completed", "session_id": "svc-sid", "total_cost_usd": 1.0},
+        {"ts": ts(101), "run": name, "event": "hold", "lane": "SV", "harness": "claude",
+         "cap": 1, "beat_after_s": 3000, "last_call": ts(100), "session_id": "svc-sid"},
+    ]
+
+
+cases = {
+    # the live control: the supervisor is ticking and the beat really is due
+    "run-svc-live": [],
+    # a requested stop: the supervisor stands down at the head's exit and beats nothing meanwhile
+    "run-svc-stop": [{"ts": ts(102), "event": "supervise", "mode": "stop-requested"}],
+    # the crash residue: a stand-down or a close with the hold still open (the supervisor died
+    # between ending the holds and writing its own last event)
+    "run-svc-down": [{"ts": ts(102), "event": "supervisor-stood-down", "reason": "stopped"}],
+    "run-svc-closed": [{"ts": ts(102), "event": "run-close", "items": "1"}],
+    # a stop cleared by a head that came back: the row promises a beat again
+    "run-svc-back": [{"ts": ts(102), "event": "supervise", "mode": "stop-requested"},
+                     {"ts": ts(103), "event": "supervise", "mode": "attached", "pid": 2,
+                      "services_holds": True}],
+}
+for name, extra in cases.items():
+    path = os.path.join(sys.argv[2], name + ".jsonl")
+    with open(path, "w", encoding="utf-8") as handle:
+        for row in base(name) + [dict(e, run=name) for e in extra]:
+            handle.write(json.dumps(row) + "\n")
+    run = watch.Run(name, path, sys.argv[1])
+    lane = run.lanes["SV"]
+    print("%s service=%s held=%s" % (name, run.hold_service, lane.is_held()))
+    for line in watch.render_lanes(run, 160):
+        if " SV " in line:
+            print("%s row|%s" % (name, line))
+PY_HOLDSVC
+HS_LIVE=$(grep '^run-svc-live row|' "$T/hold-service.txt")
+HS_STOP=$(grep '^run-svc-stop row|' "$T/hold-service.txt")
+HS_DOWN=$(grep '^run-svc-down row|' "$T/hold-service.txt")
+HS_CLOSED=$(grep '^run-svc-closed row|' "$T/hold-service.txt")
+HS_BACK=$(grep '^run-svc-back row|' "$T/hold-service.txt")
+if printf '%s' "$HS_STOP" | grep -q '◐ SV .*held · stop requested · no beat until the supervisor is back' &&
+   ! printf '%s' "$HS_STOP" | grep -q 'beat due' &&
+   grep -q '^run-svc-stop service=stop-requested held=True' "$T/hold-service.txt"; then
+  ok "HL13 an open hold under a REQUESTED supervisor stop reads ◐ held · stop requested · no beat until the supervisor is back, never beat due (review finding 1, must fire)"
+else
+  no "HL13 the requested stop still promises a beat: $HS_STOP"
+fi
+if printf '%s' "$HS_DOWN" | grep -q '◐ SV .*held · unserviced (the supervisor stood down (stopped) at ' &&
+   printf '%s' "$HS_CLOSED" | grep -q '◐ SV .*held · unserviced (the run closed at ' &&
+   ! printf '%s%s' "$HS_DOWN" "$HS_CLOSED" | grep -q 'beat due'; then
+  ok "HL14 an open hold left behind by a stood-down supervisor or a closed run — the residue of a crash between the hold-ended and the event itself — reads ◐ held · unserviced with the reason, never beat due (must fire)"
+else
+  no "HL14 the unserviced residue is wrong: $HS_DOWN || $HS_CLOSED"
+fi
+if printf '%s' "$HS_LIVE" | grep -q '◐ SV .*held · beats 0/1 · last beat none yet · beat due' &&
+   printf '%s' "$HS_BACK" | grep -q '◐ SV .*held · beats 0/1 · last beat none yet · beat due' &&
+   grep -q '^run-svc-back service=live' "$T/hold-service.txt"; then
+  ok "HL15 the live-due controls still read beat due: a ticking supervisor, and one that attached again after a requested stop (the stop is cleared by the later supervise, as the supervisor itself reads it)"
+else
+  no "HL15 a live hold service lost its due time: $HS_LIVE || $HS_BACK"
+fi
+
+# ---------------------------------------------------------------- FS: the live screen fits the window (2026-09-22)
+# A frame taller than the window scrolls its top away. This synthetic fixture
+# checks that item and lane counts cannot hide the header on a short window.
+# The live, non-plain screen folds to the window; a snapshot, --plain and the final board
+# stay whole. The fixtures live in a store of their own ($T/fstore), outside the write-proof manifest.
+mkdir -p "$T/fstore/spawn-records"
+python3 -B - "$T/fstore/spawn-records" <<'PY_CROWD'
+import json, os, sys, time
+out = sys.argv[1]
+t0 = time.time() - 200 * 60
+
+
+def ev(run, mins, kind, **fields):
+    payload = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t0 + mins * 60)),
+               "run": run, "event": kind}
+    payload.update(fields)
+    return payload
+
+
+def lanes(run, n):
+    rows = []
+    for i in range(n):
+        name, cls = "L%02d" % (i + 1), ("builder", "critic", "verifier")[i % 3]
+        rows.append(ev(run, 2 + 5 * i, "lane-open", lane=name, **{"class": cls}, model="opus",
+                       effort="max", reason="(b) breadth: a synthetic crowded-run lane"))
+        rows.append(ev(run, 5 + 5 * i, "lane-closed", lane=name, **{"class": cls},
+                       exit_class="completed" if i != 3 else "error", total_cost_usd=0.5,
+                       num_turns=3, duration_s=180))
+    return rows
+
+
+run = "run-crowd-closed"
+rows = [ev(run, 0, "run-open", session="head-sid-crowd", head="the fixture", regime="multi",
+           expect_items={"item%d" % k: 40000 for k in range(18)})]
+for k in range(7):
+    rows.append(ev(run, 1 + 20 * k, "gate", item="item%d" % k, context=1000, percent=1))
+    rows.append(ev(run, 19 + 20 * k, "phase-boundary", **{"from": "item%d" % k,
+                                                          "to": "item%d" % (k + 1)}))
+rows += lanes(run, 28)
+rows.append(ev(run, 190, "run-close", items="7", lanes="28"))
+rows.sort(key=lambda r: r["ts"])
+with open(os.path.join(out, run + ".jsonl"), "w", encoding="utf-8") as fh:
+    fh.writelines(json.dumps(r) + "\n" for r in rows)
+
+run = "run-crowd-plain"
+rows = lanes(run, 28) + [ev(run, 190, "run-close", shape="plain-lane-run", lanes=28)]
+with open(os.path.join(out, run + ".jsonl"), "w", encoding="utf-8") as fh:
+    fh.writelines(json.dumps(r) + "\n" for r in rows)
+print("crowd fixtures written")
+PY_CROWD
+
+crowd() {   # crowd <lines> <run> [args…]: the console against the crowded store at a fixed window
+  _l=$1; _r=$2; shift 2
+  env LLM_WIKI_STORE="$T/fstore" AIMYTH_PROJECTS_DIR="$T/projects" AIMYTH_WATCH_NOTIFY=0 \
+      COLUMNS=150 LINES="$_l" python3 -B "$WATCH" --vault "$T/vault" --run "$_r" --refresh 0.2 \
+      "$@" < /dev/null 2>/dev/null
+}
+
+# split one live run's output into the screen frame and the final board after the screen
+cat > "$T/fs-split.py" <<'PY_SPLIT'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+height = int(sys.argv[2])
+if "\x1b[2J\x1b[H" not in text or "\x1b[?1049l" not in text:
+    print("frame=absent")
+    sys.exit(0)
+frame = text.split("\x1b[2J\x1b[H", 1)[1].split("\x1b[?25h", 1)[0]
+final = text.split("\x1b[?1049l", 1)[1]
+rows = frame.rstrip("\n").split("\n")
+items = lambda s: len(set(re.findall(r"^│ (item\d+) ", s, re.M)))
+lanes = lambda s: len(set(re.findall(r"^│ (L\d\d) ", s, re.M)))
+print("frame_rows=%d budget=%d fits=%s" % (len(rows), height - 1, len(rows) <= height - 1))
+print("title=%s" % ("console · " in rows[0]))
+print("frame_items=%d frame_lanes=%d item_fold=%d lane_fold=%d overall=%s"
+      % (items(frame), lanes(frame), len(re.findall(r"^│ ⋯ .*folded to fit the window", frame, re.M)),
+         len(re.findall(r"^│ \+\d+ lanes .*folded to fit the window", frame, re.M)),
+         bool(re.search(r"^│ overall ", frame, re.M))))
+print("now_fold=%d" % len(re.findall(r"^│   \+\d+ lanes .*folded to fit the window", frame, re.M)))
+print("final_items=%d final_lanes=%d final_fold=%s"
+      % (items(final), lanes(final), "folded to fit" in final))
+PY_SPLIT
+
+crowd 40 run-crowd-closed > "$T/fs40.txt"; python3 -B "$T/fs-split.py" "$T/fs40.txt" 40 > "$T/fs40.res"
+if grep -q 'fits=True' "$T/fs40.res" && grep -q 'title=True' "$T/fs40.res" &&
+   grep -qE 'item_fold=[12] lane_fold=1 overall=True' "$T/fs40.res"; then
+  ok "FS01 a crowded run (18 items, 28 lanes) on a 40-row window: the live frame fits, the title shows, lanes and items fold, the overall line stays"
+else
+  no "FS01 the crowded live frame: $(tr '\n' '|' < "$T/fs40.res")"
+fi
+if grep -q 'final_items=18 final_lanes=28 final_fold=False' "$T/fs40.res"; then
+  ok "FS02 the final board after the live screen is whole (18 items, 28 lanes, no fold line)"
+else
+  no "FS02 the final board: $(tr '\n' '|' < "$T/fs40.res")"
+fi
+crowd 200 run-crowd-closed > "$T/fs200.txt"; python3 -B "$T/fs-split.py" "$T/fs200.txt" 200 > "$T/fs200.res"
+if grep -q 'fits=True' "$T/fs200.res" &&
+   grep -q 'frame_items=18 frame_lanes=28 item_fold=0 lane_fold=0' "$T/fs200.res" &&
+   grep -q 'now_fold=0' "$T/fs200.res"; then
+  ok "FS03 the must-not-fire case: on a 200-row window the same run folds nothing"
+else
+  no "FS03 a tall window folded: $(tr '\n' '|' < "$T/fs200.res")"
+fi
+crowd 6 run-crowd-closed > "$T/fs6.txt"; python3 -B "$T/fs-split.py" "$T/fs6.txt" 6 > "$T/fs6.res"
+if grep -q 'frame_rows=[1-5] budget=5 fits=True' "$T/fs6.res" && grep -q 'title=True' "$T/fs6.res"; then
+  ok "FS04 a 6-row window: the frame is clipped from the bottom to fit, the title row first"
+else
+  no "FS04 the tiny window: $(tr '\n' '|' < "$T/fs6.res")"
+fi
+crowd 20 run-crowd-plain > "$T/fsp.txt"; python3 -B "$T/fs-split.py" "$T/fsp.txt" 20 > "$T/fsp.res"
+if grep -q 'fits=True' "$T/fsp.res" && grep -q 'lane_fold=1' "$T/fsp.res" && grep -q 'now_fold=1' "$T/fsp.res" &&
+   grep -q 'final_lanes=28 final_fold=False' "$T/fsp.res"; then
+  ok "FS05 a plain record (no head row, every lane in hand) folds its timeline and lanes now to a 20-row window and keeps the final board whole"
+else
+  no "FS05 the plain crowded record: $(tr '\n' '|' < "$T/fsp.res")"
+fi
+crowd 40 run-crowd-closed --once > "$T/fsonce.txt"
+crowd 40 run-crowd-closed --plain > "$T/fsplain.txt"
+fo_items=$(grep -cE '^│ item[0-9]+ ' "$T/fsonce.txt")
+fp_items=$(grep -cE '^│ item[0-9]+ ' "$T/fsplain.txt")
+if [ "$fo_items" -ge 18 ] && [ "$fp_items" -ge 18 ] &&
+   ! grep -q 'folded to fit' "$T/fsonce.txt" && ! grep -q 'folded to fit' "$T/fsplain.txt"; then
+  ok "FS06 --once and --plain stay whole on a 40-row window ($fo_items and $fp_items item rows, no fold line)"
+else
+  no "FS06 a snapshot or --plain folded: $fo_items and $fp_items item rows"
 fi
 
 # ---------------------------------------------------------------- leg 10: the write proof

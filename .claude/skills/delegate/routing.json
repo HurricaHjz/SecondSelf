@@ -15,13 +15,17 @@
       "max"
     ]
   },
+  "preset_model": {
+    "top": "opus",
+    "cheap": "opus",
+    "_": "Presets select the configured model; the effort axis follows each preset rule."
+  },
   "classes": {
     "verifier": {
       "model": {
         "options": [
           "sonnet",
-          "opus",
-          "fable"
+          "opus"
         ],
         "default": "opus"
       },
@@ -64,15 +68,8 @@
         "grantable": []
       },
       "cache": "1h",
-      "gate": "G6a-thin re-run at opus·max PASSED 2026-09-06 (fresh head arm; 9 matches, 3 defensible, 0 misses; g6a-regate-20260906.json); 2026-09-08: effort anchor xhigh under the per-call rule of 2026-09-07 17:0x; the gate result above holds; the anchor is a reference, never a pin",
-      "dated": "model default 2026-08-27 (delegate §2 routing table, G6a); effort default 2026-09-04 (thin-lanes class table, ungated until the A12 re-gate); effort default moved to high on G6a-thin PASS (2026-09-04): target high reached; model default moved to opus and effort default to max on 2026-09-06 (shape B of per-call-model-selection-rule; A3 re-gate passed the same day); tools Write and Edit added 2026-09-07 (owner decision 1 of the N125 gate: the output clause — writes only inside the call's --write directory, findings artefacts only; the fence enforces the directory, the definition the content rule); effort default moved to xhigh on 2026-09-08 as the anchor under the per-call rule of 2026-09-07 17:0x (owner ruling: an anchor is not a pin, so no downward re-gate; run-20260908-n141)",
-      "cost": {
-        "soft_usd": 12.22,
-        "usual_usd": 0.93,
-        "n": 24,
-        "window": "2026-09-04..2026-09-08",
-        "source": "the run store's spawn records: the completed lane-closed events of this class with a numeric total_cost_usd, folded 2026-09-08 at the deep-lint of that date; usual_usd is their median, soft_usd their maximum plus 25 % headroom (token-efficiency findings 2026-09-07, proposal T3), both rounded to two decimals; a class with fewer than three completed lanes carries no block"
-      }
+      "gate": "Local gate evidence is not distributed; validate changes with the routing procedure.",
+      "dated": "Defaults are release configuration; record local changes with their evidence."
     },
     "memory-hunter": {
       "model": {
@@ -80,7 +77,7 @@
           "sonnet",
           "opus"
         ],
-        "default": "sonnet"
+        "default": "opus"
       },
       "effort": {
         "options": [
@@ -119,22 +116,14 @@
         "grantable": []
       },
       "cache": "1h",
-      "gate": "G6b-thin re-run at opus·max FAILED 2026-09-06 (12 of 16 against the 13 bar). Re-run on a fair footing the same night (TODO 130, run-20260906-n130, g6b-fair-verdict.json): one frozen coverage-first brief, byte-identical across four arms, two per tier, all 16 items reachable; coverage sonnet·high 15 and 15, opus·max 14 and 14, so opus fails the pre-registered min-and-mean rule and the model default STAYS sonnet. Both opus arms dropped the same two plain items and over-ran the word cap by half; their usable-evidence mark is level or better at 3–4× the cost per item; 2026-09-08: effort anchor xhigh under the per-call rule of 2026-09-07 17:0x; the gate result above holds; the anchor is a reference, never a pin",
-      "dated": "model default 2026-08-27 (delegate §2 routing table, G6b at opus); effort default 2026-09-04 (thin-lanes class table, ungated until the A12 gate); effort default moved to high on G6b-thin PASS (2026-09-04): target high reached; effort default moved to max on 2026-09-06 (upward, gate-free); the opus model default proposed by shape B was not admitted, its re-gate having failed (fail branch of per-call-model-selection-rule); the fair-footing retry of 2026-09-06 confirmed the sonnet default rather than moving it, and added the class's roll-call duty (definition + brief-hunter slot), which changes the report shape and no tier; effort default moved to xhigh on 2026-09-08 as the anchor under the per-call rule of 2026-09-07 17:0x (owner ruling: an anchor is not a pin, so no downward re-gate; run-20260908-n141)",
-      "cost": {
-        "soft_usd": 2.56,
-        "usual_usd": 0.57,
-        "n": 11,
-        "window": "2026-09-04..2026-09-08",
-        "source": "the run store's spawn records: the completed lane-closed events of this class with a numeric total_cost_usd, folded 2026-09-08 at the deep-lint of that date; usual_usd is their median, soft_usd their maximum plus 25 % headroom (token-efficiency findings 2026-09-07, proposal T3), both rounded to two decimals; a class with fewer than three completed lanes carries no block"
-      }
+      "gate": "Local gate evidence is not distributed; validate changes with the routing procedure.",
+      "dated": "Defaults are release configuration; record local changes with their evidence."
     },
     "wiki-compile": {
       "model": {
         "options": [
           "sonnet",
-          "opus",
-          "fable"
+          "opus"
         ],
         "default": "opus"
       },
@@ -182,22 +171,14 @@
         "grantable": []
       },
       "cache": "1h",
-      "gate": "G3/G4 passed at opus·max with the full contract; re-gate thin at opus·xhigh (≈$40); 2026-09-08: effort anchor xhigh under the per-call rule of 2026-09-07 17:0x; the gate result above holds; the anchor is a reference, never a pin",
-      "dated": "model default 2026-09-02 (fable-minimising-routing, G3/G4); effort default 2026-09-04 (thin-lanes class table, ungated until the thin re-gate); effort default moved to xhigh on G3-thin PASS, attempt 2 (2026-09-04): target xhigh reached",
-      "cost": {
-        "soft_usd": 4.66,
-        "usual_usd": 3.25,
-        "n": 5,
-        "window": "2026-09-04..2026-09-04",
-        "source": "the run store's spawn records: the completed lane-closed events of this class with a numeric total_cost_usd, folded 2026-09-08 at the deep-lint of that date; usual_usd is their median, soft_usd their maximum plus 25 % headroom (token-efficiency findings 2026-09-07, proposal T3), both rounded to two decimals; a class with fewer than three completed lanes carries no block"
-      }
+      "gate": "Local gate evidence is not distributed; validate changes with the routing procedure.",
+      "dated": "Defaults are release configuration; record local changes with their evidence."
     },
     "builder": {
       "model": {
         "options": [
           "sonnet",
-          "opus",
-          "fable"
+          "opus"
         ],
         "default": "opus"
       },
@@ -239,17 +220,10 @@
         "grantable": []
       },
       "cache": "1h",
-      "gate": "met at opus·max by the eighteen lane.py builds of 2026-09-04 to 2026-09-06 (head re-ran every suite); no lower target; 2026-09-08: effort anchor xhigh under the per-call rule of 2026-09-07 17:0x; the gate result above holds; the anchor is a reference, never a pin",
-      "dated": "model default 2026-09-02 (owner routing mandate, definition admitted the same day); effort default max: the builder's gate (a build the head reproduces, suite green, real-data run re-run) was met by the lane.py builds of 2026-09-04 (S-builder) and 2026-09-05/06 (eighteen at opus·max), and the thin-lanes target of `high` is withdrawn on 2026-09-06 (per-call-model-selection-rule: a build's hard part is design judgement); effort default moved to xhigh on 2026-09-08 as the anchor under the per-call rule of 2026-09-07 17:0x (owner ruling: an anchor is not a pin, so no downward re-gate; run-20260908-n141)",
-      "cost": {
-        "soft_usd": 27.83,
-        "usual_usd": 7.14,
-        "n": 45,
-        "window": "2026-09-04..2026-09-08",
-        "source": "the run store's spawn records: the completed lane-closed events of this class with a numeric total_cost_usd, folded 2026-09-08 at the deep-lint of that date; usual_usd is their median, soft_usd their maximum plus 25 % headroom (token-efficiency findings 2026-09-07, proposal T3), both rounded to two decimals; a class with fewer than three completed lanes carries no block"
-      }
+      "gate": "Local gate evidence is not distributed; validate changes with the routing procedure.",
+      "dated": "Defaults are release configuration; record local changes with their evidence."
     },
-    "critic": {
+    "writer": {
       "model": {
         "options": [
           "opus",
@@ -262,7 +236,73 @@
           "xhigh",
           "max"
         ],
-        "default": "max"
+        "default": "xhigh"
+      },
+      "harness": {
+        "codex": {
+          "model": {
+            "options": [
+              "gpt-6-astra"
+            ],
+            "default": "gpt-6-astra"
+          },
+          "effort": {
+            "options": [
+              "xhigh",
+              "max",
+              "ultra"
+            ],
+            "default": "xhigh"
+          },
+          "note": "the Codex half, the default writer, spawned through codex-lane.py (which the throttle does not resolve; every pick carries --choice-reason); ultra only for a seat where extreme performance is needed, the reason recorded"
+        }
+      },
+      "grants": {
+        "default": [
+          "<the manuscript's working copy>"
+        ],
+        "extras": [
+          "wiki"
+        ]
+      },
+      "writes": [
+        "<the working copy>"
+      ],
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash",
+        "Write",
+        "Edit"
+      ],
+      "skills": {
+        "default": [
+          "lane-core"
+        ],
+        "extras": []
+      },
+      "mcp": {
+        "default": [],
+        "grantable": []
+      },
+      "cache": "1h",
+      "gate": "Local gate evidence is not distributed; validate changes with the routing procedure.",
+      "dated": "Defaults are release configuration; record local changes with their evidence."
+    },
+    "critic": {
+      "model": {
+        "options": [
+          "opus"
+        ],
+        "default": "opus"
+      },
+      "effort": {
+        "options": [
+          "xhigh",
+          "max"
+        ],
+        "default": "xhigh"
       },
       "grants": {
         "default": [
@@ -292,21 +332,32 @@
         "grantable": []
       },
       "cache": "1h",
-      "gate": "no parity form exists for a review lane: the thin shape keeps today's model and effort, its first thin uses metered against the fat-shape record (A21); 2026-09-08: effort anchor max under the per-call rule of 2026-09-07 17:0x; the gate result above holds; the anchor is a reference, never a pin",
-      "dated": "model and effort defaults 2026-08-27 (delegate §2 routing table), unchanged by the thin-lanes table (A21)",
-      "cost": {
-        "soft_usd": 9.67,
-        "usual_usd": 3.67,
-        "n": 41,
-        "window": "2026-09-04..2026-09-08",
-        "source": "the run store's spawn records: the completed lane-closed events of this class with a numeric total_cost_usd, folded 2026-09-08 at the deep-lint of that date; usual_usd is their median, soft_usd their maximum plus 25 % headroom (token-efficiency findings 2026-09-07, proposal T3), both rounded to two decimals; a class with fewer than three completed lanes carries no block"
+      "gate": "Local gate evidence is not distributed; validate changes with the routing procedure.",
+      "dated": "Defaults are release configuration; record local changes with their evidence.",
+      "harness": {
+        "codex": {
+          "model": {
+            "options": [
+              "gpt-6-astra"
+            ],
+            "default": "gpt-6-astra"
+          },
+          "effort": {
+            "options": [
+              "xhigh",
+              "max",
+              "ultra"
+            ],
+            "default": "max"
+          },
+          "note": "the Codex half of the critic, admitted by the owner ruling of 2026-09-22 19:0x: the seat for open work, a review whose verdict turns on judgement about a framework change, a design or a plan (since the owner ruling of 2026-09-29 a deciding review may equally sit on the Claude half, opus 5.5, the rule that a deciding seat is fable or Astra being superseded); spawned through codex-lane.py with --class critic and --stage-from the artefact copy (the throttle does not resolve it; every pick carries --choice-reason); read-only; ultra only for a seat where extreme performance is needed, the reason recorded; the Claude half serves closed reviews, a build against a written spec or a claim list"
+        }
       }
     },
     "planner": {
       "model": {
         "options": [
-          "opus",
-          "fable"
+          "opus"
         ],
         "default": "opus"
       },
@@ -343,14 +394,31 @@
         "grantable": []
       },
       "cache": "1h",
-      "gate": "as the critic row (A21); 2026-09-08: effort anchor xhigh under the per-call rule of 2026-09-07 17:0x; the gate result above holds; the anchor is a reference, never a pin",
-      "dated": "model and effort defaults 2026-08-27 (delegate §2 routing table), unchanged by the thin-lanes table (A21); raw grant added 2026-09-04 (A23); effort default moved to xhigh on 2026-09-08 as the anchor under the per-call rule of 2026-09-07 17:0x (owner ruling: an anchor is not a pin, so no downward re-gate; run-20260908-n141)"
+      "gate": "Local gate evidence is not distributed; validate changes with the routing procedure.",
+      "dated": "Defaults are release configuration; record local changes with their evidence.",
+      "harness": {
+        "codex": {
+          "model": {
+            "options": [
+              "gpt-6-astra"
+            ],
+            "default": "gpt-6-astra"
+          },
+          "effort": {
+            "options": [
+              "xhigh",
+              "max"
+            ],
+            "default": "max"
+          },
+          "note": "the Codex half of the planner, admitted by the owner ruling of 2026-09-22 19:0x: hard decomposition or framework-critical planning is open work and takes Astra through codex-lane.py with --class planner (the throttle does not resolve it; every pick carries --choice-reason); its output stays a proposal"
+        }
+      }
     },
     "reflector": {
       "model": {
         "options": [
-          "opus",
-          "fable"
+          "opus"
         ],
         "default": "opus"
       },
@@ -360,7 +428,7 @@
           "xhigh",
           "max"
         ],
-        "default": "max"
+        "default": "xhigh"
       },
       "grants": {
         "default": [
@@ -389,14 +457,25 @@
         "grantable": []
       },
       "cache": "1h",
-      "gate": "as the critic row (A21); 2026-09-08: effort anchor max under the per-call rule of 2026-09-07 17:0x; the gate result above holds; the anchor is a reference, never a pin",
-      "dated": "model and effort defaults 2026-08-28 (delegate §2 routing table), unchanged by the thin-lanes table (A21); Bash added 2026-09-05 (hands-off design D38: the template's /tmp extraction and runtime nonce need it)",
-      "cost": {
-        "soft_usd": 18.64,
-        "usual_usd": 4.9,
-        "n": 18,
-        "window": "2026-09-04..2026-09-08",
-        "source": "the run store's spawn records: the completed lane-closed events of this class with a numeric total_cost_usd, folded 2026-09-08 at the deep-lint of that date; usual_usd is their median, soft_usd their maximum plus 25 % headroom (token-efficiency findings 2026-09-07, proposal T3), both rounded to two decimals; a class with fewer than three completed lanes carries no block"
+      "gate": "Local gate evidence is not distributed; validate changes with the routing procedure.",
+      "dated": "Defaults are release configuration; record local changes with their evidence.",
+      "harness": {
+        "codex": {
+          "model": {
+            "options": [
+              "gpt-6-astra"
+            ],
+            "default": "gpt-6-astra"
+          },
+          "effort": {
+            "options": [
+              "xhigh",
+              "max"
+            ],
+            "default": "max"
+          },
+          "note": "the Codex half of the reflector, spawned through codex-lane.py with --class reflector and --stage-from the extracted transcript (the throttle does not resolve it; every pick carries --choice-reason); read-only; the same output gate and controls as the Claude half; retain the selected effort when changing harness where both support it"
+        }
       }
     },
     "gate-judge": {
@@ -408,9 +487,9 @@
       },
       "effort": {
         "options": [
-          "max"
+          "xhigh"
         ],
-        "default": "max"
+        "default": "xhigh"
       },
       "grants": {
         "default": [
@@ -435,15 +514,9 @@
         "grantable": []
       },
       "cache": "1h",
-      "gate": "it is the gate; 2026-09-08: effort fixed at max (it is the gate); the per-call rule of 2026-09-07 17:0x does not move it",
-      "dated": "model and effort fixed 2026-09-02 (a parity gate measures the routed step's executor at its default tier)",
-      "cost": {
-        "soft_usd": 4.63,
-        "usual_usd": 1.16,
-        "n": 8,
-        "window": "2026-09-04..2026-09-08",
-        "source": "the run store's spawn records: the completed lane-closed events of this class with a numeric total_cost_usd, folded 2026-09-08 at the deep-lint of that date; usual_usd is their median, soft_usd their maximum plus 25 % headroom (token-efficiency findings 2026-09-07, proposal T3), both rounded to two decimals; a class with fewer than three completed lanes carries no block"
-      }
+      "gate": "Local gate evidence is not distributed; validate changes with the routing procedure.",
+      "dated": "Defaults are release configuration; record local changes with their evidence."
     }
-  }
+  },
+  "_": "Model and effort defaults are anchors for per-call selection; record a reason for each override."
 }

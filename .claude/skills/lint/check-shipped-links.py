@@ -23,13 +23,16 @@ check-links.py); targets resolve the way Obsidian does (alias/heading stripped, 
 trailing backslash dropped, path-style by last segment, an explicit .md dropped, case-insensitive),
 against page basenames AND frontmatter `aliases:` — an alias resolves here and dies in the published copy
 just the same. Known limitation, shared with check-links.py: only three-backtick fences are recognised
-(no ~~~, no four-backtick nesting); zero such fences in any shipped surface at the time of writing.
+(no ~~~, no four-backtick nesting).
 
 Call sites — one implementation, two callers, so they cannot drift:
   lint SKILL.md Step 2g (routine, edit time) · the publish gate's test suite, leg 14 (publish).
 Regression fixtures: test_check_shipped_links.sh beside this file (run with bash).
 
-Usage: python3 check-shipped-links.py [--vault ROOT] [VAULT_ROOT]  (default: three levels above this file)
+Usage: python3 check-shipped-links.py [--skip-skill NAME]... [--vault ROOT] [VAULT_ROOT]  (default: three levels above this file)
+--skip-skill NAME (repeatable) leaves that skill's Markdown out of the surfaces: a skill the publish build
+does not ship is no shipped surface. Its caller names it (the publish gate's suite reads the names from the
+build's own skip lines), and the control line counts the skills skipped.
 Prints ONE summary line for the lint report, then one "  <file> → [[target]]" line per finding:
   shipped-links: clean (control OK: N surfaces, M wikilinks seen, P wiki pages + aliases = Q names,
                         S shipping names excluded, U targets resolving nowhere here, self-control fired)
@@ -41,7 +44,6 @@ that is not a vault, i.e. no raw/ + wiki/ (the 2026-08-26 standard, on stderr) �
 option → 2; no shipped surfaces → 2; an unreadable or undecodable surface → 2; the
 matcher's self-control (a synthetic surface linking a synthetic page must be caught) silent → 2. An EMPTY
 wiki/ is legitimate absence (a fresh install, the published copy itself) → n/a, exit 0.
-Design record: wiki/developments/shipped-surface-wikilink-guard.md
 """
 import glob
 import os
@@ -106,13 +108,20 @@ def parse_root(argv):
     A swallowed flag is how a wrong root goes unnoticed: `--vault X` taken as the root scans a
     directory that does not exist and the run reads as a premise failure at best, clean at worst.
     """
-    given = None
+    given, skip = None, []
     rest = list(argv[1:])
     while rest:
         arg = rest.pop(0)
         if arg in ("-h", "--help"):
-            print("usage: check-shipped-links.py [--vault ROOT] [ROOT]")
+            print("usage: check-shipped-links.py [--skip-skill NAME]... [--vault ROOT] [ROOT]")
             raise SystemExit(0)
+        if arg == "--skip-skill" or arg.startswith("--skip-skill="):
+            name = arg.split("=", 1)[1] if "=" in arg else (rest.pop(0) if rest else "")
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+                print(f"PROBE FAILED: --skip-skill needs a skill name, got {name!r}", file=sys.stderr)
+                raise SystemExit(2)
+            skip.append(name)
+            continue
         if arg == "--vault":
             if not rest:
                 print("PROBE FAILED: --vault needs a directory argument", file=sys.stderr)
@@ -127,7 +136,7 @@ def parse_root(argv):
             print(f"PROBE FAILED: two roots given ({given} and {arg})", file=sys.stderr)
             raise SystemExit(2)
         given = arg
-    return given
+    return given, skip
 
 
 def assert_vault_root(root):
@@ -141,7 +150,7 @@ def assert_vault_root(root):
 
 def main(argv):
     here = os.path.dirname(os.path.abspath(__file__))
-    given = parse_root(argv)
+    given, skip = parse_root(argv)
     root = os.path.abspath(given) if given else os.path.abspath(os.path.join(here, "..", "..", ".."))
     assert_vault_root(root)
     wiki = os.path.join(root, "wiki")
@@ -154,8 +163,11 @@ def main(argv):
         parts = os.path.relpath(f, skills).split(os.sep)[:-1]
         return "wiki" in parts or "raw" in parts
 
+    def skipped(f):                                        # a skill the caller names as not shipped
+        return os.path.relpath(f, skills).split(os.sep)[0] in skip
+
     surfaces = sorted(f for f in glob.glob(os.path.join(skills, "**", "*.md"), recursive=True)
-                      if not bundled_vault_content(f))
+                      if not bundled_vault_content(f) and not skipped(f))
     surfaces += sorted(glob.glob(os.path.join(root, ".claude", "agents", "*.md")))
     if not surfaces:
         print("shipped-links: PROBE FAILED — no shipped Markdown surfaces under .claude/skills or .claude/agents")
@@ -185,7 +197,7 @@ def main(argv):
                 unresolved += 1
     ctl = (f"control OK: {len(surfaces)} surfaces, {seen} wikilinks seen, {len(files)} wiki pages + aliases = "
            f"{len(pages)} names, {len(ships)} shipping names excluded, {unresolved} targets resolving nowhere here, "
-           f"self-control fired")
+           f"self-control fired, {len(skip)} skill(s) skipped as not shipped")
     if findings:
         print(f"shipped-links: {len(findings)} dead in the published copy ({ctl})")
         for f, raw in findings:

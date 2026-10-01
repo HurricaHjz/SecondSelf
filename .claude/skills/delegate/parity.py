@@ -16,7 +16,7 @@ without letting the judges see which arm produced which artefact. Four subcomman
 
 The rubric grouping is design decision D37: a judge briefed on one rubric scores every artefact in
 the fixture, so averaging every judge over every artefact mixes the rubrics and reports a number
-that is nobody's score (run 1 printed 4.17 and 5.08 where the per-rubric means were 7.50 and 8.25).
+that does not represent either rubric's score.
 The brief carries a bare `RUBRIC: <key>` line, the judge echoes it as its first line, and a report
 without it is listed as unscored rather than pooled with a rubric it did not judge.
 
@@ -385,8 +385,7 @@ BLIND_MARKERS = [r"\barm[- ]?a\b", r"\barm[- ]?b\b", r"\bthin arm\b", r"\bhead a
                  ]
 # The artefact ids are uppercase by construction, so this marker is matched case-sensitively and
 # only as a whole token: a lowercase pair (a directory named b6, say) is not an arm id, and neither
-# is a pair inside a word (B6b, xA1). Folding case, or matching inside a word, blinded nothing and
-# refused every brief whose granted paths happened to carry such a pair.
+# is a pair inside a word. Match whole uppercase tokens so directory names cannot trigger false refusals.
 BLIND_ID_MARKER = r"(?<![0-9A-Za-z_])[AB][0-9]{1,3}(?![0-9A-Za-z_])"
 
 
@@ -409,7 +408,7 @@ def blind_id_hits(text):
     a directory name rather than a label an arm could be read off. The narrowing costs no blinding:
     an arm-identifying path component is still caught by the --arm-marker patterns and by the arm-a,
     arm-b and thin-arm markers, all of which are swept over the whole text, paths included. Sweeping
-    paths for the bare id shape instead cost one refusal per brief whose store path carried a pair.
+    paths for bare ids would also match unrelated directory names, so those names stay exempt.
     """
     hits = []
     for match in re.finditer(BLIND_ID_MARKER, text):
@@ -515,7 +514,7 @@ seek the verdict the brief seems to want. UK English throughout.
 REPORT
 The bare `RUBRIC: %(rubric_key)s` line first, then `## Scores` (the %(n)d score lines, one per
 artefact, nothing between them) · `## Grounds` (one
-line per artefact: what its accuracy score rests on) · `## Anomalies` (artefact · kind · one line)
+line per artefact: what its accuracy score rests on) · `## Anomalies` (artefact · kind · evidence)
 · `## Unverifiable` (claims the granted scope could not settle) · `## Controls` (the positive
 control phrase with its locator, the negative control, artefacts read, any refusal).
 """
@@ -553,7 +552,7 @@ def cmd_judge_brief(args):
                     "rubric_key": args.rubric}
     # The two mechanical lines are asserted here, not left to the template: the spawn wrapper's
     # parser reads a control line to the end of the line and splits on the last " in ", so prose
-    # after the file path is read as part of the path (the refusals of 2026-09-05), and the score
+    # after the file path is read as part of the path, and the score
     # step's grouping reads a bare `RUBRIC: <key>` line.
     if not re.search(r"(?m)^RUBRIC: %s$" % re.escape(args.rubric), body):
         die("the brief carries no bare `RUBRIC: %s` line: the score step could not group its report"
@@ -742,7 +741,7 @@ def cmd_score(args):
     parsed = [parse_report(p) for p in args.report]
     # A report whose rubric is missing or unknown is listed and dropped, never pooled: pooling it
     # with a rubric it did not judge is exactly the mixing D37 closes, and averaging it in silently
-    # is what made run 1's arm means unrecognisable.
+    # would report a mean that represents neither rubric.
     unscored = [r for r in parsed if r["unscored"]]
     reports = [r for r in parsed if not r["unscored"]]
     if not reports:

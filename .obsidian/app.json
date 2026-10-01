@@ -15,5 +15,6 @@
     "CONTRIBUTING.md",
     "assets/"
   ],
-  "readableLineLength": false
+  "readableLineLength": false,
+  "alwaysUpdateLinks": true
 }

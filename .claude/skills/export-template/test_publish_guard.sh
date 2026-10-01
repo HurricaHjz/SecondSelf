@@ -7,10 +7,9 @@
 # legitimate shapes the live payload actually contains; every premise failure exits 2 rather
 # than reporting clean; the index — not the working tree — is what the guard reads.
 #
-# From 2026-09-08 the suite reads the same from any working directory: group 7's gitlink blob
-# is hashed inside the fixture repository rather than wherever the caller stood, and group 7d
-# runs that build from a directory inside no repository at all (register entry 2026-09-08
-# 06:35 — from outside a repo the hash failed and took the submodule case with it).
+# Hash gitlink blobs inside the fixture repository so the suite is independent of its caller.
+# Group 7d controls this by running the build outside every repository.
+# See register entry 2026-09-08 06:35.
 
 set -uo pipefail
 
@@ -27,7 +26,7 @@ GIT="git -c user.email=t@t -c user.name=test -c commit.gpgsign=false -c init.def
 # This suite SHIPS inside `.claude/skills/**`, so it sits inside the scope of the guard it
 # tests — by design: the guard exempts no file. Every example home path is therefore
 # assembled from parts at run time and never written as a literal, or this suite would halt
-# the publish on itself (found by prototyping on the live payload, 2026-09-06).
+# the publish on itself.
 U="/U""sers"; H="/h""ome"
 
 PASS=0; FAIL=0
@@ -80,8 +79,8 @@ $GIT -C "$FXV" config user.email "qz9917+ZephyrineQ@example.invalid"
 $GIT -C "$FXV" config remote.origin.url "https://example.com/ZephyrineQ/fx.git"
 cp "$SKILL/publish-allowlist.md" "$FXA"
 # The same invocation as an array, for the two cases that must call the guard with a bad
-# argument or none at all. An array, never a string: a flag and its value in one word is the
-# 2026-09-04 wrapper defect.
+# argument or none at all. An array, never a string: a flag and its value in one word is a
+# wrapper defect.
 GUARD_CMD=(env USER=fxaccount LOGNAME=fxaccount HOME="$FXH"
            GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
            python3 "$GUARD" --vault "$FXV" --allowlist "$FXA")
@@ -107,7 +106,7 @@ P="$ROOT/p1e"; make_payload "$P"; printf 'see file://%s/someone/vault/CLAUDE.md\
 expect "$P" 1 "FINDING machine-path" "a file:// URL into a home directory halts"
 P="$ROOT/p1f"; make_payload "$P"; printf 'see https://example.com%s/guide\n' "$U" > "$P/README.md"
 expect "$P" 0 "check: clean" "a URL segment of the same spelling does NOT halt"
-# The real incident's bytes: CPython writes the source path behind a marshal LENGTH byte, so
+# CPython writes the source path behind a marshal LENGTH byte, so
 # the character before the path is arbitrary data. A text-style lookbehind swallows it — which
 # is why the machine-path rule follows the content class.
 P="$ROOT/p1g"; make_payload "$P"
@@ -115,8 +114,8 @@ printf 'x\000o%s/someone/vault/repo_pack.py\000' "$U" > "$P/.claude/skills/inges
 guard "$P"
 if [ "$RC" = 1 ] && printf '%s' "$OUT" | grep -q "FINDING machine-path" \
    && printf '%s' "$OUT" | grep -q "FINDING non-text"; then
-  ok "the 2026-09-03 incident shape (a path behind a marshal length byte) halts on BOTH probes"
-else no "the 2026-09-03 incident shape halts on both probes (exit $RC): $(echo "$OUT" | head -3)"; fi
+  ok "a path behind a marshal length byte halts on BOTH probes"
+else no "a path behind a marshal length byte halts on both probes (exit $RC): $(echo "$OUT" | head -3)"; fi
 P="$ROOT/p1h"; make_payload "$P"; printf 'the vendor path fragment is repo%s/guide\n' "$U" > "$P/MANUAL.md"
 expect "$P" 0 "check: clean" "the SAME preceding byte in a TEXT file stays a fragment, not a halt"
 
@@ -190,11 +189,8 @@ echo "── group 7: shapes git can hide ──"
 ( cd "$R" && ln -sf "$U/someone/vault/CLAUDE.md" .claude/skills/ingest/link.md && $GIT add -A ) >/dev/null
 expect "$R" 1 "FINDING machine-path" "a symlink into a home directory halts (its blob is the target path)"
 ( cd "$R" && $GIT rm -q --cached .claude/skills/ingest/link.md && rm -f .claude/skills/ingest/link.md ) >/dev/null
-# The gitlink's blob is written INSIDE the fixture repo: `git hash-object -w` writes to
-# whichever repository the caller's working directory is in, so from outside any repo the hash
-# failed and the submodule case never ran, while from a repo it left a loose object in the
-# caller's own store (2026-09-08). stderr is left visible: with the directory dependence gone,
-# a failure here is a real one and its reason belongs beside the premise leg below.
+# Write the gitlink blob inside the fixture repository: git hash-object writes into its
+# current repository. Keep stderr visible so a failure explains the premise leg's result.
 gitlink_blob(){ ( cd "$R" && $GIT hash-object -w "$ROOT/clean/CLAUDE.md" ) || echo ""; }
 SUB="$(gitlink_blob)"
 if [ -n "$SUB" ]; then
@@ -205,8 +201,8 @@ else no "could not build the gitlink fixture (premise for the submodule case)"; 
 expect "$R" 0 "check: clean" "the repo is clean again once the fixtures are removed"
 
 echo "── group 7d: the gitlink premise does not depend on the caller's directory ──"
-# The same build, run from a directory that is inside no repository: what the caller's cwd was
-# is exactly what used to decide whether group 7 could run at all.
+# The same build, run from a directory that is inside no repository: the caller's cwd must never
+# decide whether group 7 can run at all.
 OUTSIDE="$ROOT/outside"; mkdir -p "$OUTSIDE"
 if ( cd "$OUTSIDE" && $GIT rev-parse --is-inside-work-tree ) >/dev/null 2>&1; then
   # Four legs either way, so the total does not move with the premise.
@@ -230,7 +226,7 @@ else
   fi
 fi
 
-# Findings folded from the critic lane of 2026-09-06 (run-20260906-n121, C1).
+# Findings folded from an earlier critic review.
 echo "── group 7c: the folded critic findings ──"
 P="$ROOT/c1"; make_payload "$P"; printf 'OUT = "D:\\Users\\someone\\vault"\n' > "$P/MANUAL.md"
 expect "$P" 1 "FINDING machine-path" "a WINDOWS home path halts too — three roots, not the two this machine uses"

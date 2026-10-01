@@ -9,26 +9,44 @@ error stub served as a page, an HTML-dominant body from a crashed converter, a
 near-empty fetch), so the write path refuses those bodies; retry with the next
 engine, and a body you deliberately accept needs --allow-degraded '<why>' (the
 acceptance is stamped into the frontmatter and ledger, and declared in the run
-report). PLATFORM LANE (tier-3 CLIs; agent-reach-adoption-design runbook step
-5): platform output (JSON/YAML/subtitles) is wrapped VERBATIM in closed fenced
+report). PLATFORM LANE (tier-3 CLIs):
+platform output (JSON/YAML/subtitles) is wrapped VERBATIM in closed fenced
 blocks at capture — the gate and sanitiser honour that convention (fence-aware),
-and bare unfenced whole-body JSON is refused so the convention is mechanical. Fetching stays with the engines (defuddle/curl/markitdown/Jina); this
+and bare unfenced whole-body JSON is refused so the convention is mechanical. Fetching stays with the engines (defuddle/curl/markitdown/Jina, and the attended chrome-burner tab); this
 script only turns fetched Markdown into a raw/ file. If this script is missing
-or broken the run STOPS and asks — never hand-write captures around it. Verbs:
+or broken the run STOPS and asks — never hand-write captures around it.
+BROWSER RUNG (browser-capture-rung design, revision at the pre-start gate): the
+engine stays a free string (no allow-list); an engine named chrome-burner (or
+"chrome (burner)") is the attended burner Chrome tab, and its captures meet the
+ABSTRACT-PAGE RULE on top of the gate: a publisher landing page answers the
+burner with an abstract that clears the size floor, so such a body is refused
+as abstract-only when the text after its abstract is too short to be an
+article, or carries no section structure and no reference list (the measures
+and their derivations sit beside ARTICLE_MIN_WORDS below), whatever
+--allow-degraded says; the URL is printed for the hand-fetch list
+(oa_resolve.py --hand-fetch). Verbs:
     write --url U --engine E --ledger-id ID [--title T] [--slug S] [--vault-root PATH]
-          [--allow-degraded REASON]
-        reads Markdown on stdin; writes raw/<slug>.md; appends to the ledger
-    check
+          [--resolved-url R] [--allow-degraded REASON]
+        reads Markdown on stdin; writes raw/<slug>.md; appends to the ledger.
+        --resolved-url R records the open copy the body came from (oa_resolve.py)
+        as `resolved_url:` beside `source_url:`, which stays the row's own URL
+    check [--engine E] [--url U]
         reads Markdown on stdin; runs the quality gate only (no write, no
-        ledger): prints PASS (exit 0) or REJECT + reason (exit 3)
-    dedup --urls a,b,c | --urls a b c  --control URL [--vault-root PATH] [--allow-no-control]
-        greps candidate URLs against source_url/converted_from in raw/ + wiki/;
-        the --control URL MUST hit (proof the scan ran — CLAUDE.md §11)
+        ledger), the abstract-page rule included when E names the burner tab:
+        prints PASS (exit 0) or REJECT + reason (exit 3)
+    dedup --urls a,b,c | --urls a b c  [--titles 'T1' 'T2']  --control URL [--vault-root PATH]
+          [--allow-no-control]
+        greps candidate URLs against source_url/converted_from/resolved_url in raw/ + wiki/, and matches
+        the arXiv ids and DOIs in those URLs, and each normalised title, against the
+        wiki/sources/ + raw/ frontmatter keys (key code loaded from
+        ../ingest/dedup_probe.py, never copied — missing, or failing its self-test, exits 2).
+        A match prints "ALREADY IN VAULT: <paths> (matched on: <keys>)"; the --control URL
+        MUST hit (proof the scan ran — CLAUDE.md §11)
 
 --vault-root defaults to this script's OWN vault (three parents above
 .claude/skills/gather/), never the cwd; default or explicit, the root must
-contain raw/ + wiki/ or write/dedup refuse to run (2026-08-26 defect: the old
-"." default scanned whatever tree the caller stood in).
+contain raw/ + wiki/ or write/dedup refuse to run, so a scan never reads
+whatever tree the caller stands in.
 """
 import argparse, datetime, json, os, re, sys
 import run_ledger
@@ -161,8 +179,8 @@ def quality_check(body):
         return "engine returned a Page Not Found shell, not the page"
     if text.startswith(("{", "[")):
         # An all-JSON body is either an engine's API error response served as
-        # the page (2026-08-25: a Jina 403 AbuseAlleviationError stub, 620 B,
-        # cleared the size floor) or platform output missing its fence wrap.
+        # the page (an error stub can clear the size floor) or platform output missing its fence
+        # wrap.
         # Markdown that merely opens with "{"/"[" fails json.loads and passes.
         try:
             json.loads(text)
@@ -192,6 +210,145 @@ def quality_check(body):
     return None
 
 
+# ABSTRACT-PAGE RULE (browser-capture-rung design, revision at the pre-start
+# gate; the owner's default, kept until the critic gate rules otherwise). The
+# burner rung opens only for a row that failed headless and has no open copy
+# (same design, "What the revised design solves"), so every burner-tab capture
+# is taken to come from a domain that refused headless: the rule applies to an
+# engine naming the burner tab, and an engine string that merely mentions it
+# ("markitdown of a chrome-burner download") is caught too, the stricter reading.
+#
+# The rule tests what an article has and a landing page lacks, and names no
+# heading. "After the abstract" starts past the paragraph an abstract marker
+# opens; with no marker the whole body counts (the lenient reading), and a
+# paragraph running past ABSTRACT_MAX_WORDS (a collapsed conversion) is taken
+# as the abstract for that many words only. A body is refused as abstract-only
+# when
+#   1. it carries fewer than ARTICLE_MIN_WORDS words of prose after the
+#      abstract, counting neither link text (navigation, related-article lists)
+#      nor reference-entry lines (a landing page's reference list is not the
+#      article), or
+#   2. its text after the abstract carries fewer than ARTICLE_MIN_HEADINGS
+#      heading lines and fewer than REFERENCE_MIN_ENTRIES reference-entry lines.
+#      A heading is a line shape, never a name: a Markdown heading, a wholly
+#      bold line, or a short numbered or all-capitals line. A collapsed
+#      conversion (a line longer than COLLAPSED_LINE_CHARS) has no line
+#      structure to count, so arm 2 abstains there (its premise fails) and
+#      arm 1 decides alone.
+# A closed fenced block is quoted material, not the page's own text, and is not
+# measured.
+# Review these compatibility thresholds on a local corpus containing known full and
+# abstract-only captures. The derivation and controls belong with that local record.
+BURNER_ENGINE = re.compile(r"(?i)\bchrome\s*[-_ (]\s*burner\b")
+# Minimum body words: compatibility default; set by judgement, unmeasured for a new corpus.
+ARTICLE_MIN_WORDS = 500
+# Minimum headings: compatibility default; set by judgement, unmeasured for a new corpus.
+ARTICLE_MIN_HEADINGS = 3
+# Minimum reference entries: compatibility default; set by judgement, unmeasured for a new corpus.
+REFERENCE_MIN_ENTRIES = 8
+# Collapsed-line boundary: compatibility default; set by judgement, unmeasured for a new corpus.
+COLLAPSED_LINE_CHARS = 2000
+# Abstract word allowance: compatibility default; set by judgement, unmeasured for a new corpus.
+ABSTRACT_MAX_WORDS = 400
+# Line bounds for a heading and a reference entry: set by judgement, unmeasured.
+HEADING_MAX_WORDS = 10
+HEADING_MAX_CHARS = 100
+REFERENCE_LINE_CHARS = 600
+ABSTRACT_MARKER = re.compile(r"(?im)^[ \t>#*_]*abstract\b")
+LINK_OR_IMAGE = re.compile(r"!?\[[^\]\n]*\]\([^)\n]*\)")
+BARE_URL = re.compile(r"\bhttps?://\S+")
+PROSE_WORD = re.compile(r"[^\W\d_][^\W\d_'’-]*")
+HEADING_ATX = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+\S")
+HEADING_EMPHASIS = re.compile(r"^(\*\*|__)(?:(?!\1).){1,100}\1[ \t]*:?$")
+HEADING_NUMBERED = re.compile(r"^(?:\d{1,2}(?:\.\d{1,2})*\.?|[A-Z](?:\.\d{1,2})+\.?|[IVX]{1,4}\.)[ \t]*[A-Z]")
+YEAR_TOKEN = re.compile(r"\b(?:1[89]|20)\d{2}[a-z]?\b")
+NAME_INITIAL = re.compile(r"\b[A-Z]\.")
+PARAGRAPH_BREAK = re.compile(r"\n[ \t\r]*\n")
+
+
+def is_burner_engine(engine):
+    return bool(engine and BURNER_ENGINE.search(engine))
+
+
+def _is_heading_line(line):
+    t = line.strip()
+    if not t or len(t) > HEADING_MAX_CHARS:
+        return False
+    if HEADING_ATX.match(t) or HEADING_EMPHASIS.match(t):
+        return True
+    words = len(PROSE_WORD.findall(t))
+    if HEADING_NUMBERED.match(t) and words <= HEADING_MAX_WORDS and not t.endswith((".", ",", ";")):
+        return True
+    return re.search(r"[A-Z]{3}", t) is not None and re.search(r"[a-z]", t) is None and 1 <= words <= HEADING_MAX_WORDS
+
+
+def _is_reference_entry(line):
+    t = line.strip()
+    return (0 < len(t) <= REFERENCE_LINE_CHARS and YEAR_TOKEN.search(t) is not None
+            and ("et al" in t or NAME_INITIAL.search(t) is not None or t.count(",") >= 2))
+
+
+def article_measures(body):
+    """Measure the text after a capture's abstract: the words of prose (link text and
+    reference-entry lines not counted), the heading lines, the reference-entry lines and
+    the longest line. Keys: words, headings, references, longest_line, abstract_words, marker.
+
+    Premise failures: an empty or all-fenced body measures zeros; a body with no abstract
+    marker is measured whole; a marker with nothing after it leaves nothing to measure.
+    """
+    prose = FENCED_BLOCK.sub("", (body or "").strip() + "\n")
+    after, abstract_words = prose, 0
+    m = ABSTRACT_MARKER.search(prose)
+    if m:
+        rest = prose[m.end():]
+        first, _nl, tail = rest.partition("\n")
+        if not PROSE_WORD.search(first):  # a bare marker line: the abstract is the next paragraph
+            rest = re.sub(r"\A(?:[ \t\r]*\n)+", "", tail)
+        parts = PARAGRAPH_BREAK.split(rest, maxsplit=1)
+        para, after = parts[0], (parts[1] if len(parts) > 1 else "")
+        found = list(PROSE_WORD.finditer(para))
+        abstract_words = len(found)
+        if abstract_words > ABSTRACT_MAX_WORDS:  # a run-on paragraph: only the cap is the abstract
+            after = para[found[ABSTRACT_MAX_WORDS - 1].end():] + "\n\n" + after
+            abstract_words = ABSTRACT_MAX_WORDS
+    lines = after.splitlines()
+    refs = [_is_reference_entry(line) for line in lines]
+    return {"words": sum(len(PROSE_WORD.findall(_strip_links(line))) for line, ref in zip(lines, refs) if not ref),
+            "headings": sum(1 for line in lines if _is_heading_line(line)),
+            "references": sum(refs),
+            "longest_line": max((len(line) for line in lines), default=0),
+            "abstract_words": abstract_words,
+            "marker": m is not None}
+
+
+def _strip_links(text):
+    return BARE_URL.sub(" ", LINK_OR_IMAGE.sub(" ", text))
+
+
+def abstract_only_reason(body, engine):
+    """Return the abstract-only refusal for a burner-tab capture that is not an article
+    beyond its abstract (the two arms above), else None.
+
+    Premise failures: an empty or unknown engine is not the burner tab, so the rule does
+    not apply (the ordinary gate still does); an empty body measures no words and is
+    refused (on the write path the size floor refuses it first); a collapsed conversion
+    has no line structure, so only the word arm is applied to it.
+    """
+    if not is_burner_engine(engine):
+        return None
+    m = article_measures(body)
+    lead = "abstract-only: a chrome-burner capture from a domain that refused headless carries "
+    if m["words"] < ARTICLE_MIN_WORDS:
+        return (lead + f"{m['words']} words of prose after the abstract, fewer than the "
+                f"{ARTICLE_MIN_WORDS} an article carries (link text and reference entries not counted)")
+    if (m["longest_line"] <= COLLAPSED_LINE_CHARS and m["headings"] < ARTICLE_MIN_HEADINGS
+            and m["references"] < REFERENCE_MIN_ENTRIES):
+        return (lead + f"no section structure after the abstract ({m['headings']} heading lines, fewer than "
+                f"{ARTICLE_MIN_HEADINGS}) and no reference list ({m['references']} reference entries, fewer "
+                f"than {REFERENCE_MIN_ENTRIES})")
+    return None
+
+
 def write(a):
     body = sys.stdin.read()
     if not body.strip():
@@ -201,6 +358,11 @@ def write(a):
         raise ValueError(f"quality gate: {reason}; retry with the next engine in the chain — "
                          "a body you deliberately accept needs --allow-degraded '<why>', "
                          "declared in the run report")
+    abstract = abstract_only_reason(body, a.engine)
+    if abstract:  # not overridable: the design writes such a body "only when" it carries an article
+        raise ValueError(f"quality gate: {abstract}; refused whatever --allow-degraded says, nothing written. "
+                         f"For the hand-fetch list: {a.url} "
+                         f"(python3 .claude/skills/gather/oa_resolve.py --hand-fetch '{a.url}')")
     ledger_path = run_ledger.path_for(a.ledger_id)
     data = run_ledger.load(ledger_path)              # missing → FileNotFoundError (exit 2)
     captured = len(data["captures"])
@@ -214,10 +376,12 @@ def write(a):
     title = (a.title or slug).replace('"', "'")
     front_lines = ["---",
                    f'title: "{title}"',
-                   f"source_url: {a.url}",
-                   f"converted_from: {a.url}",
-                   f"converted_by: {a.engine}",
-                   f"converted_on: {datetime.date.today().isoformat()}"]
+                   f"source_url: {a.url}"]
+    if a.resolved_url:  # the open copy the body came from; source_url stays the row's own URL
+        front_lines.append(f"resolved_url: {a.resolved_url}")
+    front_lines += [f"converted_from: {a.url}",
+                    f"converted_by: {a.engine}",
+                    f"converted_on: {datetime.date.today().isoformat()}"]
     if reason:  # only reachable with --allow-degraded — stamp the acceptance
         note = a.allow_degraded.replace('"', "'")
         front_lines.append(f'capture_quality: "degraded — {reason}; accepted: {note}"')
@@ -227,6 +391,8 @@ def write(a):
         fh.write(front + sanitise(body))
     entry = {"url": a.url, "slug": slug,
              "ts": datetime.datetime.now().isoformat(timespec="seconds")}
+    if a.resolved_url:
+        entry["resolved_url"] = a.resolved_url
     if reason:
         entry["degraded"] = reason
     data["captures"].append(entry)
@@ -235,27 +401,62 @@ def write(a):
     print(f"wrote raw/{slug}.md · ledger {len(data['captures'])}/{data['budget']}{tag}")
 
 
-def check_verb(_a):
+def check_verb(a):
     body = sys.stdin.read()
-    reason = quality_check(body)
+    reason = quality_check(body) or abstract_only_reason(body, a.engine)
     if reason:
         print(f"REJECT: {reason}")
+        if reason.startswith("abstract-only"):
+            print(f"for the hand-fetch list: {a.url or '(pass --url to name the row)'}")
         sys.exit(3)
     print("PASS: body looks like real content")
 
 
+def _dedup_keys():
+    """Load the arXiv id / DOI / title key logic from the ingest skill's dedup_probe.py — the one
+    copy both de-dup probes use. Missing or broken -> exit 2, never 'new'.
+    """
+    path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "..", "ingest", "dedup_probe.py"))
+    if not os.path.isfile(path):
+        raise ValueError(f"de-dup key module missing ({path}) — the arXiv id, DOI and title keys "
+                         "cannot run; STOP and ask, never report 'new' without them")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("dedup_probe", path)
+    mod = importlib.util.module_from_spec(spec)
+    keep, sys.dont_write_bytecode = sys.dont_write_bytecode, True   # no cache file beside the ingest skill
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.dont_write_bytecode = keep
+    bad = mod.self_test()
+    if bad:
+        raise ValueError("de-dup key self-test failed — " + "; ".join(bad))
+    return mod
+
+
+def _report(label, found):
+    if found:
+        on = sorted({x for labels in found.values() for x in labels})
+        print(f"{label} -> ALREADY IN VAULT: {'; '.join(sorted(found))} (matched on: {', '.join(on)})")
+    else:
+        print(f"{label} -> new")
+
+
 def dedup(a):
-    # accept comma-joined, space-separated (nargs), or mixed — the 2026-08-18 doc/arg
-    # mismatch showed a single accepted form fails as soon as its restatement drifts
+    # accept comma-joined, space-separated (nargs), or mixed: a single accepted form fails as soon
+    # as its restatement drifts
     urls = [u.strip() for tok in (a.urls or []) for u in re.split(r"[,\s]+", tok) if u.strip()]
-    if not urls:
-        raise ValueError("dedup needs --urls a,b,c (or --urls a b c)")
+    titles = [t.strip() for t in (a.titles or []) if t.strip()]   # one argument per title, never split
+    if not urls and not titles:
+        raise ValueError("dedup needs --urls a,b,c (or --urls a b c) and/or --titles 'T1' 'T2'")
     if not a.control and not a.allow_no_control:
         raise ValueError("dedup needs --control <known-present URL> (proof the scan runs); "
                          "--allow-no-control only for a provably fresh vault, and say so")
+    dp = _dedup_keys()
     targets = urls + ([a.control] if a.control else [])
     hits = {u: [] for u in targets}
-    key = re.compile(r"^(source_url|converted_from):", re.I)
+    key = re.compile(r"^(source_url|converted_from|resolved_url):", re.I)  # resolved_url: the open copy a capture came from
     for root in ("raw", "wiki"):
         top = os.path.join(a.vault_root, root)
         for dirpath, _dirs, files in os.walk(top):
@@ -281,22 +482,53 @@ def dedup(a):
     if a.control and not hits[a.control]:
         raise ValueError(f"control URL {a.control} not found — the scan cannot be trusted; "
                          "fix the control or the scan before claiming clean")
+    # arXiv id, DOI and normalised title keys over wiki/sources/ and raw/ frontmatter: a paper compiled
+    # from a local PDF carries no source_url, so the URL key alone would pass a later URL capture of it
+    # as new. Scoped to source pages and raw files: a concept page named
+    # after a paper is not a copy of it.
+    idx = dp.build_index(a.vault_root, roots=("wiki/sources", "raw"))
+    if idx["unreadable"]:
+        raise ValueError("unreadable under the key scan: " + "; ".join(idx["unreadable"][:5]))
+    if titles and idx["files"] and not idx["title"]:
+        raise ValueError(f"title index empty over {idx['files']} files — the title key searched "
+                         "nothing, so a title reported new is unproven")
     for u in urls:
-        state = "ALREADY IN VAULT: " + "; ".join(sorted(set(hits[u]))) if hits[u] else "new"
-        print(f"{u} -> {state}")
+        found = {p: ["url"] for p in set(hits[u])}
+        for p, labels in dp.lookup(idx, arx=dp.arxiv_ids(u), doi=dp.dois(u)).items():
+            found.setdefault(p, []).extend(labels)
+        _report(u, found)
+    for t in titles:
+        key = dp.title_key(t)
+        if key is None:
+            print(f'title "{t}" -> not keyed (under {dp.TITLE_MIN_TOKENS} tokens once normalised); '
+                  "check it by eye")
+            continue
+        _report(f'title "{t}"', dp.lookup(idx, titles=[key]))
+    n = len(dp.SELF_TEST)
+    print(f"keys indexed: {idx['files']} files · {len(idx['arxiv'])} arXiv ids · {len(idx['doi'])} DOIs"
+          f" · {len(idx['title'])} titles · key self-test {n}/{n}")
 
 
 def main():
     ap = argparse.ArgumentParser(description="Sole write path for /gather captures (v3.1).")
     ap.add_argument("verb", choices=["write", "dedup", "check"])
     ap.add_argument("--url"), ap.add_argument("--title"), ap.add_argument("--slug")
-    ap.add_argument("--engine", default="unknown")
+    ap.add_argument("--engine", default="unknown",
+                    help="the engine that fetched the body (a free string); an engine naming "
+                         "chrome-burner meets the abstract-page rule")
     ap.add_argument("--ledger-id", dest="ledger_id")
     ap.add_argument("--urls", nargs="+"), ap.add_argument("--control")
+    ap.add_argument("--titles", nargs="+", metavar="TITLE",
+                    help="dedup: candidate titles, one argument each (never split), matched as "
+                         "normalised titles against wiki/sources/ and raw/ frontmatter")
     ap.add_argument("--allow-no-control", action="store_true")
     ap.add_argument("--allow-degraded", dest="allow_degraded", metavar="REASON",
                     help="write despite a quality-gate rejection; REASON is stamped into "
-                         "frontmatter + ledger and must be declared in the run report")
+                         "frontmatter + ledger and must be declared in the run report "
+                         "(never lifts the abstract-page rule)")
+    ap.add_argument("--resolved-url", dest="resolved_url", metavar="URL",
+                    help="write: the open copy the body came from (oa_resolve.py), recorded as "
+                         "resolved_url: beside source_url:")
     ap.add_argument("--vault-root", default=None,
                     help="vault to scan/write (default: this script's own vault; "
                          "must contain raw/ + wiki/)")
@@ -309,6 +541,9 @@ def main():
                 raise ValueError("write needs --url and --ledger-id")
             if a.allow_degraded is not None and not a.allow_degraded.strip():
                 raise ValueError("--allow-degraded needs a non-empty reason")
+            if a.resolved_url is not None and not re.fullmatch(r"https?://\S+", a.resolved_url):
+                raise ValueError("--resolved-url needs one http(s) URL with no whitespace "
+                                 "(a newline would inject frontmatter)")
             write(a)
         elif a.verb == "check":
             check_verb(a)

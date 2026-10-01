@@ -57,10 +57,42 @@ notwant() { if grep -qF -- "$2" "$1"; then printf 'unexpected [%s]; ' "$2"; fi; 
 wantrc() { [ "$1" = "$2" ] || printf 'exit %s, expected %s; ' "$1" "$2"; }
 
 w() { mkdir -p "$(dirname "$1")"; cat > "$1"; }
-# CRLF and byte-order-mark writers: both are states a real editor produces and both used to make a
-# page's whole frontmatter, or a page's whole tail, invisible to the scripts.
+# CRLF and byte-order-mark writers: both are states a real editor produces, and either can make a
+# page's whole frontmatter, or a page's whole tail, invisible to a script that does not handle it.
 wcr() { mkdir -p "$(dirname "$1")"; awk '{printf "%s\r\n", $0}' > "$1"; }
 wbom() { mkdir -p "$(dirname "$1")"; { printf '\xef\xbb\xbf'; cat; } > "$1"; }
+
+# ---------------------------------------------------------------- user-level fixture home (2026-09-13)
+# prefix-budget.py's user-skills and plugin-skills layers read <claude home>, which is $CLAUDE_CONFIG_DIR
+# when set: exporting it here points every prefix run in this suite at this fixture, never the live home.
+# One user skill, one enabled plugin carrying one skill, one plugin switched off, and the install record.
+CH="$TMP/claude-home"
+export CLAUDE_CONFIG_DIR="$CH"
+w "$CH/skills/uskill/SKILL.md" <<'FIXTURE_END'
+---
+name: uskill
+description: A user-level fixture skill.
+---
+
+Body bytes that the prefix probe must not count.
+FIXTURE_END
+printf 'a baseline file, not a skill directory\n' > "$CH/skills/.sanctioned.txt"
+w "$CH/plugins/cache/mkt/fx/1.0.0/skills/pskill/SKILL.md" <<'FIXTURE_END'
+---
+name: pskill
+description: A plugin fixture skill.
+---
+
+Body.
+FIXTURE_END
+w "$CH/plugins/cache/mkt/off/1.0.0/skills/offskill/SKILL.md" <<'FIXTURE_END'
+---
+name: offskill
+---
+FIXTURE_END
+printf '{"enabledPlugins": {"fx@mkt": true, "off@mkt": false}}\n' > "$CH/settings.json"
+printf '{"version": 2, "plugins": {"fx@mkt": [{"installPath": "%s"}], "off@mkt": [{"installPath": "%s"}]}}\n' \
+  "$CH/plugins/cache/mkt/fx/1.0.0" "$CH/plugins/cache/mkt/off/1.0.0" > "$CH/plugins/installed_plugins.json"
 
 # ---------------------------------------------------------------- planted fixture
 w "$PV/CLAUDE.md" <<'FIXTURE_END'
@@ -1081,10 +1113,12 @@ exp_gamma=$(awk '{n += length($0) + 1} $0 == "---" {c++; if (c == 2) {print n; e
 exp_skills=$((exp_alpha + exp_beta))
 exp_claude=$(wc -c < "$PV/CLAUDE.md" | tr -d ' ')
 exp_cust=$(wc -c < "$PV/CUSTOMISATION.md" | tr -d ' ')
-exp_total=$(( (exp_claude + exp_skills + exp_gamma + exp_cust) / 4 ))
+exp_u=$(awk '{n += length($0) + 1} $0 == "---" {c++; if (c == 2) {print n; exit}}' "$CH/skills/uskill/SKILL.md")
+exp_p=$(awk '{n += length($0) + 1} $0 == "---" {c++; if (c == 2) {print n; exit}}' "$CH/plugins/cache/mkt/fx/1.0.0/skills/pskill/SKILL.md")
+exp_total=$(( (exp_claude + exp_skills + exp_gamma + exp_u + exp_p + exp_cust) / 4 ))
 r=""
 r="$r$(wantrc "$rc_p1" 0)"
-r="$r$(want "$P1" "prefix budget: CLAUDE.md $exp_claude B · skills $exp_skills B (alpha $exp_alpha · beta $exp_beta) · agents $exp_gamma B (gamma $exp_gamma) · customisation $exp_cust B · MCP 1 declared · total ≈$exp_total tok/request")"
+r="$r$(want "$P1" "prefix budget: CLAUDE.md $exp_claude B · skills $exp_skills B (alpha $exp_alpha · beta $exp_beta) · agents $exp_gamma B (gamma $exp_gamma) · user-skills $exp_u B (uskill $exp_u) · plugin-skills $exp_p B (fx:pskill $exp_p) · customisation $exp_cust B · MCP 1 declared · total ≈$exp_total tok/request")"
 r="$r$(want "$P1" 'mcp-probe: .mcp.json present (1)')"
 r="$r$(want "$P1" 'skills measured=2 of 2 candidates agents measured=1 of 1 candidates')"
 leg "23 prefix budget line, markers-included frontmatter arithmetic" "$r"
@@ -1107,6 +1141,140 @@ r="$r$(wantrc "$rc_p3" 2)"
 r="$r$(want "$OUT/p3.txt" 'PROBE FAILED: CUSTOMISATION.md is absent')"
 r="$r$(wantre "$OUT/p3.txt" 'prefix budget: CLAUDE\.md [0-9]+ B')"
 leg "25 a missing layer is a probe failure, not a zero (exit 2)" "$r"
+
+# ---------------------------------------------------------------- user-level layers (known-issues 2026-09-05)
+r=""
+r="$r$(want "$P1" "prefix-budget: claude home=$CH user-skills measured=1 of 1 candidates plugin-skills measured=1 of 1 candidates from 1 enabled plugin(s) (fx@mkt) · settings: user present (2 key(s)) · project absent · local absent")"
+r="$r$(notwant "$P1" 'offskill')"
+r="$r$(want "$P2" '  user-skills: no figure in the previous line — format baseline, cannot diff')"
+r="$r$(want "$P2" '  plugin-skills: no figure in the previous line — format baseline, cannot diff')"
+r="$r$(wantre "$P2" '^  total: ≈[0-9]+ tok/request of that delta is the user-skills and plugin-skills layers the previous line never measured$')"
+leg "25b user-level and enabled-plugin skills are layers of their own, read from the fixture home; a plugin set false is not measured; the first diff is a format baseline" "$r"
+
+cp -R "$PV" "$TMP/uservault"
+printf '\n## [2026-09-13] deep-lint | fixture\n- **Structural**: prefix budget: CLAUDE.md 1 B · skills 1 B (alpha 1) · agents 1 B (gamma 1) · user-skills 15 B (uskill 10 · gone 5) · plugin-skills 3 B (fx:pskill 3) · customisation 1 B · MCP 1 declared · total ≈1 tok/request\n' >> "$TMP/uservault/wiki/log.md"
+rc_p9=$(run p9.txt "$PY" "$PREFIX" --vault "$TMP/uservault" --diff-log wiki/log.md)
+r=""
+r="$r$(wantrc "$rc_p9" 0)"
+r="$r$(want "$OUT/p9.txt" "  skills: 1 -> $exp_skills B")"
+r="$r$(want "$OUT/p9.txt" "  user-skills: 15 -> $exp_u B")"
+r="$r$(want "$OUT/p9.txt" "    user skill uskill: 10 -> $exp_u B")"
+r="$r$(want "$OUT/p9.txt" '    retired user skill: gone (was 5 B)')"
+r="$r$(want "$OUT/p9.txt" "    plugin skill fx:pskill: 3 -> $exp_p B")"
+r="$r$(notwant "$OUT/p9.txt" 'never measured')"
+leg "25c a previous line carrying both user-level layers diffs them per name, and the vault skills figure is never read from user-skills" "$r"
+
+rc_p10=$(run p10.txt env CLAUDE_CONFIG_DIR="$TMP/no-claude-home" "$PY" "$PREFIX" --vault "$PV")
+r=""
+r="$r$(wantrc "$rc_p10" 0)"
+r="$r$(want "$OUT/p10.txt" '· user-skills n/a (no directory) · plugin-skills 0 B (no enabled plugin) ·')"
+r="$r$(notwant "$OUT/p10.txt" 'PROBE FAILED')"
+leg "25d a fresh machine's absent user home is n/a at exit 0, and no enabled plugin is a real zero" "$r"
+
+cp -R "$CH" "$TMP/home-norecord"; rm -f "$TMP/home-norecord/plugins/installed_plugins.json"
+rc_p11=$(run p11.txt env CLAUDE_CONFIG_DIR="$TMP/home-norecord" "$PY" "$PREFIX" --vault "$PV")
+cp -R "$CH" "$TMP/home-badsettings"; printf '{"enabledPlugins": ' > "$TMP/home-badsettings/settings.json"
+rc_p12=$(run p12.txt env CLAUDE_CONFIG_DIR="$TMP/home-badsettings" "$PY" "$PREFIX" --vault "$PV")
+cp -R "$CH" "$TMP/home-gone"; rm -rf "$TMP/home-gone/plugins/cache/mkt/fx"
+# The copy's record must name the copy's own path, or the original fixture's install path still resolves.
+printf '{"version": 2, "plugins": {"fx@mkt": [{"installPath": "%s"}]}}\n' "$TMP/home-gone/plugins/cache/mkt/fx/1.0.0" > "$TMP/home-gone/plugins/installed_plugins.json"
+rc_p13=$(run p13.txt env CLAUDE_CONFIG_DIR="$TMP/home-gone" "$PY" "$PREFIX" --vault "$PV")
+r=""
+r="$r$(wantrc "$rc_p11" 2)"
+r="$r$(want "$OUT/p11.txt" 'PROBE FAILED: plugin-skills: 1 plugin(s) enabled but the install record')"
+r="$r$(wantre "$OUT/p11.txt" 'prefix budget: CLAUDE\.md [0-9]+ B .* user-skills [0-9]+ B \(uskill [0-9]+\)')"
+r="$r$(wantrc "$rc_p12" 2)"
+r="$r$(want "$OUT/p12.txt" 'PROBE FAILED: plugin-skills: the user settings file')"
+r="$r$(wantrc "$rc_p13" 2)"
+r="$r$(want "$OUT/p13.txt" 'PROBE FAILED: plugin-skills: fx@mkt is enabled but the install record places no install path on disk')"
+leg "25e an enabled plugin the probe cannot place, and an unparseable settings file, are probe failures with every other layer still measured" "$r"
+
+rc_p14=$(run p14.txt "$PY" "$PREFIX" --vault "$PV" --format json)
+r=""
+r="$r$(wantrc "$rc_p14" 0)"
+if ! "$PY" - "$OUT/p14.txt" "$CH" <<'JSON_CHECK_END'
+import json, sys
+p = json.load(open(sys.argv[1]))
+u, g = p["user_skills"], p["plugin_skills"]
+assert u["home"] == sys.argv[2] and u["present"] is True and u["candidates"] == 1 and list(u["rows"]) == ["uskill"], u
+assert g["enabled"] == ["fx@mkt"] and list(g["rows"]) == ["fx:pskill"] and g["candidates"] == 1, g
+assert p["total_bytes"] == (p["claude_md"] + p["skills"]["total"] + p["agents"]["total"] + u["total"]
+                            + g["total"] + p["customisation"]), p["total_bytes"]
+JSON_CHECK_END
+then
+  r="$r the json user-level layers did not carry their scope or did not sum into the total;"
+fi
+leg "25f the json payload carries both user-level layers with their scope, and the total sums every layer" "$r"
+
+# ---------------------------------------------------------------- user-level files the vault does not own (review F5, 2026-09-13)
+# A user-level or plugin SKILL.md may carry no frontmatter at all: a third-party skill can ship its project README,
+# which opens with a title and a badge line. Such a file is a row at 0 B with one warning naming it; a user-level
+# layer is PROBE FAILED only when it measured nothing; the vault's own skills keep the strict policy.
+FH="$TMP/home-foreign"
+cp -R "$CH" "$FH"
+w "$FH/skills/readme-skill/SKILL.md" <<'FIXTURE_END'
+# Example-MCP
+
+[![PyPI](https://img.shields.io/pypi/v/example-mcp.svg)](https://pypi.org/project/example-mcp/)
+
+A lightweight server for converting files; this file is a project README, not a skill definition.
+FIXTURE_END
+mkdir -p "$FH/plugins/cache/mkt/fx/1.0.0/skills/bare"
+cp "$FH/skills/readme-skill/SKILL.md" "$FH/plugins/cache/mkt/fx/1.0.0/skills/bare/SKILL.md"
+printf '{"version": 2, "plugins": {"fx@mkt": [{"installPath": "%s"}], "off@mkt": [{"installPath": "%s"}]}}\n' \
+  "$FH/plugins/cache/mkt/fx/1.0.0" "$FH/plugins/cache/mkt/off/1.0.0" > "$FH/plugins/installed_plugins.json"
+rc_p15=$(run p15.txt env CLAUDE_CONFIG_DIR="$FH" "$PY" "$PREFIX" --vault "$PV")
+env CLAUDE_CONFIG_DIR="$FH" "$PY" "$PREFIX" --vault "$PV" --format json > "$OUT/p15j.txt" 2> "$OUT/p15j.err"; rc_p15j=$?
+r=""
+r="$r$(wantrc "$rc_p15" 0)"
+r="$r$(want "$OUT/p15.txt" "· user-skills $exp_u B (readme-skill 0 · uskill $exp_u) · plugin-skills $exp_p B (fx:bare 0 · fx:pskill $exp_p) ·")"
+r="$r$(want "$OUT/p15.txt" "WARNING: user-skills: readme-skill ($FH/skills/readme-skill/SKILL.md) does not begin with a frontmatter block — counted as 0 description bytes")"
+r="$r$(want "$OUT/p15.txt" "WARNING: plugin-skills: fx:bare ($FH/plugins/cache/mkt/fx/1.0.0/skills/bare/SKILL.md) does not begin with a frontmatter block — counted as 0 description bytes")"
+r="$r$(want "$OUT/p15.txt" "user-skills measured=2 of 2 candidates (1 without frontmatter, counted as 0 B) plugin-skills measured=2 of 2 candidates (1 without frontmatter, counted as 0 B) from 1 enabled plugin(s)")"
+r="$r$(notwant "$OUT/p15.txt" 'PROBE FAILED')"
+[ "$(grep -c '^WARNING: ' "$OUT/p15.txt")" = 2 ] || r="$r not exactly one warning line per file without frontmatter;"
+r="$r$(wantrc "$rc_p15j" 0)"
+[ "$(grep -c '^WARNING: ' "$OUT/p15j.err")" = 2 ] || r="$r the json run did not print one warning per file on stderr;"
+if ! "$PY" - "$OUT/p15j.txt" <<'JSON_CHECK_END'
+import json, sys
+p = json.load(open(sys.argv[1]))
+u, g = p["user_skills"], p["plugin_skills"]
+assert u["rows"].get("readme-skill") == 0 and u["without_frontmatter"] == 1 and u["candidates"] == 2, u
+assert g["rows"].get("fx:bare") == 0 and g["without_frontmatter"] == 1 and g["candidates"] == 2, g
+assert len(p["warnings"]) == 2 and p["probe_failures"] == [], (p["warnings"], p["probe_failures"])
+JSON_CHECK_END
+then
+  r="$r the json payload did not carry the 0 B rows, their count and the two warnings;"
+fi
+leg "25g a user-level or plugin SKILL.md without frontmatter (a project README's shape) is a row at 0 B with one warning naming it, exit 0 (review F5)" "$r"
+
+HU="$TMP/home-unreadable"; mkdir -p "$HU/skills/broken/SKILL.md"
+rc_p16=$(run p16.txt env CLAUDE_CONFIG_DIR="$HU" "$PY" "$PREFIX" --vault "$PV")
+HP="$TMP/home-partial"; cp -R "$CH" "$HP"; mkdir -p "$HP/skills/broken/SKILL.md"
+printf '{"enabledPlugins": {"fx@mkt": true, "gone@mkt": true}}\n' > "$HP/settings.json"
+printf '{"version": 2, "plugins": {"fx@mkt": [{"installPath": "%s"}]}}\n' "$HP/plugins/cache/mkt/fx/1.0.0" > "$HP/plugins/installed_plugins.json"
+rc_p17=$(run p17.txt env CLAUDE_CONFIG_DIR="$HP" "$PY" "$PREFIX" --vault "$PV")
+r=""
+r="$r$(wantrc "$rc_p16" 2)"
+r="$r$(want "$OUT/p16.txt" "PROBE FAILED: user-skills: broken ($HU/skills/broken/SKILL.md) could not be read (IsADirectoryError)")"
+r="$r$(notwant "$OUT/p16.txt" 'WARNING: ')"
+r="$r$(wantre "$OUT/p16.txt" 'prefix budget: CLAUDE\.md [0-9]+ B')"
+r="$r$(wantrc "$rc_p17" 0)"
+r="$r$(want "$OUT/p17.txt" "WARNING: user-skills: broken ($HP/skills/broken/SKILL.md) could not be read (IsADirectoryError)")"
+r="$r$(want "$OUT/p17.txt" 'WARNING: plugin-skills: gone@mkt is enabled but the install record places no install path on disk')"
+r="$r$(want "$OUT/p17.txt" "user-skills $exp_u B (uskill $exp_u)")"
+r="$r$(notwant "$OUT/p17.txt" 'PROBE FAILED')"
+leg "25h a user-level layer that measured nothing is still PROBE FAILED at exit 2, and a problem beside a measured skill in the same layer is a warning at exit 0" "$r"
+
+VR="$TMP/vault-readme-skill"; cp -R "$PV" "$VR"
+mkdir -p "$VR/.claude/skills/readme-skill"; cp "$FH/skills/readme-skill/SKILL.md" "$VR/.claude/skills/readme-skill/SKILL.md"
+rc_p18=$(run p18.txt "$PY" "$PREFIX" --vault "$VR")
+r=""
+r="$r$(wantrc "$rc_p18" 2)"
+r="$r$(want "$OUT/p18.txt" "PROBE FAILED: readme-skill ($VR/.claude/skills/readme-skill/SKILL.md) does not begin with a frontmatter block")"
+r="$r$(notwant "$OUT/p18.txt" 'WARNING: ')"
+r="$r$(want "$OUT/p18.txt" 'skills measured=2 of 3 candidates')"
+leg "25i the vault's own skills keep the strict policy: the same README shape under .claude/skills is PROBE FAILED at exit 2" "$r"
 
 rc_a8=$(run a8.txt "$PY" "$AUDIT" --vault "$PV" --baseline 2027-01-01 --today 2026-09-02)
 r=""
@@ -1448,8 +1616,18 @@ mk r-auto AD1 2026-09-06T13:00+0100 sonnet high auto "(a) x" "$RDA" ',"model_src
 mk r-auto AB1 2026-09-06T13:00+0100 fable max auto "(a) x" "$RDA" ',"model_src":"anchor","effort_src":"anchor","choice_reason":null'
 mk r-auto AP1 2026-09-06T13:00+0100 sonnet high auto "(a) x" "$RDA"
 printf '%s\n' '{"ts":"2026-09-06T13:00+0100","event":"spawn","lane":"old"}' 'not json' > "$RD/r-norunopen.jsonl"
+# An attended run (known-issues 2026-09-08): lane-open lines and no run-open, the shape `lane.py spawn` writes in
+# an attended session. It is dated by its EARLIEST lane-open (written second here), labelled attended and checked
+# like any other run; one dated before the window is not reviewed; a line that parses but is no object is a bad line.
+printf '%s\n' '{"ts":"2026-09-06T14:05+0100","run":"r-attended","event":"lane-open","lane":"AT2","class":"verifier","model":"opus","effort":"max","throttle":"default","reason":"(b) second lane","row_default":{"model":"opus","effort":"max"}}' \
+  '{"ts":"2026-09-06T14:00+0100","run":"r-attended","event":"lane-open","lane":"AT1","class":"verifier","model":"sonnet","effort":"max","throttle":"default","reason":"(a) attended lane","row_default":{"model":"opus","effort":"max"}}' \
+  '["a line that parses but is not an object"]' > "$RD/r-attended.jsonl"
+printf '%s\n' '{"ts":"2026-08-20T10:00+0100","run":"r-attended-old","event":"lane-open","lane":"OLD1","class":"verifier","model":"sonnet","effort":"high","throttle":"default","reason":"no letter","row_default":{"model":"opus","effort":"max"}}' > "$RD/r-attended-old.jsonl"
 srr() { $PY "$SRR" --records "$RD" --routing "$RJ" --log "$RL" --rule-from "$RF" "$@" > "$TMP/srr.out" 2>&1; echo $? > "$TMP/srr.rc"; }
 srr
+leg "srr: a record with no run-open is reviewed as an attended run, dated by its earliest lane-open (known-issues 2026-09-08)" "$(want "$TMP/srr.out" '  r-attended (attended): 2 lanes')$(want "$TMP/srr.out" "FINDING AT1: model sonnet below the row default opus without 'sonnet because'")"
+leg "srr: an attended run dated before the window is not reviewed, and the summary counts attended runs apart" "$(notwant "$TMP/srr.out" 'OLD1')$(want "$TMP/srr.out" ' runs (1 attended: no run-open, dated by the first lane-open) ')"
+leg "srr: a record line that parses but is not a JSON object is a bad line, never a crash" "$(want "$TMP/srr.out" '· 2 bad lines')$([ "$(cat "$TMP/srr.rc")" = 0 ] || printf 'exit %s; ' "$(cat "$TMP/srr.rc")")"
 leg "srr: default below-default sonnet·high without phrases is caught twice" "$(want "$TMP/srr.out" 'D1: model sonnet below the row default opus')$(want "$TMP/srr.out" 'D1: effort high below the row default max')"
 leg "srr: the phrase-present lane passes (the phrase check discriminates)" "$(notwant "$TMP/srr.out" 'FINDING P1')"
 leg "srr: cheap at the floor is skipped; above the floor is caught" "$(notwant "$TMP/srr.out" 'FINDING C1')$(want "$TMP/srr.out" "C2: pick above the owner's floor")"
@@ -1461,13 +1639,15 @@ leg "srr: the cut: a minute before RULE_FROM is baseline, a minute after is chec
 leg "srr: the letter check starts at LETTER_FROM" "$(notwant "$TMP/srr.out" 'FINDING L0')$(want "$TMP/srr.out" 'L1: no instrument-rule letter')"
 leg "srr: an unparseable ts is listed" "$(want "$TMP/srr.out" 'Z1: unparsed ts')"
 leg "srr: unclosed, unread applied effort and a recorded/applied mismatch are told apart" "$(want "$TMP/srr.out" 'U1: unclosed')$(want "$TMP/srr.out" 'N1: applied effort unread')$(want "$TMP/srr.out" 'M1: effort max recorded, high applied')"
-leg "srr: a file without run-open is skipped and its bad lines counted" "$(want "$TMP/srr.out" 'r-norunopen.jsonl: skipped (no run-open, 1 bad lines)')"
+leg "srr: a file with neither a run-open nor a dated lane-open is skipped and its bad lines counted" "$(want "$TMP/srr.out" 'r-norunopen.jsonl: skipped (no run-open and no dated lane-open, 1 bad lines)')"
 leg "srr: auto, a reasoned departure above the anchor (effort_src auto: …) is clean" "$(notwant "$TMP/srr.out" 'FINDING AR1')"
 leg "srr: auto, an unreasoned departure is the finding, naming the axis and the anchor" "$(want "$TMP/srr.out" 'FINDING AU1: auto pick without --choice-reason (effort max departs from the anchor xhigh)')"
 leg "srr: auto, an anchor pick is clean" "$(notwant "$TMP/srr.out" 'FINDING AA1')"
 leg "srr: auto, a reasoned pick BELOW the anchor is clean (the hand-set phrase check does not apply)" "$(notwant "$TMP/srr.out" 'FINDING AD1')"
 leg "srr: auto, both axes unreasoned are two findings" "$(want "$TMP/srr.out" 'FINDING AB1: auto pick without --choice-reason (model fable departs from the anchor opus)')$(want "$TMP/srr.out" 'FINDING AB1: auto pick without --choice-reason (effort max departs from the anchor xhigh)')"
 leg "srr: a pre-fields auto line (no model_src) keeps the phrase check" "$(want "$TMP/srr.out" 'AP1: model sonnet below the row default opus without')$(notwant "$TMP/srr.out" 'AP1: auto pick')"
+srr --json
+leg "srr: json totals count attended runs and skipped files apart (1 attended, 1 skipped, 3 files without run-open)" "$($PY -c 'import json, sys; t = json.load(open(sys.argv[1]))["totals"]; assert (t["attended"], t["skipped"], t["no_run_open"]) == (1, 1, 3), t' "$TMP/srr.out" 2>&1)"
 srr --since 2099-01-01T00:00+0100
 leg "srr: an empty window says so with the file count" "$(want "$TMP/srr.out" 'no lanes this window (control:')"
 $PY "$SRR" --records "$TMP/absent-zz" --routing "$RJ" --log "$RL" > "$TMP/srr.out" 2>&1; rc=$?
@@ -1477,6 +1657,56 @@ leg "srr: an unreadable routing record is PROBE FAILED, exit 2" "$(want "$TMP/sr
 RF_SCRIPT=$(grep -o 'RULE_FROM = "[^"]*"' "$SRR" | head -1 | sed 's/.*"\(.*\)"/\1/')
 RF_LOG=$(grep -o 'per-call model and effort rule shipped 2026-09-06 [0-9][0-9]:[0-9][0-9]' "$HERE/../../../wiki/log.md" | head -1 | grep -o '[0-9][0-9]:[0-9][0-9]$')
 leg "srr: RULE_FROM equals the ship entry's title time in wiki/log.md" "$([ -n "$RF_LOG" ] && [ "${RF_SCRIPT:11:5}" = "$RF_LOG" ] || printf 'script %s vs log %s; ' "$RF_SCRIPT" "$RF_LOG")"
+
+# ---------------------------------------------------------------- stdout-only proof for the 2026-09-13 readers
+# prefix-budget.py now reads a claude home and spawn-record-review.py reads attended records: both run against
+# read-only copies with a checksum manifest before and after, and the review's source faces the write grep.
+ROCH="$TMP/readonly-claude-home"; RORD="$TMP/readonly-records"
+cp -R "$CH" "$ROCH"; cp -R "$RD" "$RORD"
+# A user-level skill with no frontmatter rides along, so the warning path is proven write-free too (review F5).
+mkdir -p "$ROCH/skills/readme-skill"; cp "$FH/skills/readme-skill/SKILL.md" "$ROCH/skills/readme-skill/SKILL.md"
+# The copy's install record names the copy's own plugin root, so the plugin layer is read from the read-only tree.
+printf '{"version": 2, "plugins": {"fx@mkt": [{"installPath": "%s"}], "off@mkt": [{"installPath": "%s"}]}}\n' \
+  "$ROCH/plugins/cache/mkt/fx/1.0.0" "$ROCH/plugins/cache/mkt/off/1.0.0" > "$ROCH/plugins/installed_plugins.json"
+chmod -R a-w "$ROCH" "$RORD"
+manifest "$ROCH" "$OUT/roch_before.txt"; manifest "$RORD" "$OUT/rord_before.txt"
+env CLAUDE_CONFIG_DIR="$ROCH" "$PY" "$PREFIX" --vault "$RO" --diff-log wiki/log.md > "$OUT/ro7.txt" 2>&1; rc_ro7=$?
+env CLAUDE_CONFIG_DIR="$ROCH" "$PY" "$PREFIX" --vault "$RO" --format json > "$OUT/ro8.txt" 2>&1; rc_ro8=$?
+"$PY" "$SRR" --records "$RORD" --routing "$RJ" --log "$RL" --rule-from "$RF" > "$OUT/ro9.txt" 2>&1; rc_ro9=$?
+"$PY" "$SRR" --records "$RORD" --routing "$RJ" --log "$RL" --rule-from "$RF" --json > "$OUT/ro10.txt" 2>&1; rc_ro10=$?
+manifest "$ROCH" "$OUT/roch_after.txt"; manifest "$RORD" "$OUT/rord_after.txt"
+r=""
+r="$r$(wantrc "$rc_ro7" 0)$(wantrc "$rc_ro8" 0)$(wantrc "$rc_ro9" 0)$(wantrc "$rc_ro10" 0)"
+r="$r$(want "$OUT/ro7.txt" 'user-skills ')$(want "$OUT/ro9.txt" '(attended)')$(want "$OUT/ro7.txt" 'WARNING: user-skills: readme-skill (')"
+cmp -s "$OUT/roch_before.txt" "$OUT/roch_after.txt" || r="$r the read-only claude home changed;"
+cmp -s "$OUT/rord_before.txt" "$OUT/rord_after.txt" || r="$r the read-only records changed;"
+[ "$(grep -c . "$OUT/roch_before.txt")" -ge 5 ] || r="$r the claude-home manifest came back nearly empty;"
+if grep -qE -- "$WRITE_RE" "$SRR"; then r="$r write pattern in spawn-record-review.py;"; fi
+leg "47b stdout-only: the user-level prefix layers and the attended-run review run against read-only copies, byte-identical after, no write pattern in the review's source" "$r"
+
+# ---------------------------------------------------------------- Step 6 Monitor extract (known-issues 2026-09-08)
+# The entry: an open-ended sed range carried the whole Archive section into a lane's grant. The skill names a
+# bounded extract; this leg runs the skill's own awk program on a fixture IDEAS file, where the old
+# open-ended form must leak (the fixture discriminates) and the named form must not.
+STEP6="$(awk 'index($0, "### 6 ") == 1 {f = 1} index($0, "### 7 ") == 1 {f = 0} f' "$HERE/SKILL.md")"
+PROG="$(printf '%s\n' "$STEP6" | grep -o "awk -v h='## 📡 Monitor' '[^']*'" | head -1 | sed "s/^awk -v h='## 📡 Monitor' '//; s/'\$//")"
+IDF="$TMP/IDEAS.md"
+printf '# Ideas\n\n## TODO\n- a todo line\n\n## 📡 Monitor\n- caution one\n- caution two\n\n## Archive\n- an archived idea\n' > "$IDF"
+r=""
+if [ -z "$PROG" ]; then
+  r="$r the Step 6 text names no bounded awk extract;"
+else
+  EXTRACT="$(awk -v h='## 📡 Monitor' "$PROG" "$IDF")"
+  [ "$(printf '%s\n' "$EXTRACT" | grep -c '^## 📡 Monitor')" = 1 ] || r="$r the bounded extract lost the Monitor heading (the positive control);"
+  [ "$(printf '%s\n' "$EXTRACT" | grep -c 'caution two')" = 1 ] || r="$r the bounded extract lost the section body;"
+  [ "$(printf '%s\n' "$EXTRACT" | grep -c -e '^## Archive' -e 'archived idea' -e '^## TODO' -e 'a todo line')" = 0 ] || r="$r the bounded extract leaked a neighbouring section;"
+fi
+[ "$(sed -n '/^## 📡 Monitor/,$p' "$IDF" | grep -c 'archived idea')" = 1 ] || r="$r the fixture does not discriminate (the old open-ended range did not leak);"
+leg "48 Step 6: the skill's bounded Monitor extract stops at the next ## heading, while the old open-ended range leaks on the same fixture" "$r"
+r=""
+printf '%s\n' "$STEP6" | grep -q 'leakage control per neighbouring section' || r="$r no leakage-control sentence;"
+printf '%s\n' "$STEP6" | grep -q 'Re-read `IDEAS.md` immediately before staging' || r="$r no re-read-before-staging sentence;"
+leg "49 Step 6 requires a leakage control per neighbouring section and a re-read of IDEAS.md immediately before staging" "$r"
 
 # ---------------------------------------------------------------- teardown
 chmod -R u+w "$TMP"

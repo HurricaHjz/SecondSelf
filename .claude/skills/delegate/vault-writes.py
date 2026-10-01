@@ -14,8 +14,8 @@ one of them against an asserted anchor, prints one line, and refuses rather than
 
 The clock, and why it is not an argument
 
-  A time of day written by hand is written from a sense of elapsed time, and seven such
-  stamps reached five surfaces in one session before anything compared one to a clock. So
+  A time of day written by hand is written from a sense of elapsed time, and such stamps
+  spread across surfaces before anything compares one to a clock. So
   every stamp below is read from the clock at the moment of the write and from nowhere
   else — no `--time` argument exists to be guessed into:
 
@@ -29,11 +29,23 @@ The clock, and why it is not an argument
                      TITLE` heading is a schema surface and is not touched.
 
   The zone is the clock's own (`%Z`), never a literal. And because a caller's free text may
-  still name a time, every text argument is scanned for an `H:MM`, `HH:MM` or `HH:Mx` token
-  whose hour disagrees with the clock's: each such token prints one line on stderr,
+  still name a time, every text argument is scanned for an `HH:MM` or `HH:Mx` token whose
+  hour disagrees with the clock's: each such token prints one line on stderr,
   `clock: the note names TOKEN, the clock reads HH:MM`. It is a warning and never a
   refusal — a note may legitimately cite a past event — so the write proceeds either way,
-  and `--dry-run` prints the same warnings.
+  and `--dry-run` prints the same warnings. The hour has two digits, as every stamp the vault
+  writes has, so a meter's model count (`claude-opus-5:88`) is not a time; nor is a token
+  glued to a word by a hyphen or a dot, a minute above 59, or an ISO zone offset (`+01:00`).
+
+The payload, and what a shell may have done to it (log-append)
+
+  A payload inside double quotes is expanded by the caller's shell before this script sees
+  it: a backticked token is run as a command and replaced by its output, usually nothing. The
+  clean loss arrives looking like ordinary text and cannot be seen here. Two of its traces
+  can: an argument carrying an odd number of backticks (a code span left open), and one
+  carrying the text `command not found` (a substitution's own error captured into the
+  payload). Each prints one stderr line, `payload: ARGUMENT carries …`, and the write
+  proceeds either way; `--dry-run` prints the same warnings.
 
 The contract every verb keeps
 
@@ -113,11 +125,21 @@ CHUNK = 65536                           # the log newline count reads this much 
 PREVIEW_MAX = 6                         # `--dry-run` prints at most this many `| ` lines
 SHORT = 70                              # an error line quotes at most this much of a line
 
-# A clock token as the register and the notes actually write one: a one- or two-digit hour,
-# a colon, then two digits or the rounded `Mx` form the register uses ("filed 21:3x BST").
+# A clock token as the register and the notes actually write one: a two-digit hour, a colon,
+# then a minute 00-59 or the rounded `Mx` form the register uses ("filed 21:3x BST").
 # The lookarounds keep the seconds of `19:52:29` from reading as a second token (`52:29`)
 # and keep a token out of a longer word; an hour above 23 is not a time and is skipped.
-CLOCK_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z:])([0-9]{1,2}):([0-9][0-9x])(?![0-9A-Za-z])")
+# Anchored 2026-09-13 (register entry of 2026-09-09 15:27): a one-digit hour would read a meter's
+# model count as a clock. Requiring a two-digit hour avoids that ambiguity; excluding a
+# letter followed by a hyphen rejects model counts while retaining the second endpoint
+# of a time range. Each lookbehind, and the shape it keeps out:
+#   a letter, digit, colon or `+`        a word, a longer time, a zone offset (`+01:00`)
+#   a letter then a hyphen               a model id and its count (`opus-15:30`)
+#   an alphanumeric then a dot           a version and its count (`gpt-5.10:12`)
+#   `:SS-` closing a timestamp           a negative zone offset (`12:00:00-05:00`)
+CLOCK_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z:+])(?<![A-Za-z]-)(?<![0-9A-Za-z]\.)"
+                            r"(?<!:[0-9]{2}:[0-9]{2}-)"
+                            r"([0-9]{2}):([0-5][0-9x])(?![0-9A-Za-z])")
 HOUR_MAX = 23
 HOURS = 24
 # The grace: the previous hour passes while the clock's minute is under ten — a note written
@@ -223,6 +245,43 @@ def warn_clock(now, values):
     reading = clock_hm(now)
     for token in clock_tokens(now, values):
         sys.stderr.write("clock: the note names %s, the clock reads %s\n" % (token, reading))
+
+
+# --------------------------------------------------------------------- payload ---------
+
+# Detect traces a caller's shell leaves when a double-quoted payload loses a backticked token
+# (register entry of 2026-09-10 19:59). An odd backtick count is a code span left open: one
+# argument is one wiki line, so a span cannot close in another. The phrase is the unknown-command
+# text zsh and bash print ("zsh: command not found: X", "bash: X: command not found"), which
+# reaches a payload only when a substitution captured its own stderr; dash prints "X: not found"
+# and is not matched, since "not found" alone is ordinary prose. A clean loss (the token and both
+# backticks gone) leaves neither trace, and preventing it is the caller's shell discipline.
+BACKTICK = "`"
+LOST_COMMAND_RE = re.compile(r"command not found", re.IGNORECASE)
+
+
+def payload_traces(named):
+    """(argument, reason) for each trace in the caller's text, in the order the verb lists them."""
+    found = []
+    for name, value in named:
+        if not value:
+            continue
+        ticks = value.count(BACKTICK)
+        if ticks % 2:
+            found.append((name, "carries %d backtick%s, an odd count: a code span is left open, "
+                                "or a double-quoted shell argument lost a backticked token"
+                                % (ticks, "" if ticks == 1 else "s")))
+        if LOST_COMMAND_RE.search(value):
+            found.append((name, "carries 'command not found': a command substitution ran inside "
+                                "a double-quoted shell argument"))
+    return found
+
+
+def warn_payload(named):
+    """One stderr line per trace. A warning: the text may mean exactly what it says, so the
+    write goes ahead, and stdout keeps the one line a head reads."""
+    for name, reason in payload_traces(named):
+        sys.stderr.write("payload: %s %s\n" % (name, reason))
 
 
 def stamped_status(status, date, hm):
@@ -345,6 +404,7 @@ def cmd_log_append(args):
     changed = check_text(verb, "--changed", args.changed)
     conflicts = check_text(verb, "--conflicts", args.conflicts)
     extras = []
+    named = [("--title", title), ("--changed", changed), ("--conflicts", conflicts)]
     for raw in args.extra or []:
         check_text(verb, "--extra", raw)
         if ":" not in raw:
@@ -354,11 +414,13 @@ def cmd_log_append(args):
         if not key or not value:
             die(verb, "--extra '%s' needs a key and a value" % short(raw))
         extras.append((key, value))
+        named.append(("--extra %s" % key, raw))
     if not os.path.isfile(path):
         die(verb, "no file at %s" % path)
 
     now = clock_now()
     warn_clock(now, [title, changed, conflicts] + [raw for raw in args.extra or []])
+    warn_payload(named)
     # The heading shape is a schema surface and stays `## [DATE] ACTION | TITLE`, so the time
     # rides in a bullet instead — first among the extras, where it sits under the heading's
     # own date and does not move when the caller passes more of them.

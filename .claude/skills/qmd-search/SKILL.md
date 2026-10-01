@@ -14,8 +14,7 @@ user-invocable: true
 # qmd-search — optional semantic search over the wiki (dormant until qmd is installed)
 
 ## What this is
-A thin, **dormant** adapter to `qmd` (design: `wiki/developments/qmd-opt-in-design.md`; setup runbook:
-`wiki/developments/equipping-the-wiki-with-qmd.md`). It does **not** replace `index.md` (the curated, read-first catalogue); it is the
+A thin, **dormant** adapter to `qmd`. It does **not** replace `index.md` (the curated, read-first catalogue); it is the
 *semantic fallback* `query`/`output` reach for when the catalogue under-covers a question, and the
 **refresh hook** that keeps qmd's embeddings current as the wiki changes. qmd retrieves; the wiki governs
 (compile, cross-link, confidence, conflicts).
@@ -61,9 +60,8 @@ Two signals refresh whenever wiki page(s) are created or updated:
    is skipped entirely and a changed one re-embeds *all* of its chunks — which is why `wiki/log.md` is
    excluded from the collection, CLAUDE.md §10). A no-op when qmd is dormant.
 
-**Enforcement — a turn-end hook, not an agent step.** Measured 2026-08-23: as an agent-executed step the
-embedding refresh did not fire at all, leaving the index 3 days and 138 files stale while every session
-believed it current. Duties that gate nothing are not performed (this vault's 88%-vs-4% finding). So where
+**Enforcement — a turn-end hook, not an agent step.** A prose-only refresh duty can be missed,
+leaving the index stale while later sessions treat it as current. So where
 the harness supports it, the refresh belongs in a **`Stop` hook** — the harness runs it once per turn, so
 no agent can forget it, and it costs zero agent tokens. **The agent then does NOT run the qmd commands
 inline**; it still owns step 1. This is not a daemon, cron job, launchd job or file-watcher: the hook is a
@@ -78,13 +76,13 @@ command -v qmd >/dev/null 2>&1 || exit 0          # qmd absent      -> silent no
 mkdir "$L" 2>/dev/null || exit 0                   # another refresh in flight
 qmd update >/dev/null 2>&1 && qmd embed >/dev/null 2>&1 && mv -f "$S.new" "$S"
 ```
-- **Gate on the filesystem, not on `qmd update`'s output.** An earlier design parsed its stdout and failed
-  its own positive control; `find -newer` against a stamp file is ground truth and passes
+- **Gate on the filesystem, not on `qmd update` output.** `find -newer` against a stamp file
+  tests the underlying state and supports the controls for
   no-change / modify / create / delete / missing-stamp. Directory mtimes make deletions visible too.
 - **Stamp before the work, promote after success** (`$S.new` → `$S`), so a file changed mid-refresh is
   caught next turn rather than skipped.
 - **Fail open, never block.** Every premise failure exits 0; a missing stamp means "refresh".
-- Costs ~10 ms on a turn that changed nothing, against ~1–75 s for an unconditional `qmd embed`.
+- Measure the no-change check and refresh runtime on the local installation.
 
 **Where no such hook exists** (another harness, hooks disabled), the fallback is the original inline rule:
 the agent runs `qmd update && qmd embed` itself as the last action of a write operation — `ingest`,

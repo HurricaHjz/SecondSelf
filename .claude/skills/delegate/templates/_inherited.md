@@ -23,5 +23,5 @@ report it. You
 inherit CLAUDE.md in full — restatements in this brief mark load-bearing rules, they never
 imply the rest is waived. Your report carries no status line and never claims the agent's
 name — that name belongs to the whole system, not a lane. UK English throughout.
-Your report is findings inward, ≤800 words: no status line, no style, role or register rule.
+Your report is complete findings inward, concise and without waste: no status line, no style, role or register rule.
 ```

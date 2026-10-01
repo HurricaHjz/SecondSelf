@@ -4,7 +4,7 @@
 # NEVER touches the real vault. Run:  bash test_export_template.sh
 # Premise guard: this suite needs process substitution. Invoked as `sh <file>` it dies mid-run
 # with a raw syntax error and exit 2, and a caller grepping the output for "FAIL" then reads zero
-# and calls it green (observed 2026-08-28). Probe the CAPABILITY, not the shell name: on macOS
+# and calls it green. Probe the CAPABILITY, not the shell name: on macOS
 # /bin/sh IS bash, so $BASH_VERSION is set while POSIX mode still disables the feature.
 if ! (eval 'cat < <(echo probe)') >/dev/null 2>&1; then
   echo "ERROR: process substitution unavailable (POSIX mode?) — run: bash $0"; exit 2
@@ -19,6 +19,7 @@ REMOTE="$ROOT/remote.git"
 CLONE="$ROOT/clone"
 SCRIPT="$V/.claude/skills/export-template/export_template.sh"
 GIT="git -c user.email=t@t -c user.name=test -c commit.gpgsign=false -c init.defaultBranch=main"
+EXCLUDED_SKILL="professor-loop"   # the one skill copy_framework() leaves out of build and push (v0.9.6)
 
 PASS=0; FAIL=0
 ok(){ PASS=$((PASS+1)); echo "    ok   — $1"; }
@@ -41,6 +42,8 @@ build_fake_vault(){
   for s in ingest query lint oldskill output gather newskill; do  # 'newskill' tests dynamic discovery
     mkdir -p "$V/.claude/skills/$s"; printf '# %s skill\n' "$s" > "$V/.claude/skills/$s/SKILL.md"
   done
+  mkdir -p "$V/.claude/skills/$EXCLUDED_SKILL"   # present in the vault, never shipped
+  printf '# excluded skill\n' > "$V/.claude/skills/$EXCLUDED_SKILL/SKILL.md"
   cp -R "$REALSKILL" "$V/.claude/skills/export-template"
   # a 'delegate' skill shaped like the real one: a python wrapper, a JSON routing table, a template
   # and a nested slice directory — the shapes the thin-lane path added under .claude/skills/ (2026-09-04).
@@ -67,6 +70,8 @@ setup_published(){   # fake vault + bare remote + clone holding the published fr
   $GIT clone -q "$REMOTE" "$CLONE" 2>/dev/null
   bash "$SCRIPT" --push "$CLONE" >/dev/null 2>&1
   ( cd "$CLONE" && $GIT add -A && $GIT commit -qm init && $GIT push -qu origin main ) >/dev/null 2>&1
+  # Use the published skill as this synthetic round-trip baseline; the real skill is read-only.
+  cp -R "$CLONE/.claude/skills/export-template/." "$V/.claude/skills/export-template/"
 }
 
 [ -f "$REALSKILL/export_template.sh" ] || { echo "cannot find export_template.sh next to this test"; exit 2; }
@@ -84,7 +89,10 @@ chk "build: no legacy no-ext LICENSE"       '[ ! -f "$BUILT/LICENSE" ]'
 chk "build: CONTRIBUTING NOT shipped (retired)" '[ ! -f "$BUILT/CONTRIBUTING.md" ]'
 chk "build: .gitignore present"             '[ -f "$BUILT/.gitignore" ]'
 chk "build: setup.sh present + executable"  '[ -x "$BUILT/setup.sh" ]'
-chk "build: 9 skills shipped (auto-discovered)" '[ "$(ls "$BUILT/.claude/skills" | wc -l | tr -d " ")" = 9 ]'
+chk "build: 9 skills shipped (auto-discovered, the one exclusion left out)" '[ "$(ls "$BUILT/.claude/skills" | wc -l | tr -d " ")" = 9 ]'
+chk "build: the excluded skill is NOT shipped"   '[ ! -e "$BUILT/.claude/skills/$EXCLUDED_SKILL" ]'
+chk "build: the excluded skill stays in the vault" '[ -f "$V/.claude/skills/$EXCLUDED_SKILL/SKILL.md" ]'
+chk "control: export_template.sh skips exactly this skill" "grep -qF '[ \"\$s\" = $EXCLUDED_SKILL ] && continue' \"\$REALSKILL/export_template.sh\""
 chk "build: NEW skill auto-shipped (dynamic)"   '[ -d "$BUILT/.claude/skills/newskill" ]'
 chk "build: export-template IS shipped"     '[ -f "$BUILT/.claude/skills/export-template/export_template.sh" ]'
 chk "build: export-template payload shipped" '[ -d "$BUILT/.claude/skills/export-template/payload/example" ]'
@@ -210,6 +218,17 @@ chk "self-update: pull completed cleanly (exit 0)"      '[ "$rc" = 0 ]'
 chk "self-update: vault export-template got the change" 'grep -q "UPSTREAM EXPORT-TEMPLATE MARKER" "$V/.claude/skills/export-template/SKILL.md"'
 chk "self-update: export_template.sh still present"     '[ -f "$V/.claude/skills/export-template/export_template.sh" ]'
 
+echo "== Phase 11: push removes a stale generated copy of the excluded skill; the vault's copy is untouched =="
+setup_published
+mkdir -p "$CLONE/.claude/skills/$EXCLUDED_SKILL"; printf 'stale\n' > "$CLONE/.claude/skills/$EXCLUDED_SKILL/SENTINEL.md"
+b_excl="$(hash_of "$V/.claude/skills/$EXCLUDED_SKILL/SKILL.md")"
+bash "$SCRIPT" --push "$CLONE" >/dev/null 2>&1; rc=$?
+chk "push: exits 0 over a destination holding the sentinel"     '[ "$rc" = 0 ]'
+chk "push: the sentinel excluded-skill directory is gone"      '[ ! -e "$CLONE/.claude/skills/$EXCLUDED_SKILL" ]'
+chk "push: an ordinary skill is present (control)"             '[ -f "$CLONE/.claude/skills/ingest/SKILL.md" ]'
+chk "push: export-template is present (control)"               '[ -f "$CLONE/.claude/skills/export-template/export_template.sh" ]'
+chk "push: the vault's excluded skill is byte-identical"       '[ "$(hash_of "$V/.claude/skills/$EXCLUDED_SKILL/SKILL.md")" = "$b_excl" ]'
+
 echo "== 13) the REAL vault README's images can actually ship =="
 VAULT_ROOT="$(cd "$REALSKILL/../../.." && pwd)"
 IMGS=$(grep -oE 'assets/[A-Za-z0-9._-]+\.(png|jpg|jpeg|gif|webp)' "$VAULT_ROOT/README.md" | sort -u)
@@ -222,10 +241,14 @@ done
 
 echo "== 14) shipped surfaces carry no wikilink to a page that does not ship (shared script: lint/check-shipped-links.py) =="
 # One implementation, two callers: lint Step 2g runs this at edit time, this leg at publish — they cannot
-# drift. Scope, exclusions and premise guards live in the script (design record:
-# wiki/developments/shipped-surface-wikilink-guard.md). Exit 0 clean · 1 findings · 2 PROBE FAILED.
+# drift. Scope, exclusions and premise guards live in the script. Exit 0 clean · 1 findings ·
+# 2 PROBE FAILED.
 VROOT="$(cd "$REALSKILL/../../.." && pwd)"
-SL_RC=0; SL_OUT="$(python3 "$VROOT/.claude/skills/lint/check-shipped-links.py" "$VROOT" 2>&1)" || SL_RC=$?
+# The skills copy_framework() skips never ship, so the check is told to skip them: the names come from
+# the exporter's own skip lines, and the leg below proves they are the one reviewed exclusion.
+SL_SKIP=$(sed -n 's/^[[:space:]]*\[ "\$s" = \([A-Za-z0-9._-]*\) \] && continue[[:space:]]*$/\1/p' "$REALSKILL/export_template.sh")
+chk "control: the exporter's skip lines name exactly the excluded skill" '[ "$SL_SKIP" = "$EXCLUDED_SKILL" ]'
+SL_RC=0; SL_OUT="$(python3 "$VROOT/.claude/skills/lint/check-shipped-links.py" $(for s in $SL_SKIP; do printf -- '--skip-skill %s ' "$s"; done) "$VROOT" 2>&1)" || SL_RC=$?
 chk "control: shipped-links probe ran (exit 0/1, never PROBE FAILED)" '[ "$SL_RC" -ne 2 ]'
 chk "no shipped surface links a non-shipping wiki page"               '[ "$SL_RC" -eq 0 ]'
 [ "$SL_RC" -ne 0 ] && echo "      $SL_OUT"
@@ -233,7 +256,7 @@ chk "no shipped surface links a non-shipping wiki page"               '[ "$SL_RC
 echo "== 15) every shipped skill is documented in README + MANUAL =="
 SKDIR15="$(cd "$REALSKILL/.." && pwd)"            # the real .claude/skills/
 VROOT15="$(cd "$REALSKILL/../../.." && pwd)"      # the real vault root
-SKILLS15=$(cd "$SKDIR15" && ls -d */ | tr -d '/')
+SKILLS15=$(cd "$SKDIR15" && ls -d */ | tr -d '/' | grep -vx "$EXCLUDED_SKILL")   # the excluded skill never ships
 chk "control: shipped skills enumerated"        "[ -n \"$SKILLS15\" ]"
 MISS_R15=""; MISS_M15=""
 for s in $SKILLS15; do

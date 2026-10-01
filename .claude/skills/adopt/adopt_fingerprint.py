@@ -17,8 +17,8 @@ Reports (stdout only; never writes, never fetches):
     licence -> reference in place; an upstream `disable-model-invocation: true` -> upstream intends
     by-name; the repository's shape (single skill, skill collection, plugin, package, documents only).
 
-Bounds (safety caps with headroom, not thresholds that decide anything): MAX_FILES 20,000 walked (the
-largest skill repository seen so far holds ~1,500 files); MAX_FILE_BYTES 2 MiB per scanned file (a
+Bounds (safety caps set by judgement, unmeasured): MAX_FILES 20,000 walked;
+MAX_FILE_BYTES 2 MiB per scanned file (a
 text file above that is data, not code; it is counted, not read); MAX_TOTAL_BYTES 200 MiB scanned in
 all (beyond it the scan stops and reports itself truncated). Directories never walked: .git,
 node_modules, virtual environments, caches and build output.
@@ -37,7 +37,7 @@ SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".mypy_cach
 MAX_FILES = 20000
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_BYTES = 200 * 1024 * 1024
-# The primitives the design names (capability-register-design D3 step 0), as fixed strings.
+# The primitives the design names (the capability register contract), as fixed strings.
 PRIMITIVES = ["subprocess", "os.system", "requests.", "urllib", "fetch(", "curl ", "wget ",
               "http.client", "socket."]
 EXEC_PRIMITIVES = {"subprocess", "os.system"}

@@ -8,30 +8,28 @@ description: >
   (~/.llm-wiki/projects/) or are registered where they already are; the wiki holds only a registry row
   (wiki/tools/Agent Project Store.md) and commit-pinned snapshots ingested through raw/. Never runs
   from passive context, IDEAS.md or another skill; never changes the working directory; commits as
-  the owner on the word commit, pushes on the word push, never force. Design and rationale:
-  wiki/developments/project-store-design.md.
+  the owner on the word commit, pushes on the word push, never force.
 user-invocable: true
 ---
 
 # project — the owner's working repositories beside the vault
 
 ## Contract
-`wiki/developments/project-store-design.md` is the governing text; this skill adds **procedure only**
-and can never relax a permission. The load-bearing rules, restated for salience:
+The permissions below govern this procedure; no procedural step may relax them.
+The load-bearing rules are:
 - **Explicit instruction only.** A passive mention of a repository (an `@`-mention, a selection,
   IDEAS.md) never triggers a verb. Every verb that clones, removes or writes into the wiki shows a
   preview first and waits for the owner's go.
-- **Placement.** New clones go to the project store root `~/.llm-wiki/projects/<name>/` (on this
-  machine `~/.llm-wiki/` aliases `~/.aimyth/`); an existing working copy outside the vault is
+- **Placement.** New clones go to `projects/<name>/` under the configured store
+  (`LLM_WIKI_STORE`, default `~/.llm-wiki/`); an existing working copy outside the vault is
   registered in place (`link --path`). A path inside the vault is refused. The sibling store
   `~/.llm-wiki/repos/` (studied third-party repositories, `repo_pack.py clone`) is never used here.
 - **Nothing in a clone is knowledge.** The wiki holds the registry row and, per repository, the
   source page compiled from a snapshot pack in `raw/`; no page describes a repository from its live
   tree, no page cites a clone path except the registry.
-- **No `cd`.** Every command is `git -C <absolute path> …` or names an absolute file path
-  (CUSTOMISATION.md shell rules: a persisted working directory has misplaced writes twice).
+- **No persistent `cd`.** Use `git -C <absolute path> …` or an absolute file path so commands cannot inherit the wrong directory.
 - **Credentials never in a URL.** Each clone carries a git credential helper that reads its token
-  from the credential file (`~/.aimyth/credentials.env`, the Agent Credential Store page); the remote
+  from `credentials.env` under the configured store (`LLM_WIKI_STORE`, default `~/.llm-wiki/`); the remote
   URL is clean (`https://git.overleaf.com/<id>`, `https://github.com/<owner>/<repo>`).
 - **Commits and pushes.** Commit on the word *commit*, or under a standing per-repository policy the
   owner set on its registry row; the owner is sole author (git config identity, no AI trailer, an
@@ -67,8 +65,7 @@ repository:
    name: ask). Refuse a name already on the registry; refuse a `--path` under the vault root; refuse a
    URL whose user part carries a password (`user:secret@host`).
 2. **Channel check (URL only).** `git ls-remote <clean url>` with the helper environment; record the
-   branch list (Overleaf serves one branch: the documentation says `master`, the research outline
-   showed `main` on 2026-09-07; take what `ls-remote` shows). A failure here is reported, never
+   branch list; take the default branch that `ls-remote` reports. A failure here is reported, never
    worked around (a missing Overleaf git integration means the `github-bridge` channel instead).
 3. **Preview and wait.** One table: source · name · destination path (or the registered path) ·
    remotes with roles · channel · commit policy · the brief selection (files and bytes) · what the
@@ -101,8 +98,8 @@ output directory) and report the result; with no engine, say the build is unchec
 head (the `.tex` that holds `\documentclass`, its first 200 lines), and a README, abstract or outline
 skeleton where one exists — at most 8 files and 32 KiB (caps set by judgement, unmeasured). A single-file
 document (one `main.tex` larger than the per-file cap) has no useful head: its brief is the document itself,
-packed whole under `--allow-large '<why>'` with its bibliography, within the 300 KiB hard cap (2026-09-07,
-the research outline: `main.tex` 127 KB).
+packed whole under `--allow-large '<why>'` with its bibliography, within the 300 KiB safety bound
+(set by judgement, unmeasured for a new workload).
 
 ### `snapshot <name> [paths…] [--brief]`
 The only way repository content reaches the wiki.
@@ -114,8 +111,8 @@ The only way repository content reaches the wiki.
    --slice <sha12> --title "<name> snapshot <date> <sha12>" --rationale "<why these files>"
    --ledger-id <project>-<date>`
    The pack lands in the `raw/` root; `/ingest` compiles it at `standard` depth or above. The ingest's
-   de-dup pre-flight matches an existing source page for the same work (the research outline already
-   has one) and updates it as the new version, never a second page; the sort table's authorship rule
+   de-dup pre-flight matches an existing source page for the same work and updates it as the
+   new version, never a second page; the sort table's authorship rule
    sends the pack to `raw/9-originals/`. Confidence `high` by default (the owner's own work), stamped
    `audited:`.
 3. Update the registry row's last-sync sha and the project page's source-page link.
@@ -137,11 +134,10 @@ Set once per clone, never a token in the URL; the helper reads the key at use ti
 sourcing the file (a cookie value with a `;` would execute):
 ```
 git -C <path> config --local credential.helper ''
-git -C <path> config --local --add credential.helper '!f() { echo username=git; echo "password=$(grep "^OVERLEAF_GIT_TOKEN=" "$HOME/.aimyth/credentials.env" | cut -d= -f2-)"; }; f'
+git -C <path> config --local --add credential.helper '!f() { echo username=git; echo "password=$(grep "^OVERLEAF_GIT_TOKEN=" "${LLM_WIKI_STORE:-$HOME/.llm-wiki}/credentials.env" | cut -d= -f2-)"; }; f'
 ```
-The empty first value resets the helper list for that clone, so the machine's keychain helper (Homebrew's
-`osxkeychain`, set system-wide) is not consulted and never stores a second copy of the token; the
-credential file stays the single home (the first link set both lines through `git clone -c …`, 2026-09-07).
+The empty first value resets the clone's helper list so a machine-wide helper does not store
+a second copy. The authorised credential file remains the single home.
 GitHub remotes use the login `gh` already holds (`gh auth setup-git` once per machine if a push
 prompts). A token that expires or is revoked fails the push with an authentication error: report,
 stop, no retry loop; the owner renews it in Overleaf's Account Settings and updates the credential
