@@ -6,7 +6,7 @@ clock) · items (one bar per pack item, its state and its lanes as running/compl
 overall bar) · lanes now (state, class, model and effort, elapsed, live turns from the lane's own
 transcript, its last tool call, cost at the close or the cap while it runs) · timeline (a time axis,
 the head row coloured by item with gate, boundary, limit-wait, stop, resume and close marks, the close
-in the close's tone: bold green when every item is done, bold yellow when one was skipped; one row
+in the close's tone: bold green when every item is done, bold yellow when one is not; one row
 per lane coloured by class) · feed (the record's events and the head's prose and tool calls, alerts
 in red).
 
@@ -41,10 +41,23 @@ any unanswered probe leave the lane running, and an open lane whose record carri
 all stays running too — an absence is never read as a death. `lane.py kill` is the deliberate
 stop that writes the close this probe stands in for.
 
-At the close the run has the last word on the items: every item that ever started ends with the
-run and reads done, one that never started reads skipped, the overall line carries the verdict,
-and a boxed RUN CLOSED notice with the run's totals follows the final board, the report's path
-on a bare line beneath it so it is never cut.
+At the close the items stand as the record left them. An item reads done only on an explicit
+completion record: a `phase-boundary` from it, or `handsoff.py item-done`. A start records activity
+and never completion, so one that started with no such record reads unresolved, and one that never
+started reads skipped: the close reports and converts nothing (register 2026-11-05 12:41). The
+overall line carries the verdict, and a boxed RUN CLOSED notice with the run's totals follows the
+final board, the report's path on a bare line beneath it so it is never cut.
+
+While the run is open, an item reads running when it is the item in hand or when a gate or a
+lane's `--item` or an event whose `phase` names it started it and nothing has ended it yet, so
+items worked in parallel all read running (register 2026-09-20 20:0x); item0, the orientation row,
+is running only while it is in hand. A lane sits under the item its `--item` named; with none it
+sits under the item in hand with `~` after its name, since that placing is inferred. The overall
+line gives the date and age of the last item record, so a board nobody has moved says so. When the
+record's last head event is a stop (a `stop-condition` or `supervisor-stood-down` after the last
+head start), the head row's fill of a running item ends at that stop: later events of a
+stood-down run, a heartbeat line or the supervisor's exit observation, draw no head activity
+(register 2026-09-25 14:5x).
 
 Item keys. The pack's rows are keyed by the bare `item<k>`; a record's gate `item` and
 boundary `from` and `to` reduce to their leading `item<k>` token (`item_key`). A longer label
@@ -68,7 +81,10 @@ stand in for a later head that recorded none (register 2026-09-10 20:29).
 A live console started before its record exists waits up to `--wait-record` seconds for the
 record to hold an event before the missing-record premise failure stands: a wrapper now opens the
 console before its detached worker writes the lane's first line (register 2026-09-09 11:21).
-`--once` never waits.
+A record that exists but holds no `run-open` and no lane event yet — only a pre-registered
+controls line or an early observation — gets the same grace, since the wrappers open the console
+before they write `lane-open` (register 2026-10-01 13:34); past the grace its premise failure
+stands as before. `--once` never waits.
 
 Every path is derived: the vault is `--vault`, else `CLAUDE_PROJECT_DIR`, else three directory
 levels above this script; the run store and the record path come from `handsoff.py`
@@ -77,7 +93,7 @@ transcript follows `lane.py`'s `find_transcript` rule over the lane's own `lane-
 
 Usage: watch.py --run RUN [--once] [--plain] [--no-notify] [--refresh S] [--wait-record S] [--vault DIR]
 Keys while it runs: `q` quits · `r` resumes a stopped head (`handsoff.py resume-head`).
-Design and derivations: DESIGN.md beside this file; suite: test_watch.sh.
+Suite: test_watch.sh.
 """
 import argparse
 import glob as globmod
@@ -247,7 +263,7 @@ TIMELINE_MIN_W = 20     # fewer than 20 slices cannot separate two marks; the pa
 FEED_MIN = 3            # feed rows a crowded live screen keeps before the feed itself shrinks: the floor the feed always had, set by judgement
 FOLD_LANE_ROWS = 4      # timeline lane rows, fold line included, a crowded screen keeps before the items fold; set by judgement, unmeasured (the running lanes also stand in lanes now)
 FOLD_ITEM_ROWS = 3      # item rows a crowded screen keeps around the item in hand before the feed shrinks; set by judgement, unmeasured
-FOLD_ANCHOR_STATES = ("running",)   # the item states the items fold centres on, first match in run order
+FOLD_ANCHOR_STATES = ("running", "unresolved")   # the item states the items fold centres on, first match in run order
 NOTIFY_CHARS = 180      # osascript's notification body is truncated by the notification centre
 
 USE_COLOUR = True
@@ -338,6 +354,11 @@ def epoch(ts):
     return d.timestamp() if d else 0.0
 
 
+def dated(ts):
+    """A moment with its day, `3 Nov 14:07`: the console's clock alone cannot tell two days apart."""
+    return "%d %s" % (ts.day, ts.strftime("%b %H:%M"))
+
+
 def span(seconds):
     seconds = int(max(0, seconds))
     h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
@@ -363,19 +384,28 @@ def read_events(path):
 
 # ------------------------------------------------------------------ the pack's items --------
 
-ITEM_LINE = re.compile(r"^\s*(?:[-*]\s*)?[*_`]*item(\d+)[*_`]*\s+(.+?)\s+—")
+# An item's id after `item`: up to two capital letters, a number, then any lower-case suffix, so
+# `item4`, `item12b`, `itemR3` and `itemB4f` are each an item of their own. A suffixed item is a
+# separate row: `item14b` is never `item14`, whose boundary says nothing about it.
+ITEM_ID = r"[A-Z]{0,2}\d+[a-z]*"
+ITEM_LINE = re.compile(r"^\s*(?:[-*]\s*)?[*_`]*item(" + ITEM_ID + r")[*_`]*\s+(.+?)\s+—")
+# A hand-off's summary bullet (`item0 to item13b, itemB4f — done`) matches ITEM_LINE with a "name"
+# that continues the list or range into another item id: such a line names no single item.
+SUMMARY_NAME = re.compile(r"^(?:to|and|or|through|until|[-–,&+])\s*[*_`]*item" + ITEM_ID + r"(?![A-Za-z0-9])",
+                          re.I)
 
-# A record's item string reduces to its leading `item<k>` token (delegate skill section 4: gate and
+# A record's item string reduces to its leading `item<id>` token (delegate skill section 4: gate and
 # boundary events carry the bare `item<k>`), so the three reads in Run.rebuild key through this.
 # Reconcile observed phases with the plan without adding duplicate rows.
-ITEM_KEY = re.compile(r"^\s*[*_`]*item(\d+)(?![0-9])", re.I)
+ITEM_KEY = re.compile(r"^\s*[*_`]*(?i:item)(" + ITEM_ID + r")(?![A-Za-z0-9])")
 
 
 def item_key(value):
-    """The planned row a record item string names: its leading `item<k>` token, spelled as the pack
-    parser spells it (`item1 N148 · build+install` -> `item1`). A string with no such token keys as
-    itself, stripped, so an item no pack names still gets a row of its own as before; an empty or
-    missing value is None, which every caller reads as no item at all."""
+    """The planned row a record item string names: its leading `item<id>` token, spelled as the
+    pack parser spells it (`item1 N148 · build+install` -> `item1`, `item14b · build` -> `item14b`).
+    A string with no such token keys as itself, stripped, so an item no pack names still gets a row
+    of its own as before; an empty or missing value is None, which every caller reads as no item
+    at all."""
     if value is None:
         return None
     text = str(value).strip()
@@ -383,6 +413,16 @@ def item_key(value):
         return None
     m = ITEM_KEY.match(text)
     return "item" + m.group(1) if m else text
+
+
+def item_sort_key(key):
+    """The panel's order for planned rows: numbered items by number, a suffixed item right after
+    its parent (`item12`, `item12b`, `item13`), then lettered series by letter and number
+    (`itemB4f`, `itemC1`, `itemR1`); any other key last, by name."""
+    m = re.match(r"item([A-Z]{0,2})(\d+)([a-z]*)$", key)
+    if not m:
+        return (2, "", 0, key)
+    return (1 if m.group(1) else 0, m.group(1), int(m.group(2)), m.group(3))
 
 
 def clean_name(text):
@@ -412,7 +452,7 @@ def parse_items(text):
         found = {}
         for line in body:
             m = ITEM_LINE.match(line)
-            if m:
+            if m and not SUMMARY_NAME.match(clean_name(m.group(2))):
                 found.setdefault("item" + m.group(1), clean_name(m.group(2)))
         return found
 
@@ -458,30 +498,50 @@ def preflight_candidates(text, pack, run):
     return out
 
 
+# The run's planned items are the map the gate's fit estimate reads, taken exactly as handsoff.py's
+# declared_items takes it, so the items panel and the gate never disagree: the last `expect-items`
+# event whose `items` field is a map is the whole plan (a replacement, never a merge; `expect`
+# writes that field), else the first run-open's `expect_items` field, else none. A run-resume
+# carries no map (handsoff.py's run-resume writes none), and `expect_items` on any event other
+# than the run-open is not read. An earlier map's items that the plan drops keep a row only once
+# observed (a gate or a boundary names them).
+def latest_expect(events):
+    """The declared item map, as handsoff.py's declared_items reads it: the last `expect-items`
+    event's `items` map, else the first run-open's `expect_items`, else {}. A run-open value that
+    is not a map, which the writer never produces, reads as {} rather than breaking the board."""
+    for e in reversed(events):
+        if e.get("event") == "expect-items" and isinstance(e.get("items"), dict):
+            return e["items"]
+    for e in events:
+        if e.get("event") == "run-open":
+            got = e.get("expect_items") or {}
+            return got if isinstance(got, dict) else {}
+    return {}
+
+
 def pack_items(events):
     """(items, the path they came from). The pack is the `handoff` the last run-open names. A pack
-    whose items live elsewhere is followed rather than refused: the pre-flight candidates next, then
-    the run-open's `expect_items` keys as
-    unnamed rows; nothing anywhere returns {} and the caller warns and watches on."""
-    path, run, expect = "", "", {}
+    whose items live elsewhere is followed rather than refused: the pre-flight candidates next.
+    The declared item map's keys (latest_expect) remain as unnamed rows wherever the chosen
+    source names none; nothing anywhere returns {} and the caller warns and watches on."""
+    path, run = "", ""
     for e in events:
         if e.get("event") in ("run-open", "run-resume"):
             if e.get("handoff"):
                 path = os.path.expanduser(str(e["handoff"]))
             run = str(e.get("run") or run)
-            if isinstance(e.get("expect_items"), dict) and e["expect_items"]:
-                expect = e["expect_items"]
+    expect = latest_expect(events)
+    planned = {item_key(k): "" for k in expect if ITEM_KEY.match(str(k))}
     text = read_text(path)
     items = parse_items(text) if text else {}
     if items:
-        return items, path
+        return dict(planned, **items), path
     for cand in preflight_candidates(text, path, run):
         items = parse_items(read_text(cand))
         if items:
-            return items, cand
-    keys = [item_key(k) for k in expect if ITEM_KEY.match(str(k))]
-    if keys:
-        return {k: "" for k in keys}, path or "(the run-open's expect_items)"
+            return dict(planned, **items), cand
+    if planned:
+        return planned, path or "(the record's declared item map)"
     return {}, path
 
 
@@ -536,6 +596,7 @@ class Lane:
         self.cost = None
         self.turns_final = None
         self.item = None
+        self.item_inferred = False                             # placed under the item in hand: no --item
         self.resumes = 0
         self.notes = ""                                        # a stall or an unwatched transcript
         self.pids = []                                         # what the spawn recorded (see probe_liveness)
@@ -563,9 +624,9 @@ class Lane:
     def note_pids(self, e):
         """The processes a spawn or a resume names: the lane's own `pid` and the wrapper's
         `wrapper_pid`: `lane-spawned` carries both, a `lane-resumed` the wrapper's (lane.py since
-        2026-09-13) or neither (codex-lane.py), and the `lane-respawned` after it both. A later spawn,
-        resume or respawn of the same lane name replaces them, so the pids in hand are always the
-        latest run's."""
+        2026-09-13, codex-lane.py since 2026-10-09: register 2026-09-29 16:57), and the
+        `lane-respawned` after it both. A later spawn, resume or respawn of the same lane name
+        replaces them, so the pids in hand are always the latest run's."""
         pids = []
         for key in ("pid", "wrapper_pid"):
             value = e.get(key)
@@ -619,6 +680,14 @@ class Lane:
         self.note_pids(e)
         if e.get("budget_usd") is not None:
             self.budget = e["budget_usd"]
+        # A resume may run at another model or effort than the open (`codex-lane.py resume
+        # --effort` writes both keys on its lane-resumed; lane.py's carries neither): a key the
+        # event carries replaces the drawn value, a missing one keeps the open's (register
+        # 2026-09-21 18:5x).
+        if e.get("model"):
+            self.model = str(e["model"])
+        if e.get("effort"):
+            self.effort = str(e["effort"])
         if e.get("session_id"):
             self.session, self.pos, self.turns = e["session_id"], 0, 0
             self.transcript = self._transcript()
@@ -714,8 +783,8 @@ def tool_target(blk):
 
 
 # The event vocabulary: every kind the writers (handsoff.py, lane.py) and the trace schema of the
-# design page can put in a record, and what this console does with it. TREATMENT is the table
-# DESIGN.md carries in prose; the suite asserts that no kind in a record is missing from it, so a
+# design page can put in a record, and what this console does with it.
+# The suite asserts that no kind in a record is missing from TREATMENT, so a
 # new writer's kind is a suite failure rather than a silent omission. Marks are drawn on the head
 # row only, so a lane's own events move the lane row and the items panel instead.
 MARKS = {"gate": "gate", "phase-boundary": "boundary", "head-exit": "boundary",
@@ -729,7 +798,10 @@ TREATMENT = {
     "run-resume": "a head start: the followed transcript and a ↻ mark; feed",
     "run-close": "the run's end: the ■ mark, the final board and the timeline report; feed, alert",
     "gate": "the item's start and the header's context percent; the │ mark; feed",
-    "phase-boundary": "the item's end and the header's spend; the ▲ mark; feed",
+    "phase-boundary": "the item's end and the header's spend, labelled with this boundary; the ▲ mark; feed",
+    "item-done": "the named items' explicit end, with no meter; the ▲ mark; feed",
+    "expect-items": "the planned item rows: the last such event's items map replaces the run-open's "
+                    "expect_items whole, as the gate's fit estimate reads it; feed",
     "head-exit": "the followed transcript switches; the ▲ mark; feed, alert",
     "head-successor": "the followed transcript switches; the ↻ mark; feed",
     "head-resumed": "closes an open limit wait; the ↻ mark; feed",
@@ -740,15 +812,18 @@ TREATMENT = {
     "lane-open": "opens the lane's row, its class, model, effort, cap and transcript; feed",
     "lane-spawned": "the session the wrapper really started under; feed",
     "lane-respawned": "the processes a resumed call really started under (pid, wrapper_pid); feed",
+    "lane-awake": "the keep-awake process beside the lane process (lane.py start_awake): started "
+                  "with its caffeinate_pid, or skipped with the why in note; feed only",
     "lane-closed": "closes the lane's row with its cost, turns and exit; feed, alert when the "
                    "exit class is not completed or the close carries a fallback verdict "
                    "(fallback, unconfirmed or stale-map: the owner's ruling of 2026-09-29 that he "
                    "is told of every refused or re-routed task)",
     "lane-swapped": "a fallen-back task moved to GPT-6 Astra at the lane's own effort (lane.py's "
-                    "swap), or the swap that could not be done; feed, alert",
-    "lane-resumed": "the lane runs again under its new session: ● on the items panel, a row in "
-                    "lanes now until its next close and a bar growing again on its timeline row; "
-                    "feed",
+                    "swap), a swap not done, or one unconfirmed while its worker may still start "
+                    "the lane; feed, alert",
+    "lane-resumed": "the lane runs again under its new session, at the model and effort the event "
+                    "carries where it carries them: ● on the items panel, a row in lanes now "
+                    "until its next close and a bar growing again on its timeline row; feed",
     "stall": "a note on the lane's row; feed",
     "unwatched": "a note on the lane's row; feed",
     "observation": "feed, alert when the what matches the alert words",
@@ -865,10 +940,38 @@ class Run:
         self.vault = vault
         self.names = {}
         self.pack = ""
+        self.pack_stamp = None
+        self.item_order = []
         self.events = []
         self.lanes = {}
         self.head_live = None      # the live meter's last reading (head_live_spend)
         self.rebuild(read_events(record))
+
+    def refresh_names(self):
+        """Retry unnamed rows each tick; also watch both the hand-off and its selected source.
+        A pack edit can then replace even a fully named pre-flight without a record append."""
+        paths = {self.pack} if self.pack else set()
+        for e in reversed(self.events):
+            if e.get("event") in ("run-open", "run-resume") and e.get("handoff"):
+                paths.add(os.path.expanduser(str(e["handoff"])))
+                break
+        stamp = []
+        for path in sorted(paths):
+            try:
+                st = os.stat(path)
+                stamp.append((path, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns))
+            except OSError:
+                stamp.append((path, None))
+        # The declared item map is a source too: a re-declared map appended to the record must
+        # reach the rows even when every name is filled and the pack is unchanged.
+        stamp.append(("expect_items", tuple(sorted(str(k) for k in latest_expect(self.events)))))
+        if self.names and all(self.names.values()) and stamp == self.pack_stamp:
+            return
+        # Capture before reading: a concurrent pack edit must still be noticed on the next tick.
+        self.pack_stamp = stamp
+        self.names, self.pack = pack_items(self.events)
+        observed = [key for key in self.item_order if key not in self.names]
+        self.item_order = sorted(self.names, key=item_sort_key) + observed
 
     def rebuild(self, events):
         self.events = events
@@ -877,12 +980,13 @@ class Run:
         # There is no head session, no pack and no items panel; the lanes, the timeline's lane
         # rows and the feed are the whole board.
         self.plain = not any(e.get("event") == "run-open" for e in events)
-        if not self.names:
-            self.names, self.pack = pack_items(events)
+        self.refresh_names()
         self.t0 = parse_ts(events[0].get("ts")) if events else None
-        self.item_order = sorted(self.names, key=lambda k: int(k[4:]))
+        self.item_order = sorted(self.names, key=item_sort_key)
         self.item_start, self.item_end, self.gates, self.waits, self.marks = {}, {}, [], [], []
         self.heads, self.meters, self.closed_at = [], [], None
+        self.unresolved = set()                        # started, no explicit completion, at the close
+        self.last_item_at = None                       # the newest gate, boundary, item-done or --item
         self.supervisor, self.stopped_note = "-", ""
         # What an open hold's row may promise: read from the record's own supervisor and run
         # events, exactly as the supervisor reads them (review finding 1, 2026-09-18).
@@ -896,7 +1000,15 @@ class Run:
         # close-out produces this shape).
         self.boundary_only = set()
         self.close_items = None                        # the run-close event's own `items` text
+        # Every item a gate or a lane's --item opened before the close: with no end it reads
+        # running, not only the latest gate's item (register 2026-09-20 20:0x, the recurrence of
+        # 22 September: an item gated earlier and worked in parallel read pending for hours).
+        self.gated = set()
+        # The first stop (`stop-condition`, `supervisor-stood-down`) after the last head start,
+        # else None: the head row's fill of a running item ends there (register 2026-09-25 14:5x).
+        self.stopped_at = None
         current, wait_open = None, None
+        orientation_seen, before_first_work_gate = False, True
         for e in events:
             ev, ts = e.get("event"), parse_ts(e.get("ts"))
             lane = self.lanes.get(e.get("lane"))
@@ -905,19 +1017,39 @@ class Run:
             # changes no item's state, and the run-close's own `items` text stays the quoted
             # authority. The lanes panel and the feed still take every event.
             settled = self.closed_at is not None
+            # item0 is the orientation row; item1 is the first work item. A measured orientation
+            # (including zero tokens), or explicit work on phase item0, is evidence until the
+            # first allowed work gate. Admission to item0 itself does not end orientation.
+            # A successor's later orientation must not retrospectively complete the run's item0.
+            if not settled and before_first_work_gate and item_key(e.get("phase")) == "item0":
+                orientation_seen = True
             if ev == "gate" and item_key(e.get("item")):
                 key = item_key(e["item"])
                 self.gates.append((ts, key, e.get("percent")))
                 if not settled:
+                    if before_first_work_gate:
+                        if isinstance(e.get("orientation_tokens"), (int, float)):
+                            orientation_seen = True
+                        if e.get("decision") == "allow" and key != "item0":
+                            if key == "item1" and orientation_seen:
+                                # Keep the verdict even if the pack names item0 on a later tick.
+                                self.item_end.setdefault("item0", ts)
+                            before_first_work_gate = False
                     current = key
+                    self.gated.add(key)
+                    self.last_item_at = ts or self.last_item_at
                     if current not in self.item_order:
                         self.item_order.append(current)
                     self.item_start.setdefault(current, ts)
                     self.boundary_only.discard(current)        # a gate of its own is work
             elif ev == "phase-boundary":
                 if e.get("meter"):
-                    self.meters.append(e["meter"])
+                    # kept with the boundary it came from, so the header can say whose figures
+                    # they are: a boundary meters one head's tenure, never the run so far
+                    self.meters.append({"meter": e["meter"], "ts": ts, "kind": "boundary",
+                                        "from": item_key(e.get("from")), "to": item_key(e.get("to"))})
                 if not settled:
+                    self.last_item_at = ts or self.last_item_at
                     if item_key(e.get("from")):
                         self.item_end[item_key(e["from"])] = ts
                     current = item_key(e.get("to")) or current
@@ -927,12 +1059,30 @@ class Run:
                         self.item_start.setdefault(current, ts)
                         if current not in self.item_order:
                             self.item_order.append(current)
+            elif ev == "item-done":
+                if ts:
+                    self.marks.append((ts, "boundary"))
+                if not settled:
+                    self.last_item_at = ts or self.last_item_at
+                    for key in filter(None, (item_key(name) for name in e.get("items") or [])):
+                        self.item_end[key] = ts
+                        self.boundary_only.discard(key)
+                        if key not in self.item_order:
+                            self.item_order.append(key)
             elif ev == "lane-open" and e.get("lane"):
                 new = Lane(e, projects=None)
-                new.item = current if not settled else None
+                named = item_key(e.get("item"))
+                new.item = (named or current) if not settled else None
+                new.item_inferred = not named
                 self.lanes[new.name] = new
                 if not settled:
-                    self.boundary_only.discard(current)        # a lane of its own is work
+                    self.boundary_only.discard(new.item)       # a lane of its own is work
+                    if named:                                  # activity on its item, never its end
+                        self.gated.add(named)
+                        self.item_start.setdefault(named, ts)
+                        self.last_item_at = ts or self.last_item_at
+                        if named not in self.item_order:
+                            self.item_order.append(named)
             elif ev in ("lane-spawned", "lane-respawned") and lane:
                 lane.spawned(e)                                # a respawn names the resumed call's processes
             elif ev == "lane-closed" and lane:
@@ -943,6 +1093,7 @@ class Run:
                 elif e.get("lane"):                            # a resume without its open in view
                     new = Lane(e, projects=None)
                     new.item = current if not settled else None
+                    new.item_inferred = True
                     self.lanes[new.name] = new
                     if not settled:
                         self.boundary_only.discard(current)
@@ -977,15 +1128,21 @@ class Run:
             elif ev == "run-close":
                 self.closed_at = ts
                 if e.get("meter"):
-                    self.meters.append(e["meter"])
+                    self.meters.append({"meter": e["meter"], "ts": ts, "kind": "close",
+                                        "from": None, "to": None})
                 if isinstance(e.get("items"), str) and e["items"].strip():
                     self.close_items = e["items"].strip()      # the close's own word on the items
             # Any record event whose `phase` names an item (a ledger row, a decision, an
-            # observation) is work on it: the item is no longer a boundary's target alone —
-            # before the close only; a phase event after the run-close changes no verdict.
+            # observation) is work on it: the item is no longer a boundary's target alone, and a
+            # planned item starts there, as activity and never completion — before the close
+            # only; a phase event after the run-close changes no verdict.
             phased = item_key(e.get("phase")) if e.get("phase") else None
             if phased and not settled:
                 self.boundary_only.discard(phased)
+                if phased in self.item_order:
+                    self.gated.add(phased)
+                    self.item_start.setdefault(phased, ts)
+                    self.last_item_at = ts or self.last_item_at
             if ev == "supervise":
                 self.supervisor = "supervise %s" % (e.get("mode") or "")
             elif ev == "supervisor-stood-down":
@@ -996,24 +1153,27 @@ class Run:
                 self.marks.append((ts, MARKS[ev]))
             if ev in ("stop-condition", "supervisor-stood-down"):
                 self.stopped_note = str(e.get("note") or e.get("action") or ev)[:70]
+                if self.stopped_at is None:
+                    self.stopped_at = ts                       # the first stop since the last start
+            elif ev in ("head-successor", "head-resumed", "run-open", "run-resume"):
+                self.stopped_at = None                         # head_stopped()'s starts: a head runs again
         for lane_obj in self.lanes.values():
             # After every rebuild, so no panel and no count can draw an open lane as running
             # while its recorded processes have gone; the live loop re-probes each frame.
             lane_obj.probe_liveness()
         if wait_open:
             self.waits.append((wait_open, None))               # a wait still open ends at "now"
-        if self.closed_at and current and current not in self.boundary_only:
-            self.item_end.setdefault(current, self.closed_at)  # the close ends the item in hand
         if self.closed_at:
-            # the close ends every item that ever started (a gate, a boundary or a lane of its
-            # own) and was worked; an item a boundary's `to` alone named, with no gate, lane or
-            # phase event of its own since, reads skipped, never done (register 2026-09-17 12:51);
-            # an item with no start at all reads skipped, never pending, once the run is over
+            # The close reports and converts nothing: only an explicit completion ends an item. One
+            # that started (a gate, a boundary or a lane of its own) and was worked, with none,
+            # reads unresolved; an item a boundary's `to` alone named, with no gate, lane or phase
+            # event of its own since, reads skipped (register 2026-09-17 12:51); an item with no
+            # start at all reads skipped, never pending, once the run is over.
             for it in self.item_order:
-                if it in self.boundary_only:
+                if it in self.item_end or it in self.boundary_only:
                     continue
                 if it in self.item_start or any(l.item == it for l in self.lanes.values()):
-                    self.item_end.setdefault(it, self.closed_at)
+                    self.unresolved.add(it)
         self.current = current
 
     # -- state ------------------------------------------------------------------------------
@@ -1022,11 +1182,29 @@ class Run:
         return self.closed_at or datetime.now(self.t0.tzinfo if self.t0 else None)
 
     def state(self, item):
+        """`done` is an explicit completion and nothing else. `running` is the item in hand (the
+        latest gate's or boundary's) and every other item a gate or a lane's --item opened with no
+        end yet, so items worked in parallel all read running. At the close a started item with no
+        completion is `unresolved` and any other is `skipped`. item0 is the orientation row, which
+        the first work gate settles rather than a boundary (rebuild), so it is running only while
+        it is the item in hand."""
         if item in self.item_end:
             return "done"
         if self.closed_at:
-            return "skipped"                                  # the run closed before it started
-        return "running" if item == self.current else "pending"
+            return "unresolved" if item in self.unresolved else "skipped"
+        if item == self.current or (item in self.gated and item != "item0"):
+            return "running"
+        return "pending"
+
+    def head_fill_end(self, item):
+        """Where the head row's fill of an item ends: its end, else the stop when the record's
+        last head event is one (`stopped_at`), else None, which draws to now. A stood-down head's
+        row stops at its ✖, so later record events (a heartbeat line, the supervisor's exit
+        observation) never draw as head activity (register 2026-09-25 14:5x)."""
+        end = self.item_end.get(item)
+        if end is None and not self.closed_at:
+            return self.stopped_at
+        return end
 
     def head_session(self):
         for e in reversed(self.heads):
@@ -1052,7 +1230,8 @@ class Run:
                 last_stop = i
         return last_stop > last_start
 
-    def spend(self):
+    def spend(self, short=False):
+        """The header's spend text; `short` asks for the compact boundary label (meter_label)."""
         if self.plain:
             # A plain record names no head session, so no meter line exists to read: the lanes'
             # own recorded costs are the whole spend, and the count says how many carried one.
@@ -1070,8 +1249,36 @@ class Run:
                      if isinstance(l.cost, (int, float)) and not isinstance(l.cost, bool)]
             lanes = " · lanes $%.2f" % sum(costs) if costs else ""
             return "spend not yet metered" + tail + lanes
-        m = re.search(r"(head \$[\d.]+ · lanes \$[\d.]+ · session \$[\d.]+)", str(self.meters[-1]))
-        return (m.group(1) if m else str(self.meters[-1])[:48]) + tail
+        last = self.meters[-1]
+        text = str(last["meter"])
+        m = re.search(r"(head \$[\d.]+ · lanes \$[\d.]+ · session \$[\d.]+)", text)
+        return self.meter_label(last, short) + (m.group(1) if m else text[:48]) + tail
+
+    def meter_label(self, meter, short=False):
+        """Which event the billed figures come from: `billed ▲14:07 item15→item15b: `, or
+        `billed ■14:07: ` for the close, with its date when that is not today and `before this
+        head` when a head started after that boundary. A boundary meters one head's tenure, so its
+        figures are neither the run's total nor the head now named beside them. `short` keeps the
+        mark, the time and those two (`▲3 Nov 14:07, before this head: `) and drops the span, for a
+        header line the full label would push past the terminal's width; `bare` drops the words too,
+        for a line even that would push past it."""
+        ts = meter.get("ts")
+        when = ts.strftime("%H:%M") if ts else "?"
+        if ts and ts.date() != self.now().date():
+            when = dated(ts)
+        glyph = "■" if meter.get("kind") == "close" else "▲"
+        starts = [parse_ts(e.get("ts")) for e in self.heads if e.get("event") in HEAD_STARTS]
+        starts = [t for t in starts if t is not None]
+        before = meter.get("kind") != "close" and ts is not None and starts and max(starts) > ts
+        tail = ", before this head" if before else ""
+        if short:
+            return "%s%s%s " % (glyph, when, tail + ":" if tail and short != "bare" else "")
+        if meter.get("kind") == "close":
+            return "billed ■%s: " % when
+        span_txt = ""
+        if meter.get("from") or meter.get("to"):
+            span_txt = " %s→%s" % (meter.get("from") or "?", meter.get("to") or "?")
+        return "billed ▲%s%s%s: " % (when, span_txt, tail)
 
     def context_pct(self):
         return self.gates[-1][2] if self.gates else None
@@ -1163,22 +1370,27 @@ def section(title, width):
 
 
 def items_summary(run):
-    """`k/n items done · all done`, or `· m skipped`: the close's one-line verdict on the items.
-    A plain record has no items to verdict, and says so rather than reading `0/0 done`."""
+    """`k/n items done · all done`, or `· u unresolved · m skipped`, each named where it is not
+    none: the close's one-line verdict on the items. A plain record has no items to verdict, and
+    says so rather than reading `0/0 done`."""
     if run.plain:
         return PLAIN_HEADER
     if not run.item_order:
         return NO_ITEMS_HEADER
     n = len(run.item_order)
-    done_n = sum(1 for it in run.item_order if run.state(it) == "done")
-    return "%d/%d items done · %s" % (done_n, n, "all done" if done_n == n else "%d skipped" % (n - done_n))
+    states = [run.state(it) for it in run.item_order]
+    done_n, open_n = states.count("done"), states.count("unresolved")
+    parts = ["%d unresolved" % open_n] if open_n else []
+    if n - done_n - open_n:
+        parts.append("%d skipped" % (n - done_n - open_n))
+    return "%d/%d items done · %s" % (done_n, n, " · ".join(parts) or "all done")
 
 
 def close_tone(run):
     """The close's colour, one rule for the timeline mark, the header's RUN CLOSED, the overall line
     and the banner: green when every item is done (a plain record has no items to verdict and reads
-    green), yellow when the close skipped an item, so a close that skipped an item never reads green
-    anywhere."""
+    green), yellow when the close left an item unresolved or skipped, so such a close never reads
+    green anywhere."""
     if run.plain:
         return GREEN
     if not run.item_order:
@@ -1230,9 +1442,14 @@ def render_header(run, width, head_turns):
         line = "%s · lanes %d · %s · elapsed %s" % (
             PLAIN_HEADER, len(run.lanes), run.spend(), elapsed)
     else:
-        line = "head %s · %s · turn %s · context %s · %s · elapsed %s · supervisor %s" % (
-            sid, head_model_text(run), head_turns, ("%s %%" % pct) if pct is not None else "-",
-            run.spend(), elapsed, run.supervisor)
+        def head_line(spend):
+            return "head %s · %s · turn %s · context %s · %s · elapsed %s · supervisor %s" % (
+                sid, head_model_text(run), head_turns, ("%s %%" % pct) if pct is not None else "-",
+                spend, elapsed, run.supervisor)
+        line = head_line(run.spend())
+        for form in (True, "bare"):
+            if len(line) > max(0, width - 4 - len(closed)):
+                line = head_line(run.spend(short=form))       # keep elapsed and supervisor in view
     line = fit(line, max(0, width - 4 - len(closed)))              # the close is never truncated away
     return [top, row(c(line, WHITE) + c(closed, close_tone(run), bold=True), width)]
 
@@ -1240,15 +1457,17 @@ def render_header(run, width, head_turns):
 def render_items(run, width):
     lines, now = [], run.now()
     bw = max(6, min(24, width - 60))
+    # the id column fits the longest id (`item12b`, `itemB4f`), six as before when none is longer
+    iw = max([6] + [len(it) for it in run.item_order])
     done_n, frac_sum = 0, 0.0
     for it in run.item_order:
         st = run.state(it)
         lanes = [l for l in run.lanes.values() if l.item == it]
         if st == "done":
             f, done_n = 1.0, done_n + 1
-        elif st == "running":
+        elif st in ("running", "unresolved"):
             # a running item's bar is its closed lanes over its lanes, held between 0.05 and 0.9
-            # so that no item reads as full before its boundary event says so
+            # so that no item reads as full before its completion record says so
             f = min(0.9, max(0.05, sum(1 for l in lanes if l.exit != "running") / len(lanes))) \
                 if lanes else 0.1
         else:
@@ -1257,17 +1476,18 @@ def render_items(run, width):
         start, end = run.item_start.get(it), run.item_end.get(it)
         # a pending or a skipped item shows no clock: a record that skipped a boundary can leave
         # a start behind, and a boundary's never-worked target has a start and no work
-        dur = span(((end or now) - start).total_seconds()) if start and st in ("done", "running") else ""
+        dur = span(((end or now) - start).total_seconds()) if start and st in ("done", "running", "unresolved") else ""
         marks = " ".join(("●" if l.exit == "running" else "◐" if l.is_held() else
                           "✓" if l.exit == "completed" else "✗")
-                         + l.name for l in sorted(lanes, key=lambda x: x.opened or now))
+                         + l.name + ("~" if l.item_inferred else "")
+                         for l in sorted(lanes, key=lambda x: x.opened or now))
         colour = item_colour(run, it) if st not in ("pending", "skipped") else DIM
-        used = 6 + 1 + ITEM_NAME_W + 1 + bw + 1 + 9 + 1 + 7 + 2
+        used = iw + 1 + ITEM_NAME_W + 1 + bw + 1 + 10 + 1 + 7 + 2
         coloured = "%s %s %s %s %s  %s" % (
-            c("%-6s" % it, colour, bold=st == "running"),
+            c("%-*s" % (iw, it), colour, bold=st == "running"),
             c("%-*s" % (ITEM_NAME_W, fit(run.names.get(it, ""), ITEM_NAME_W)), colour),
-            c(bar(f, bw), colour), c("%-9s" % st, GREEN if st == "done" else
-                                     YELLOW if st == "running" else DIM),
+            c(bar(f, bw), colour), c("%-10s" % st, GREEN if st == "done" else
+                                     YELLOW if st in ("running", "unresolved") else DIM),
             c("%7s" % dur, GREY), c(fit(marks, max(0, width - 4 - used)), WHITE))
         lines.append(row(coloured, width))
     total = len(run.item_order) or 1
@@ -1275,13 +1495,18 @@ def render_items(run, width):
     if not run.item_order:
         summary, tone = " " + NO_ITEMS_HEADER, YELLOW     # never `0/1 items done` on an empty list
     if run.closed_at:
-        # the close has the last word: every item is done or was never started, and the line says
-        # which, in green when nothing was skipped
+        # the close reports: every item is done, unresolved or never started, and the line says
+        # which, in green only when all are done
         summary, tone = " " + items_summary(run) + " ■ RUN CLOSED", close_tone(run)
     # the overall label spans the item and name columns, so its bar starts under the item bars
-    lines.append(row(c("%-*s" % (6 + 1 + ITEM_NAME_W, "overall"), WHITE, bold=True) + " "
+    aged = ""
+    if run.last_item_at:
+        room = width - 4 - (iw + 1 + ITEM_NAME_W + 1 + bw + len(summary))
+        aged = fit(" · last item record %s, %s ago" % (
+            dated(run.last_item_at), span((now - run.last_item_at).total_seconds())), max(0, room))
+    lines.append(row(c("%-*s" % (iw + 1 + ITEM_NAME_W, "overall"), WHITE, bold=True) + " "
                      + c(bar(frac_sum / total, bw), tone if run.closed_at else WHITE)
-                     + c(summary, tone, bold=bool(run.closed_at)), width))
+                     + c(summary, tone, bold=bool(run.closed_at)) + c(aged, GREY), width))
     return lines
 
 
@@ -1377,6 +1602,7 @@ def render_timeline(run, width, for_report=False):
         s, e = run.item_start.get(it), run.item_end.get(it)
         if not s or (not e and run.state(it) != "running" and not run.closed_at):
             continue
+        e = run.head_fill_end(it)                              # a running item stops at a stand-down
         for k in range(col_of(s), col_of(e) + 1):
             cells[k] = ("█", item_colour(run, it))
     for s, e in run.waits:                                     # a limit wait hatches over the item
@@ -1406,7 +1632,7 @@ def render_timeline(run, width, for_report=False):
                          + c("".join(body), body_colour,
                              dim=not for_report and l.exit != "running"), width))
     legend = fit("legend: █ item or lane · │ gate · ▲ boundary · ░ limit wait · ✖ stop · ↻ resume"
-                 " · ■ close · ▶ running · ✓ completed · ◐ held · ✗ other", width - 4)
+                 " · ■ close · ▶ running · ✓ completed · ◐ held · ✗ other · ~ item inferred", width - 4)
     lines.append(row(c(legend, GREY), width))
     return lines
 
@@ -1422,6 +1648,8 @@ def fmt_event(e):
             if isinstance(v, float):
                 v = "%.2f" % v
             extra += " %s=%s" % (k, str(v).replace("\n", " ")[:160])
+    if e.get("event") == "item-done":
+        extra += " items=%s" % ",".join(str(name) for name in e.get("items") or [])
     fb = e.get("fallback") if isinstance(e.get("fallback"), dict) else None
     if fb and fb.get("verdict"):
         extra += " fallback=%s ran-on=%s expected=%s" % (fb.get("verdict"), ",".join(fb.get("non_helper") or []) or "-",
@@ -2205,21 +2433,45 @@ def main_session(a):
 
 # ------------------------------------------------------------------ main --------------------
 
+def record_watchable(events):
+    """Whether a record holds what main() asserts after the wait: a `run-open` (a hands-off run)
+    or a lane event that makes a lane row (`lane-open`, or a `lane-resumed` whose open is out of
+    view). A record holding only a pre-registered controls line or an early observation holds
+    neither yet: the wrappers open the console before they write `lane-open` (register
+    2026-10-01 13:34)."""
+    for e in events:
+        if not isinstance(e, dict):
+            continue
+        kind = e.get("event")
+        if kind == "run-open" or (kind in ("lane-open", "lane-resumed") and e.get("lane")):
+            return True
+    return False
+
+
 def wait_for_record(record, bound, poll=0.5):
-    """True once the record exists and holds at least one parseable event, polled for at most
-    `bound` seconds; one line on stdout says what the console is waiting for. False when the bound
-    passes first, and the caller's premise checks then decide exactly as before."""
-    began, said = time.time(), False
+    """True once the record exists and holds a `run-open` or a lane event (record_watchable),
+    polled for at most `bound` seconds: a missing record and an event-less one get the same grace.
+    One line on stdout says what the console is waiting for, and a second one if the record
+    appears event-less during the wait. False when the bound passes first, and the caller's
+    premise checks then decide exactly as before."""
+    began, said = time.time(), None
     while True:
-        if os.path.isfile(record) and read_events(record):
+        events = read_events(record) if os.path.isfile(record) else []
+        if record_watchable(events):
             return True
         if time.time() - began >= bound:
             return False
-        if not said:
-            sys.stdout.write("waiting up to %d s for the run record %s (a detached lane writes its "
-                             "first line within seconds)\n" % (bound, record))
+        state = "event-less" if os.path.isfile(record) else "missing"
+        if said != state:
+            if state == "missing":
+                sys.stdout.write("waiting up to %d s for the run record %s (a detached lane writes "
+                                 "its first line within seconds)\n" % (bound, record))
+            else:
+                sys.stdout.write("waiting up to %d s for a run-open or lane event in the run record "
+                                 "%s (it holds %d event(s), none of them yet: a wrapper opens the "
+                                 "console before it writes lane-open)\n" % (bound, record, len(events)))
             sys.stdout.flush()
-            said = True
+            said = state
         time.sleep(poll)
 
 
@@ -2251,9 +2503,10 @@ def main(argv=None):
     ap.add_argument("--vault", default=None,
                     help="the vault root (default: CLAUDE_PROJECT_DIR, else three levels up)")
     ap.add_argument("--wait-record", type=float, default=RECORD_WAIT_S, metavar="S",
-                    help="a live console whose record does not exist yet, or holds no event, waits "
-                         "up to S seconds for it (default %d: a wrapper opens the console before its "
-                         "detached worker writes the first line); 0 or --once never waits"
+                    help="a live console whose record does not exist yet, or holds no run-open and "
+                         "no lane event yet, waits up to S seconds for one (default %d: a wrapper "
+                         "opens the console before its detached worker writes lane-open); 0 or "
+                         "--once never waits"
                          % RECORD_WAIT_S)
     a = ap.parse_args(argv)
 
@@ -2272,8 +2525,10 @@ def main(argv=None):
     # A plain record (no run-open) is watched on its lane events, and its own premise is that it
     # holds some — an empty file is still a broken premise. A record with a run-open is a live
     # run whether or not an item row exists yet: the pack may name none, no pre-flight beside it
-    # may name any, the run-open may carry no expect_items and no gate or boundary may have
-    # landed. That reads as a warning on stderr and on the board, never a refusal;
+    # may name any, the record may declare no item map (latest_expect: no expect-items event's
+    # items, no run-open expect_items) and no gate or boundary may have landed. That reads as a
+    # warning on stderr and on the board,
+    # never a refusal;
     # the item rows appear at the first gate or boundary, the lanes and the feed show at once.
     if run.plain:
         if not run.lanes:
@@ -2281,7 +2536,7 @@ def main(argv=None):
                 "watched on its lane events and this record holds none" % record)
     elif not run.item_order:
         sys.stderr.write("watch.py: warning: no item line in %s, none in a pre-flight beside it, "
-                         "no expect_items on the run-open and no gate or boundary event yet in "
+                         "no declared item map in the record and no gate or boundary event yet in "
                          "%s: watching the lanes and the feed; item rows appear at the first gate "
                          "or boundary\n" % (run.pack or "(no hand-off named by the run-open)", record))
 
@@ -2360,6 +2615,8 @@ def main(argv=None):
                                           "run-resume"):
                         transcript, tpos = run.head_transcript(), 0
                         head_turns = 0
+            else:
+                run.refresh_names()                          # a pack can change on its own
             new, tpos = follow(transcript, tpos)
             for line in new:
                 for item in transcript_rows(line):

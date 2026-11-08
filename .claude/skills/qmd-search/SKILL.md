@@ -5,8 +5,8 @@ description: >
   rerank). Use only when the wiki has outgrown index.md AND the user has installed + enabled qmd. The
   agent auto-detects qmd; if it is absent or disabled this skill does nothing and the normal
   index.md → grep search runs unchanged. Provides confidence-aware semantic retrieval as the
-  query/output fallback, plus a refresh hook that updates a page's qmd embedding whenever it is created
-  or changed. Retrieval only — never writes or decides. Trigger: /qmd-search <query>, or internally as
+  query/output fallback, with a freshness gate before every qmd search. Refreshes only when needed.
+  Retrieval only — never writes wiki pages or decides confidence. Trigger: /qmd-search <query>, or internally as
   the query/output semantic fallback.
 user-invocable: true
 ---
@@ -16,17 +16,16 @@ user-invocable: true
 ## What this is
 A thin, **dormant** adapter to `qmd`. It does **not** replace `index.md` (the curated, read-first catalogue); it is the
 *semantic fallback* `query`/`output` reach for when the catalogue under-covers a question, and the
-**refresh hook** that keeps qmd's embeddings current as the wiki changes. qmd retrieves; the wiki governs
+**freshness gate** that catches up qmd's embeddings before a search. qmd retrieves; the wiki governs
 (compile, cross-link, confidence, conflicts).
 
 ## Activation — capability detection (the opt-in *is* installation)
-Use qmd **only if all three hold**; otherwise fall through to the default search silently:
+Use qmd **only if all three hold**; otherwise use the default search:
 1. `command -v qmd` succeeds (qmd installed), AND
 2. an index exists for this vault (`qmd status` lists indexed collections), AND
 3. there is **no `.qmd-off` marker** in the vault root — create that file to force qmd off without uninstalling; its absence means **active** (installing qmd + building an index *is* the opt-in).
 
-This is one cheap shell check. If any condition fails, **do nothing**: the agent uses `index.md` → `grep`
-exactly as normal. A fresh clone or a non-adopter is unaffected, with no prompt to install anything.
+Check installation and `.qmd-off` before invoking any qmd command, including `qmd status`. If detection fails, use `index.md` → `grep`; never prompt a non-adopter to install anything. The pre-search gate also checks installation and the marker and explains a plain-route result in one line.
 
 ## When to invoke (opt-in — never on every search)
 qmd search is **not** a default step. Invoke it only when:
@@ -35,11 +34,10 @@ qmd search is **not** a default step. Invoke it only when:
    semantic recall, or the corpus is too large to scan reliably).
 
 Otherwise answer from `index.md` → `grep` and **do not call qmd** — a qmd *query* reads passages into the
-agent's context (real tokens), so it must earn that cost. This gates only the **read** side; the **write**
-side — refreshing embeddings on every page change — always runs when qmd is active (local compute,
-≈ no agent tokens).
+agent's context (real tokens), so it must earn that cost. Writes leave the semantic index alone; when a qmd search is warranted, the freshness gate below catches up first.
 
 ## Search (only when active)
+Before **every** `qmd search`, `qmd vsearch` or `qmd query`, run the gate in the next section and inspect its exit code. Repeat this after an earlier search in the same session. Only exit 0 permits the qmd search; any other result takes the plain route and retains the gate's explanation.
 - **CLI shell-out by default** (no daemon):
   `qmd query "<question>" --json --files --min-score <t> -n <k>` over the `wiki` collection. The CLI
   inherits the shell environment, sidestepping the MCP-spawn `HOME`/db-path pitfall (qmd issue #615).
@@ -51,52 +49,28 @@ side — refreshing embeddings on every page change — always runs when qmd is 
 - **Index-first, always:** `index.md` is read first; qmd is the *fallback / widener* when the catalogue is
   insufficient or the corpus is large. A qmd hit never bypasses the governing deep-read.
 
-## Refresh on write — one-shot, NEVER a resident process
-Two signals refresh whenever wiki page(s) are created or updated:
-1. **`confidence`** — (re)assign / confirm per CLAUDE.md §4.6 for every changed file. **Always the
-   agent's job**, never a hook's, and never gated on qmd.
-2. **qmd embedding** — `qmd update && qmd embed`, once per write operation, never per file (incremental
-   **per file, not per chunk**: qmd keys embeddings on a file's whole-content hash, so an unchanged file
-   is skipped entirely and a changed one re-embeds *all* of its chunks — which is why `wiki/log.md` is
-   excluded from the collection, CLAUDE.md §10). A no-op when qmd is dormant.
+## Refresh before search — one-shot, never resident
+**Confidence still refreshes on write.** For every created or changed page, the agent assigns or confirms `confidence` and stamps `audited:` per CLAUDE.md §4.6, independently of qmd.
 
-**Enforcement — a turn-end hook, not an agent step.** A prose-only refresh duty can be missed,
-leaving the index stale while later sessions treat it as current. So where
-the harness supports it, the refresh belongs in a **`Stop` hook** — the harness runs it once per turn, so
-no agent can forget it, and it costs zero agent tokens. **The agent then does NOT run the qmd commands
-inline**; it still owns step 1. This is not a daemon, cron job, launchd job or file-watcher: the hook is a
-one-shot that runs and exits, nothing stays resident, and nothing runs while the vault is idle.
-
-The live hook is in this vault's `.claude/settings.json` (vault-local; it is not part of the shipped
-framework, so an adopter installs their own). Shape, with the guards that matter:
-```bash
-command -v qmd >/dev/null 2>&1 || exit 0          # qmd absent      -> silent no-op
-[ -e "$D/.qmd-off" ] && exit 0                     # forced off      -> silent no-op
-[ -e "$S" ] && [ -z "$(find "$D/wiki" "$D/raw" -newer "$S" -print -quit)" ] && exit 0   # nothing changed
-mkdir "$L" 2>/dev/null || exit 0                   # another refresh in flight
-qmd update >/dev/null 2>&1 && qmd embed >/dev/null 2>&1 && mv -f "$S.new" "$S"
+**The turn-end refresh is retired.** No write operation, ingest completion or turn end starts `qmd update` or `qmd embed`. Immediately before every qmd search, run this gate from the vault root, with the same environment as the search:
+```sh
+/bin/sh .claude/skills/qmd-search/qmd-fresh.sh
 ```
-- **Gate on the filesystem, not on `qmd update` output.** `find -newer` against a stamp file
-  tests the underlying state and supports the controls for
-  no-change / modify / create / delete / missing-stamp. Directory mtimes make deletions visible too.
-- **Stamp before the work, promote after success** (`$S.new` → `$S`), so a file changed mid-refresh is
-  caught next turn rather than skipped.
-- **Fail open, never block.** Every premise failure exits 0; a missing stamp means "refresh".
-- Measure the no-change check and refresh runtime on the local installation.
+- **Exit 0:** the index is fresh or a completed `qmd update && qmd embed` caught it up. The requested qmd search may now run.
+- **Exit 1:** qmd is absent, `.qmd-off` is present, another session holds the refresh lock, or the refresh failed. Use `index.md` then `grep`, and say the semantic index is not current using the gate's one-line reason. Never search the stale index.
+- **Exit 2:** `PROBE FAILED` names a broken premise, such as a missing source tree or failed filesystem operation. Use the same plain route and report that reason; this is never a clean freshness result.
 
-**Where no such hook exists** (another harness, hooks disabled), the fallback is the original inline rule:
-the agent runs `qmd update && qmd embed` itself as the last action of a write operation — `ingest`,
-`query` after filing a synthesis, `deep-lint`, or any other write path. `deep-lint`'s own refresh remains
-the periodic backstop either way.
+The gate checks both files and directories under `wiki/` and `raw/` against the refresh stamp. Directory mtimes expose deletions; a missing stamp forces a refresh. It acquires the directory lock before checking freshness, waits for update and embed to finish when stale, stamps before the work and promotes the stamp only after both commands succeed. A change during refresh remains newer than that stamp and is caught at the next search. It neither waits on another session's lock nor removes that session's lock. A lock left by a killed process also takes the plain route.
+
+The default cache is `${XDG_CACHE_HOME:-$HOME/.cache}/qmd`, with `vault-refresh-stamp` and `vault-refresh.lock`. An absolute `INDEX_PATH` uses adjacent `<INDEX_PATH>.vault-refresh-stamp` and `<INDEX_PATH>.vault-refresh.lock` instead. Keep the root, config and database environment identical for the gate and search; the gate uses the default qmd invocation, so do not add a different `--index` to the search alone. qmd updates only its configured collections; the existing exclusion of `wiki/log.md` is unchanged. No daemon, watcher or periodic write-time backstop is needed.
 
 ## Graceful degradation (mandatory)
-Any qmd call that errors, times out, or returns nonzero → **fall back silently** to `index.md` → `grep`
-and carry on. The vault never depends on qmd; it only accelerates with it.
+Any qmd call that errors, times out or returns nonzero takes `index.md` → `grep`. Say why the semantic route was unavailable; a freshness failure says the semantic index is not current. The vault never depends on qmd; it only accelerates with it.
 
 ## Hard constraints
 - **Retrieval only.** qmd never creates, edits, or deletes wiki pages, and never decides `confidence` or
   conflicts — those stay with `ingest`/`query`/`deep-lint`.
-- **Nothing resident.** Every qmd invocation — by the agent or by the turn-end refresh hook — is a
+- **Nothing resident.** Every qmd invocation — by the agent or by the pre-search gate — is a
   **one-shot CLI call** (`qmd search`/`vsearch`/`query`/`update`/`embed`) that runs and **exits**. The
   agent MUST NOT start the MCP daemon (`qmd mcp …`) or any long-running/watching qmd process; that is a
   manual, user-only opt-in. Nothing qmd-related stays resident, and nothing runs while the vault is idle.

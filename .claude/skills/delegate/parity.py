@@ -254,7 +254,7 @@ CHECKS = [
      "args": ["{vault}"], "head": r"^qmd-registry:"},
     {"label": "tier-cap-check", "script": "tier-cap-check.py", "runner": "python3",
      "args": ["--vault", "{vault}"],
-     "head": r"^(tier-cap-check:|checked:|violations:|overrides|boundary-2 notes:|other notes:"
+     "head": r"^(tier-cap-check:|checked:|violations:|overrides|other notes:"
              r"|cap-control:|extra-control:)"},
 ]
 

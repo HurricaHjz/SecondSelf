@@ -12,8 +12,21 @@ identical rules instead of re-deriving an ad-hoc scanner. Rules encoded here:
     extension over every non-dot path in the vault, so a narrower rule reports live links
     as dead ([[index.md]], [[Claude Code.md]], [[choices-quick-reference]] in output/, and
     every attic target all resolve in the app);
-  - media embeds ![[name.ext]] resolve against assets/ (the attachment folder) and are
-    reported separately as dead embeds when missing — they are checked, not skipped;
+  - frontmatter `aliases:` are read as YAML reads them, by the shared reader below: a one-line
+    flow list respects quotes (double quotes with backslash escapes, single quotes doubling their
+    quote), so a quoted alias carrying a comma stays one alias, and a block list of one-line `-`
+    items reads each item the same way. A value spread over more than one line (a wrapped flow
+    list or quoted entry, a `|` or `>` block scalar, an item or a value continued below its line),
+    a value YAML cannot parse (an unclosed quote or bracket, an empty entry, a nested collection,
+    text after a closing quote or bracket, an escape naming no character, a plain entry opening
+    with a reserved character or carrying ": "), a mapping, or a repeated `aliases:` key is a
+    MALFORMED ALIASES finding and contributes no alias — never a guess, never a traceback;
+  - media embeds ![[name.ext]] resolve the way Obsidian resolves a file name: a bare name by
+    file name over every visible file in the vault (the same dot-path rule as page links)
+    except the attic, which is retired material; a path-qualified name by its path (from the
+    vault root, from the embedding page, or as the tail of one visible file's path). No match
+    is a DEAD EMBED (a finding); more than one is an AMBIGUOUS EMBED, listed on its own line
+    and not a finding, since it renders — qualify it with a path to pin which file shows;
   - frontmatter `sources:` entries that name a vault path are resolved against disk and
     reported separately as DANGLING SOURCES (provenance is a reference, not only prose);
   - a `sources:` entry led by `~` or `/` is OUT-OF-VAULT provenance (a run store, a home
@@ -34,6 +47,7 @@ Usage (from the vault root):
   exit 0 = clean · 1 = findings · 2 = broken premise
 """
 import os
+import posixpath
 import re
 import sys
 import glob
@@ -107,12 +121,23 @@ def read_text(path):
 # extension, across the whole vault; dot-folders are invisible to it. Model the same surface or
 # valid links read as dead. Ambiguous basenames are treated as resolving: for a dead-link checker,
 # erring permissive avoids false alarms, and Obsidian falls back to path resolution there anyway.
+# The same walk indexes media-embed targets: every visible file outside the attic (the attic is
+# retired material, so an embed that only the attic could satisfy is dead), keyed on its
+# lower-cased basename and on its lower-cased vault-relative path.
+ATTIC = "attic"
 vault_basenames = set()
+embed_by_name, embed_paths = {}, set()
 for _dir, _subdirs, _names in os.walk(root):
     _subdirs[:] = [d for d in _subdirs if not d.startswith(".")]
+    _rel_dir = os.path.relpath(_dir, root).replace(os.sep, "/")
+    _in_attic = _rel_dir == ATTIC or _rel_dir.startswith(ATTIC + "/")
     for _n in _names:
         if not _n.startswith("."):
             vault_basenames.add(_n.lower())
+            if not _in_attic:
+                _rel = _n if _rel_dir == "." else _rel_dir + "/" + _n
+                embed_by_name.setdefault(_n.lower(), []).append(_rel)
+                embed_paths.add(_rel.lower())
 
 # --- sources: provenance resolution -------------------------------------------------------
 # Classification of one `sources:` entry, in this order (the order matters: an email address
@@ -149,6 +174,302 @@ def split_flow_list(text):
             buf += ch
     out.append(buf)
     return [v.strip() for v in out if v.strip()]
+
+
+YAML_ESCAPES = {'"': '"', "\\": "\\", "/": "/", " ": " ", "0": "\0", "a": "\a", "b": "\b",
+                "t": "\t", "\t": "\t", "n": "\n", "v": "\v", "f": "\f", "r": "\r", "e": "\x1b",
+                "N": "\x85", "_": "\xa0", "L": chr(0x2028), "P": chr(0x2029)}
+YAML_HEX_ESCAPES = {"x": 2, "u": 4, "U": 8}
+PLAIN_RESERVED = "@`&*!|>%{}[]"
+YAML_NULLS = ("null", "Null", "NULL", "~")
+
+
+def line_end(text, j):
+    """The index of the line break ending the line that holds text[j], or len(text)."""
+    end = text.find("\n", j)
+    return len(text) if end == -1 else end
+
+
+def line_rest(text, j):
+    """None when text[j:] up to the end of its line holds only blanks or a comment (a `#` after a
+    blank), else the text it holds: YAML allows nothing else after a closed value."""
+    rest = text[j:line_end(text, j)]
+    tail = rest.lstrip(" \t")
+    if not tail or (tail.startswith("#") and len(tail) < len(rest)):
+        return None
+    return tail
+
+
+def next_content(text, j):
+    """The index where the first line at or after text[j] holding more than blanks or a comment
+    starts, or len(text)."""
+    n = len(text)
+    while j < n:
+        end = line_end(text, j)
+        body = text[j:end].lstrip(" \t")
+        if body and not body.startswith("#"):
+            return j
+        j = end + 1
+    return n
+
+
+def is_item(body):
+    """True when a line, its indentation removed, opens a block-list `-` item."""
+    return body[:1] == "-" and body[1:2] in ("", " ", "\t")
+
+
+def parse_quoted(text, i):
+    """Decode the YAML quoted scalar whose opening quote is text[i], which must close on its own
+    line: (value, end, None), `end` the index after its closing quote, or (None, i, reason). Double
+    quotes take YAML's backslash escapes, and a \\x, \\u or \\U escape must name a Unicode character
+    (no surrogate, nothing past U+10FFFF); single quotes double their quote. A line break before the
+    closing quote, a backslash ending the line among them, is a reason: a value spans one line, so a
+    quoted scalar YAML would fold over lines is malformed here, never folded."""
+    quote, n = text[i], len(text)
+    kind = "double" if quote == '"' else "single"
+    j, buf = i + 1, []
+    while j < n:
+        ch = text[j]
+        if ch == quote:
+            if quote == "'" and j + 1 < n and text[j + 1] == "'":
+                buf.append("'")
+                j += 2
+                continue
+            return "".join(buf), j + 1, None
+        if ch == "\n" or (quote == '"' and ch == "\\" and text[j + 1:j + 2] == "\n"):
+            return None, i, f"an unclosed {kind} quote at the end of its line (a value spans one line)"
+        if quote == '"' and ch == "\\":
+            code = text[j + 1] if j + 1 < n else ""
+            if code in YAML_HEX_ESCAPES:
+                width = YAML_HEX_ESCAPES[code]
+                digits = text[j + 2:j + 2 + width]
+                if len(digits) != width or not all(c in "0123456789abcdefABCDEF" for c in digits):
+                    return None, i, "a bad hexadecimal escape in a double-quoted value"
+                point = int(digits, 16)
+                if point > 0x10FFFF or 0xD800 <= point <= 0xDFFF:
+                    return None, i, "an escape naming no Unicode character in a double-quoted value"
+                buf.append(chr(point))
+                j += 2 + width
+                continue
+            if code not in YAML_ESCAPES:
+                return None, i, "an unknown escape in a double-quoted value"
+            buf.append(YAML_ESCAPES[code])
+            j += 2
+            continue
+        buf.append(ch)
+        j += 1
+    return None, i, f"an unclosed {kind} quote"
+
+
+def read_flow_sequence(text, i, pairs=False):
+    """Read the YAML flow sequence whose `[` is text[i], which must close on its own line: (values,
+    reason, end), `end` the index after the closing bracket (or where reading stopped), reason None
+    when the list is sound.
+
+    A quoted entry is read by parse_quoted; a plain entry runs to the next comma or the closing
+    bracket, a ` #` starting a comment, and a plain null (null, Null, NULL, ~) is None. A trailing
+    comma is allowed, and after the closing bracket the line may hold only blanks or a comment. A
+    line ending before the closing bracket (a comment inside the brackets reaches it too) is a
+    reason: a value spans one line. Anything YAML would refuse or read as something other than a
+    list of strings is a reason, never repaired; with pairs=True a plain entry carrying ": " (a
+    one-pair mapping to YAML) is kept as its text."""
+    values, eol = [], line_end(text, i)
+    i += 1
+    open_line = "no closing ] on its line (a value spans one line)"
+
+    def skip(j):
+        while j < eol and text[j] in " \t":
+            j += 1
+        return j
+
+    def close(j):
+        return values, (None if line_rest(text, j + 1) is None else "text after the closing ]"), j + 1
+
+    while True:
+        i = skip(i)
+        if i >= eol or (text[i] == "#" and text[i - 1] in " \t[,"):
+            return values, open_line, i
+        ch = text[i]
+        if ch == "]":
+            return close(i)
+        if ch == ",":
+            return values, "an empty entry between commas", i
+        if ch in "[{":
+            return values, "a nested collection", i
+        if ch in "\"'":
+            value, i, reason = parse_quoted(text, i)
+            if reason:
+                return values, reason, i
+        else:
+            if ch in PLAIN_RESERVED:
+                return values, f"a plain entry opening with {ch!r}, which YAML reserves", i
+            follow = text[i + 1:i + 2]
+            if (ch in "-?:" and follow in ("", " ", "\t", "\n")) or (ch in "?:" and follow in (",", "]")):
+                return values, f"a plain entry opening with {ch!r} as an indicator, which YAML reads as structure", i
+            j = i
+            while j < eol and text[j] not in ",]" and not (text[j] == "#" and text[j - 1] in " \t"):
+                if text[j] in "[{}":
+                    return values, "a bracket inside a plain entry", i
+                j += 1
+            value = text[i:j].rstrip(" \t")
+            if not pairs and (": " in value + " " or ":\t" in value):
+                return values, "': ' inside a plain entry, which YAML reads as a mapping", i
+            value = None if value in YAML_NULLS else value
+            i = j
+        values.append(value)
+        i = skip(i)
+        if i >= eol or (text[i] == "#" and text[i - 1] in " \t"):
+            return values, open_line, i
+        if text[i] == ",":
+            i += 1
+            continue
+        if text[i] == "]":
+            return close(i)
+        return values, "text after a quoted entry", i
+
+
+def parse_flow_sequence(text, i=0, pairs=False):
+    """Parse the YAML flow sequence whose `[` is text[i]: (values, None) or (values so far, reason),
+    as read_flow_sequence reads it."""
+    values, reason, _end = read_flow_sequence(text, i, pairs)
+    return values, reason
+
+
+def parse_value(text, i, pairs=False, entry=False):
+    """Read the YAML value that starts at text[i], blanks before it skipped: (kind, value, reason,
+    end), `end` the line break ending the line the value opens on (or len(text)): a value spans one
+    line.
+
+    kind is "empty" (nothing, or only a comment, before the line's end), "null" (null, Null, NULL,
+    ~), "str" (a quoted scalar), "plain" (a plain scalar), "seq" (a flow sequence, `value` its
+    entries), "map" (a flow mapping, which no caller reads as a list) or "block" (a `|` or `>`
+    block scalar, always with a reason: its text sits on the lines below). A value YAML would
+    refuse, or one this reader does not resolve (an anchor, an alias, a tag), is a reason. A plain
+    value carrying ": " is a mapping to YAML: a reason, unless `pairs` is set and the value is an
+    `entry` of a list, which then keeps it as its text."""
+    n = len(text)
+    while i < n and text[i] in " \t":
+        i += 1
+    if i >= n or text[i] in "\n#":
+        return "empty", None, None, line_end(text, i)
+    ch = text[i]
+    if ch == "[":
+        values, reason, end = read_flow_sequence(text, i, pairs)
+        return "seq", values, reason, line_end(text, end)
+    if ch == "{":
+        return "map", None, None, line_end(text, i)
+    if ch in "\"'":
+        value, end, reason = parse_quoted(text, i)
+        if not reason and line_rest(text, end) is not None:
+            reason = "text after a quoted value"
+        return "str", value, reason, line_end(text, end)
+    if ch in "|>":
+        return "block", None, f"a {ch} block scalar, whose text spans the lines below (a value spans one line)", line_end(text, i)
+    if ch in PLAIN_RESERVED or ch == ",":
+        return "str", None, f"a value opening with {ch!r}, which YAML reserves or reads as an anchor, alias or tag", line_end(text, i)
+    if ch in "-?:" and text[i + 1:i + 2] in ("", " ", "\t", "\n"):
+        return "str", None, f"a value opening with {ch!r} as an indicator, which YAML reads as structure", line_end(text, i)
+    end = line_end(text, i)
+    value = re.split(r"[ \t]#", text[i:end], maxsplit=1)[0].rstrip(" \t")
+    if (": " in value + " " or ":\t" in value) and not (pairs and entry):
+        return "str", None, "': ' inside a plain value, which YAML reads as a mapping", end
+    if value in YAML_NULLS:
+        return "null", None, None, end
+    return "plain", value, None, end
+
+
+def parse_block_sequence(text, i, pairs=False):
+    """Read the block list whose first `-` item opens the line at text[i]: (values, reason, end),
+    `end` the index where the first line after the list starts (or len(text)), reason None when the
+    list is sound. Each item is one line, its value read by parse_value; a null or empty item gives
+    None. A nested collection or a block scalar in an item, any line deeper than the items (a value
+    written below its `-`, a continuation, an indented key: a value spans one line), a line at the
+    items' indentation that is not an item and an item shallower than the first are reasons. The
+    list ends at the first line, blank and comment lines aside, shallower than its items."""
+    values, n = [], len(text)
+    indent = None
+    while i < n:
+        end = line_end(text, i)
+        line = text[i:end]
+        body = line.lstrip(" \t")
+        lead = len(line) - len(body)
+        if not body or body.startswith("#"):
+            i = end + 1
+            continue
+        if indent is None:
+            indent = lead
+        if is_item(body) and lead == indent:
+            kind, value, reason, end = parse_value(text, i + lead + 1, pairs, entry=True)
+            if reason:
+                return values, reason, i
+            if kind in ("seq", "map"):
+                return values, "a nested collection in a - item", i
+            values.append(value if kind in ("str", "plain") else None)
+        elif lead > indent:
+            return values, "a line below a - item, deeper than the items (a value spans one line)", i
+        elif lead == indent and indent > 0:
+            return values, "a line at the list's indentation that is not a - item", i
+        elif is_item(body):
+            return values, "a - item shallower than the list", i
+        else:
+            return values, None, i
+        i = end + 1
+    return values, None, n
+
+
+def parse_key_value(text, j, pairs=False):
+    """Read the value of the mapping key whose colon ends at text[j], the key standing at the start
+    of its line: on the key's own line or, when that holds nothing, on the one deeper line or the
+    `-` items below it. (kind, value, reason) as parse_value gives them, a block list counting as a
+    "seq". The value spans one line, a block list one line per item: the first line below it,
+    blank and comment lines aside, must start at the left margin and open no `-` item, or it
+    continues the value, which is then malformed (the second review of 2026-10-11)."""
+    kind, value, reason, end = parse_value(text, j, pairs)
+    after = end + 1
+    if kind == "empty":
+        k = next_content(text, after)
+        if k >= len(text):
+            return "empty", None, None
+        if is_item(text[k:line_end(text, k)].lstrip(" \t")):
+            kind = "seq"
+            value, reason, after = parse_block_sequence(text, k, pairs)
+        elif text[k] not in " \t":
+            return "empty", None, None
+        else:
+            kind, value, reason, end = parse_value(text, k, pairs)
+            after = end + 1
+    if not reason:
+        k = next_content(text, after)
+        if k < len(text) and text[k] in " \t":
+            reason = "text below the value, deeper than its key"
+        elif k < len(text) and is_item(text[k:line_end(text, k)]):
+            reason = "a - line below the value, which continues it"
+    return kind, value, reason
+
+
+ALIASES_KEY_RE = re.compile(r"^aliases[ \t]*:", re.M)
+
+
+def frontmatter_aliases(block):
+    """(aliases, reason) for one frontmatter block: `aliases:` read as YAML reads it, a one-line flow
+    list on the key's line or the line below it, or a block list of one-line `-` items, empty and
+    null entries dropped. A reason means the value is malformed, spread over more than one line (a
+    block scalar, a wrapped list, an item continued below), a mapping, or the key repeats: it gives
+    no alias, never a guess. No key, a null, an empty value and a single one-line scalar give none
+    and no reason."""
+    keys = list(ALIASES_KEY_RE.finditer(block))
+    if not keys:
+        return [], None
+    if len(keys) > 1:
+        return [], "a duplicated aliases: key"
+    kind, values, reason = parse_key_value(block, keys[0].end())
+    if reason:
+        return [], reason
+    if kind == "map":
+        return [], "a mapping, not a list"
+    if kind != "seq":
+        return [], None
+    return [v.strip() for v in values if v is not None and v.strip()], None
 
 
 def frontmatter_sources(block):
@@ -197,7 +518,7 @@ source_paths = source_urls = source_prose = 0
 dangling_sources, annotated_sources, unparsed_sources = [], [], []
 outside_present, outside_missing = [], []
 
-aliases = {}
+aliases, malformed_aliases = {}, []
 for p in files:
     head = read_text(p)   # full read — a byte-capped head can silently drop aliases past the cap (§12: a bound needs stated headroom; the link pass re-reads every file in full anyway)
     fm = re.match(r"\A---\n(.*?)\n---", head, re.S)
@@ -230,18 +551,12 @@ for p in files:
                 source_paths += 1
                 if not os.path.exists(os.path.join(root, value)):
                     dangling_sources.append(f"{rel_page} · {value}")
-    m = re.search(r"^aliases:\s*\[([^\]]*)\]", block, re.M)
-    vals = []
-    if m:
-        vals = m.group(1).split(",")
-    else:
-        m2 = re.search(r"^aliases:\s*\n((?:\s*-\s*.+\n?)+)", block, re.M)
-        if m2:
-            vals = re.findall(r"-\s*(.+)", m2.group(1))
-    for a in vals:
-        a = a.strip().strip("\"'")
-        if a:
-            aliases[a] = p
+    page_aliases, alias_error = frontmatter_aliases(block)
+    if alias_error:
+        raw = block[ALIASES_KEY_RE.search(block).start():].split("\n", 1)[0]
+        malformed_aliases.append(f"{os.path.relpath(p, root)} · {raw} ({alias_error})")
+    for a in page_aliases:
+        aliases[a] = p
 
 
 def strip_noise(text):
@@ -270,7 +585,26 @@ def resolves(target):
     return False
 
 
-dead_links, dead_embeds = [], []
+def resolve_embed(target, page_rel_dir):
+    """The visible, non-attic files one media embed target can mean, as vault-relative paths.
+
+    A bare name matches by file name anywhere; a path-qualified one matches from the vault root,
+    then from the embedding page's folder, then as the tail of a visible file's path (how
+    Obsidian reads a partial path). Case is ignored, as Obsidian's lookup ignores it.
+    """
+    t = target.split("#", 1)[0].strip().replace("\\", "/").lower()
+    name = posixpath.basename(t)
+    if "/" not in t:
+        return list(embed_by_name.get(name, []))
+    for cand in (posixpath.normpath(t.lstrip("/")),
+                 posixpath.normpath(posixpath.join(page_rel_dir.lower(), t))):
+        if cand in embed_paths:
+            return [p for p in embed_by_name.get(name, []) if p.lower() == cand]
+    tail = posixpath.normpath(t.lstrip("/"))
+    return [p for p in embed_by_name.get(name, []) if p.lower().endswith("/" + tail)]
+
+
+dead_links, dead_embeds, ambiguous_embeds = [], [], []
 links_checked = embeds_checked = 0
 for p in files:
     if os.path.basename(p) == "log.md":
@@ -282,9 +616,12 @@ for p in files:
         rel = os.path.relpath(p, root)
         if is_embed and ext in MEDIA_EXT:
             embeds_checked += 1
-            cands = [os.path.join(root, "assets", target), os.path.join(root, target)]
-            if not any(os.path.exists(c) for c in cands):
+            page_dir = os.path.dirname(rel).replace(os.sep, "/")
+            matches = resolve_embed(target, page_dir)
+            if not matches:
                 dead_embeds.append(f"{rel} -> ![[{target}]]")
+            elif len(matches) > 1:
+                ambiguous_embeds.append(f"{rel} -> ![[{target}]] ({len(matches)} files: {', '.join(sorted(matches))})")
         else:
             links_checked += 1
             if not resolves(target):
@@ -297,6 +634,14 @@ for d in dead_links:
     print("  " + d)
 print(f"DEAD EMBEDS: {len(dead_embeds)}")
 for d in dead_embeds:
+    print("  " + d)
+# An ambiguous embed renders (Obsidian picks one of the files), so it is listed, never a finding:
+# qualifying the embed with a path pins which file shows.
+print(f"AMBIGUOUS EMBEDS: {len(ambiguous_embeds)}   (a bare name more than one visible file carries; listed, not a finding)")
+for d in ambiguous_embeds:
+    print("  " + d)
+print(f"MALFORMED ALIASES: {len(malformed_aliases)}")
+for d in malformed_aliases:
     print("  " + d)
 print(f"SOURCES SCANNED: {source_pages} pages carry sources: | {source_entries} entries "
       f"| {source_paths} vault paths resolved | {source_urls} URLs | {source_prose} prose "
@@ -429,4 +774,5 @@ for label, items in (("original found elsewhere under raw/", conv_elsewhere),
                      ("unreadable raw file", conv_unreadable)):
     for d in items:
         print(f"  ({label}) {d}")
-sys.exit(1 if (dead_links or dead_embeds or dangling_sources or outside_missing or conv_missing) else 0)
+sys.exit(1 if (dead_links or dead_embeds or malformed_aliases or dangling_sources or outside_missing
+               or conv_missing) else 0)

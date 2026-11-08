@@ -14,6 +14,15 @@
 /IDEAS.md
 /CUSTOMISATION.md
 /CUSTOMISATION-definitions.md
+/CALENDAR.md
+/CALENDAR-done.md
+/.claude/settings.local.json
+/.claude/adopt/
+/.claude/routing.local.json
+/.claude/sanctioned.local.txt
+/.claude/skills/my-*/
+/.claude/agents/my-*.md
+/.claude/hooks/my-*
 
 # --- ...but keep the empty folder skeleton (the .gitkeep placeholders) ---
 !/wiki/**/

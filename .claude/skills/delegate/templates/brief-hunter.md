@@ -12,15 +12,15 @@ SPEC
 - Consumer's question: {{the question the consumer must answer — you retrieve FOR it, you
   never answer it}}
 - Consumer's task: {{what the consumer will do with the pack}}
-- Budget: {{target pack size — default: keep the consumer near ≈100k total context}}
+- Budget: {{the consumer's room for this pack, from its task and its context now; the helper packs the least that carries the evidence the task needs}}
 - Candidate material: {{starting points, if any — index sections, known pages | none}}
 
 SCOPE
 - Reading list (pre-scoped): wiki/index.md first and WHOLE (`route` mode — never a grep or a
   section slice; it finds about half the pages), then wiki pages your triage selects —
   {{plus any spec-named starting points}}
-- File whitelist: your memory directory ONLY (MEMORY.md curation). All other writes refused;
-  proposed diffs instead.
+  An index past one Read call's limit is read whole in consecutive offsets to the end, the lines read checked against `wc -l wiki/index.md`, never stopped at a refused or truncated first chunk.
+- File whitelist: none. All writes refused; proposed diffs instead.
 - Boundary: report off-scope findings without fixing them.
 
 GRANTS
@@ -46,7 +46,7 @@ Role delta: the pack carries sources and reasons, never conclusions on the consu
 question; excerpts are pointers, never deciding evidence. {{extra conduct | —}}
 
 REPORT
-The pack (## Pack · ## Excerpts · ## Gaps · ## Pack size), then ## Method and ## Memory.
+The pack (## Pack · ## Excerpts · ## Gaps · ## Pack size), then ## Method.
 ```
 
 <!-- Spawner checks: spawn-record line written (SKILL.md §3 slot 0); assigned-context size

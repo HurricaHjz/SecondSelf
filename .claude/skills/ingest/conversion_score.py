@@ -572,7 +572,10 @@ def render(m, t_short, t_run, t_rec, t_long, t_readable=THRESHOLD_READABLE):
     else:
         rec = f"recovery {m['recovery']:.2f} ({'<' if 'recovery' in reasons else '>='} {tc}; {m['found']}/{m['total']} sentences)"
     if m["readable"] is None:
-        readable = "readable-words n/a (non-Latin-majority text)"
+        # Two causes, two reasons: a body whose letters are mostly another script, and a
+        # Latin-majority body with no ASCII letter at all (accented letters only).
+        why = "non-Latin-majority text" if not m["latin"] else "no ASCII letter in the body"
+        readable = f"readable-words n/a ({why})"
     else:
         ta = fmt_threshold(t_readable)
         sign = "<" if "readable-words" in reasons else ">="
@@ -813,11 +816,16 @@ def main(argv):
         scopes[m["scope"]] += 1
         print(line)
     source = f"override {override!r}" if override else f"derived {DERIVED_ON}"
+    # The readable-words cut keeps its own derived provenance unless the override's fifth field
+    # replaced it (four values, or a fifth `-`, keep the derived cut).
+    fields = override.split(",") if override else []
+    readable_source = (f"override {override!r}" if len(fields) == 5 and fields[4].strip() not in ("", "-")
+                       else "validate on a separately labelled local corpus")
     print(f"SCORED: {len(targets)} file(s) · clean {len(targets) - suspect} · suspect {suspect} · "
           f"scope pdf {scopes['pdf']} | other {scopes['other']} · "
           f"thresholds short-lines > {fmt_threshold(t_short, ' %')} | run-together > {fmt_threshold(t_run, ' %')} "
           f"| long-run > {fmt_threshold(t_long, ' /1k')} | recovery < {fmt_threshold(t_rec)} ({source}) "
-          f"| readable-words < {fmt_threshold(t_readable)} (validate on a separately labelled local corpus)")
+          f"| readable-words < {fmt_threshold(t_readable)} ({readable_source})")
     print(control)
     return 3 if suspect else 0
 

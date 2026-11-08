@@ -153,6 +153,13 @@ run --ledger "$R/run-fx-1.jsonl" "$B/L1.md"
 if [ $RC -eq 2 ] && has "$OUT" "lane L1 is named neither by --dry-run"; then ok "(d) premise: a lane named neither headless nor in-session is exit 2"; else no "(d) unnamed lane: rc=$RC: $OUT"; fi
 run --ledger "$R/run-fx-1.jsonl" --fence "$T/no-such-fence.py" --dry-run L1="$T/dry-ok.txt" "$B/L1.md"
 if [ $RC -eq 2 ] && has "$OUT" "does not import"; then ok "(d) premise: a fence that does not import is exit 2"; else no "(d) no fence: rc=$RC: $OUT"; fi
+# The verify lane's open and close are the head's to write (the verifier definition bans the lane's
+# own append), so a headless verify brief whose lane cannot append passes (d); a compile brief cannot.
+{ cat "$B/V1.md"; printf -- '- Run ledger, read for the slices: ~/.agent-wiki/ingest-runs/run-fx-1.jsonl\n'; } > "$B/V2.md"
+run --ledger "$R/run-fx-1.jsonl" --fence "$T/stub-fence.py" --dry-run V1="$T/dry-nowrite.txt" "$B/V2.md"
+if [ $RC -eq 0 ] && has "$OUT" "(d) exempt: a verify brief" && has "$OUT" "fence queried 0" && has "$OUT" "(d) exempt 1" && ! has "$OUT" "FAIL (d)"; then ok "(d) K1a12a51f a headless verify brief whose lane cannot append passes, exempt, its fence not asked"; else no "(d) K1a12a51f verify brief exempt: rc=$RC: $OUT"; fi
+run --ledger "$R/run-fx-1.jsonl" --fence "$T/stub-fence.py" --dry-run L1="$T/dry-nowrite.txt" --dry-run V1="$T/dry-nowrite.txt" "$B/L1.md" "$B/V2.md"
+if [ $RC -eq 1 ] && has "$OUT" "FAIL (d) L1 check() answers deny for the lane's own append" && ! has "$OUT" "FAIL (d) V1" && has "$OUT" "fence queried 1" && has "$OUT" "failed 1 ·"; then ok "(d) K1a12a51f a compile brief that cannot append still fails (d) on the same run, beside the exempt verify brief"; else no "(d) K1a12a51f compile beside verify: rc=$RC: $OUT"; fi
 
 echo '--- (e) index sections ---'
 { cat "$B/L1.md"; printf -- '- Also read wiki/index.md in section mode for the `## Entities` and `## Models` headings\n'; } > "$B/L1-named.md"
@@ -327,6 +334,68 @@ else
   no 'R2 generated-brief harness failed'
 fi
 
+echo '--- batch clauses: fidelity, verifier events and the chunked index read ---'
+if "$PY" -B - "$HERE" "$T" <<'PYBATCHTEXT' > "$T/batch-text-results.txt"
+import re, sys
+from pathlib import Path
+here, temp = map(Path, sys.argv[1:])
+templates = here.parent / "delegate-templates"
+if not templates.is_dir():
+    templates = here.parent / "delegate/templates"
+def normalise(text):
+    return " ".join(text.split())
+def body(name):
+    """The spawn body a lane receives: spawner comments removed, every slot filled."""
+    spawn = (templates / name).read_text().split("\n```\n")[1]
+    spawn = re.sub(r"<!--.*?-->", "", spawn, flags=re.S)
+    return re.sub(r"\{\{.*?\}\}", "fixture", spawn, flags=re.S)
+def leg(name, passed):
+    print(("OK " if passed else "FAIL ") + name)
+compile_body, verify_body, hunter_body = body("brief-compile.md"), body("brief-ingest-verify.md"), body("brief-hunter.md")
+skill = (here / "SKILL.md").read_text()
+query = (here.parent / "query/SKILL.md").read_text()
+clauses = [
+    ("K8690e3fa-whole-source-universal", 'A statement about what a whole source contains or lacks ("the only figures are …", "the paper never discusses …") is a universal too: it rests on a grep of the whole raw, its pattern and hit count stated beside it, never on recall of the reading.', [compile_body]),
+    ("K7eecda29-word-absent-from-collapsed-cell", "A word or unit absent from a collapsed cell is never supplied: the cell is quoted as printed and the gap marked `unverified`.", [compile_body, skill]),
+    ("K7e51d58b-related-gloss-tables", "A `## Related` gloss that says where a metric or method appears lists the tables or sections it rests on, each one checked in the raw.", [compile_body]),
+    ("Kc5337707-attribute-of-named-work", "An attribute of a named work, person or organisation (a novel, a paper, a startup, a professor) comes from the raw or is left out.", [compile_body]),
+    ("K61ff0d78-vault-state-command-and-scope", 'A vault-state sentence names the exact command and the scope it ran over; "wiki/" in such a sentence means the whole tree, so a count taken over your index slice or the pages you read names that narrower scope instead.', [compile_body]),
+    ("K88d02fb9-comparison-and-identifier", "A comparison with other sources, sibling captures included, names the check behind it, and no attribute is inferred from an identifier such as a path or a host name.", [compile_body]),
+    ("Kf6b428da-chunked-whole-read", "An index past one Read call's limit is read whole in consecutive offsets to the end, the lines read checked against `wc -l wiki/index.md`, never stopped at a refused or truncated first chunk.", [query, hunter_body]),
+]
+for name, clause, carriers in clauses:
+    for i, text in enumerate(carriers, 1):
+        present = normalise(clause) in normalise(text)
+        removed = text.replace(clause, "")
+        leg("%s carrier %d: present, and a copy without it fails the same probe" % (name, i),
+            present and normalise(clause) not in normalise(removed))
+leg("K88d02fb9-identifier-count: the compile template names an identifier exactly once",
+    (templates / "brief-compile.md").read_text().count("identifier") == 1)
+leg("K7eecda29-table-rule-line-intact: the collapsed-cell sentence extends the all-depths table rule",
+    "If the raw does not let you verify the labels, report the cell as unverifiable and omit the attributed figure. A word or unit absent from a collapsed cell is never supplied" in skill)
+# The fidelity plant left formal work (the owner's rule of 26 October 2026): no brief a lane receives holds one.
+verify_flat, skill_flat = normalise(verify_body), normalise(skill)
+leg("plant-gone-from-the-verify-body", "plant" not in verify_flat.lower())
+leg("plant-gone-from-the-compile-body", "plant" not in normalise(compile_body).lower())
+leg("plant-gone-control: the same probe hits a copy that keeps the slot", "plant" in (verify_flat + " - Plant: a claim").lower())
+# K1a12a51f: the head writes the verifier's open and close; the verify brief asks for no append.
+verify_step = skill.split("## Verify step", 1)[1].split("\n## ", 1)[0]
+leg("K1a12a51f-skill-head-writes-verifier-events", 'appends the verifier\'s `lane_open` (`role: verify`) and `lane_close`' in verify_step
+    and '"written_by": "head"' in verify_step and "exempts verify briefs from its check (d)" in verify_step)
+leg("K1a12a51f-skill-preflight-d-exempt", "a verify brief is exempt: the head appends the verifier's `lane_open` and `lane_close`" in skill_flat)
+leg("K1a12a51f-verify-brief-no-append", '"written_by": "head"' in verify_body and "you append nothing to the run ledger" in verify_body
+    and "role: verify" in verify_body)
+leg("K1a12a51f-compile-spawner-note", "A verify brief is exempt from the fence check" in (templates / "brief-compile.md").read_text())
+PYBATCHTEXT
+then
+  while IFS=' ' read -r result label; do
+    if [ "$result" = OK ]; then ok "$label"; else no "$label"; fi
+  done < "$T/batch-text-results.txt"
+else
+  cat "$T/batch-text-results.txt"
+  no 'batch clause harness failed'
+fi
+
 echo '--- premise failures ---'
 run --ledger "$R/run-fx-1.jsonl" --in-session all
 if [ $RC -eq 2 ] && has "$OUT" "PROBE FAILED: zero briefs matched"; then ok "zero briefs: exit 2"; else no "zero briefs: rc=$RC: $OUT"; fi
@@ -449,8 +518,24 @@ report_cases = [
 ]
 for name, report, expected in report_cases:
     leg("F6-report-" + name, report_ok(report) == expected)
-leg("F6-verifier-consumer", "scores `claims 1`" in verify
-    and "names the compile lane" in verify and "- Compile report:" in verify)
+# A lane-report evidence failure is `shape: fail` on the verify record, never a `claims` count, and a
+# refuted fact whose object still applies is listed under `flagged_facts` (the merge planner's rule,
+# 2026-09-21). Each carrier is pinned here; the retired `claims 1` wording fails every leg.
+leg("F6-verifier-consumer", "shape: fail" in verify and "scores `claims 1`" not in verify
+    and "names the compile lane" not in verify and "name the compile lane" in verify and "- Compile report:" in verify)
+locator_rows = [row for row in verify.splitlines() if "**Named check — claims locator evidence" in row]
+leg("F6-locator-consumer", len(locator_rows) == 1 and "shape: fail" in locator_rows[0]
+    and "claims 1" not in locator_rows[0] and "it never adds to `claims`" in locator_rows[0])
+leg("F6-flagged-facts", "`flagged_facts` (name · lane · fact · fix)" in verify)
+leg("F6-shape-line-placement", "`shape: fail` on its own line directly above that scores line, never inside it" in verify)
+compile_text = brief.read_text()
+notes = [row for row in compile_text.splitlines()
+         if row.startswith(("`## Controls` (parallel mode):", "The same section carries the claims-locator check"))]
+leg("F6-compile-report-notes", len(notes) == 2 and "`claims 1`" not in compile_text
+    and all("`shape: fail`, never a `claims` count" in row for row in notes))
+skill_text = (here / "SKILL.md").read_text()
+leg("F6-skill-step-8", "the event's `shape: fail` field, never into `claims`" in skill_text
+    and "the verify event lists it under `flagged_facts` (name · lane · fact · fix)" in skill_text)
 for carrier in (core, brief):
     leg("F6-report-location-" + carrier.name,
         "final report under a `## Controls` heading" in carrier.read_text())

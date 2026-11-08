@@ -1,17 +1,19 @@
 # lane-home-src — the skill slices a headless lane carries
 
 A headless lane sees only the skills in its lane home plus the user-level ones. This directory is
-the **source** of the vault-owned slices: the wrapper copies the ones a class's `routing.json` row
-names into that spawn's lane home under `.claude/skills/`, and the wrapper appends them to the lane's system prompt (`--append-system-prompt-file`),
-so the slices reach a restricted lane without depending on a `skills:` preload.
+the **source** of the vault-owned slices: at each spawn the wrapper reads the ones a class's
+`routing.json` row names, and any a `--skill` flag adds, strips their frontmatter and vault-local
+blocks, and appends them to the lane's system prompt (`--append-system-prompt-file`), so the slices
+reach a restricted lane without depending on a `skills:` preload. `init` installs no `skills/` links.
 
 A slice is a **hand-made subset** of a vault skill: the half a lane performs, with the half the
 head performs left out. It is not generated, and nothing keeps it in step automatically.
 
 | Slice | Source | Sections taken | Deliberately left out |
 |---|---|---|---|
-| `compile-core/SKILL.md` | the ingest skill | Depth (range, triggers, overrides, the locator rule) · Step 3 (both source-page templates, verbatim) · Step 4 (network duties) · Step 5 (registries, as propose-don't-write) · the claims schema from Parallel mode · Hard constraints | conversion and de-dup, pacing, parallel orchestration and the merge, the verify step, raw sorting, the run ledger's mechanics, the routing notes |
-| `reflect-slice/SKILL.md` | the reflect skill | Steps 1–5 (register, horizon and sweep, the three-clause bar, routing, grading) · the reflector prefill's report shape and its named-discard rule | Step 2b (usage and waste — head-only: needs the meter and the run's records), Steps 5b–8 (the critic pass, the preview, writing, logging, the recommendations), `--yes` and every write path, the trigger rules |
+| `compile-core/SKILL.md` | the ingest skill | Depth (range, triggers, overrides, the locator rule) · Step 3 (both source-page templates, verbatim) · Step 4 (network duties) · Step 5 (registries, as propose-don't-write) · the claims schema from Parallel mode · Step 7's tool-markup check (the lane's half) · Hard constraints | conversion and de-dup, pacing, parallel orchestration and the merge, the verify step, raw sorting, the run ledger's mechanics, the routing notes |
+| `reflect-slice/SKILL.md` | the reflect skill | Steps 1–5 (register, horizon and sweep, the three-clause bar with stored-is-not-recorded and missed moments, routing with Reaches, grading) · the reflector prefill's report shape and its named-discard rule | Step 2b (usage and waste — head-only: needs the meter and the run's records), Steps 5b–8 (the critic pass, the preview, writing, logging, the recommendations), `--yes` and every write path, the trigger rules |
+| `lint-slice/SKILL.md` | the lint skill | Pipeline steps 1, 2, 2b–2g and 3 · its report format · its hard constraints. No class row lists it: a spawn names it with `--skill lint-slice` | Every fix, every registry line and every wiki write, which stay with the head and the owner |
 
 Two neighbours in the lane home come from elsewhere and are not slices of a skill:
 

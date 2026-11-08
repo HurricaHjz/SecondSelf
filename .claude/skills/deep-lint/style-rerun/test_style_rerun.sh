@@ -127,7 +127,8 @@ printf '{"type":"result","session_id":"%s","result":"ok"}\n' "$sid"
 STUB_END
 chmod +x "$BIN/claude"
 OUT="$W/out"; REC="$W/record.jsonl"
-STAMP_BEFORE=$(cat "$HOME/.llm-wiki/style-rerun/last-run.txt" 2>/dev/null | wc -l | tr -d ' ')
+stamp_sum() { if [ -f "$1" ]; then shasum -a 256 <"$1" | cut -d' ' -f1; else echo absent; fi; }   # bytes, not lines
+STAMP_BEFORE=$(stamp_sum "$HOME/.llm-wiki/style-rerun/last-run.txt")
 mkdir -p "$W/home"   # HOME redirected: run.sh writes its run stamp under $HOME/.llm-wiki/style-rerun/, never the real one
 RUNOUT=$(env HOME="$W/home" PATH="$BIN:$PATH" STUB_TRANSCRIPTS="$STUB_TRANSCRIPTS" STUB_COUNT="$STUB_COUNT" STUB_STDIN="$STUB_STDIN" \
 	bash "$HERE/run.sh" --questions "$W/questions.txt" --vault "$VAULT" --out "$OUT" --style shortest --record "$REC" --run-id run-test 2>&1)
@@ -138,8 +139,13 @@ eq "K04b the manifest has one tag-and-sid row per question, in order" \
 	"$(awk '{print $1}' "$OUT/manifest.txt" | tr '\n' ' ')/$(awk 'NF==2' "$OUT/manifest.txt" | wc -l | tr -d ' ')" "tutor-shortest engineer-shortest generalist-shortest /3"
 eq "K04c the stub was called with each session's id (the transcripts carry the manifest's sids)" \
 	"$(awk '{print $2}' "$OUT/manifest.txt" | while read -r s; do [ -f "$STUB_TRANSCRIPTS/$s.jsonl" ] && echo y; done | wc -l | tr -d ' ')" "3"
-eq "K16b the run stamp went to the fixture HOME, and the real stamp file is unchanged (control: the fixture's has one line)" \
-	"$(cat "$HOME/.llm-wiki/style-rerun/last-run.txt" 2>/dev/null | wc -l | tr -d ' ')/$(cat "$W/home/.llm-wiki/style-rerun/last-run.txt" 2>/dev/null | wc -l | tr -d ' ')" "$STAMP_BEFORE/1"
+eq "K16b the run stamp went to the fixture HOME, and the real stamp file is byte-identical (checksum before and after; control: the fixture's has one line)" \
+	"$(stamp_sum "$HOME/.llm-wiki/style-rerun/last-run.txt")/$(cat "$W/home/.llm-wiki/style-rerun/last-run.txt" 2>/dev/null | wc -l | tr -d ' ')" "$STAMP_BEFORE/1"
+cp "$W/home/.llm-wiki/style-rerun/last-run.txt" "$W/stamp-copy"   # a scratch copy: the control never touches the real file
+C_BEFORE=$(stamp_sum "$W/stamp-copy"); L_BEFORE=$(wc -l <"$W/stamp-copy" | tr -d ' ')
+awk '{ $1 = "1999-01-01"; print }' "$W/home/.llm-wiki/style-rerun/last-run.txt" >"$W/stamp-copy"
+eq "K16c control: K16b's checksum catches a same-line-count change to a scratch copy of a stamp, which a line count misses" \
+	"$([ "$(stamp_sum "$W/stamp-copy")" != "$C_BEFORE" ] && echo caught || echo missed)/$(wc -l <"$W/stamp-copy" | tr -d ' ')" "caught/$L_BEFORE"
 eq "K16a every session's stdin was empty (run.sh feeds /dev/null; a leaked plan file would show as bytes here; the real claude re-reads a leaked file from byte 0, the stub drains it, and either way the property that matters is zero bytes)" \
 	"$(wc -l <"$STUB_STDIN" | tr -d ' ')/$(awk '$2 != 0' "$STUB_STDIN" | wc -l | tr -d ' ')" "3/0"
 eq "K04d the sessions ran from the vault root (the stub recorded its cwd)" \

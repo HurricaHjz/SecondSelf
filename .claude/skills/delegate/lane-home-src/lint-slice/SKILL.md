@@ -15,8 +15,8 @@ user-invocable: false
 You scan the vault your brief names and report what you find. **Report only, never fix: you
 propose, and you write nothing into the vault** — no page edit, no `wiki/index.md` line, no
 `wiki/log.md` append, no palette restore, not even an obvious one-character repair. The fix is
-the head's after the owner confirms it, and a lane that fixed as it went would leave the owner a
-diff nobody reviewed.
+the head's after the report (it asks the owner first only where lint's Hard constraints say), and a
+lane that fixed as it went would leave a diff nobody reviewed.
 
 A finding is a fact you probed for, so **no check reports clean without its positive control**: a
 zero with a zero control is a broken probe, not a healthy vault. Never put `2>/dev/null` on a
@@ -37,6 +37,7 @@ script accepts:
 | `check-orphans.py` | `python3 <vault>/.claude/skills/lint/check-orphans.py --vault <vault>` | 0 clean · 1 findings |
 | `check-qmd-registry.sh` | `sh <vault>/.claude/skills/lint/check-qmd-registry.sh <vault>` (positional root) | 0 clean or n/a · 1 finding |
 | `check-shipped-links.py` | `python3 <vault>/.claude/skills/lint/check-shipped-links.py <vault>` (positional root) | 0 clean · 1 findings |
+| `check-tool-markup.py` | `python3 <vault>/.claude/skills/lint/check-tool-markup.py --vault <vault> --all` | 0 clean · 1 hits · 2 cannot decide |
 | `throttle.py` | `python3 <vault>/.claude/skills/delegate/throttle.py check --root <vault>` | 0 clean · non-zero findings |
 
 Read each script's exit code before quoting it, and take the pipe out of any command whose exit
@@ -49,7 +50,7 @@ check whose input you cannot read is reported as `not run (grant missing)`, neve
 ## 1 — Index consistency (the one check that is not a script)
 
 Take the registered page names only — `grep -o '^- \[\[[^]|]*' <vault>/wiki/index.md | sed 's/^- \[\[//'`,
-Never read `index.md` whole for this: the check compares names, and
+a fraction of the file. Never read `index.md` whole for this: the check compares names, and
 its one-line descriptions are waste here. Glob every `.md` under `<vault>/wiki/`, excluding `index.md` and
 `log.md`. Report two lists: pages registered in the index but **missing on disk**, and pages on
 disk but **not registered**.
@@ -61,10 +62,16 @@ findings counts. Zero pages globbed is a broken probe (a wrong root), not a clea
 
 Run `check-links.py`. It is the single source of truth for the link rules, so you apply none of
 them yourself: code spans, fenced blocks and HTML comments are not links; frontmatter `aliases`
-resolve; vault-path and root-doc targets resolve; `wiki/log.md` is exempt as a source
-(append-only history); and media embeds are checked against `assets/`, a missing target being a
-**dead embed**, reported separately from a dead link. Copy its scan totals into your report as
-its own control line.
+resolve (the list is read as YAML reads it, a one-line flow list or a block list of one-line items;
+a list it cannot parse, such as an unclosed quote, text after the closing bracket or an escape naming
+no character, or a value spread over more than one line, such as a block scalar, a wrapped list or an
+item continued below, prints under `MALFORMED ALIASES:`, a finding, and gives no alias); vault-path
+and root-doc targets resolve;
+`wiki/log.md` is exempt as a source (append-only history); and media embeds resolve by file name
+anywhere in the vault outside dot paths and the attic (a path-qualified one by its path), a
+missing target being a **dead embed**, reported separately from a dead link, and a name two
+visible files carry printing under `AMBIGUOUS EMBEDS:` (listed, not a finding). Copy its scan
+totals into your report as its own control line.
 
 Run `check-orphans.py --vault <vault>`. A page with **no inbound links** from any other page is
 an **orphan**; `index`, `log` and `maps/` pages are exempt by design (Maps of Content are
@@ -90,17 +97,47 @@ page**: lint counts, deep-lint reconciles.
 
 ## 2c — Attic leak (filenames only; attic contents are never opened)
 
-A live page must never link into the attic: the vault resolves wikilinks vault-wide, so a
-surviving link to an archived note silently reconnects retired material.
+A live page must never link into the attic: the vault resolves wikilinks and embeds vault-wide, so
+a surviving link to an archived file silently reconnects retired material.
 
-List basenames only — `find <vault>/attic -type f -name '*.md'` — and skip `MANIFEST.md`. Attic
-absent or empty → report `attic-leak: n/a` and move on. For each basename `b`, grep the live wiki
-(excluding `wiki/log.md`) for the exact link forms `[[b]]` · `[[b|` · `[[b#` · `/b]]` · `/b|`. A
-plain-text mention such as "b (archived)" is the sweep style and is **not** a finding. Any hit is
-a **leak**: report it with the page it sits on and leave the repair to the head.
+List every attic file by name only — `find <vault>/attic -type f ! -path '<vault>/attic/MANIFEST.md'`
+(names, never contents; only the root catalogue is set aside, by its path, and an archived project's
+own `MANIFEST.md` is listed). Attic absent or empty → report `attic-leak: n/a` and move on. Each name has its
+delimiter-complete link forms; every form ends in the character that closes a link target, so a
+longer name never matches:
+- a Markdown file `b.md`: `[[b]]` · `[[b|` · `[[b#` · `[[b.md]]` · `[[b.md|` · `[[b.md#` · `/b]]` ·
+  `/b|` · `/b#` · `/b.md]]` · `/b.md|` · `/b.md#` · `(b.md)` · `(b.md#` · `/b.md)`;
+- any other file `b.ext` (a name without an extension kept whole): `[[b.ext]]` · `[[b.ext|` ·
+  `[[b.ext#` · `/b.ext]]` · `/b.ext|` · `/b.ext#` · `(b.ext)` · `(b.ext#` · `/b.ext)`.
 
-Control: the same pipeline against one known live page name must return more than zero before you
-may report "no leaks".
+The forms go in a **pattern file**, never on a command line: most begin with `/`, and your fence
+refuses a command word that begins with `/` outside your grants. Write every form of every name,
+one per line with no blank line (a blank line is an empty pattern, which matches every line),
+with the file-writing tool to a scratch path your grants let you write, never inside the vault. A
+lane with no such path reports `needs: a writable scratch path because the attic-leak pattern
+file` and the check as `not run (grant missing)`. Then search with fixed strings, the live wiki
+only (the root history log `<vault>/wiki/log.md`, append-only, excluded by its full path; a live
+page elsewhere named `log.md` is searched like any other); no form is a command word, and the
+only paths on the line, the pattern file's and the vault's, lie inside your grants:
+
+```sh
+{ grep -rnoFf <pattern file> --include='*.md' <vault>/wiki; echo "search exit: $?"; } | grep -v '^<vault>/wiki/log\.md:'
+```
+
+The search's own exit status prints after its hits, read straight after it and before the log
+filter, whose status would turn a search error into an ordinary no-match: `search exit: 0` with
+hits, or with log hits only, `1` with none, and any other status (`2`, or no status line) is a
+failed probe, never "no leaks".
+
+A plain-text mention such as "attic/b.pdf (archived)" and a longer name such as `[[b.pdf.old]]` do
+not match and are **not** findings. Stated limits: a Markdown-link target written URL-encoded
+(`my%20note.md`) or in angle brackets is not matched; a parenthetical mention ending at the name,
+or a live file sharing an attic file's name, does match, so read each hit. Any confirmed hit is a
+**leak**: report it with the page it sits on and leave the repair to the head.
+
+Control: a pattern file holding the forms of one known linked live page's name, searched the same
+way, must print a hit (`path:line:form`) and `search exit: 0` before you may report "no leaks"; a
+diagnostic or the status line alone is no hit.
 
 ## 2d — qmd registry guard (one script; silent when qmd is dormant)
 
@@ -117,16 +154,20 @@ line as printed and never soften it.
 Anything landing in the roots the harness auto-loads reaches every session. **Two roots, four
 arms.** Skills are directories under `.claude/skills/`; agent definitions are files under
 `.claude/agents/` — an unsanctioned definition names a lane's model, tools and write scope, so it
-is the same exposure as an unsanctioned skill. Both arms diff against the same baseline.
+is the same exposure as an unsanctioned skill. Both arms diff against the same baseline, plus the
+user's own `<vault>/.claude/sanctioned.local.txt` where that file exists: the same line format, in
+the user's layer, listing their own `my-` skills and helpers. The prefix alone sanctions nothing.
 
 ```sh
 b="<vault>/.claude/skills/lint/sanctioned-skills.txt"   # vault skill names + agent definition filenames
+bl="<vault>/.claude/sanctioned.local.txt"               # the user's own lines, same format; absent = none
 hs="$HOME/.claude/skills/.sanctioned.txt"               # machine-local baselines, never shipped
 ha="$HOME/.claude/agents/.sanctioned.txt"
 [ -s "$b" ] || echo "PROBE FAILED: vault baseline missing/empty"
-comm -13 <(grep '^vault:' "$b" | cut -d: -f2 | sort) <(ls "<vault>/.claude/skills" | sort)
+reg="$(cat "$b"; [ ! -f "$bl" ] || cat "$bl")"          # the shipped registry, then the user's own lines
+comm -13 <(grep '^vault:' <<<"$reg" | cut -d: -f2 | sort) <(ls "<vault>/.claude/skills" | sort)
 [ -d "<vault>/.claude/agents" ] \
-  && comm -13 <(grep '^agent:' "$b" | cut -d: -f2 | sort) <(ls "<vault>/.claude/agents" | sort) \
+  && comm -13 <(grep '^agent:' <<<"$reg" | cut -d: -f2 | sort) <(ls "<vault>/.claude/agents" | sort) \
   || echo "agents-guard: n/a (no .claude/agents in this vault)"
 [ -d "$HOME/.claude/skills" ] || echo "PROBE FAILED: user-level skills root missing"
 [ -s "$hs" ] && [ -d "$HOME/.claude/skills" ] && comm -13 <(sort "$hs") <(ls "$HOME/.claude/skills" | sort)
@@ -142,7 +183,9 @@ you. Baseline entries missing on disk are drift, reported as information.
 
 Control before trusting any empty arm: re-run **each** arm's `comm` with a known-absent name
 injected into the disk side (`printf 'zzz-ctrl\n'`) and confirm it prints. One arm's control does
-not vouch for another's, so report four control results, one per arm.
+not vouch for another's, so report four control results, one per arm. Where the local list holds a
+line, add its control: the vault-skills arm on `$b` alone prints each listed `my-` skill that is on
+disk, and the arm above prints none of them.
 
 Throttle check, same step: run `throttle.py check --root <vault>`. Each `DRIFT` / `MISSING` /
 `UNROUTED` / `DESCRIPTION-TIER` line is a finding; `PROBE FAILED` never reads as clean. The script
@@ -179,6 +222,20 @@ verbatim**. It tells legitimate absence from a broken premise itself: an empty `
 name in code font, no link) — proposed by you, applied by the head, never by deleting the
 reference.
 
+## 2i — Experience reach (one script)
+
+`python3 .claude/skills/lint/check-experience-reach.py --vault .` pairs each experience page with the readers it declares and each pointer with a page. Report its totals and every `WARN` line. A vault with no pages and no pointers prints that state, which is no evidence that a pair works.
+
+## 2h — Tool-call markup (one script)
+
+A compile lane once left a leaked closing tag of the model harness's tool-call markup on every
+page it wrote. Run `check-tool-markup.py` and copy its `tool-markup:` summary line into your
+report verbatim, with each `path:line: <tag>` hit line; its `CONTROL:` line is the control. Code
+is strict: only the lines inside a plain fence and a one-line code span in a plain paragraph
+count, so an unusual quotation is a hit. Exit 1 lists hits, findings whose repair is the head's
+(remove a real leak; requote a false alarm as plain code); exit 2 (`cannot check`,
+`incomplete scan`, `0 pages checked`, `PROBE FAILED`) never reads as clean.
+
 ## 3 — Conflict audit
 
 Find pages carrying a `## Conflicts / Open Questions` section and list each unresolved conflict
@@ -213,7 +270,7 @@ names in code font rather than links:
 - `<the qmd-registry line, verbatim>` · `attic-leak: none / n/a / N leaks (control M)` ·
   `skill-guard: clean / N unsanctioned (four arm controls: …)` ·
   `customisation-pairing: ok / n/a / N findings` · `throttle-check: <the line, verbatim>` ·
-  `shipped-links: <the first line, verbatim>`
+  `shipped-links: <the first line, verbatim>` · `tool-markup: <the summary line, verbatim>`
 
 ### Proposed next steps
 1. ... (each a proposal for the head and the owner, never an action taken)

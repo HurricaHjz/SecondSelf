@@ -22,6 +22,27 @@ trap cleanup EXIT
 # alone. Only these are hashed: the rest of the directory may legitimately change under
 # another editor.
 HOME_BEFORE="$(shasum "$S" "$HERE/prices.json" "${BASH_SOURCE[0]}")"
+# What the suite DID to its home is the claim, as in test_lane.sh: the home's __pycache__ is
+# recorded now (absent, or its listing with each file's size and modification time) and the
+# closing leg fails only when the directory appeared or its listing changed during the suite. A
+# __pycache__ an earlier import of a delegate module left there is not this suite's write, so
+# such a directory never fails the leg; a file that appears, grows or is rewritten inside it
+# during the run still does. Two suites running in the same directory at once can change the
+# listing between the two readings: the leg then names both states, and a run alone settles it.
+pycache_state(){ "$PY" -B - "$1" <<'PYCACHE_STATE_END'
+import os, sys
+d = os.path.join(sys.argv[1], "__pycache__")
+if not os.path.isdir(d):
+    print("absent")
+else:
+    rows = []
+    for n in sorted(os.listdir(d)):
+        st = os.stat(os.path.join(d, n))
+        rows.append("%s %d %d" % (n, st.st_size, st.st_mtime_ns))
+    print("present: " + ("; ".join(rows) or "empty"))
+PYCACHE_STATE_END
+}
+PYC_BEFORE="$(pycache_state "$HERE")"
 
 # ---------------------------------------------------------------- fixture -------------------
 # Head session `sess`: one assistant call before the window, three inside (one of them written
@@ -1800,14 +1821,42 @@ PYSM
 if [ "$SM" = "5" ]; then ok "session_matches: equal, an 8-char prefix either way; a 6-char prefix, a different id and an empty id do not match"
 else no "session_matches  [expected 5 passes, got '$SM']"; fi
 
-# 47 — the suite itself leaves the shipped home alone: the files are byte-identical and no
-#      bytecode cache appeared (importing the script for leg 22 would write one by default).
-mkdir -p "$F/fakehome/__pycache__"                     # control: the -d test must discriminate
+# 47 — the suite itself leaves the shipped home alone: the files are byte-identical and the
+#      home's bytecode cache is as it was at the start (importing the script for leg 22 would
+#      write one by default). A cache an earlier import left, unchanged, does not fail the leg.
 HOME_AFTER="$(shasum "$S" "$HERE/prices.json" "${BASH_SOURCE[0]}")"
-if [ -n "$HOME_BEFORE" ] && [ "$HOME_BEFORE" = "$HOME_AFTER" ] && [ ! -d "$HERE/__pycache__" ] \
-   && [ -d "$F/fakehome/__pycache__" ]; then
-  ok "the suite leaves its own home untouched: script, price table and suite unchanged, no bytecode cache (controls: the byte-change control above, and a planted __pycache__ the same test does see)"
-else no "suite wrote into the script home  [changed: $([ "$HOME_BEFORE" = "$HOME_AFTER" ] && echo no || echo yes); pycache: $([ -d "$HERE/__pycache__" ] && echo yes || echo no)]"; fi
+PYC_AFTER="$(pycache_state "$HERE")"
+mkdir -p "$F/fakehome/__pycache__"                     # control: the state reader must see a planted cache
+if [ -n "$HOME_BEFORE" ] && [ "$HOME_BEFORE" = "$HOME_AFTER" ] && [ -n "$PYC_BEFORE" ] \
+   && [ "$PYC_BEFORE" = "$PYC_AFTER" ] && [ "$(pycache_state "$F/fakehome")" = "present: empty" ]; then
+  ok "the suite leaves its own home untouched: script, price table and suite unchanged, and its __pycache__ as at the start ($PYC_BEFORE) (controls: the byte-change control above, and a planted __pycache__ the same reader sees)"
+else no "suite wrote into the script home  [changed: $([ "$HOME_BEFORE" = "$HOME_AFTER" ] && echo no || echo yes); __pycache__ before: ${PYC_BEFORE:-unread}; after: ${PYC_AFTER:-unread}]"; fi
+# 47a — the own-home check's own legs, on a copy of the home's files under the fixture root, never
+#       the shipped home: a cache that appears must fire; a pre-existing one left unchanged must
+#       not; a new stray file, a grown file and a same-size rewrite inside it must each fire.
+PC="$F/pycache-copy"
+rm -rf "$PC"; mkdir -p "$PC"
+cp "$S" "$HERE/prices.json" "${BASH_SOURCE[0]}" "$PC/"
+S0="$(pycache_state "$PC")"
+mkdir -p "$PC/__pycache__"; printf 'planted bytecode\n' > "$PC/__pycache__/fable-share.cpython-99.pyc"
+S1="$(pycache_state "$PC")"
+if [ "$S0" = "absent" ] && [ -n "$S1" ] && [ "$S1" != "$S0" ]; then
+  ok "own-home check (must fire): a __pycache__ that appears during the suite changes the state ($S0 -> present)"
+else no "own-home check did not fire on a planted __pycache__  [$S0 / $S1]"; fi
+S2="$(pycache_state "$PC")"
+if [ -n "$S2" ] && [ "$S2" = "$S1" ]; then
+  ok "own-home check (must not fire): a pre-existing __pycache__ left unchanged reads the same state"
+else no "own-home check fired on an unchanged __pycache__  [$S1 / $S2]"; fi
+printf 'stray\n' > "$PC/__pycache__/other.cpython-99.pyc"
+S3="$(pycache_state "$PC")"
+printf 'more bytecode\n' >> "$PC/__pycache__/fable-share.cpython-99.pyc"
+S4="$(pycache_state "$PC")"
+"$PY" -B -c 'import os, sys; os.utime(sys.argv[1], ns=(1, 1))' "$PC/__pycache__/fable-share.cpython-99.pyc"
+S5="$(pycache_state "$PC")"
+if [ -n "$S3" ] && [ "$S3" != "$S2" ] && [ -n "$S4" ] && [ "$S4" != "$S3" ] && [ -n "$S5" ] && [ "$S5" != "$S4" ]; then
+  ok "own-home check (must fire): a new stray file, a grown file and a same-size rewrite in a pre-existing __pycache__ each change the state"
+else no "own-home check missed a change inside a pre-existing __pycache__  [stray: $([ "$S3" != "$S2" ] && echo seen || echo missed); grown: $([ "$S4" != "$S3" ] && echo seen || echo missed); rewritten: $([ "$S5" != "$S4" ] && echo seen || echo missed)]"; fi
+rm -rf "$PC"
 
 TOTAL=$((PASS + FAIL))
 if [ "$FAIL" -eq 0 ]; then echo "PASS $PASS/$TOTAL"; else echo "FAIL $FAIL/$TOTAL"; exit 1; fi

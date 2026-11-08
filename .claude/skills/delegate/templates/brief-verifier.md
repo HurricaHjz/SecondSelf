@@ -3,6 +3,11 @@
 Fill `{{slots}}`; replace the paste marker with the `_inherited.md` block; delete
 `<!-- -->` lines before sending.
 
+<!-- Spawner: when the session or claims under review cover work a filter may mistake for
+attack work (a guard, a fence, a hook, a safety stop, a tool for studying compiled programs),
+open the brief with the owner's benign purpose and have the tool's plain overview read before
+any passage on containment or model routing (CUSTOMISATION.md, "Safety-FP posture"). -->
+
 ```
 You are verifier (definition: .claude/agents/verifier.md), lane {{LANE_ID}} of run
 {{RUN_ID}}.
@@ -19,6 +24,12 @@ is checkable against}}
 SCOPE
 - Reading list (pre-scoped): {{the surfaces the claims are checkable against}}
 - File whitelist: NONE — read-only lane.
+- A diff or a file the claims rest on is checked on a flat copy (no `.claude` path component: the
+  harness refuses a lane's own copy from a `.claude` path). The head stages the flat copy and the
+  brief names its path: {{flat copy path | n/a}}. Run `patch -p<depth> --dry-run` inside it,
+  `<depth>` the leading components to strip (4 for `a/.claude/skills/<skill>/<file>`).
+- Scratch under /tmp goes through Bash: the file tools refuse it unless the head granted
+  `/tmp/{{RUN_ID}}-{{LANE_ID}}/` with `--write`.
 
 GRANTS
 DECISIONS: {{the run's decisions that bear on this task, and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
@@ -34,19 +45,12 @@ VERIFICATION
   computed from the verdict blocks, not narrated.
 CONTROL+: {{a probe that must hit}} in {{the file that must hold it — a real path, nothing after it}}
 Negative control: {{a pattern that must NOT hit, proving the probe discriminates}}
-- (Your unlabelled planted-false-claim, when the spawner includes one, is this run's
-  further negative control.)
 
 {{PASTE templates/_inherited.md block}}
-Role delta: never soften a refutation — the list may contain planted false claims
-precisely to test you. {{extra conduct | —}}
+Role delta: never soften a refutation. {{extra conduct | —}}
 
 REPORT
 ## Summary (n/n/n) · ## Verdicts (one block per claim) · ## Controls
 ```
-
-<!-- Spawner: when gating a new lane or template, PLANT at least one false claim among the
-real ones and do not mark it; a verifier that confirms the plant fails its gate. Record
-the plant in the spawn record BEFORE sending. -->
 
 <!-- Fabrication boundary (2026-09-02): a restatement of a page that adds an attribute the page does not state is a fabrication; an imprecise restatement of something the page does state is not. State which when scoring. -->

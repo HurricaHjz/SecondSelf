@@ -46,6 +46,56 @@ fail=0
 ok() { pass=$((pass + 1)); printf 'ok   %s\n' "$1"; }
 no() { fail=$((fail + 1)); printf 'FAIL %s\n' "$1"; }
 
+# Every concrete file cited by the module header resolves from the skill or vault root.
+# Runtime templates such as <store>/<run>-timeline.txt are not documentation locators.
+python3 -B - "$WATCH" > "$T/header-paths.txt" 2>&1 <<'PY_HEADER_PATHS'
+import ast
+from pathlib import Path
+import re
+import sys
+import uuid
+
+script = Path(sys.argv[1]).resolve()
+header = ast.get_docstring(ast.parse(script.read_text(encoding="utf-8")))
+if not header:
+    print("PROBE FAILED: watch.py has no module header")
+    raise SystemExit(2)
+
+
+def references(text):
+    tokens = re.findall(r"[\w./<>-]+\.(?:py|sh|md|txt)\b", text)
+    return {p for p in tokens if "<" not in p and ">" not in p}
+
+
+def missing(text):
+    # <vault>/.claude/skills/delegate/watch.py: parents[3] is the vault root.
+    return sorted(p for p in references(text)
+                  if not ((script.parents[3] if "/" in p else script.parent) / p).is_file())
+
+
+refs = references(header)
+if not {"watch.py", "test_watch.sh"} <= refs:
+    print("PROBE FAILED: the header path scan missed its known script and suite controls")
+    raise SystemExit(2)
+absent = missing(header)
+planted = "absent-" + uuid.uuid4().hex + ".md"
+if (script.parent / planted).exists():
+    print("PROBE FAILED: the planted missing path exists")
+    raise SystemExit(2)
+assert missing(header + "\n" + planted) == sorted(absent + [planted])
+print("header paths: %d checked, %d missing; planted missing-path control: 1" % (len(refs), len(absent)))
+if absent:
+    print("missing: " + ", ".join(absent))
+    raise SystemExit(1)
+PY_HEADER_PATHS
+header_rc=$?
+if [ "$header_rc" -eq 2 ]; then cat "$T/header-paths.txt"; exit 2; fi
+if [ "$header_rc" -eq 0 ]; then
+  ok "HP1 every header file path exists; known-file and planted missing-path controls pass"
+else
+  no "HP1 header file paths: $(cat "$T/header-paths.txt")"
+fi
+
 # Every leg runs the console with the store, the projects root and the vault given as fixture
 # paths: nothing in watch.py may point at a real machine for these to resolve. COLUMNS and LINES
 # are fixed so the rendering the assertions read is the same on every terminal.
@@ -235,6 +285,10 @@ events = [
        silence_s=900.0, silence_src="--silence-s"),
     ev(4, "lane-spawned", lane="B-ONE", session_id="lane-sid-1", pid=2001, wrapper_pid=2000,
        **{"class": "builder"}),
+    ev(4, "lane-awake", lane="B-ONE", session_id="lane-sid-1", wrapper_pid=2000,
+       **{"class": "builder"}, detached=False, awake="started", caffeinate_pid=2004,
+       watched_pid=2001, command=["/usr/bin/caffeinate", "-i", "-w", "2001"],
+       note="caffeinate pid 2004 holds an idle-sleep assertion until pid 2001 exits"),
     ev(5, "observation", phase="build", what="a plain note that carries no alerting word",
        note="evidence: the fixture"),
     ev(6, "observation", phase="build", what="warning: the planted alert word",
@@ -329,16 +383,17 @@ write_jsonl("run-vocab.jsonl", events)
 write_jsonl("run-vocab-closed.jsonl", [dict(e, run="run-vocab-closed") for e in events] + [
     dict(ev(90, "run-close", items="3", lanes="3", meter=METER, reason_tally="(a)x2 (b)x1",
             trace="3 rows", commit="0000000", push="ok"), run="run-vocab-closed")])
-# the same run closed with every item done: item4 starts at a boundary just before the close and
-# is then WORKED (a ledger observation carrying its phase), so the close ends it and the verdict
-# reads 4/4 · all done (the green case for the close's tone). Without that observation item4's
-# only start would be the boundary's `to`, which the close reads as skipped since 2026-09-17
-# (register 12:51; the F4 legs below).
+# the same run closed with every item done: item4 starts at a boundary just before the close, is
+# WORKED (a ledger observation carrying its phase) and ends on an explicit item-done, so the verdict
+# reads 4/4 · all done (the green case for the close's tone). Without that record item4 reads
+# unresolved, and without the observation its only start is the boundary's `to`, which the close
+# reads as skipped since 2026-09-17 (register 12:51; the F4 legs below).
 write_jsonl("run-vocab-alldone.jsonl", [dict(e, run="run-vocab-alldone") for e in events] + [
     dict(ev(89, "phase-boundary", **{"from": "item3", "to": "item4"},
             disposition="the synthetic verifier closed green", meter=METER), run="run-vocab-alldone"),
     dict(ev(89, "observation", phase="item4", what="the close-out report written",
             note="evidence: the fixture"), run="run-vocab-alldone"),
+    dict(ev(89, "item-done", items=["item4"], note="the close-out report written"), run="run-vocab-alldone"),
     dict(ev(90, "run-close", items="4", lanes="3", meter=METER, reason_tally="(a)x2 (b)x1",
             trace="4 rows", commit="0000000", push="ok"), run="run-vocab-alldone")])
 # the head stopped: one more stop after the last head start, so the `r` key may fire
@@ -1279,17 +1334,17 @@ else
 fi
 
 # ---------------------------------------------------------------- leg 8b: the close's item states and notice
-# the close ends every item that started and reads a never-started item as skipped, the overall
-# line carries the verdict, and a boxed notice follows the final board; the open run keeps item4
-# pending (the control), so the rule fires only at a close
+# the close converts nothing: a started item with no completion record reads unresolved and a
+# never-started item skipped, the overall line carries the verdict, and a boxed notice follows the
+# final board; the open run keeps item4 pending (the control), so the rule fires only at a close
 run_watch --run run-vocab-closed --once --plain < /dev/null > "$T/closed-once.txt" 2>&1
-if grep -qE '^│ item3 .*done' "$T/closed-once.txt" && grep -qE '^│ item4 .*skipped' "$T/closed-once.txt" &&
+if grep -qE '^│ item3 .*unresolved' "$T/closed-once.txt" && grep -qE '^│ item4 .*skipped' "$T/closed-once.txt" &&
    ! grep -qE '^│ item[0-9]+ .*pending' "$T/closed-once.txt"; then
-  ok "at the close the item in hand reads done and the item never started reads skipped, none pending"
+  ok "at the close the item in hand reads unresolved and the item never started reads skipped, none pending"
 else
   no "the closed run's item states are wrong: $(grep -E '^│ item' "$T/closed-once.txt" | tr '\n' ' ')"
 fi
-if grep -q '3/4 items done · 1 skipped ■ RUN CLOSED' "$T/closed-once.txt"; then
+if grep -q '2/4 items done · 1 unresolved · 1 skipped ■ RUN CLOSED' "$T/closed-once.txt"; then
   ok "the overall line of a closed run counts done and skipped and carries the close mark"
 else
   no "the overall line is wrong: $(grep -m1 overall "$T/closed-once.txt")"
@@ -1988,8 +2043,8 @@ else
 fi
 for v in gated laned phased; do
   kwatch --run "run-f4-$v" --once --plain < /dev/null > "$T/f4-$v.txt" 2>&1
-  if grep -qE '^│ item3 .* done ' "$T/f4-$v.txt" && grep -q '4/6 items done · 2 skipped ■ RUN CLOSED' "$T/f4-$v.txt"; then
-    ok "F4-04 (must not fire, $v) the boundary's target then worked (a $v event of its own) still reads done at the close: 4/6 items done"
+  if grep -qE '^│ item3 .* unresolved ' "$T/f4-$v.txt" && grep -q '3/6 items done · 1 unresolved · 2 skipped ■ RUN CLOSED' "$T/f4-$v.txt"; then
+    ok "F4-04 (must not fire, $v) the boundary's target then worked (a $v event of its own) reads unresolved at the close, never skipped: 3/6 items done"
   else
     no "F4-04 ($v) the worked target reads: $(grep -E '^│ item3 |items done' "$T/f4-$v.txt" | tr '\n' '|')"
   fi
@@ -2009,8 +2064,8 @@ else
   no "F4-06 the no-items close reads: $(grep -E 'run-close says|items done' "$T/f4-noitems.txt" | tr '\n' '|')"
 fi
 kwatch --run run-f4-nobnd --once --plain < /dev/null > "$T/f4-nobnd.txt" 2>&1
-if grep -qE '^│ item0 .* done ' "$T/f4-nobnd.txt" && grep -q '1/6 items done · 5 skipped ■ RUN CLOSED' "$T/f4-nobnd.txt"; then
-  ok "F4-07 (premise) a record with no boundary at all: the gated item reads done, the rest skipped"
+if grep -qE '^│ item0 .* unresolved ' "$T/f4-nobnd.txt" && grep -q '0/6 items done · 1 unresolved · 5 skipped ■ RUN CLOSED' "$T/f4-nobnd.txt"; then
+  ok "F4-07 (premise) a record with no boundary at all: the gated item reads unresolved, the rest skipped"
 else
   no "F4-07 the boundary-less close reads: $(grep -E '^│ item0 |items done' "$T/f4-nobnd.txt" | tr '\n' '|')"
 fi
@@ -2606,18 +2661,942 @@ else
   no "FS06 a snapshot or --plain folded: $fo_items and $fp_items item rows"
 fi
 
+# ---------------------------------------------------------------- PN/OR: names arriving after run-open and orientation
+# Exercise the real main loop on one Run: each key read follows a rendered frame, so the
+# fixture edit happens after the unnamed frame and the assertion sees the next refresh.
+# No sleeps or live console are needed. This mutable fixture tree is outside manifest().
+python3 -B - "$WATCH" "$T" > "$T/item-refresh.txt" 2>&1 <<'PY_ITEM_REFRESH'
+import contextlib
+from datetime import datetime
+import hashlib
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import sys
+from unittest.mock import patch
+
+spec = importlib.util.spec_from_file_location("watch_item_refresh", sys.argv[1])
+watch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(watch)
+watch.USE_COLOUR = False
+root = Path(sys.argv[2]) / "item-refresh"
+root.mkdir()
+stamp = datetime.now().astimezone().isoformat()
+
+
+def event(kind, **fields):
+    return dict(ts=stamp, run="run-items", event=kind, **fields)
+
+
+def pack_text(names):
+    return "## Resume prompt\n" + "".join(
+        "- %s %s — fixture work.\n" % pair for pair in names.items())
+
+
+def fixture(label, names, planned=True):
+    base = root / label
+    base.mkdir()
+    pack = base / "pack.md"
+    pack.write_text(pack_text(names), encoding="utf-8")
+    record = base / "run-items.jsonl"
+    opened = event("run-open", handoff=str(pack))
+    if planned:
+        opened["expect_items"] = {"item0": 1, "item1": 1, "item2": 1}
+    rows = [opened]
+    save(record, rows)
+    return pack, record, rows
+
+
+def save(record, rows):
+    record.write_text("".join(json.dumps(e) + "\n" for e in rows), encoding="utf-8")
+
+
+def panel(run):
+    return "\n".join(watch.render_items(run, 150))
+
+
+def row(text, key):
+    found = next((line for line in text.splitlines() if line.startswith("│ " + key + " ")), "")
+    assert found, "missing %s row: %s" % (key, text)
+    return found
+
+
+def check(label, test):
+    try:
+        test()
+    except AssertionError as exc:
+        print("FAIL %s: %s" % (label, str(exc).replace("\n", " | ") or "assertion failed"))
+    else:
+        print("ok   " + label)
+
+
+def live_names(label, initial, final, append=False, preflight=False):
+    pack, record, rows = fixture(label, initial)
+    target = pack
+    if preflight:
+        target = pack.with_name("run-items-preflight.md")
+        target.write_text(pack_text(initial), encoding="utf-8")
+        pack.write_text("## Resume prompt\nSee the sibling pre-flight.\n", encoding="utf-8")
+    out, err = io.StringIO(), io.StringIO()
+    step = 0
+    # One unchanged refresh discovers the selected pre-flight path in the source cache;
+    # the subsequent edit must be noticed through that source's metadata, not its discovery.
+    edit_step = 1 if preflight else 0
+    before = record.read_bytes()
+    inputs = None
+
+    def manifest():
+        return {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in pack.parent.iterdir() if p.is_file()}
+
+    def key(_timeout):
+        nonlocal step, inputs
+        text = out.getvalue()
+        if step <= edit_step:
+            for item, name in initial.items():
+                assert name in row(text, item), text
+            if not initial:
+                assert text.count(" pending ") == 3, text
+                assert all(name not in text for name in final.values()), text
+            if step == edit_step:
+                target.write_text(pack_text(final), encoding="utf-8")
+                if append:
+                    with record.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(event("observation", note="names ready")) + "\n")
+                inputs = manifest()  # after the fixture edit, before the console reads it
+            out.seek(0)
+            out.truncate()
+            step += 1
+            return ""
+        for item, name in final.items():
+            assert name in row(text, item), text
+        assert len([line for line in text.splitlines() if line.startswith("│ item")]) == 3, text
+        if not append:
+            assert record.read_bytes() == before, "record changed without an append"
+        step += 1
+        return "q"
+
+    env = {"LLM_WIKI_STORE": str(root), "AIMYTH_PROJECTS_DIR": str(root),
+           "AIMYTH_WATCH_NOTIFY": "0", "COLUMNS": "150", "LINES": "60"}
+    with patch.dict(os.environ, env), patch.object(watch, "record_path", return_value=str(record)), \
+            patch.object(watch, "read_key", side_effect=key), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        assert watch.main(["--run", "run-items", "--vault", str(root), "--plain",
+                           "--no-notify", "--wait-record", "0"]) == 0
+    assert step == edit_step + 2, "the live loop did not render every expected frame"
+    assert not err.getvalue(), err.getvalue()
+    assert inputs and inputs == manifest(), "the console changed its fixture inputs"
+
+
+names = {"item0": "orientation", "item1": "capture", "item2": "review"}
+check("PN01 blank names fill after a pack edit and record append; planned rows survive",
+      lambda: live_names("append", {}, {"item1": "capture", "item2": "review"}, append=True))
+check("PN02 blank names fill after a pack edit alone; record bytes stay unchanged",
+      lambda: live_names("pack-only", {}, {"item1": "capture", "item2": "review"}))
+check("PN03 a fully named pack is renamed without a record append",
+      lambda: live_names("rename", names, dict(names, item1="collect")))
+check("PN04 a fully named pre-flight is refreshed without a record append",
+      lambda: live_names("preflight", names, dict(names, item1="collect"), preflight=True))
+
+
+def planned_rows():
+    pack, record, rows = fixture("partial", {"item1": "capture"})
+    run = watch.Run("run-items", str(record), str(root))
+    assert run.names == {"item0": "", "item1": "capture", "item2": ""}, run.names
+    text = panel(run)
+    assert text.count(" pending ") == 3 and "0/3 items done" in text, text
+    assert "capture" in row(text, "item1"), text
+
+
+check("PN05 a partial pack retains every expect_items row with zero items done and a named control",
+      planned_rows)
+check("PN06 blank names retry the pre-flight while the pack and record stay unchanged",
+      lambda: live_names("blank-retry", {}, names, preflight=True))
+
+
+def orientation(label, named=False, evidence=True, decision="allow", later=False,
+                closed=False, phase=False, null=False, target="item1", prior_allowed=False):
+    pack, record, rows = fixture(label, names if named else {"item1": "capture"})
+    run = watch.Run("run-items", str(record), str(root))
+    assert "pending" in row(panel(run), "item0"), panel(run)
+    if prior_allowed:
+        rows.extend([event("gate", item="item1", decision="allow"), event("head-successor")])
+    if phase:
+        rows.append(event("ledger", phase="item0", note="orientation read"))
+    gate = event("gate", item=target, decision=decision)
+    if evidence:
+        gate["orientation_tokens"] = None if null else 0  # zero is measured, not absent
+    rows.append(gate)
+    if closed:
+        rows.insert(-1, event("run-close"))
+    if later:
+        rows.append(event("gate", item="item1", decision="allow"))
+    save(record, rows)
+    run.rebuild(watch.read_events(str(record)))
+    wanted = "done" if not closed and not prior_allowed and target == "item1" and (phase or evidence and not null) \
+        and (decision == "allow" or later) else "skipped" if closed else "pending"
+    text = panel(run)
+    assert wanted in row(text, "item0"), text
+    assert len(run.item_order) == 3, run.item_order
+    if wanted == "done":
+        assert "running" in row(text, "item1") and "1/3 items done" in text, text
+    elif wanted == "pending":
+        assert "0/3 items done" in text and "capture" in row(text, "item1"), text
+
+
+check("OR01 measured orientation and an allowed first-item gate complete named item0",
+      lambda: orientation("named", named=True))
+check("OR02 the same allowed gate completes item0 when the pack never names it",
+      lambda: orientation("unnamed"))
+check("OR03 a refused gate leaves orientation pending despite measured evidence (negative control)",
+      lambda: orientation("refused", decision="refuse"))
+check("OR04 evidence on a refused gate survives until the later allowed gate",
+      lambda: orientation("retry", decision="refuse", later=True))
+check("OR05 an allowed gate without orientation evidence leaves item0 pending",
+      lambda: orientation("no-evidence", evidence=False))
+check("OR06 null orientation is unmeasured and leaves item0 pending",
+      lambda: orientation("null", null=True))
+check("OR07 explicit work on phase item0 followed by an allowed gate completes orientation",
+      lambda: orientation("phase", evidence=False, phase=True))
+check("OR08 a gate after run-close does not change the orientation verdict",
+      lambda: orientation("post-close", closed=True))
+check("OR09 an allowed gate skipping the first work item does not complete orientation",
+      lambda: orientation("skip-first", target="item2"))
+check("OR10 a later head's measured orientation cannot complete item0 retrospectively",
+      lambda: orientation("later-head", prior_allowed=True))
+
+
+def late_orientation(label, decision="allow", evidence=True):
+    pack, record, rows = fixture(label, {"item1": "capture", "item2": "review"}, planned=False)
+    gate = event("gate", item="item1", decision=decision)
+    if evidence:
+        gate["orientation_tokens"] = 0  # measured zero is evidence
+    rows.append(gate)
+    save(record, rows)
+    before = record.read_bytes()
+    out, err = io.StringIO(), io.StringIO()
+    step = 0
+
+    def key(_timeout):
+        nonlocal step
+        text = out.getvalue()
+        if step == 0:
+            assert not any(line.startswith("│ item0 ") for line in text.splitlines()), text
+            assert "capture" in row(text, "item1") and "0/2 items done" in text, text
+            # The gate is already in the record; only the pack changes from here onwards.
+            pack.write_text(pack_text(names), encoding="utf-8")
+            out.seek(0)
+            out.truncate()
+            step += 1
+            return ""
+        wanted = "done" if decision == "allow" and evidence else "pending"
+        assert "orientation" in row(text, "item0") and wanted in row(text, "item0"), text
+        assert "running" in row(text, "item1") and "pending" in row(text, "item2"), text
+        assert ("1/3" if wanted == "done" else "0/3") + " items done" in text, text
+        assert record.read_bytes() == before, "the late row depended on a record append"
+        step += 1
+        return "q"
+
+    env = {"LLM_WIKI_STORE": str(root), "AIMYTH_PROJECTS_DIR": str(root),
+           "AIMYTH_WATCH_NOTIFY": "0", "COLUMNS": "150", "LINES": "60"}
+    with patch.dict(os.environ, env), patch.object(watch, "record_path", return_value=str(record)), \
+            patch.object(watch, "read_key", side_effect=key), \
+            contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        assert watch.main(["--run", "run-items", "--vault", str(root), "--plain",
+                           "--no-notify", "--wait-record", "0"]) == 0
+    assert step == 2, "the live loop did not render the frame before and after name discovery"
+    assert not err.getvalue(), err.getvalue()
+    assert {p.name for p in pack.parent.iterdir()} == {pack.name, record.name}
+    assert pack.read_text(encoding="utf-8") == pack_text(names), "the console changed the pack"
+    assert record.read_bytes() == before, "the console changed the record"
+
+
+def orientation_admission(label, decision="allow", evidence=True):
+    pack, record, rows = fixture(label, names)
+    admission = event("gate", item="item0", decision="allow")
+    if evidence:
+        admission["orientation_tokens"] = 0  # only the admission carries the measurement
+    rows.append(admission)
+    save(record, rows)
+    run = watch.Run("run-items", str(record), str(root))
+    text = panel(run)
+    assert "running" in row(text, "item0") and "pending" in row(text, "item1"), text
+    assert "0/3 items done" in text, text
+    # There is no boundary event; departure alone must settle orientation.
+    rows.append(event("gate", item="item1", decision=decision))
+    save(record, rows)
+    before = record.read_bytes()
+    run.rebuild(watch.read_events(str(record)))
+    wanted = "done" if decision == "allow" and evidence else "pending"
+    text = panel(run)
+    assert wanted in row(text, "item0") and "running" in row(text, "item1"), text
+    assert "review" in row(text, "item2") and "pending" in row(text, "item2"), text
+    assert ("1/3" if wanted == "done" else "0/3") + " items done" in text, text
+    assert record.read_bytes() == before, "the console changed the record"
+
+
+check("OR11 item0 first named after an allowed gate is done on a pack-only refresh without expect_items",
+      lambda: late_orientation("late-name"))
+check("OR12 admission to item0 then an allowed item1 gate completes orientation without a boundary",
+      lambda: orientation_admission("admission"))
+check("OR13 a late orientation row stays pending for a refused gate or absent evidence",
+      lambda: (late_orientation("late-refused", decision="refuse"),
+               late_orientation("late-no-evidence", evidence=False)))
+check("OR14 after item0 admission, refusal or absent evidence leaves orientation pending",
+      lambda: (orientation_admission("admission-refused", decision="refuse"),
+               orientation_admission("admission-no-evidence", evidence=False)))
+PY_ITEM_REFRESH
+[ $? -eq 0 ] || { cat "$T/item-refresh.txt"; printf 'PROBE FAILED: item refresh fixtures did not finish\n'; exit 2; }
+while IFS= read -r result; do
+  case "$result" in
+    'ok   '*) ok "${result#ok   }" ;;
+    'FAIL '*) no "${result#FAIL }" ;;
+    *) printf 'PROBE FAILED: unexpected item refresh output: %s\n' "$result"; exit 2 ;;
+  esac
+done < "$T/item-refresh.txt"
+
+# ---------------------------------------------------------------- B10: the console repairs of Batch 10
+# Their fixtures live in a store of their own ($T/b10store), outside the manifest the write-proof
+# legs compare, as the KF legs' do; the one sanctioned report a close writes there stays there.
+BS="$T/b10store"
+mkdir -p "$BS/spawn-records" "$T/b10handoffs"
+python3 -B - "$T" "$LIVE_PID" <<'PY_B10FIX'
+import json
+import os
+import sys
+import time
+
+T, LIVE = sys.argv[1], int(sys.argv[2])
+REC = os.path.join(T, "b10store", "spawn-records")
+t0 = time.time() - 90 * 60
+
+
+def ts(mins):
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t0 + mins * 60))
+
+
+def ev(mins, kind, **fields):
+    payload = {"ts": ts(mins), "event": kind}
+    payload.update(fields)
+    return payload
+
+
+def write(run, rows):
+    with open(os.path.join(REC, run + ".jsonl"), "w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(dict(row, run=run), ensure_ascii=False) + "\n")
+
+
+four = os.path.join(T, "b10handoffs", "four.md")
+with open(four, "w", encoding="utf-8") as fh:
+    fh.write("# a four-item pack (fixture)\n\n## Resume prompt\n\n")
+    for k in range(1, 5):
+        fh.write("item%d N%d · build — fixture item %d\n" % (k, k, k))
+
+# WR: a record with no run-open and no lane event yet (register 2026-10-01 13:34): the spawner's
+# pre-registered controls line (`ledger --phase controls-LANE` writes an observation) and an early
+# peer-name observation, both written before the wrapper's lane-open.
+controls = [ev(0, "observation", phase="controls-XR", what="controls: a fixture phrase in a truth file",
+               note="pre-registered by the spawner"),
+            ev(0.1, "observation", phase="peer", what="peer name: fixture-peer", note="fixture")]
+write("run-wr-ctl", controls)              # stays event-less: the premise failure after the grace
+write("run-wr-ctl-late", controls)         # gains its lane-open inside the grace (the leg appends it)
+
+# RE: a resume at another effort (register 2026-09-21 18:5x). codex-lane.py's lane-resumed carries
+# model and effort; lane.py's carries neither key, so its resume keeps the open's.
+opened = [ev(0, "lane-open", lane="RE-A", model="gpt-6-astra", effort="max", session_id="sid-RE-A",
+             reason="(a) a fixture lane", **{"class": "builder"}),
+          ev(0, "lane-spawned", lane="RE-A", session_id="sid-RE-A", pid=LIVE, wrapper_pid=LIVE),
+          ev(10, "lane-closed", lane="RE-A", exit_class="completed", total_cost_usd=1.0,
+             session_id="sid-RE-A")]
+write("run-re-ultra", opened + [ev(20, "lane-resumed", lane="RE-A", session_id="sid-RE-A2",
+                                   wrapper_pid=LIVE, resume_n=1, model="gpt-6-astra", effort="ultra")])
+write("run-re-keyless", opened + [ev(20, "lane-resumed", lane="RE-A", session_id="sid-RE-A2",
+                                     wrapper_pid=LIVE, resume_n=1)])
+
+# ST: the head row after a stand-down (register 2026-09-25 14:5x): the head exits, the supervisor
+# stands down (the ✖), then a heartbeat line and the supervisor's own exit observation arrive.
+head = [ev(0, "run-open", session="st-head-1", handoff=four, regime="multi"),
+        ev(1, "gate", item="item1", percent=5)]
+write("run-st-down", head + [ev(30, "head-exit", band="ok", handoff=four, pack=True),
+                             ev(35, "supervisor-stood-down", reason="stopped"),
+                             ev(50, "heartbeat", minutes=30, action="beat"),
+                             ev(60, "observation", what="the supervisor exited after the stand-down",
+                                note="fixture")])
+write("run-st-live", head + [ev(50, "heartbeat", minutes=30, action="beat")])
+write("run-st-resumed", head + [ev(30, "stop-condition", which="limit", action="wait"),
+                                ev(40, "head-resumed", session_id="st-head-1", resume_n=1)])
+
+# PR: items worked in parallel (register 2026-09-20 20:0x, the recurrence of 22 September):
+# item1 and item2 are gated, item2's boundary ends it and hands on to item3; item1 has no end.
+write("run-pr", [ev(0, "run-open", session="pr-head-1", handoff=four, regime="multi"),
+                 ev(1, "gate", item="item1", percent=5),
+                 ev(10, "gate", item="item2", percent=8),
+                 ev(20, "phase-boundary", **{"from": "item2", "to": "item3"})])
+print("b10 fixtures written")
+PY_B10FIX
+[ $? -eq 0 ] || { printf 'PROBE FAILED: the B10 fixture generator did not run\n'; exit 2; }
+bwatch() {
+  env LLM_WIKI_STORE="$BS" AIMYTH_PROJECTS_DIR="$T/projects" AIMYTH_WATCH_NOTIFY=0 \
+      COLUMNS=150 LINES=60 python3 -B "$WATCH" --vault "$T/vault" "$@"
+}
+
+# WR01-WR03: a record holding no run-open and no lane event gets the missing record's grace
+# (register 2026-10-01 13:34); RW01-RW03 above stay the missing-record legs, unchanged.
+( sleep 2
+  python3 -B -c '
+import json, sys, time
+path = sys.argv[1]
+now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+rows = [{"ts": now, "run": "run-wr-ctl-late", "event": "lane-open", "lane": "WR-A", "class": "critic",
+         "model": "opus", "effort": "max", "session_id": "sid-WR-A"},
+        {"ts": now, "run": "run-wr-ctl-late", "event": "lane-closed", "lane": "WR-A",
+         "exit_class": "completed", "total_cost_usd": 0.1},
+        {"ts": now, "run": "run-wr-ctl-late", "event": "run-close", "shape": "plain-lane-run", "lanes": 1}]
+with open(path, "a", encoding="utf-8") as fh:
+    fh.write("".join(json.dumps(r) + "\n" for r in rows))
+' "$BS/spawn-records/run-wr-ctl-late.jsonl" ) &
+wrpid=$!
+bwatch --run run-wr-ctl-late --plain --refresh 0.2 --wait-record 30 < /dev/null > "$T/wr-late.txt" 2>&1
+wrrc=$?
+wait "$wrpid"
+if [ "$wrrc" -eq 0 ] && grep -q 'waiting up to 30 s for a run-open or lane event' "$T/wr-late.txt" &&
+   grep -q '■ RUN CLOSED · run-wr-ctl-late' "$T/wr-late.txt" && ! grep -q 'PROBE FAILED' "$T/wr-late.txt"; then
+  ok "WR01 (must fire) a controls-only record that gains its lane-open inside the grace draws the console and closes the run (exit 0)"
+else
+  no "WR01 the controls-only record: exit $wrrc, $(head -3 "$T/wr-late.txt" | tr '\n' '|')"
+fi
+bwatch --run run-wr-ctl --plain --wait-record 1 < /dev/null > "$T/wr-never.txt" 2>&1
+wnrc=$?
+if [ "$wnrc" -eq 2 ] && grep -q 'waiting up to 1 s for a run-open or lane event' "$T/wr-never.txt" &&
+   grep -q 'PROBE FAILED: no run-open, no lane-open and no lane-closed event' "$T/wr-never.txt"; then
+  ok "WR02 a record that stays event-less past the grace waits first, then ends with its probe message (exit 2)"
+else
+  no "WR02 the event-less record after the wait: exit $wnrc, $(tr '\n' '|' < "$T/wr-never.txt")"
+fi
+bwatch --run run-wr-ctl --once --plain --wait-record 30 < /dev/null > "$T/wr-once.txt" 2>&1
+wonrc=$?
+if [ "$wonrc" -eq 2 ] && ! grep -q 'waiting up to' "$T/wr-once.txt" &&
+   grep -q 'no run-open, no lane-open and no lane-closed event' "$T/wr-once.txt"; then
+  ok "WR03 --once still never waits: the controls-only record fails at once (the control for WR01)"
+else
+  no "WR03 --once on the controls-only record: exit $wonrc, $(tr '\n' '|' < "$T/wr-once.txt")"
+fi
+
+# RE01-RE02: a resumed lane's row takes the resume's model and effort (register 2026-09-21 18:5x)
+bwatch --run run-re-ultra --once --plain > "$T/re-ultra.txt" 2>&1
+if grep -qE '^. ● RE-A .* astra·ultra ' "$T/re-ultra.txt" && ! grep -qE '^. . RE-A .* astra·max ' "$T/re-ultra.txt"; then
+  ok "RE01 (must fire) a resume from max to ultra draws the lane at astra·ultra in lanes now, never the open's astra·max"
+else
+  no "RE01 the resumed lane reads: $(grep -E '^. . RE-A ' "$T/re-ultra.txt" | head -1)"
+fi
+bwatch --run run-re-keyless --once --plain > "$T/re-keyless.txt" 2>&1
+if grep -qE '^. ● RE-A .* astra·max ' "$T/re-keyless.txt"; then
+  ok "RE02 (must not fire) a resume whose event carries no model or effort key keeps the open's astra·max"
+else
+  no "RE02 the keyless resume reads: $(grep -E '^. . RE-A ' "$T/re-keyless.txt" | head -1)"
+fi
+
+# ST01-ST03: the head row's fill ends at the stop of a stood-down head (register 2026-09-25 14:5x)
+for v in down live resumed; do
+  bwatch --run "run-st-$v" --once --plain > "$T/st-$v.txt" 2>&1
+done
+python3 -B - "$WATCH" "$T/st-down.txt" "$T/st-live.txt" "$T/st-resumed.txt" > "$T/st-cells.txt" 2>&1 <<'PY_HEADCELLS'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("watch_under_test", sys.argv[1])
+watch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(watch)
+cut = len("│ ") + watch.LANE_NAME_W + 1                  # the box edge and the label column
+for path in sys.argv[2:]:
+    rows = [line.rstrip("\n") for line in open(path, encoding="utf-8")
+            if line.startswith("│ head ") and line[7:8] == " "]
+    if len(rows) != 1:
+        print("%s rows=%d" % (path.rsplit("/", 1)[-1], len(rows)))
+        continue
+    cells = rows[0][cut:-2]
+    stop = cells.rfind("✖")
+    before = cells[:stop].count("█") if stop >= 0 else 0
+    after = cells[stop + 1:].count("█") if stop >= 0 else -1
+    print("%s stop=%s before=%d after=%d last=%s" % (path.rsplit("/", 1)[-1][:-4],
+          "yes" if stop >= 0 else "no", before, after, cells.rstrip()[-1:] or "-"))
+PY_HEADCELLS
+stdown=$(grep '^st-down ' "$T/st-cells.txt")
+case $stdown in
+  "st-down stop=yes before="[1-9]*" after=0 last="*) ok "ST01 (must fire) after a head exit and a stand-down, the heartbeat and the supervisor's exit observation draw no head fill past the ✖ ($stdown)" ;;
+  *) no "ST01 the stood-down head row: $stdown" ;;
+esac
+stlive=$(grep '^st-live ' "$T/st-cells.txt")
+case $stlive in
+  "st-live stop=no "*" last=█") ok "ST02 (must not fire) a live head with a later heartbeat still fills its row to now ($stlive)" ;;
+  *) no "ST02 the live head row: $stlive" ;;
+esac
+stres=$(grep '^st-resumed ' "$T/st-cells.txt")
+case $stres in
+  "st-resumed stop=yes "*" last=█") ok "ST03 (must not fire) a stop followed by a head start fills on to now ($stres)" ;;
+  *) no "ST03 the resumed head row: $stres" ;;
+esac
+
+# PR01-PR02: running is every gated item with no end boundary, not only the item in hand
+# (register 2026-09-20 20:0x); OR11-OR14 above keep item0's own rule, and leg 3, IK and F4 the
+# item in hand's.
+bwatch --run run-pr --once --plain > "$T/pr.txt" 2>&1
+if grep -qE '^│ item1 .* running ' "$T/pr.txt" && grep -qE '^│ item3 .* running ' "$T/pr.txt"; then
+  ok "PR01 (must fire) two items gated and one ended: the other gated item reads running beside the item in hand"
+else
+  no "PR01 the parallel items read: $(grep -E '^│ item[13] ' "$T/pr.txt" | tr '\n' '|')"
+fi
+if grep -qE '^│ item2 .* done ' "$T/pr.txt" && grep -qE '^│ item4 .* pending ' "$T/pr.txt" &&
+   grep -q ' 1/4 items done' "$T/pr.txt"; then
+  ok "PR02 (must not fire) the ended item reads done and the never-gated one pending: 1/4 items done"
+else
+  no "PR02 the other rows read: $(grep -E '^│ item[24] |items done' "$T/pr.txt" | tr '\n' '|')"
+fi
+
+# ---------------------------------------------------------------- IX: suffixed items, re-declared maps, summary bullets, the billed label
+# Four causes of one miscount (register 2026-10-12 15:54), each with a planted case and a control:
+# a suffixed item keyed as its parent, planned rows read from the run-open's map alone, a
+# hand-off's summary bullet read as an item's name, and a boundary's billed figures shown
+# unlabelled beside a later head. The fixtures live under $T/ixstore, outside manifest(); only
+# --once snapshots and in-process renders run. An `expect-items` event is written in the shape
+# handsoff.py's `expect` writes it (its map under `items`, `src` "expect"); IX09 and IX10 hold the
+# panel to the map the gate reads, IX10 against handsoff.py's own declared_items beside this suite.
+mkdir -p "$T/ixstore/spawn-records" "$T/ixstore/projects" "$T/ixstore/vault" "$T/ixstore/state"
+python3 -B - "$WATCH" "$T/ixstore" "$HERE/handsoff.py" > "$T/ix.txt" 2>&1 <<'PY_IX'
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import time
+
+WATCH, ROOT, HANDSOFF = sys.argv[1], sys.argv[2], sys.argv[3]
+RECS = os.path.join(ROOT, "spawn-records")
+os.environ.update(LLM_WIKI_STORE=ROOT, AIMYTH_PROJECTS_DIR=os.path.join(ROOT, "projects"),
+                  AIMYTH_STATE_DIR=os.path.join(ROOT, "state"), AIMYTH_WATCH_NOTIFY="0")
+spec = importlib.util.spec_from_file_location("watch_ix", WATCH)
+watch = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(watch)
+watch.USE_COLOUR = False
+t0 = time.time() - 3 * 3600
+METER = "billed (list, prices 0000-00-00): head $1.00 · lanes $2.00 · session $3.00 · rewrites 0 ($0.00)"
+
+
+def ts(mins):
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t0 + mins * 60))
+
+
+def hhmm(mins):
+    return time.strftime("%H:%M", time.localtime(t0 + mins * 60))
+
+
+def shown(mins):
+    """The board's label for that moment: the time alone on the day the suite runs, and its date as well
+    across midnight, since t0 is three hours back."""
+    moment = watch.parse_ts(ts(mins))
+    return hhmm(mins) if moment.date() == watch.datetime.now(moment.tzinfo).date() else watch.dated(moment)
+
+
+def room(width):
+    return width + len(shown(20)) - len(hhmm(20))    # a dated label is wider, and these legs pin the header's fit
+
+
+def ev(mins, kind, run, **fields):
+    out = {"ts": ts(mins), "run": run, "event": kind}
+    out.update(fields)
+    return out
+
+
+def save(name, events):
+    path = os.path.join(RECS, name + ".jsonl")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("".join(json.dumps(e) + "\n" for e in events))
+    return path
+
+
+def check(label, test):
+    try:
+        test()
+    except AssertionError as exc:
+        print("FAIL %s: %s" % (label, str(exc).replace("\n", " | ") or "assertion failed"))
+    except Exception as exc:                       # a missing function is a failed leg, not a crash
+        print("FAIL %s: %s: %s" % (label, type(exc).__name__, str(exc).replace("\n", " | ")))
+    else:
+        print("ok   " + label)
+
+
+def ix01():
+    cases = [("item14b", "item14b"), ("item14b N214 · build", "item14b"), ("**item12b** close-out", "item12b"),
+             ("itemR3", "itemR3"), ("itemB4f · verify", "itemB4f"), ("Item4b N1 · build", "item4b"),
+             ("item14 N214 · build", "item14"), ("item14-verify", "item14"), ("item1 N148 · build+install", "item1"),
+             ("items", "items"), ("itemization", "itemization")]
+    bad = [(v, want, watch.item_key(v)) for v, want in cases if watch.item_key(v) != want]
+    assert not bad, bad
+
+
+def ix02():
+    text = ("## In flight\n- item0 to item13b, itemB4f — done\n- item2 and item3 — open\n"
+            "- item14b N214 · build — the work\n- itemC1 C1 · close-out — the work\n"
+            "- item5 verify item4's build — the work\n- item0 orientation — read the pack\n")
+    got = watch.parse_items(text)
+    want = {"item14b": "N214 · build", "itemC1": "C1 · close-out", "item5": "verify item4's build",
+            "item0": "orientation"}
+    assert got == want, got
+
+
+def ix03():
+    keys = ["itemR1", "item12b", "item2", "itemC1", "item10", "item12", "item0", "itemB4f", "zz"]
+    got = sorted(keys, key=watch.item_sort_key)
+    assert got == ["item0", "item2", "item10", "item12", "item12b", "itemB4f", "itemC1", "itemR1", "zz"], got
+
+
+PACK = os.path.join(ROOT, "ix-handoff.md")
+with open(PACK, "w", encoding="utf-8") as fh:
+    fh.write("# Hand-off\n\n## In flight\n- item0 to item1b — done\n\n## Items\n- item0 orientation — read\n"
+             "- item1 N1 · build — go\n- item1b N1 · install — go\n- itemC1 C1 · close-out — go\n\n"
+             "## Resume prompt\nResume from the record.\n")
+board_events = [
+    ev(0, "run-open", "run-ix", session="ix-head-1", handoff=PACK,
+       expect_items={"item0": 1, "item1": 1, "item2": 1, "item3": 1}),
+    ev(1, "gate", "run-ix", item="item1", percent=10, decision="allow", orientation_tokens=10),
+    ev(20, "phase-boundary", "run-ix", meter=METER, **{"from": "item1", "to": "item1b"}),
+    ev(21, "gate", "run-ix", item="item1b", percent=20, decision="allow"),
+    ev(30, "expect-items", "run-ix",
+       items={"item0": 1, "item1": 1, "item1b": 1, "item2": 1, "item3": 1, "itemC1": 1}, src="expect"),
+    ev(40, "head-successor", "run-ix", session_id="ix-head-2"),
+]
+REC = save("run-ix", board_events)
+
+
+def snapshot(run, columns):
+    env = dict(os.environ, COLUMNS=str(columns), LINES="60")
+    r = subprocess.run([sys.executable, "-B", WATCH, "--vault", os.path.join(ROOT, "vault"), "--run", run,
+                        "--once", "--plain"], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, "exit %d: %s" % (r.returncode, r.stderr[-300:])
+    return r.stdout
+
+
+def rows(text):
+    out = {}
+    for line in text.splitlines():
+        if line.startswith("│ item"):
+            key = line[2:].split(" ", 1)[0]
+            state = next((w for w in ("done", "running", "pending", "skipped") if " %s " % w in line), "?")
+            out[key] = (state, line)
+    return out
+
+
+def ix04():
+    text = snapshot("run-ix", 150)
+    got = rows(text)
+    states = {k: v[0] for k, v in got.items()}
+    assert states == {"item0": "done", "item1": "done", "item1b": "running", "item2": "pending",
+                      "item3": "pending", "itemC1": "pending"}, states
+    assert " 2/6 items done" in text, [l for l in text.splitlines() if "items done" in l]
+    assert "orientation" in got["item0"][1] and "to item1b" not in text, got["item0"][1]
+
+
+def ix05():
+    kinds = sorted({e["event"] for e in board_events})
+    missing = [k for k in kinds if k not in watch.TREATMENT]
+    assert "expect-items" in kinds and not missing, missing
+    assert "an-invented-kind" not in watch.TREATMENT
+
+
+def ix06():
+    launch = {"item0": 1, "item1": 1}
+    events = [ev(0, "run-open", "run-x", expect_items=launch),
+              ev(1, "expect-items", "run-x", items=["item9"], src="expect"),
+              ev(2, "expect-items", "run-x", expect_items={"item7": 1}),
+              ev(3, "observation", "run-x", items={"item7": 1}, expect_items={"item7": 1}),
+              ev(4, "run-resume", "run-x", expect_items={"item0": 1, "item2": 1})]
+    got = watch.latest_expect(events)
+    assert got == launch, got
+    later = events + [ev(5, "expect-items", "run-x", items={"item2b": 80000}, src="expect")]
+    assert watch.latest_expect(later) == {"item2b": 80000}, watch.latest_expect(later)
+    emptied = later + [ev(6, "expect-items", "run-x", items={}, src="expect")]
+    assert watch.latest_expect(emptied) == {}, watch.latest_expect(emptied)
+
+
+def ix07():
+    pack2 = os.path.join(ROOT, "ix-refresh-handoff.md")
+    with open(pack2, "w", encoding="utf-8") as fh:
+        fh.write("## Resume prompt\n- item0 orientation — read\n- item1 N1 · build — go\n")
+    rec = save("run-ix-refresh", [ev(0, "run-open", "run-ix-refresh", session="ix-r", handoff=pack2,
+                                     expect_items={"item0": 1, "item1": 1})])
+    run = watch.Run("run-ix-refresh", rec, os.path.join(ROOT, "vault"))
+    before = list(run.item_order)
+    with open(rec, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(ev(1, "expect-items", "run-ix-refresh",
+                               items={"item0": 1, "item1": 1, "item1b": 1}, src="expect")) + "\n")
+    run.rebuild(watch.read_events(rec))
+    assert before == ["item0", "item1"] and list(run.item_order) == ["item0", "item1", "item1b"], (before, run.item_order)
+
+
+def ix08():
+    run = watch.Run("run-ix", REC, os.path.join(ROOT, "vault"))
+    wide = "\n".join(watch.render_header(run, room(240), "0"))
+    full = "billed ▲%s item1→item1b, before this head: head $1.00 · lanes $2.00 · session $3.00" % shown(20)
+    assert full in wide and "supervisor" in wide, wide
+    narrow = "\n".join(watch.render_header(run, room(150), "0"))
+    assert ("▲%s head $1.00 · lanes $2.00 · session $3.00 · elapsed " % shown(20)) in narrow and "supervisor" in narrow, narrow
+    # control: a boundary inside the current head's tenure says which boundary, never "before this head"
+    own = save("run-ix-own", board_events[:4])
+    mine = watch.Run("run-ix-own", own, os.path.join(ROOT, "vault")).spend()
+    assert mine.startswith("billed ▲%s item1→item1b: head $1.00" % shown(20)), mine
+    closed = save("run-ix-closed", board_events + [ev(50, "run-close", "run-ix", meter=METER, items="fixture")])
+    shut = watch.Run("run-ix-closed", closed, os.path.join(ROOT, "vault")).spend()
+    assert shut.startswith("billed ■%s: head $1.00" % hhmm(50)), shut
+
+
+# A real record's shape: the run-open declares item0 to item10; after launch the head's `expect` declares
+# one item, and the record carries `"items": {"item2b": 80000}, "src": "expect"`. The gate takes
+# that map whole (handsoff.py declared_items: a replacement, never a merge), so the panel does too.
+PARTIAL_LAUNCH = {"item0": 40000, "item1": 160000, "item2": 90000, "item3": 90000, "item4": 140000,
+                  "item5": 60000, "item6": 90000, "item7": 150000, "item8": 50000, "item9": 120000,
+                  "item10": 150000}
+PACK_T = os.path.join(ROOT, "ix-partial-handoff.md")
+with open(PACK_T, "w", encoding="utf-8") as fh:
+    fh.write("# Hand-off\n\n## Resume prompt\nResume from the record.\n")
+partial_events = [
+    ev(0, "run-open", "run-ix-partial", session="ix-t-seed", handoff=PACK_T, regime="multi",
+       expect_items=PARTIAL_LAUNCH),
+    ev(1, "head-exit", "run-ix-partial"),
+    ev(1, "head-successor", "run-ix-partial", session_id="ix-t-head"),
+    ev(2, "run-resume", "run-ix-partial", session="ix-t-head", head="the fixture", detail="item0"),
+    ev(3, "phase-boundary", "run-ix-partial", **{"from": "item0", "to": "item1"}),
+    ev(3, "gate", "run-ix-partial", item="item1", percent=5, decision="allow"),
+    ev(10, "phase-boundary", "run-ix-partial", **{"from": "item1", "to": "item3"}),
+    ev(10, "gate", "run-ix-partial", item="item3", percent=9, decision="allow"),
+    ev(11, "expect-items", "run-ix-partial", items={"item2b": 80000}, src="expect"),
+    ev(17, "phase-boundary", "run-ix-partial", **{"from": "item3", "to": "item4"}),
+    ev(17, "gate", "run-ix-partial", item="item4", percent=12, decision="allow"),
+]
+save("run-ix-partial", partial_events)
+
+
+def ix09():
+    text = snapshot("run-ix-partial", 150)
+    got = rows(text)
+    states = {k: v[0] for k, v in got.items()}
+    want = {"item1": "done", "item2b": "pending", "item3": "done", "item4": "running"}
+    assert all(states.get(k) == s for k, s in want.items()), states
+    stale = sorted(k for k in ("item2", "item5", "item6", "item7", "item8", "item9", "item10") if k in got)
+    assert not stale, "rows from the replaced launch map: %s" % stale
+    done = sum(1 for s in states.values() if s == "done")
+    assert (" %d/%d items done" % (done, len(states))) in text, [l for l in text.splitlines() if "items done" in l]
+    assert watch.latest_expect(partial_events) == {"item2b": 80000}, watch.latest_expect(partial_events)
+
+
+def ix10():
+    import ast
+    with open(HANDSOFF, encoding="utf-8") as fh:          # read only; the function's own source runs alone
+        tree = ast.parse(fh.read())
+    fn = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "declared_items"]
+    assert len(fn) == 1, "%d top-level declared_items definitions in %s, wanted 1" % (len(fn), HANDSOFF)
+    ns = {}
+    exec(compile(ast.Module(body=fn, type_ignores=[]), HANDSOFF, "exec"), ns)
+    gate = ns["declared_items"]
+    a, b, c = {"item0": 1, "item1": 1}, {"item0": 2, "item2b": 3}, {"item4": 5}
+    cases = {
+        "a real record's shape": partial_events,
+        "the launch map alone": [ev(0, "run-open", "r", expect_items=a), ev(1, "gate", "r", item="item0")],
+        "two re-declarations": [ev(0, "run-open", "r", expect_items=a), ev(1, "expect-items", "r", items=b),
+                                ev(2, "expect-items", "r", items=c)],
+        "a list-valued items": [ev(0, "run-open", "r", expect_items=a), ev(1, "expect-items", "r", items=b),
+                                ev(2, "expect-items", "r", items=["item9"])],
+        "the run-open's key on an expect-items event": [ev(0, "run-open", "r", expect_items=a),
+                                                         ev(1, "expect-items", "r", expect_items=b)],
+        "a map on a run-resume": [ev(0, "run-open", "r", expect_items=a),
+                                  ev(1, "run-resume", "r", expect_items=b)],
+        "a map on another kind": [ev(0, "run-open", "r", expect_items=a),
+                                  ev(1, "observation", "r", items=b, expect_items=b)],
+        "an empty items map": [ev(0, "run-open", "r", expect_items=a), ev(1, "expect-items", "r", items={})],
+        "two run-opens": [ev(0, "run-open", "r", expect_items=a), ev(1, "run-open", "r", expect_items=b)],
+        "a first run-open without a map": [ev(0, "run-open", "r"), ev(1, "run-open", "r", expect_items=b)],
+        "no run-open": [ev(0, "gate", "r", item="item1")],
+        "an empty record": [],
+    }
+    bad = [(name, watch.latest_expect(evs), gate(evs)) for name, evs in cases.items()
+           if watch.latest_expect(evs) != gate(evs)]
+    assert not bad, bad
+
+    def misread(evs):                                    # control: `expect_items` read on every kind
+        got = {}
+        for e in evs:
+            if e.get("event") in ("run-open", "run-resume", "expect-items") \
+                    and isinstance(e.get("expect_items"), dict) and e["expect_items"]:
+                got = e["expect_items"]
+        return got
+    assert misread(partial_events) != gate(partial_events), "control: the misreading reader agreed with the gate"
+
+
+if not os.path.isfile(HANDSOFF):
+    print("PROBE FAILED: no handsoff.py beside this suite at %s; IX10 compares the panel's map with "
+          "its declared_items" % HANDSOFF)
+check("IX01 item_key keys a suffixed or lettered item as itself (item14b, itemR3, itemB4f, Item4b) and still reduces a long string to its id (11 cases)", ix01)
+check("IX02 parse_items skips a summary bullet (to / and lists) and names suffixed and lettered items; a name that only mentions another item is kept", ix02)
+check("IX03 item_sort_key orders numbered items by number with a suffix after its parent, then lettered series, then any other key", ix03)
+check("IX04 (must fire) an open item1b reads running on its own row beside a done item1, the latest expect-items map adds itemC1, the summary bullet names nothing: 2/6 items done", ix04)
+check("IX05 every kind in the IX record has a treatment, expect-items included; an invented kind has none (control)", ix05)
+check("IX06 (must not fire) a list-valued items, the run-open's key on an expect-items event, a map on another kind and a map on a run-resume leave the launch map the plan; the last expect-items event's items map replaces it whole, a partial map and an empty one alike", ix06)
+check("IX07 a map appended to the record reaches the rows on the next rebuild when every name is already filled", ix07)
+check("IX08 the header labels the billed figures with their boundary (full when it fits, mark and time alone when not, elapsed and supervisor kept); before this head only when a head started after it (control); a close's meter reads ■", ix08)
+
+
+# The item bars (register 2026-11-05 12:41; the critic's model): a start records activity, only an
+# explicit completion record ends an item, and a close reports what is left without converting it.
+def ib_run(name, rows):
+    opening = ev(0, "run-open", name, session="sid-ib", head="fixture head",
+                 expect_items={"item1": 1000, "item2": 1000, "item3": 1000})
+    return watch.Run(name, save(name, [opening] + rows), os.path.join(ROOT, "vault"))
+
+
+def ib01():
+    n = "run-ib1"
+    run = ib_run(n, [ev(1, "gate", n, item="item1", decision="allow"), ev(5, "run-close", n, items="three done")])
+    assert (run.state("item1"), run.state("item2")) == ("unresolved", "skipped"), run.state("item1")
+    assert watch.items_summary(run) == "0/3 items done · 1 unresolved · 2 skipped", watch.items_summary(run)
+    n = "run-ib1b"
+    ended = ib_run(n, [ev(1, "gate", n, item="item1", decision="allow"),
+                       ev(2, "phase-boundary", n, **{"from": "item1", "to": "item2"}),
+                       ev(3, "gate", n, item="item2", decision="allow"), ev(4, "item-done", n, items=["item2"]),
+                       ev(5, "run-close", n, items="two")])
+    assert (ended.state("item1"), ended.state("item2")) == ("done", "done"), ended.state("item2")
+    assert watch.items_summary(ended) == "2/3 items done · 1 skipped", watch.items_summary(ended)
+
+
+def ib02():
+    n = "run-ib2"
+    run = ib_run(n, [ev(1, "gate", n, item="item1", decision="allow"), ev(2, "gate", n, item="item2", decision="allow"),
+                     ev(3, "item-done", n, items=["item1", "item2 N2 · build", "item3"]), ev(5, "run-close", n, items="all")])
+    assert [run.state(i) for i in ("item1", "item2", "item3")] == ["done"] * 3, run.item_end
+    assert watch.items_summary(run) == "3/3 items done · all done" and watch.close_tone(run) == watch.GREEN
+    assert not run.meters, run.meters
+    assert "items=item1,item2 N2 · build,item3" in watch.fmt_event(run.events[3]), watch.fmt_event(run.events[3])
+
+
+def ib03():
+    n = "run-ib3"
+    run = ib_run(n, [ev(1, "gate", n, item="item1", decision="allow"),
+                     ev(2, "lane-open", n, lane="LA", item="item2"), ev(2, "lane-open", n, lane="LB", item="item3 N3 · read"),
+                     ev(3, "lane-open", n, lane="LC")])
+    assert (run.lanes["LA"].item, run.lanes["LB"].item, run.lanes["LC"].item) == ("item2", "item3", "item1"), run.lanes
+    assert run.current == "item1", run.current
+    assert [run.state(i) for i in ("item1", "item2", "item3")] == ["running"] * 3, run.gated
+    assert (run.lanes["LA"].item_inferred, run.lanes["LC"].item_inferred) == (False, True)
+    text = "\n".join(watch.render_items(run, 160))
+    assert "●LA " in text and "●LB " in text and "●LC~" in text, text
+
+
+def ib04():
+    n = "run-ib4"
+    run = ib_run(n, [ev(1, "lane-open", n, lane="LA", item="item2"),
+                     ev(2, "lane-closed", n, lane="LA", exit_class="completed", total_cost_usd=1.0),
+                     ev(5, "run-close", n, items="none")])
+    assert run.state("item2") == "unresolved", run.state("item2")
+    assert "✓LA" in "\n".join(watch.render_items(run, 160))
+
+
+def ib05():
+    n = "run-ib5"
+    run = ib_run(n, [ev(30, "gate", n, item="item1", decision="allow")])
+    text = "\n".join(watch.render_items(run, 170))
+    assert "last item record %s" % watch.dated(watch.parse_ts(ts(30))) in text and " ago" in text, text
+    idle = ib_run("run-ib5b", [])
+    assert "last item record" not in "\n".join(watch.render_items(idle, 170))
+
+
+def ib06():
+    n = "run-ib6"
+    old = ev(-2880, "phase-boundary", n, meter=METER, **{"from": "item1", "to": "item2"})
+    run = ib_run(n, [old])
+    when = watch.dated(watch.parse_ts(old["ts"]))
+    assert run.spend().startswith("billed ▲%s item1→item2" % when), run.spend()
+    assert run.spend(short=True).startswith("▲%s" % when), run.spend(short=True)
+    same = ib_run("run-ib6b", [ev(20, "phase-boundary", "run-ib6b", meter=METER, **{"from": "item1", "to": "item2"})])
+    assert same.spend().startswith("billed ▲%s item1→item2" % shown(20)), same.spend()
+
+
+def ib07():
+    n = "run-ib7"
+    run = ib_run(n, [ev(1, "gate", n, item="item1", decision="allow"), ev(5, "run-close", n, items="one"),
+                     ev(6, "item-done", n, items=["item1"])])
+    assert run.state("item1") == "unresolved", run.state("item1")
+
+
+def ib08():
+    n = "run-ib8"
+    run = ib_run(n, [ev(1, "gate", n, item="item1", decision="allow"),
+                     ev(2, "phase-boundary", n, **{"from": "item1", "to": "item2"}), ev(5, "run-close", n, items="one")])
+    assert run.state("item2") == "skipped", run.state("item2")
+    n = "run-ib8b"
+    done = ib_run(n, [ev(1, "gate", n, item="item1", decision="allow"),
+                      ev(2, "phase-boundary", n, **{"from": "item1", "to": "item2"}),
+                      ev(3, "item-done", n, items=["item2"]), ev(5, "run-close", n, items="two")])
+    assert done.state("item2") == "done", done.state("item2")
+
+
+def ib10():
+    n = "run-ib10"
+    run = ib_run(n, [ev(1, "gate", n, item="item1", decision="allow"),
+                     ev(2, "decision", n, phase="item2", what="a decision on item2"),
+                     ev(3, "observation", n, phase="not an item", what="a stray phase")])
+    assert run.state("item2") == "running" and "not an item" not in run.item_order, run.item_order
+    n = "run-ib10b"
+    closed = ib_run(n, [ev(2, "observation", n, phase="item2", what="work on item2"), ev(5, "run-close", n, items="x")])
+    assert closed.state("item2") == "unresolved", closed.state("item2")
+    assert closed.state("item3") == "skipped", closed.state("item3")
+
+
+def ib09():
+    run = watch.Run("run-ix", REC, os.path.join(ROOT, "vault"))
+    middle = "\n".join(watch.render_header(run, room(172), "0"))
+    assert "▲%s, before this head: head $1.00" % shown(20) in middle and "supervisor" in middle, middle
+
+
+check("IB01 (fails on old) a start is activity: a close reads a gated item with no completion unresolved, and a boundary from it or item-done reads done (the control)", ib01)
+check("IB02 (fails on old) item-done ends the items it names, long keys included, with no meter, and the feed names them; all done reads green", ib02)
+check("IB03 (fails on old) lanes run side by side file under their own --item and start it, the item in hand stands, and a lane with none sits under it marked ~", ib03)
+check("IB04 (fails on old) a lane's completed close is no item's completion: its item reads unresolved at the close", ib04)
+check("IB05 (fails on old) the overall line gives the date and age of the last item record (control: a run with none)", ib05)
+check("IB06 (fails on old) a billed label from another day carries its date in both forms (control: today's carries the time alone)", ib06)
+check("IB07 an item-done after the close changes no verdict: the board stays as the close left it", ib07)
+check("IB08 a boundary's never-worked target stays skipped, and an explicit item-done on it reads done (the control)", ib08)
+check("IB09 (fails on old) a header too narrow for the span keeps before this head while elapsed and the supervisor still fit", ib09)
+check("IB10 (fails on old) an event whose phase names a planned item starts it, as activity: running, then unresolved at the close, never skipped (control: a phase naming no row adds none)", ib10)
+check("IX09 (must fire) a real record's shape: a later expect-items event whose items map declares item2b alone gives item2b a pending row, and the launch-map items no gate or boundary named (item2, item5 to item10) keep none, as the gate reads the map", ix09)
+check("IX10 the panel's map is the gate's: latest_expect equals handsoff.py's own declared_items (its source beside this suite, the function alone) on 12 records, a real record's partial map among them; a reader of expect_items on every kind disagrees on that one (control)", ix10)
+PY_IX
+[ $? -eq 0 ] || { cat "$T/ix.txt"; printf 'PROBE FAILED: the IX fixtures did not finish\n'; exit 2; }
+ix_n=0
+while IFS= read -r result; do
+  case "$result" in
+    'ok   '*) ok "${result#ok   }"; ix_n=$((ix_n + 1)) ;;
+    'FAIL '*) no "${result#FAIL }"; ix_n=$((ix_n + 1)) ;;
+    *) printf 'PROBE FAILED: unexpected IX output: %s\n' "$result"; exit 2 ;;
+  esac
+done < "$T/ix.txt"
+[ "$ix_n" -eq 20 ] || { printf 'PROBE FAILED: the IX block reported %s legs, wanted 20\n' "$ix_n"; exit 2; }
+
 # ---------------------------------------------------------------- leg 10: the write proof
 cp -R "$T/store" "$T/ro-store"
 chmod -R a-w "$T/ro-store"
 robefore=$(find "$T/ro-store" -type f | wc -l | tr -d ' ')
+find "$T/ro-store" -type f -print0 | sort -z | xargs -0 shasum | sort > "$T/ro-before.txt"
 env LLM_WIKI_STORE="$T/ro-store" AIMYTH_PROJECTS_DIR="$T/projects" AIMYTH_WATCH_NOTIFY=0 \
     COLUMNS=150 LINES=60 python3 -B "$WATCH" --vault "$T/vault" --run run-vocab --once --plain \
     > "$T/ro.txt" 2>&1
 rc=$?
 roafter=$(find "$T/ro-store" -type f | wc -l | tr -d ' ')
+find "$T/ro-store" -type f -print0 | sort -z | xargs -0 shasum | sort > "$T/ro-after.txt"
 chmod -R u+w "$T/ro-store"
-if [ "$rc" -eq 0 ] && [ "$robefore" -eq "$roafter" ] && [ "$robefore" -gt 0 ]; then
-  ok "a snapshot against a read-only store runs (exit 0) and adds no file ($robefore before and after)"
+if [ "$rc" -eq 0 ] && [ "$robefore" -eq "$roafter" ] && [ "$robefore" -gt 0 ] &&
+   [ -s "$T/ro-before.txt" ] && cmp -s "$T/ro-before.txt" "$T/ro-after.txt"; then
+  ok "a snapshot against a read-only store runs (exit 0); its checksum manifest is unchanged ($robefore files)"
 else
   no "the read-only run exited $rc and left $roafter files, wanted $robefore"
 fi

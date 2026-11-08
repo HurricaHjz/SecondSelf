@@ -17,32 +17,77 @@
 #       sh test_lane.sh --live          offline + the live sonnet legs (prints the live spend)
 #       sh test_lane.sh --live-handsoff offline + two haiku probes (the allow list, the vault root)
 #       sh test_lane.sh --vault DIR     run a copy of the scripts from elsewhere against DIR
+#       sh test_lane.sh --leg TEXT      only the legs whose name holds TEXT (the note at `leg_shown`)
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 LANE="$HERE/lane.py"
 FENCE="$HERE/lane-fence.py"
 PY="${PYTHON:-python3}"
-LIVE=0; LIVEHO=0; VAULT_ARG=""
+LIVE=0; LIVEHO=0; VAULT_ARG=""; LEG=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --live) LIVE=1 ;;
     --live-handsoff) LIVEHO=1 ;;
     --vault) shift; VAULT_ARG="${1:-}" ;;
-    *) echo "usage: sh test_lane.sh [--live] [--live-handsoff] [--vault DIR]" >&2; exit 2 ;;
+    --leg) shift; LEG="${1:-}"; [ -n "$LEG" ] || { echo "PROBE FAILED: --leg needs the text of a leg's name" >&2; exit 2; } ;;
+    *) echo "usage: sh test_lane.sh [--live] [--live-handsoff] [--vault DIR] [--leg TEXT]" >&2; exit 2 ;;
   esac
   shift
 done
 export PYTHONDONTWRITEBYTECODE=1
 
-PASS=0; FAIL=0
-ok(){ PASS=$((PASS+1)); echo "  ok   — $1"; }
-no(){ FAIL=$((FAIL+1)); echo "FAIL   — $1"; }
+# LEG-FILTER-BEGIN
+# `--leg TEXT` (register 2026-10-13 14:13): the legs share one fixture tree, each building on the
+# ones before it, so nothing before the chosen legs can be skipped. What it saves is the tail: the
+# run ends once as many legs naming TEXT have reported as the source's pass lines name, and only
+# those passes are counted. A leg built from a variable is not in that count, so a name found only
+# there runs on to the end. A failed leg always shows and counts, whatever its name: its wording
+# often differs from its pass line, and a filter must never turn a failure into a pass. No leg
+# named means no result, so that run ends PROBE FAILED. Run the suite whole before relying on it.
+PASS=0; FAIL=0; LEG_WANT=0; LEG_SEEN=0
+[ -z "$LEG" ] || LEG_WANT=$(grep -E '(^|[;&|] *| )(ok|eq) "' "$0" | grep -c -F -- "$LEG")
+leg_shown(){ [ -z "$LEG" ] && return 0; case "$1" in *"$LEG"*) return 0 ;; esac; return 1; }
+suite_total(){
+  TOTAL=$((PASS + FAIL))
+  if [ -n "$LEG" ] && [ "$TOTAL" -eq 0 ]; then echo "PROBE FAILED: no leg named '$LEG'"; exit 2; fi
+  if [ "$FAIL" -eq 0 ]; then echo "PASS $PASS/$TOTAL"; else echo "FAIL $FAIL/$TOTAL"; exit 1; fi
+}
+leg_stop(){ LEG_SEEN=$((LEG_SEEN+1)); if [ "$LEG_SEEN" -eq "$LEG_WANT" ]; then suite_total; exit 0; fi; }
+ok(){
+  leg_shown "$1" || return 0
+  PASS=$((PASS+1)); echo "  ok   — $1"
+  [ -z "$LEG" ] || leg_stop
+}
+no(){
+  FAIL=$((FAIL+1)); echo "FAIL   — $1"
+  if [ -n "$LEG" ] && leg_shown "$1"; then leg_stop; fi
+}
+# LEG-FILTER-END
 eq(){ if [ "$2" = "$3" ]; then ok "$1"; else no "$1  [want $3, got $2]"; fi; }
 
-F=$(mktemp -d)
-cleanup(){ chmod -R u+w "$F" >/dev/null 2>&1; rm -rf "$F"; }
+# CR-A3-1 M2 (depth/spec): fixture roots are independent of the caller's run store.
+# The default is the platform mktemp directory; restricted callers supply an explicit root.
+if [ -n "${AIMYTH_TEST_ROOT:-}" ]; then
+  F=$(mktemp -d "$AIMYTH_TEST_ROOT/lane-suite.XXXXXX") || exit 2
+else
+  F=$(mktemp -d) || exit 2
+fi
+LFTMP=""        # the B4LF-04 legs' scratch directory under /tmp, removed by those legs or here
+cleanup(){ chmod -R u+w "$F" >/dev/null 2>&1; rm -rf "$F"; if [ -n "$LFTMP" ]; then rm -rf "$LFTMP"; fi; }
 trap cleanup EXIT INT TERM
+
+# The suite's own home (register 2026-10-04 10:45: guarded reviews blocked the delegate suites'
+# reads of the real ~/.claude.json, ~/.claude/projects and ~/.codex/sessions). Every lookup a wrapper
+# makes under the home directory — the trust entry in .claude.json, the projects root, the run
+# store's default, the Codex session tree and its global instructions — lands in this fixture.
+# REAL_HOME is kept for the legs that must name the real home: the trace leg's control, the write
+# proof over the real store, and the live legs, which need the owner's login.
+# The home sits one level down (homes/fixture), so no other fixture folder is a sibling of it: a file
+# grant whose parent is a home's sibling earns the home-directory warning (grant_parent_warnings).
+REAL_HOME=$HOME
+mkdir -p "$F/homes/fixture/.claude/projects" "$F/homes/fixture/.codex/sessions"
+export HOME="$F/homes/fixture" CODEX_HOME="$F/homes/fixture/.codex"
 
 # The vault: three levels up from the shipped location, or --vault DIR when the suite runs on a
 # copy of the scripts elsewhere (a builder's /tmp draft); the fence is read from beside lane.py,
@@ -50,6 +95,16 @@ trap cleanup EXIT INT TERM
 if [ -n "$VAULT_ARG" ]; then VAULT=$(cd "$VAULT_ARG" && pwd) || exit 2
 else VAULT=$(cd "$HERE/../../.." && pwd); fi
 export CLAUDE_PROJECT_DIR="$VAULT"
+# CR-A3-1 M2: out-of-grant fixtures must be outside implicit scratch, vault and cwd grants.
+"$PY" - "$F" "$VAULT" "$HERE" <<'FIXTURE_PREMISE_END' || exit 2
+from pathlib import Path
+import sys
+root = Path(sys.argv[1]).resolve()
+grants = [Path(value).resolve() for value in ("/tmp", "/dev", *sys.argv[2:]) if value]
+if any(root == grant or grant in root.parents for grant in grants):
+    print("PROBE FAILED: out-of-grant fixtures are inside a granted root; set AIMYTH_TEST_ROOT", file=sys.stderr)
+    raise SystemExit(2)
+FIXTURE_PREMISE_END
 [ -f "$FENCE" ] || FENCE="$VAULT/.claude/skills/delegate/lane-fence.py"
 # The shipped home's own three files, so the last leg can prove the suite left them alone.
 HOME_BEFORE=$(shasum "$LANE" "$FENCE" "$0")
@@ -72,6 +127,7 @@ PYCACHE_STATE_END
 PYC_BEFORE=$(pycache_state "$HERE")
 
 STORE="$F/store"
+export LLM_WIKI_STORE="$STORE"
 # mktemp -d hands back the unresolved /var form on this platform; the wrapper records real paths.
 FR=$("$PY" -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$F")
 SR="$FR/store/spawn-records"
@@ -86,12 +142,19 @@ printf 'ELSEWHERE\n' > "$F/elsewhere/outside.txt"
 cat > "$BIN/claude" <<'STUB_SOURCE_TERMINATOR'
 #!/usr/bin/env python3
 """Stub harness: records the call, writes a fixture transcript, prints a canned result."""
-import json, os, re, sys, time
+import json, os, re, select, sys, time
 
 log = os.environ["STUB_LOG"]
 os.makedirs(log, exist_ok=True)
 argv = sys.argv[1:]
-STDIN = sys.stdin.read()
+# The CLI's wait for its input (register 2026-11-04 15:38): STUB_STDIN_WAIT_S seconds for a first
+# byte or an end of file, then its two lines and exit 1. STUB_SKIP_STDIN never reads the input.
+wait_s = os.environ.get("STUB_STDIN_WAIT_S")
+if wait_s and not select.select([0], [], [], float(wait_s))[0]:
+    sys.stderr.write("Warning: no stdin data received in %ss, proceeding without it\n" % wait_s)
+    sys.stderr.write("Error: Input must be provided either through stdin or as a prompt argument when using --print\n")
+    sys.exit(1)
+STDIN = "" if os.environ.get("STUB_SKIP_STDIN") else sys.stdin.read()
 if STDIN.strip() == "Reply with the single word ok.":
     # The wrapper's alias probe (2026-09-22): answer with what the alias resolves to, from
     # STUB_PROBE_USAGE (JSON) when planted, else the alias map; STUB_PROBE_EXIT fails the probe.
@@ -156,6 +219,9 @@ def model_usage():
 delay = float(os.environ.get("STUB_SLEEP", "0"))
 if delay:
     time.sleep(delay)
+if os.environ.get("STUB_TOUCH"):                # what a lane's own write leaves in its folder
+    with open(os.environ["STUB_TOUCH"], "w") as h:
+        h.write("written by the lane\n")
 
 projects = os.environ.get("STUB_PROJECTS", "")
 if projects:
@@ -197,7 +263,15 @@ if projects:
             "usage": {"input_tokens": 0, "cache_creation_input_tokens": 0,
                       "cache_read_input_tokens": 0, "output_tokens": 0},
             "content": [{"type": "text", "text": "You've hit your session limit"}]}})
-    with open(os.path.join(directory, sid + ".jsonl"), "w") as h:
+    if "STUB_REPORT" in os.environ:
+        # E5 migration: the report-control bytes belong to assistant evidence, not only the CLI envelope.
+        for record in records:
+            if record.get("type") == "assistant":
+                record["message"]["content"] = []
+        records.append({"type": "assistant", "message": {
+            "id": "controlled-report", "model": "claude-sonnet-5", "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": os.environ["STUB_REPORT"]}]}})
+    with open(os.path.join(directory, sid + ".jsonl"), "a") as h:
         for record in records:
             h.write(json.dumps(record) + "\n")
 
@@ -241,10 +315,31 @@ cat > "$BIN/swap-stub.sh" <<'SWAP_STUB_END'
 printf '%s\n' "$@" > "${AIMYTH_SWAP_ARGV:-/dev/null}"
 # a real detached spawn writes the successor's lane-open and then, once its process runs, lane-spawned
 # into the record it was given; the stub writes both unless AIMYTH_SWAP_NOOPEN is set (the "returned 0
-# but never started" case) or AIMYTH_SWAP_SPAWNFAIL is set (lane-open, then a spawn-failed close)
+# but never started" case) or AIMYTH_SWAP_SPAWNFAIL is set (lane-open, then a spawn-failed close); a non-zero
+# AIMYTH_SWAP_EXIT writes nothing unless AIMYTH_SWAP_WRITE is set (an unconfirmed spawn whose worker did start).
+# Like the real caller, an exit 0 or 4 names its worker: on stderr as it starts, and in the stdout outcome line. The
+# worker has already ended, unless AIMYTH_SWAP_WORKER=live leaves a sleeper running, its pid in AIMYTH_SWAP_PIDFILE.
+# AIMYTH_SWAP_SIGNAL names the worker on stderr and then ends the stub itself with that signal: a caller stopped
+# mid-call, after its worker started (critic CR-ADD3 finding 2).
 REC=""; TO=""; RUN=""
 while [ $# -gt 0 ]; do case "$1" in --record) REC="$2"; shift ;; --lane) TO="$2"; shift ;; --run) RUN="$2"; shift ;; esac; shift; done
-if [ "${AIMYTH_SWAP_EXIT:-0}" = 0 ] && [ -z "${AIMYTH_SWAP_NOOPEN:-}" ] && [ -n "$REC" ]; then
+CODE="${AIMYTH_SWAP_EXIT:-0}"
+if [ "${AIMYTH_SWAP_WORKER:-ended}" = live ]; then
+  sleep "${AIMYTH_SWAP_LIVE_S:-120}" </dev/null >/dev/null 2>&1 &
+  WPID=$!
+  [ -n "${AIMYTH_SWAP_PIDFILE:-}" ] && printf '%s\n' "$WPID" > "$AIMYTH_SWAP_PIDFILE"
+else
+  sh -c 'exit 0' </dev/null >/dev/null 2>&1 &
+  WPID=$!
+  wait "$WPID"
+fi
+if [ -n "${AIMYTH_SWAP_SIGNAL:-}" ]; then
+  printf 'codex-lane.py: worker pid %s started (log stub-detached.log); waiting up to 60 s for this call'\''s lane-open\n' "$WPID" >&2
+  kill -s "$AIMYTH_SWAP_SIGNAL" $$
+  sleep 5; exit 9
+fi
+case "$CODE" in 0|4) printf 'codex-lane.py: worker pid %s started (log stub-detached.log); waiting up to 60 s for this call'\''s lane-open\n' "$WPID" >&2 ;; esac
+if { [ "$CODE" = 0 ] || [ -n "${AIMYTH_SWAP_WRITE:-}" ]; } && [ -z "${AIMYTH_SWAP_NOOPEN:-}" ] && [ -n "$REC" ]; then
   printf '{"ts": "2026-01-01T00:00:00+0000", "run": "%s", "lane": "%s", "event": "lane-open", "harness": "codex", "stub": true}\n' "$RUN" "$TO" >> "$REC"
   if [ -n "${AIMYTH_SWAP_SPAWNFAIL:-}" ]; then
     printf '{"ts": "2026-01-01T00:00:01+0000", "run": "%s", "lane": "%s", "event": "lane-closed", "exit_class": "spawn-failed", "stub": true}\n' "$RUN" "$TO" >> "$REC"
@@ -252,7 +347,11 @@ if [ "${AIMYTH_SWAP_EXIT:-0}" = 0 ] && [ -z "${AIMYTH_SWAP_NOOPEN:-}" ] && [ -n 
     printf '{"ts": "2026-01-01T00:00:01+0000", "run": "%s", "lane": "%s", "event": "lane-spawned", "pid": 4242, "stub": true}\n' "$RUN" "$TO" >> "$REC"
   fi
 fi
-exit "${AIMYTH_SWAP_EXIT:-0}"
+case "$CODE" in
+  0) printf 'detached pid %s (log stub-detached.log)\n' "$WPID" ;;
+  4) printf 'detached pid %s, unconfirmed after 60 s\n' "$WPID" ;;
+esac
+exit "$CODE"
 SWAP_STUB_END
 chmod +x "$BIN/swap-stub.sh"
 # The order stub: stands in for the opener in the call-order leg, recording its parent process.
@@ -289,7 +388,7 @@ table = {"schema": 2,
                     ["<claim files>"], ["wiki", "raw"], [],
                     ["Read", "Grep", "Glob", "Bash"], ["lane-core"], ["markitdown"]),
     "memory-hunter": row(["sonnet", "opus"], "sonnet", ["high", "xhigh", "max"], "xhigh",
-                         ["wiki"], ["raw"], ["<memory dir>"], ["Read", "Grep", "Glob"]),
+                         ["wiki"], ["raw"], [], ["Read", "Grep", "Glob"]),
     "wiki-compile": row(["sonnet", "opus", "fable"], "opus",
                         ["medium", "high", "xhigh", "max"], "xhigh",
                         ["wiki", "<assigned raw files>"], ["raw", "assets"], [],
@@ -586,6 +685,80 @@ if grep -qx -- '--append-system-prompt-file' "$A" \
   ok "the appended file is the one passed with --append-system-prompt-file"
 else no "the appended file was not passed to the harness"; fi
 
+# VL · the appended file carries no vault-local block, so a lane reads each sentence once (register
+# 2026-10-04 00:09). The fixture core holds a public line with its local twin and an inline block.
+printf 'A public line on the rule\n<!-- vault-local:begin -->\nA local twin of the rule\n<!-- vault-local:end -->\ncontinues here. An inline<!-- vault-local:begin --> local remark<!-- vault-local:end -->\n fragment joins.\n' > "$F/core-vl.md"
+spawn --run run-test-vl1 --lane VL1 --class verifier --grant "$F/granted" --append-core "$F/core-vl.md" \
+      --record "$F/rec-vl1.jsonl" --reason '(a) appended: local blocks stripped' >/dev/null 2>"$F/vl1.err"; RC=$?
+VL1=$(appended run-test-vl1 VL1)
+if [ "$RC" = 0 ] && printf '%s\n' "$VL1" | grep -qxF 'A public line on the rule' \
+   && printf '%s\n' "$VL1" | grep -qxF 'continues here. An inline fragment joins.' \
+   && ! printf '%s' "$VL1" | grep -qF -e 'vault-local' -e 'local twin' -e 'local remark' \
+   && grep -qF 'local twin' "$F/core-vl.md" && ! grep -qF 'vault-local' "$F/vl1.err"; then
+  ok "VL01 the wrapper strips a vault-local block and an inline one from the core (control: the source holds both)"
+else no "VL01 the local strip  [exit $RC: $VL1 / $(cat "$F/vl1.err")]"; fi
+# The real core and every real slice a row names, through the same path: no marker reaches a lane,
+# but for the slice KEEP_LOCAL_SLICES names, whose own leg is VL05. So A3 is read up to that slice.
+VLC=$(grep -c 'vault-local:begin' "$CORESRC"); VLS=$(grep -c 'vault-local:begin' "$VAULT/.claude/skills/delegate/lane-home-src/compile-core/SKILL.md")
+if [ "$VLC" -ge 1 ] && [ "$VLS" -ge 1 ] \
+   && ! appended run-test-ap2 A2 | grep -q 'vault-local' \
+   && ! appended run-test-ap3 A3 | sed '/^## Lane slice: reflect-slice/,$d' | grep -q 'vault-local'; then
+  ok "VL02 the shipped core and every slice but the reflect slice reach a lane with no local block (controls: the core's source holds $VLC, compile-core's $VLS)"
+else no "VL02 a local block reached a lane  [core $VLC, slice $VLS, appended $(appended run-test-ap2 A2 | grep -c 'vault-local')]"; fi
+# VL05 · the reflect slice keeps its local blocks by name, and no other slice does. The fixture home
+# holds the same text under both names, so the leg stands on a public copy, whose real slice has no
+# block; the real slice's own blocks are compared with the reflector's appended text beside it.
+VLK=$("$PY" - "$LANE" "$F" <<'VL_KEEP_END'
+import importlib.machinery, importlib.util, os, sys
+spec = importlib.util.spec_from_loader("lanevk", importlib.machinery.SourceFileLoader("lanevk", sys.argv[1]))
+lane = importlib.util.module_from_spec(spec); spec.loader.exec_module(lane)
+home = os.path.join(sys.argv[2], "vl-keep-home")
+for name in ("reflect-slice", "compile-core"):
+    os.makedirs(os.path.join(home, "skills", name))
+    with open(os.path.join(home, "skills", name, "SKILL.md"), "w") as handle:
+        handle.write("---\nname: x\n---\nA public line\n<!-- vault-local:begin -->\nA local rule\n<!-- vault-local:end -->\n")
+keep = lane.resolve_slice("reflect-slice", home, "/no/such/vault")[1]
+strip = lane.resolve_slice("compile-core", home, "/no/such/vault")[1]
+print("%s|%s|%s" % ("A local rule" in keep, "A local rule" in strip, "A public line" in strip))
+VL_KEEP_END
+)
+VLRS=$(grep -c 'vault-local:begin' "$VAULT/.claude/skills/delegate/lane-home-src/reflect-slice/SKILL.md")
+VLRA=$(appended run-test-ap3 A3 | sed -n '/^## Lane slice: reflect-slice/,$p' | grep -c 'vault-local:begin')
+if [ "$VLK" = "True|False|True" ] && [ "$VLRA" = "$VLRS" ]; then
+  ok "VL05 the reflect slice keeps its local blocks by name and compile-core stays stripped (control: the same fixture text under both names; the real slice delivers its $VLRS of $VLRS)"
+else no "VL05 the reflect slice's local blocks  [$VLK; source $VLRS, appended $VLRA]"; fi
+# A broken marker leaves the text whole and says so; it never refuses the spawn.
+printf 'Public\n<!-- vault-local:begin -->\nNo end marker\n' > "$F/core-vl2.md"
+spawn --run run-test-vl2 --lane VL2 --class verifier --grant "$F/granted" --append-core "$F/core-vl2.md" \
+      --record "$F/rec-vl2.jsonl" --reason '(a) appended: broken marker' >/dev/null 2>"$F/vl2.err"; RC=$?
+if [ "$RC" = 0 ] && appended run-test-vl2 VL2 | grep -qF 'No end marker' && grep -qF 'unmatched vault-local marker' "$F/vl2.err"; then
+  ok "VL03 an unmatched marker appends the text as it stands, with one stderr line, and the spawn goes on"
+else no "VL03 the broken marker  [exit $RC: $(cat "$F/vl2.err")]"; fi
+# The home core against its template and its recorded build (register 2026-10-04 00:09).
+"$PY" "$LANE" init --home "$LHOME" >/dev/null 2>&1
+VLCLEAN=$(spawn --run run-test-vl3 --lane VL3 --class verifier --grant "$F/granted" --record "$F/rec-vl3.jsonl" --dry-run 2>&1 | grep -c 'lane-home core')
+cp "$LHOME/lane-core.md" "$F/home-core.keep"
+printf 'hand edit\n' >> "$LHOME/lane-core.md"
+VLEDIT=$(spawn --run run-test-vl3 --lane VL3 --class verifier --grant "$F/granted" --record "$F/rec-vl3.jsonl" --dry-run 2>&1 | grep -c 'matches neither its recorded build nor its template')
+cp "$F/home-core.keep" "$LHOME/lane-core.md"
+VLNOTE=$("$PY" - "$LANE" "$F" "$LHOME" "$CORESRC" <<'VL_DRIFT_END'
+import importlib.machinery, importlib.util, os, shutil, sys
+spec = importlib.util.spec_from_loader("lanevl", importlib.machinery.SourceFileLoader("lanevl", sys.argv[1]))
+lane = importlib.util.module_from_spec(spec); spec.loader.exec_module(lane)
+root = os.path.join(sys.argv[2], "vl-vault")
+template = os.path.join(root, ".claude", "skills", "delegate", "templates", "lane-core.md")
+os.makedirs(os.path.dirname(template))
+shutil.copyfile(sys.argv[4], template)
+same = lane.core_drift_note(sys.argv[3], root)
+with open(template, "a") as handle:
+    handle.write("a template edit\n")
+print("%s|%s" % (same, "older than its template" in (lane.core_drift_note(sys.argv[3], root) or "")))
+VL_DRIFT_END
+)
+if [ "$VLCLEAN" = 0 ] && [ "$VLEDIT" = 1 ] && [ "$VLNOTE" = "None|True" ]; then
+  ok "VL04 a hand-edited home core draws the note and a stale one says so; a home core equal to its template draws none (control: the clean spawn)"
+else no "VL04 the home core note  [clean $VLCLEAN, edited $VLEDIT, helper $VLNOTE]"; fi
+
 spawn --run run-test-ap4 --lane A4 --class wiki-compile --grant "$F/granted" --no-core \
       --record "$F/rec-ap4.jsonl" --reason '(a) appended: --no-core' >/dev/null 2>&1
 if [ "$(headings run-test-ap4 A4)" = 1 ] \
@@ -600,8 +773,9 @@ if [ -s "$STORE/spawn-records/run-test-b-definition-L2.md" ] \
   ok "the thin definition copy is saved beside the record"
 else no "no definition copy saved"; fi
 
-if [ "$(cat "$STORE/spawn-records/run-test-b-report-L2.md")" = "stub report body" ]; then
-  ok "the report is persisted from the result JSON"
+EXPECTED_REPORT=$(printf 'stub transcript text\n\nI saw lane-fence: outside the grants')
+if [ "$(cat "$STORE/spawn-records/run-test-b-report-L2.md")" = "$EXPECTED_REPORT" ]; then
+  ok "E5: the whole assistant report is persisted in event order"
 else no "report not persisted  [$(cat "$STORE/spawn-records/run-test-b-report-L2.md" 2>&1)]"; fi
 
 BRIEFED=$(cat "$F/stub/stdin.txt")
@@ -632,8 +806,8 @@ env STUB_REFUSAL=1 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --r
   --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-e --lane L5 --class verifier \
   --grant "$F/granted" --record "$F/rec-e.jsonl" --reason '(a) leg 17' >/dev/null 2>&1
 eq "a refusal in the transcript closes the lane at exit 3" "$?" "3"
-grep -q '"exit_class": "refusal"' "$F/rec-e.jsonl" \
-  && ok "the close line names the refusal" || no "close line does not name the refusal"
+grep -q '"exit_class": "refusal-continued"' "$F/rec-e.jsonl" \
+  && ok "E5: the later assistant end_turn makes the refusal continued, pending head judgement" || no "close line does not name the continued refusal"
 
 env STUB_SUBTYPE=error_max_budget_usd $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
   --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-f --lane L6 --class verifier \
@@ -669,7 +843,7 @@ tier(){ $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R"
         | tr '\n' ' '; }
 eq "throttle default -> the row's default"      "$(tier default)"    "opus xhigh "
 eq "throttle top -> the strongest options"      "$(tier top)"        "fable max "
-eq "throttle cheap -> weakest model, ceiling effort" "$(tier cheap)"  "sonnet max "
+eq "throttle cheap -> weakest model, the row's default effort (never above it)" "$(tier cheap)"  "sonnet xhigh "
 eq "throttle fast -> default model, weakest effort" "$(tier fast)"   "opus medium "
 eq "throttle cheap-fast -> weakest of both"     "$(tier cheap-fast)" "sonnet medium "
 
@@ -686,7 +860,7 @@ tierp(){ $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$F
         | grep '^  claude' | tr ' ' '\n' | grep -A1 -x -e --model -e --effort | grep -v '^--' \
         | tr '\n' ' '; }
 eq "preset_model: throttle top -> opus, the effort ceiling kept" "$(tierp top)" "opus max "
-eq "preset_model: throttle cheap -> opus, the effort ceiling kept" "$(tierp cheap)" "opus max "
+eq "preset_model: throttle cheap -> opus at the row's default effort" "$(tierp cheap)" "opus xhigh "
 eq "preset_model control: cheap-fast keeps the weakest of both" "$(tierp cheap-fast)" "sonnet medium "
 eq "preset_model control: default keeps the row's default" "$(tierp default)" "opus xhigh "
 "$PY" - "$R" "$F/routing-v2pbad.json" <<'LANE_PRESET_BAD_END'
@@ -703,6 +877,10 @@ if [ "$PRC" = 2 ] && printf '%s' "$PERR" | grep -q 'preset_model.top'; then
 else no "a preset_model outside the class's options was not refused  [exit $PRC]"; fi
 
 # 26c · a grant given as the real path also gets its ~/.llm-wiki spelling (2026-09-06) ---------
+# HOME is the suite's fixture (register 2026-10-04 10:45), so the symlinked store root is planted in
+# it: the leg runs on every machine, never on the owner's real store.
+mkdir -p "$F/linkstore/spawn-records"
+ln -s "$F/linkstore" "$HOME/.llm-wiki"
 if [ -L "$HOME/.llm-wiki" ]; then
   OUT=$(spawn --run run-test-sl --lane SL --class verifier --grant "$(cd "$HOME/.llm-wiki" && pwd -P)/spawn-records" \
         --record "$F/rec-sl.jsonl" --dry-run 2>&1)
@@ -744,14 +922,11 @@ if printf '%s' "$PH1" | grep -q '"granted": true' && printf '%s' "$PH1" | grep -
   ok "a write slot is filled by --write, and the record carries the resolved path, never the token"
 else no "builder write slot  [$PH1]"; fi
 
-MEMREL=".claude/agent-memory-local/memory-hunter"
-if [ -d "$LHOME/$MEMREL" ]; then
-  spawn --run run-test-ph2 --lane B2 --class memory-hunter \
-        --record "$F/rec-ph2.jsonl" --reason '(a) slot filled by the home memory dir' >/dev/null 2>&1
-  if grep -q "$MEMREL" "$F/rec-ph2.jsonl"; then
-    ok "a memory class's write slot resolves to its own directory in the home, with no flag"
-  else no "memory slot did not auto-resolve  [$(grep -o '"writes": \[[^]]*\]' "$F/rec-ph2.jsonl")]"; fi
-else no "init did not materialise the memory directory the leg needs"; fi
+spawn --run run-test-ph2 --lane B2 --class memory-hunter \
+      --record "$F/rec-ph2.jsonl" --reason '(a) a class with no write slot' >/dev/null 2>&1
+if grep -q '"writes": \[\]' "$F/rec-ph2.jsonl" && ! grep -q 'agent-memory-local' "$F/rec-ph2.jsonl"; then
+  ok "a memory-hunter lane takes no flag and no write grant, and no memory directory is added for it"
+else no "the memory-hunter's write grant  [$(grep -o '"writes": \[[^]]*\]' "$F/rec-ph2.jsonl")]"; fi
 
 spawn --run run-test-ph3 --lane B3 --class verifier --grant "$F/granted" \
       --record "$F/rec-ph3.jsonl" --reason '(a) read slot filled by --grant' >/dev/null 2>&1
@@ -838,7 +1013,7 @@ ERR=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" -
       --projects-root "$PROJ" --run run-test-p --lane P --class verifier --grant "$F/granted" \
       --record "$F/rolock/rec.jsonl" --reason '(a) an unwritable record' 2>&1)
 RC=$?; chmod u+w "$F/rolock" "$F/rolock/rec.jsonl"
-if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q 'not writable'; then
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qE 'not writable|Permission denied'; then
   ok "premise: an unwritable spawn record (exit 2)"
 else no "an unwritable record did not stop the spawn  [exit $RC: $ERR]"; fi
 
@@ -1053,6 +1228,54 @@ ADDDIRS_TERMINATOR
 argafter(){ grep -A1 -x -- "$1" "$A" | tail -1; }
 dirs_of(){ printf '%s\n' "$1" | grep '^add-dirs:' | sed 's/^add-dirs: //' | tr ' ' '\n'; }
 
+# K2 · the brief is on the lane's input before the wrapper's record work (register 2026-11-04 15:38).
+# The driver runs the real wrapper with its keep-awake start held back, which is the busy machine of
+# the entry; the stub then waits as the CLI does, for less time than the wrapper is held.
+cat > "$F/k2-slow.py" <<'K2_SLOW_END'
+import importlib.util, os, sys, time
+spec = importlib.util.spec_from_file_location("lane", sys.argv[1])
+lane = importlib.util.module_from_spec(spec)
+sys.modules["lane"] = lane
+spec.loader.exec_module(lane)
+real = lane.start_awake
+def slow(pid):
+    time.sleep(float(os.environ["K2_SLOW_S"]))
+    return real(pid)
+lane.start_awake = slow
+sys.argv = sys.argv[1:]
+sys.exit(lane.main())
+K2_SLOW_END
+"$PY" -c 'import sys; sys.stdout.write("".join("K2 brief line %07d\n" % n for n in range(16000)))' > "$F/k2-big.md"
+k2run(){ # lane, brief, more spawn flags: the real spawn, held back, with the stub's one-second wait
+  k2lane=$1; k2brief=$2; shift 2
+  env STUB_STDIN_WAIT_S=1 K2_SLOW_S=3 $LANEV "$PY" "$F/k2-slow.py" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+    --brief "$k2brief" --projects-root "$PROJ" --run run-test-k2 --lane "$k2lane" --class verifier --grant "$F/granted" \
+    --record "$F/rec-k2.jsonl" --reason '(a) a held-back wrapper' "$@" >"$F/$k2lane.out" 2>"$F/$k2lane.err"
+}
+k2run K2A "$F/brief.md"; RC=$?
+if [ "$RC" = 0 ] && [ "$(recfield "$F/rec-k2.jsonl" lane-closed exit_class)" = '"completed"' ] \
+   && [ "$(cat "$F/stub/stdin.txt")" = "$(cat "$F/brief.md")" ]; then
+  ok "K201 a lane whose wrapper is held back after the start still has its brief within the CLI's wait, and closes completed"
+else no "K201 the held-back spawn  [exit $RC, $(recfield "$F/rec-k2.jsonl" lane-closed exit_class), $(tail -2 "$F/K2A.err" | tr '\n' '|')]"; fi
+k2run K2B "$F/k2-big.md"; RC=$?
+if [ "$RC" = 0 ] && [ "$(wc -c < "$F/k2-big.md")" -gt 65536 ] && cmp -s "$F/stub/stdin.txt" "$F/k2-big.md"; then
+  ok "K202 a brief longer than any pipe's buffer reaches the lane whole while the wrapper is held back (byte comparison; control: its size is above 64 KiB)"
+else no "K202 the long brief  [exit $RC, $(wc -c < "$F/stub/stdin.txt") of $(wc -c < "$F/k2-big.md") bytes]"; fi
+k2run K2C "$F/brief.md" --prompt-arg; RC=$?
+if [ "$RC" = 0 ] && [ ! -s "$F/stub/stdin.txt" ] && grep -q -F "$(head -1 "$F/brief.md")" "$F/stub/argv.txt"; then
+  ok "K203 a brief passed as the prompt argument leaves the lane's input closed at once (control: the brief is in its argv)"
+else no "K203 the prompt argument  [exit $RC, stdin $(wc -c < "$F/stub/stdin.txt") bytes]"; fi
+env STUB_SKIP_STDIN=1 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/k2-big.md" --projects-root "$PROJ" \
+  --run run-test-k2 --lane K2D --class verifier --grant "$F/granted" --record "$F/rec-k2.jsonl" --reason '(a) a lane that reads nothing' >"$F/K2D.out" 2>"$F/K2D.err"; RC=$?
+if [ "$RC" = 0 ] && [ "$(recfield "$F/rec-k2.jsonl" lane-closed exit_class)" = '"completed"' ] && ! grep -q 'Traceback' "$F/K2D.err"; then
+  ok "K204 a lane that exits without reading a long brief closes as itself, with no hang and no traceback"
+else no "K204 the unread brief  [exit $RC, $(tail -2 "$F/K2D.err" | tr '\n' '|')]"; fi
+env STUB_STDIN_WAIT_S=1 K2_SLOW_S=3 $LANEV "$PY" "$F/k2-slow.py" "$LANE" resume --run run-test-k2 --lane K2A --beat \
+  --record "$F/rec-k2.jsonl" --home "$LHOME" >"$F/K2E.out" 2>"$F/K2E.err"; RC=$?
+if [ "$RC" = 0 ] && [ "$(recfield "$F/rec-k2.jsonl" hold-beat ok)" = true ]; then
+  ok "K205 a held-lane beat has its one-word prompt within the CLI's wait on the same held-back wrapper"
+else no "K205 the held-back beat  [exit $RC, ok $(recfield "$F/rec-k2.jsonl" hold-beat ok), $(tail -2 "$F/K2E.err" | tr '\n' '|')]"; fi
+
 # file-level grants, the per-spawn settings and the input directory ---------------------------
 printf 'NOTE\n' > "$F/writable/note.md"
 spawn --run run-test-fg --lane FG --class builder --grant "$F/granted/inside.txt" \
@@ -1078,10 +1301,13 @@ if [ -f "$SET" ] && grep -qx -- "$SR/run-test-fg-settings-FG.json" "$A" \
   ok "the per-spawn settings file carries the home's hooks plus Edit/Write allow rules for the file write, and is what --settings names"
 else no "per-spawn settings  [$(cat "$SET" 2>&1 | tr '\n' ' ')]"; fi
 SETC="$STORE/spawn-records/run-test-c-settings-L3.json"; SETB="$STORE/spawn-records/run-test-b-settings-L2.json"
+# Since 2026-10-10 a class whose definition allows WebSearch (the verifier) carries its one `WebSearch`
+# rule, and one that blocks it (wiki-compile) carries none: a read-only lane still has no write rule.
 if grep -q "\"Edit(/$FR/writable/\*\*)\"" "$SETC" && grep -q "\"Write(/$FR/writable/\*\*)\"" "$SETC" \
-   && ! grep -q 'permissions' "$SETB" && grep -q '"PreToolUse"' "$SETB"; then
-  ok "a directory write allows its whole tree (dir/**); a read-only lane's settings carry the hooks and no allow list (control)"
-else no "settings allow shapes  [$(grep -o 'Edit([^)]*)' "$SETC" | tr '\n' ' ') / permissions lines in the read-only file: $(grep -c permissions "$SETB")]"; fi
+   && ! grep -q '"WebSearch"' "$SETC" \
+   && ! grep -q 'Edit(\|Write(' "$SETB" && grep -q '"WebSearch"' "$SETB" && grep -q '"PreToolUse"' "$SETB"; then
+  ok "a directory write allows its whole tree (dir/**); a read-only lane's settings carry the hooks and no Edit or Write rule, only its class's WebSearch (control; the wiki-compile file has no WebSearch)"
+else no "settings allow shapes  [$(grep -o 'Edit([^)]*)' "$SETC" | tr '\n' ' ') / write rules in the read-only file: $(grep -c 'Edit(\|Write(' "$SETB") / WebSearch there: $(grep -c '"WebSearch"' "$SETB")]"; fi
 IN="$STORE/spawn-records/run-test-fg-in-FG"
 if [ -f "$IN/run-test-fg-brief-FG.md" ] && cmp -s "$IN/run-test-fg-brief-FG.md" "$F/brief.md" \
    && [ "$(recfield "$F/rec-fg.jsonl" lane-open input_dir)" = "\"$SR/run-test-fg-in-FG\"" ] \
@@ -1119,10 +1345,39 @@ if dirs_of "$GV" | grep -qx "$FR/vault" && printf '%s\n' "$GV" | grep -q '"grant
   ok "--grant-vault-root passes the real vault root through --add-dir and the fence grants and records the flag (control: absent without it)"
 else no "--grant-vault-root  [$(dirs_of "$GV" | tr '\n' ' ')]"; fi
 
+# G59 · each close names its harness and marks what does not apply to it (register 2026-10-13 06:43).
+# The fields beside the mark stay as they were, so the weekly reader reads a new close as it read an old.
+spawn --run run-test-g59 --lane G59A --class verifier --grant "$F/granted" --record "$F/rec-g59.jsonl" --reason '(a) a close' >/dev/null 2>&1; RC=$?
+if [ "$RC" = 0 ] && [ "$(recfield "$F/rec-g59.jsonl" lane-closed harness)" = '"claude"' ] \
+   && [ "$(recfield "$F/rec-g59.jsonl" lane-open harness)" = '"claude"' ] \
+   && recfield "$F/rec-g59.jsonl" lane-closed not_applicable | grep -q '"denials.sandbox": "a Claude lane has no sandbox channel' \
+   && ! recfield "$F/rec-g59.jsonl" lane-closed denials | grep -q 'sandbox'; then
+  ok "G59-01 a lane.py close and lane-open name the claude harness, and the close marks the sandbox channel not applicable without changing its denials"
+else no "G59-01 the Claude close  [exit $RC: $(recfield "$F/rec-g59.jsonl" lane-closed harness) $(recfield "$F/rec-g59.jsonl" lane-closed not_applicable)]"; fi
+WEEKLY="$VAULT/.claude/skills/weekly-audit/weekly-waste.py"
+if [ -f "$WEEKLY" ]; then
+  G59W=$("$PY" - "$WEEKLY" "$F/rec-g59.jsonl" <<'G59_WEEKLY_END'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("weekly_waste", sys.argv[1])
+reader = importlib.util.module_from_spec(spec)
+sys.modules["weekly_waste"] = reader
+spec.loader.exec_module(reader)
+close = [json.loads(line) for line in open(sys.argv[2]) if '"lane-closed"' in line][-1]
+old = {key: value for key, value in close.items() if key not in ("harness", "not_applicable")}
+got = [reader.denial_values(close), reader.duration_value(close), reader.exit_value(close)]
+want = [reader.denial_values(old), reader.duration_value(old), reader.exit_value(old)]
+print(got == want, got[0]["tool"][0], got[0]["fence"][0], got[0]["sandbox"][0], got[2][1])
+G59_WEEKLY_END
+)
+  if [ "$G59W" = "True known known unknown completed" ]; then
+    ok "G59-02 the weekly reader reads a close with the new fields exactly as it reads one without them (control: tool and fence known, the sandbox channel its old unknown)"
+  else no "G59-02 the weekly reader  [$G59W]"; fi
+fi
+
 # CONTROL+ lines --------------------------------------------------------------------------------
 printf 'Do the thing.\nCONTROL+: GRANTED in %s\n- CONTROL+: "Settings" in CUSTOMISATION.md\n' "$F/granted/inside.txt" > "$F/brief-ctl.md"
 spawn --run run-test-ct --lane CT --class verifier --grant "$F/granted" --record "$F/rec-ct.jsonl" \
-      --brief "$F/brief-ctl.md" --reason '(a) controls checked' >/dev/null 2>&1
+      --grant-vault-root --brief "$F/brief-ctl.md" --reason '(a) controls checked' >/dev/null 2>&1
 RC=$?
 WANT="[{\"file\": \"$FR/granted/inside.txt\", \"matches\": 1, \"phrase\": \"GRANTED\"}, {\"file\": \"$FR/vault/CUSTOMISATION.md\", \"matches\": 1, \"phrase\": \"Settings\"}]"
 GOT=$(recfield "$F/rec-ct.jsonl" lane-open controls_checked)
@@ -1149,7 +1404,7 @@ premise "the rehearsal form (--dry-run, no --detach --no-wait) reaches the contr
 rm -f "$F/rec-ctl-dry.jsonl"
 DRYCTL=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-ctl-dry.jsonl" \
          --reason '(a) rehearsal' --home "$LHOME" --routing "$R" --brief "$F/brief-ctl.md" --run run-test-p \
-         --lane P --class verifier --grant "$F/granted" --dry-run 2>&1); RCD=$?
+         --lane P --class verifier --grant "$F/granted" --grant-vault-root --dry-run 2>&1); RCD=$?
 if [ "$RCD" = 0 ] && [ ! -f "$F/rec-ctl-dry.jsonl" ] && printf '%s' "$DRYCTL" | grep -q 'controls checked: \[{"'; then
   ok "the rehearsal form on a sound brief prints the controls checked and writes no record (the control for the refusal above)"
 else no "the rehearsal form on a sound brief  [exit $RCD, said: $(printf '%s' "$DRYCTL" | head -3 | tr '\n' ' ')]"; fi
@@ -1162,7 +1417,7 @@ if [ "$RCX" = 2 ] && printf '%s' "$DETDRY" | grep -q 'no-wait goes with --detach
   ok "the detached form under --dry-run is refused before the controls (a broken control stays unseen there: the reason the duty names the rehearsal form, until the proposed wrapper fix lands)"
 else no "the detached dry run  [exit $RCX, said: $(printf '%s' "$DETDRY" | head -3 | tr '\n' ' ')]"; fi
 
-# ---- kifix 2026-09-13: the caller's checks and the memory directory ------------------------------
+# ---- kifix 2026-09-13: the caller's checks --------------------------------------------------------
 # DR · a brief carrying a doubled root is refused before any record line (register 2026-09-09
 # 19:03). The incident's home-prefix family is assembled through printf, so no home-path literal
 # sits in this file.
@@ -1288,6 +1543,26 @@ GPH=$($LANEV HOME="$F/fakehome" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOM
 if [ "$RC" = 0 ] && printf '%s' "$GPH" | grep -q "whole parent $FR/fakehome (a home directory)"; then
   ok "GP03 a --grant file directly in a home directory earns the warning naming that parent as a home directory"
 else no "GP03 the home-directory file grant  [exit $RC: $(printf '%s' "$GPH" | grep -m1 'warning')]"; fi
+# BC2-40: any parent with other entries in it, since the file tools reach them all; a parent the spawn
+# grants anyway widens nothing, and the system's own .DS_Store is no sibling.
+mkdir -p "$F/gp-shared/sub" "$F/gp-alone" "$F/gp-covered"
+printf 'one\n' > "$F/gp-shared/asked.txt"; printf 'two\n' > "$F/gp-shared/answer-key.txt"
+printf 'one\n' > "$F/gp-alone/asked.txt"; printf 'x\n' > "$F/gp-alone/.DS_Store"
+printf 'one\n' > "$F/gp-covered/asked.txt"; printf 'two\n' > "$F/gp-covered/other.txt"
+GPS=$(spawn --run run-test-gp --lane GP4 --class verifier --grant "$F/gp-shared/asked.txt" --record "$F/rec-gp.jsonl" --dry-run 2>&1); RC=$?
+if [ "$RC" = 0 ] && printf '%s' "$GPS" | grep -q "whole parent $FR/gp-shared (it holds 2 other entries)"; then
+  ok "GP04 a --grant file in an ordinary directory holding other entries earns the warning, with their number, and the spawn proceeds (exit 0)"
+else no "GP04 the shared directory  [exit $RC: $(printf '%s' "$GPS" | grep -m1 'warning')]"; fi
+GPA=$(spawn --run run-test-gp --lane GP5 --class verifier --grant "$F/gp-alone/asked.txt" --record "$F/rec-gp.jsonl" --dry-run 2>&1); RC=$?
+if [ "$RC" = 0 ] && ! printf '%s' "$GPA" | grep -q 'file grant reaches its whole parent'; then
+  ok "GP05 a --grant file whose only sibling is .DS_Store earns no warning (control: GP04)"
+else no "GP05 the file alone  [exit $RC: $(printf '%s' "$GPA" | grep -m1 'warning')]"; fi
+GPC2=$(spawn --run run-test-gp --lane GP6 --class verifier --grant "$F/gp-covered" --grant "$F/gp-covered/asked.txt" --record "$F/rec-gp.jsonl" --dry-run 2>&1); RC=$?
+GPW=$(spawn --run run-test-gp --lane GP7 --class builder --write "$F/gp-shared/asked.txt" --record "$F/rec-gp.jsonl" --dry-run 2>&1); RCW=$?
+if [ "$RC" = 0 ] && ! printf '%s' "$GPC2" | grep -q 'file grant reaches its whole parent' \
+   && [ "$RCW" = 0 ] && printf '%s' "$GPW" | grep -q 'warning: --write .*asked.txt is a file'; then
+  ok "GP06 a file whose parent the spawn grants anyway earns no warning, and a --write file in a shared directory earns the same one (control)"
+else no "GP06 the covered parent  [exit $RC/$RCW: $(printf '%s|%s' "$GPC2" "$GPW" | grep 'warning' | cut -c1-200 | head -2)]"; fi
 
 # RC · a spawn onto a closed run warns and proceeds (register 2026-09-03). The key is the property:
 # the record holds a run-close with no later run-open or run-resume, whatever else follows it
@@ -1354,53 +1629,36 @@ if [ "$(printf '%s\n' "$RCU" | grep -c ' silent$')" = 7 ] && printf '%s\n' "$RCU
   ok "RC04 the warning's premise cases say nothing (re-opened by run-open, no close, unparseable lines, an empty file, a missing file, a directory, no path), and a run closed, resumed and closed again warns naming the latest close (the control)"
 else no "RC04 the closed-run premise cases  [$(printf '%s' "$RCU" | tr '\n' '|')]"; fi
 
-# MM · the memory directory is a real directory, synced from the vault at init and back at the close
-# (register 2026-09-04). A fixture vault and home of their own, so no leg reads or writes a real one.
+# MM · no class holds a memory directory: the memory trial retired 2026-11-04. A fixture vault and home of their own, so no leg
+# reads or writes a real one. The definition still declares the old field and the home still holds the old folder, the shape an
+# upgraded install has, so each leg shows the wrapper leaves both alone.
 MV="$F/memvault"; MVH="$F/memhome"; MEMR=".claude/agent-memory-local/memory-hunter"
-mkdir -p "$MV/.claude/agents" "$MV/$MEMR" "$MV/wiki" "$MVH/.claude/agent-memory-local"
+mkdir -p "$MV/.claude/agents" "$MV/$MEMR" "$MV/wiki" "$MVH/$MEMR"
 cp "$VAULT/CLAUDE.md" "$MV/CLAUDE.md"
-printf '%s\n' '---' 'name: memory-hunter' 'description: a fixture memory class' 'memory: local' '---' \
+printf '%s\n' '---' 'name: memory-hunter' 'description: a fixture class still declaring the old field' 'memory: local' '---' \
   'The fixture hunter.' > "$MV/.claude/agents/memory-hunter.md"
 printf '## Settings\n- **throttle**: default\n- **breadth**: standard\n- **delegation**: single — the fixture regime\n' \
   > "$MV/CUSTOMISATION.md"
-printf 'line one\n' > "$MV/$MEMR/MEMORY.md"
-ln -s "$MV/$MEMR" "$MVH/$MEMR"          # the shape every home had before: a link into the vault
+printf 'vault copy\n' > "$MV/$MEMR/MEMORY.md"
+printf 'home copy\n' > "$MVH/$MEMR/MEMORY.md"
 MI=$(env CLAUDE_PROJECT_DIR="$MV" "$PY" "$LANE" init --home "$MVH" 2>&1); RC=$?
-if [ "$RC" = 0 ] && [ -d "$MVH/$MEMR" ] && [ ! -L "$MVH/$MEMR" ] && cmp -s "$MVH/$MEMR/MEMORY.md" "$MV/$MEMR/MEMORY.md" \
-   && [ "$(cat "$MV/$MEMR/MEMORY.md")" = 'line one' ] \
-   && printf '%s' "$MI" | grep -q 'replaced .*memory-hunter (a symlink into the vault; now a real directory)' \
-   && printf '%s' "$MI" | grep -q 'synced .*memory-hunter (from the vault: 1 copied, 0 unchanged)'; then
-  ok "MM01 init turns the home's memory link into a real directory holding the vault copy's files, and leaves the vault's own directory and file as they were"
-else no "MM01 the materialised memory directory  [exit $RC, still a link: $([ -L "$MVH/$MEMR" ] && echo yes || echo no): $(printf '%s' "$MI" | grep memory | tr '\n' '|')]"; fi
-printf 'line two\n' >> "$MVH/$MEMR/MEMORY.md"
+if [ "$RC" = 0 ] && printf '%s' "$MI" | grep -q 'lane home: ' && ! printf '%s' "$MI" | grep -q 'memory' \
+   && [ "$(cat "$MV/$MEMR/MEMORY.md")" = 'vault copy' ] && [ "$(cat "$MVH/$MEMR/MEMORY.md")" = 'home copy' ]; then
+  ok "MM01 init syncs no memory directory and names none: the vault's and the home's files stay as they were, with a class still declaring the field (the control: init ran and printed its own line)"
+else no "MM01 init and the old memory directory  [exit $RC: $(printf '%s' "$MI" | grep memory | tr '\n' '|')]"; fi
 memspawn(){ $LANEV CLAUDE_PROJECT_DIR="$MV" "$PY" "$LANE" spawn --expect-usd 2 --home "$MVH" --routing "$R" --brief "$F/brief.md" \
             --projects-root "$PROJ" --class memory-hunter --run run-test-mem --record "$F/rec-mem.jsonl" "$@"; }
-MS=$(memspawn --lane MEM1 --reason '(a) the memory sync at the close' 2>&1); RC=$?
-MSYNC='{"conflicts": [], "copied": ["MEMORY.md"], "dir": ".claude/agent-memory-local/memory-hunter", "error": null}'
-if [ "$RC" = 0 ] && [ "$(cat "$MV/$MEMR/MEMORY.md")" = "$(printf 'line one\nline two')" ] \
-   && [ "$(recfield "$F/rec-mem.jsonl" lane-closed memory_sync)" = "$MSYNC" ]; then
-  ok "MM02 a memory-hunter lane's lane-closed copies the file the lane changed back to the vault's copy and records memory_sync"
-else no "MM02 the sync at the close  [exit $RC, vault copy: $(tr '\n' '|' < "$MV/$MEMR/MEMORY.md"), memory_sync $(recfield "$F/rec-mem.jsonl" lane-closed memory_sync): $(printf '%s' "$MS" | head -2 | tr '\n' ' ')]"; fi
-MVSHA=$(shasum "$MV/$MEMR/MEMORY.md" | cut -d' ' -f1)
-memspawn --lane MEM2 --reason '(a) control: nothing changed in the home' >"$F/mem2.out" 2>&1; RC=$?
-MSYNC0='{"conflicts": [], "copied": [], "dir": ".claude/agent-memory-local/memory-hunter", "error": null}'
-if [ "$RC" = 0 ] && [ "$(shasum "$MV/$MEMR/MEMORY.md" | cut -d' ' -f1)" = "$MVSHA" ] \
-   && [ "$(recfield "$F/rec-mem.jsonl" lane-closed memory_sync)" = "$MSYNC0" ] && ! grep -q 'memory sync' "$F/mem2.out"; then
-  ok "MM03 a close whose lane changed nothing copies nothing: the vault copy is byte-identical and memory_sync lists no file (the control for MM02)"
-else no "MM03 the no-change close  [exit $RC, memory_sync $(recfield "$F/rec-mem.jsonl" lane-closed memory_sync)]"; fi
-printf 'vault edit\n' >> "$MV/$MEMR/MEMORY.md"; printf 'home edit\n' >> "$MVH/$MEMR/MEMORY.md"
-memspawn --lane MEM3 --reason '(a) both copies changed since the last sync' >"$F/mem3.out" 2>&1; RC=$?
-MSYNCX='{"conflicts": ["MEMORY.md"], "copied": [], "dir": ".claude/agent-memory-local/memory-hunter", "error": null}'
-if [ "$RC" = 0 ] && grep -q 'vault edit' "$MV/$MEMR/MEMORY.md" && ! grep -q 'home edit' "$MV/$MEMR/MEMORY.md" \
-   && grep -q 'home edit' "$MVH/$MEMR/MEMORY.md" && [ "$(recfield "$F/rec-mem.jsonl" lane-closed memory_sync)" = "$MSYNCX" ] \
-   && grep -q 'conflict (changed on both sides since the last sync, both kept): MEMORY.md' "$F/mem3.out"; then
-  ok "MM04 a file changed on both sides since the last sync is a conflict: the vault's copy is not overwritten, both are kept and one line says so"
-else no "MM04 the two-sided change  [exit $RC, memory_sync $(recfield "$F/rec-mem.jsonl" lane-closed memory_sync)]"; fi
-MI2=$(env CLAUDE_PROJECT_DIR="$MV" "$PY" "$LANE" init --home "$MVH" 2>&1); RC=$?
-if [ "$RC" = 0 ] && grep -q 'home edit' "$MVH/$MEMR/MEMORY.md" \
-   && printf '%s' "$MI2" | grep -q '1 kept: changed in the home since the last sync: MEMORY.md'; then
-  ok "MM05 init keeps a home copy changed since the last sync rather than overwrite it with the vault's, and names it"
-else no "MM05 init over a changed home copy  [exit $RC: $(printf '%s' "$MI2" | grep memory)]"; fi
+rm -f "$F/stub/argv.txt"
+MS=$(memspawn --lane MEM1 --reason '(a) no memory sync at the close' 2>&1); RC=$?
+if [ "$RC" = 0 ] && [ "$(recfield "$F/rec-mem.jsonl" lane-closed memory_sync)" = 'null' ] \
+   && [ "$(recfield "$F/rec-mem.jsonl" lane-closed exit_class)" != 'null' ] \
+   && [ "$(cat "$MV/$MEMR/MEMORY.md")" = 'vault copy' ] && [ "$(cat "$MVH/$MEMR/MEMORY.md")" = 'home copy' ]; then
+  ok "MM02 a memory-hunter lane's lane-closed records no memory_sync and copies nothing back, though the home's file differs (the control: the same close's exit_class reads)"
+else no "MM02 the close and the old memory directory  [exit $RC, memory_sync $(recfield "$F/rec-mem.jsonl" lane-closed memory_sync), exit_class $(recfield "$F/rec-mem.jsonl" lane-closed exit_class): $(printf '%s' "$MS" | head -2 | tr '\n' ' ')]"; fi
+MAGENT=$(grep -A1 -x -- '--agents' "$F/stub/argv.txt" | tail -1)
+if printf '%s' "$MAGENT" | "$PY" -c 'import json, sys; a = next(iter(json.load(sys.stdin).values())); sys.exit(0 if a.get("tools") and "memory" not in a else 1)'; then
+  ok "MM03 the thin definition carries no memory field, though the source definition declares one (the control: it carries its tools)"
+else no "MM03 the thin definition  [$MAGENT]"; fi
 
 # --config-dir ----------------------------------------------------------------------------------
 mkdir -p "$F/cfg2"
@@ -1439,7 +1697,7 @@ SHORT=$(spawn --run run-test-cut2 --lane CU2 --class verifier --grant "$F/grante
 FIVE=$(env STUB_REPORT="$LONG" $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
        --projects-root "$PROJ" --run run-test-cut3 --lane CU3 --class verifier --grant "$F/granted" \
        --record "$F/rec-cut3.jsonl" --report-words 5 --reason '(a) the report cut' 2>&1)
-if printf '%s\n' "$SHORT" | grep -q '(3 of 3 words shown; full text: ' \
+if printf '%s\n' "$SHORT" | grep -q '(9 of 9 words shown; full text: ' \
    && [ "$(recfield "$F/rec-cut2.jsonl" lane-closed report_cut)" = false ] \
    && printf '%s\n' "$FIVE" | grep -q '(5 of 1000 words shown; full text: ' \
    && printf '%s\n' "$FIVE" | grep -qw 'w5' && ! printf '%s\n' "$FIVE" | grep -qw 'w6'; then
@@ -1470,7 +1728,7 @@ env STUB_SLEEP=20 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --ro
   --projects-root "$PROJ" --run run-test-st3 --lane S3 --class verifier --grant "$F/granted" \
   --silence-s 30 --poll-s 1 --no-transcript-s 2 --record "$F/rec-st3.jsonl" --reason '(a) no transcript' >/dev/null 2>&1
 RC=$?; ELAPSED=$(( $(date +%s) - START ))
-if [ "$RC" = 5 ] && grep -q '"reason": "no transcript"' "$F/rec-st3.jsonl" && [ "$ELAPSED" -lt 15 ]; then
+if [ "$RC" = 3 ] && grep -q '"reason": "no transcript"' "$F/rec-st3.jsonl" && [ "$ELAPSED" -lt 15 ]; then
   ok "no transcript within --no-transcript-s is a stall of reason 'no transcript' (${ELAPSED}s)"
 else no "the no-transcript stall  [exit $RC, ${ELAPSED}s]"; fi
 env STUB_SLEEP_AFTER=4 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
@@ -1489,14 +1747,109 @@ BL2=$(spawn --run run-test-bl --lane BL --class verifier --grant "$F/granted" --
 BL3=$(spawn --run run-test-bl --lane BL --class verifier --grant "$F/granted" --record "$F/rec-bl.jsonl" --dry-run 2>&1)
 if printf '%s\n' "$BL" | grep -qF 'silence: 15.0 s (1.5 x baseline X (10.0 s))' \
    && printf '%s\n' "$BL2" | grep -qF 'silence: 100.0 s (--silence-s)' \
-   && printf '%s\n' "$BL3" | grep -qF 'silence: 900 s (default)'; then
-  ok "--baseline-lane raises the threshold to 1.5 x the predecessor's duration only when larger; the default is 900 s"
+   && printf '%s\n' "$BL3" | grep -qF 'silence: 900 s (class default for verifier)'; then
+  ok "--baseline-lane raises the threshold to 1.5 x the predecessor's duration only when larger; the verifier's class default is 900 s"
 else no "the silence threshold  [$(printf '%s\n' "$BL" | grep '^silence') / $(printf '%s\n' "$BL2" | grep '^silence') / $(printf '%s\n' "$BL3" | grep '^silence')]"; fi
 ERR=$(spawn --run run-test-bl --lane BL --class verifier --grant "$F/granted" --record "$F/rec-bl.jsonl" \
       --baseline-lane Y --dry-run 2>&1); RC=$?
 if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q 'has no lane-closed'; then
   ok "premise: --baseline-lane naming a lane with no recorded close (exit 2)"
 else no "an unknown baseline lane got through  [exit $RC: $ERR]"; fi
+
+# The class silence default (registers 2026-09-26 03:5x, 2026-10-13 13:26): writer, critic, builder and planner take 2400 s, every other
+# class 900 s; --silence-s N, --silence-s 0 and --baseline-lane keep their precedence; lane-open names
+# the class as the source; a resume keeps the lane-open's value, and a lane-open from before
+# silence_s resumes on the class default a spawn would resolve. The fixture routing gains a writer
+# row (the critic's row under the writer's name) so the class resolves here as in the shipped table.
+"$PY" - "$F/routing-v2.json" "$F/routing-cd.json" <<'CLASS_DEFAULT_ROUTING_END'
+import json, sys
+table = json.load(open(sys.argv[1]))
+table["classes"]["writer"] = json.loads(json.dumps(table["classes"]["critic"]))
+table["classes"]["planner"] = json.loads(json.dumps(table["classes"]["critic"]))
+with open(sys.argv[2], "w") as handle:
+    json.dump(table, handle, indent=1)
+CLASS_DEFAULT_ROUTING_END
+printf '{"event": "lane-closed", "lane": "X", "run": "run-test-cd", "duration_s": 10}\n{"event": "lane-closed", "lane": "Y", "run": "run-test-cd", "duration_s": 2000}\n' > "$F/rec-cd.jsonl"
+cdspawn(){ spawn --record "$F/rec-cd.jsonl" --routing "$F/routing-cd.json" --grant "$F/granted" "$@"; }
+cdsrc(){ # record lane event -> "silence_s|silence_src" of the lane's last such event
+  "$PY" - "$1" "$2" "$3" <<'CDSRC_END'
+import json, sys
+found = "absent"
+for line in open(sys.argv[1]):
+    r = json.loads(line)
+    if r.get("lane") == sys.argv[2] and r.get("event") == sys.argv[3]:
+        found = "%s|%s" % (r.get("silence_s"), r.get("silence_src"))
+print(found)
+CDSRC_END
+}
+cdspawn --run run-test-cd --lane CDW --class writer --reason '(a) class default: writer' >/dev/null 2>&1; RC=$?
+eq "class default: a writer spawn resolves 2400 s and its lane-open names the class (exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDW lane-open)" "0|2400|class default for writer"
+cdspawn --run run-test-cd --lane CDC --class critic --reason '(a) class default: critic' >/dev/null 2>&1; RC=$?
+eq "class default: a critic spawn resolves 2400 s (exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDC lane-open)" "0|2400|class default for critic"
+cdspawn --run run-test-cd --lane CDB --class builder --write "$F/writable" --reason '(a) class default: builder' >/dev/null 2>&1; RC=$?
+eq "class default: a builder spawn resolves 2400 s (register 2026-10-13 13:26; exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDB lane-open)" "0|2400|class default for builder"
+cdspawn --run run-test-cd --lane CDP --class planner --reason '(a) class default: planner' >/dev/null 2>&1; RC=$?
+eq "class default: a planner spawn resolves 2400 s (exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDP lane-open)" "0|2400|class default for planner"
+cdspawn --run run-test-cd --lane CDV --class verifier --reason '(a) class default: verifier' >/dev/null 2>&1; RC=$?
+eq "class default: a verifier spawn keeps 900 s (control: the longer default belongs to the four classes alone; exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDV lane-open)" "0|900|class default for verifier"
+cdspawn --run run-test-cd --lane CDW6 --class writer --silence-s 600 --reason '(a) class default: writer, explicit' >/dev/null 2>&1; RC=$?
+eq "class default: a writer with --silence-s 600 resolves 600, the flag named as the source (exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDW6 lane-open)" "0|600.0|--silence-s"
+env STUB_SLEEP_AFTER=4 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$F/routing-cd.json" --brief "$F/brief.md" \
+  --projects-root "$PROJ" --run run-test-cd --lane CDW0 --class writer --grant "$F/granted" \
+  --silence-s 0 --poll-s 1 --no-transcript-s 1 --record "$F/rec-cd.jsonl" --reason '(a) class default: writer, watch off' >/dev/null 2>&1; RC=$?
+if [ "$RC" = 0 ] && [ "$(cdsrc "$F/rec-cd.jsonl" CDW0 lane-open)" = "0|--silence-s 0 (watch disabled)" ] \
+   && ! grep '"lane": "CDW0"' "$F/rec-cd.jsonl" | grep -q '"event": "stall"'; then
+  ok "class default: a writer with --silence-s 0 still disables the watch (a 4 s silence at a 1 s no-transcript bound completes; the class default does not override it)"
+else no "class default: writer --silence-s 0  [exit $RC, $(cdsrc "$F/rec-cd.jsonl" CDW0 lane-open)]"; fi
+CDX=$(cdspawn --run run-test-cd --lane CDBX --class writer --baseline-lane X --reason '(a) class default: baseline below' --dry-run 2>&1)
+CDY=$(cdspawn --run run-test-cd --lane CDBY --class writer --baseline-lane Y --reason '(a) class default: baseline above' --dry-run 2>&1)
+if printf '%s\n' "$CDX" | grep -qxF 'silence: 2400 s (class default for writer)' \
+   && printf '%s\n' "$CDY" | grep -qxF 'silence: 3000.0 s (1.5 x baseline Y (2000.0 s))'; then
+  ok "class default: --baseline-lane raises a writer's 2400 s only when 1.5 x the predecessor is larger (15 s keeps 2400; 3000 s wins)"
+else no "class default and --baseline-lane  [$(printf '%s\n' "$CDX" | grep '^silence') / $(printf '%s\n' "$CDY" | grep '^silence')]"; fi
+printf 'Follow-up: say more.\n' > "$F/brief-cd-follow.md"
+cdspawn --run run-test-cd --lane CDR --class writer --silence-s 700 --reason '(a) class default: to resume' >/dev/null 2>&1
+CDRS=$($LANEV "$PY" "$LANE" resume --run run-test-cd --lane CDR --brief "$F/brief-cd-follow.md" --record "$F/rec-cd.jsonl" \
+       --home "$LHOME" 2>&1); RC=$?
+eq "class default: a resume of a writer keeps its lane-open's 700 s, never the class default (exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDR lane-resumed)" "0|700.0|lane-open"
+cdspawn --run run-test-cd --lane CDO --class writer --reason '(a) class default: an old lane-open' >/dev/null 2>&1
+"$PY" - "$F/rec-cd.jsonl" CDO <<'CD_STRIP_END'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1])]
+for row in rows:
+    if row.get("lane") == sys.argv[2] and row.get("event") == "lane-open":
+        row.pop("silence_s", None)
+        row.pop("silence_src", None)
+with open(sys.argv[1], "w") as handle:
+    handle.write("".join(json.dumps(row) + "\n" for row in rows))
+CD_STRIP_END
+CDOS=$($LANEV "$PY" "$LANE" resume --run run-test-cd --lane CDO --brief "$F/brief-cd-follow.md" --record "$F/rec-cd.jsonl" \
+       --home "$LHOME" 2>&1); RC=$?
+eq "class default: a writer's lane-open from before silence_s resumes on the class default a spawn resolves (exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDO lane-open)|$(cdsrc "$F/rec-cd.jsonl" CDO lane-resumed)" "0|None|None|2400|class default for writer"
+# The --silence-s help names each command's real default: the class default for spawn, none for
+# watch and wait (they kill for silence only when given a threshold), the lane-open's threshold for
+# resume. Control: the retired one-number claim, the shape every command printed before, is absent.
+CDH=""
+for cmd in spawn watch wait resume; do   # COLUMNS wide, so argparse never wraps a phrase mid-word
+  CDH="$CDH$cmd:$(env COLUMNS=400 "$PY" "$LANE" "$cmd" --help 2>&1 | tr -s ' \n' '  ')|"
+done
+if printf '%s' "$CDH" | grep -qF '(default: the class default, 2400 for the writer, critic, builder and planner classes and 900 for every other; 0 disables the watch)' \
+   && [ "$(printf '%s' "$CDH" | grep -oF '(default: none: this watch requests an owner stop only when given a threshold; 0 disables the watch)' | wc -l | tr -d ' ')" = 2 ] \
+   && printf '%s' "$CDH" | grep -qF "(default: the lane-open's threshold, else the class default; 0 disables the watch)" \
+   && ! printf '%s' "$CDH" | grep -qF '(default 900; 0 disables' \
+   && printf '%s' 'stall threshold in seconds (default 900; 0 disables the watch)' | grep -qF '(default 900; 0 disables'; then
+  ok "class default: the --silence-s help names each command's real default (spawn the class default, watch and wait none, resume the lane-open's; the retired 'default 900' claim absent, and the same probe catches it in a planted line)"
+else no "class default: the --silence-s help  [$(printf '%s' "$CDH" | grep -o 'stall threshold in seconds ([^)]*)' | tr '\n' '|')]"; fi
+# The docstring's two slips (register 2026-10-02 03:00 and the plan's sweep): the torn preview
+# sentence and the one-number silence default are gone; the class default and the mended sentence
+# are there. Control: each retired line is caught by the same grep in a planted copy.
+printf 'The report (D8): stdout carries the complete report by default. An explicit preview\npreview request uses `--report-words N` and names the full persisted text in its pointer.\n  - silence threshold, default 900 s: a compatibility bound, set by judgement, unmeasured for\n' > "$F/cd-docstring-planted.txt"
+CDT0=$(grep -c -e '^preview request uses' -e 'silence threshold, default 900 s' "$LANE"); CDTP=$(grep -c -e '^preview request uses' -e 'silence threshold, default 900 s' "$F/cd-docstring-planted.txt")
+if [ "$CDT0" = 0 ] && [ "$CDTP" = 2 ] \
+   && grep -qxF 'The report (D8): stdout carries the complete report by default. An explicit preview request' "$LANE" \
+   && grep -qF -- '- silence threshold, the class default when a spawn passes no `--silence-s`: 2400 s for the' "$LANE"; then
+  ok "class default: the lane.py docstring states the class default and the mended preview sentence; neither retired line remains (control: the same grep finds both in a planted copy)"
+else no "class default: the lane.py docstring  [retired lines in lane.py $CDT0, in the planted copy $CDTP]"; fi
 
 # watch -----------------------------------------------------------------------------------------
 ERR=$($LANEV "$PY" "$LANE" watch --run run-test-b --lane NOPE --record "$F/rec-b.jsonl" --poll-s 1 --appear-s 0 2>&1); RC=$?
@@ -1537,7 +1890,7 @@ sleep 2; START=$(date +%s)
 WOUT=$($LANEV "$PY" "$LANE" watch --run run-test-ws --lane WS --record "$F/rec-ws.jsonl" --poll-s 1 --silence-s 1 \
        --home "$LHOME" --projects-root "$PROJ" 2>&1); RC=$?
 wait "$SP"; ELAPSED=$(( $(date +%s) - START ))
-if [ "$RC" = 5 ] && grep -q '"by": "watch"' "$F/rec-ws.jsonl" && grep -q '"event": "stall"' "$F/rec-ws.jsonl" \
+if [ "$RC" = 5 ] && grep -q '"event": "stop-requested"' "$F/rec-ws.jsonl" && grep -q '"event": "stall"' "$F/rec-ws.jsonl" \
    && [ "$(events "$F/rec-ws.jsonl" lane-closed)" = 1 ] && [ "$ELAPSED" -lt 20 ]; then
   ok "watch --silence-s kills a silent lane (stall event by watch, exit 5) and the live wrapper writes the one close (${ELAPSED}s against a 30 s sleep)"
 else no "watch stalling a lane  [exit $RC, ${ELAPSED}s: $(printf '%s' "$WOUT" | head -2 | tr '\n' ' ')]"; fi
@@ -1559,14 +1912,12 @@ with open(sys.argv[1], "w") as h:
         "content": [{"type": "text", "text": "orphan report text ORPHAN-9911"}]}}) + "\n")
 GONE_TRANSCRIPT_TERMINATOR
 WG=$($LANEV "$PY" "$LANE" watch --run run-test-wg --lane WG --record "$F/rec-wg.jsonl" --poll-s 1 2>&1); RC=$?
-if [ "$RC" = 0 ] && grep -q '"exit_class": "watch-closed"' "$F/rec-wg.jsonl" \
-   && grep -q '"cost_src": "transcript-estimate"' "$F/rec-wg.jsonl" && grep -q '"denials": "unknown"' "$F/rec-wg.jsonl" \
-   && grep -q '"note": "closed by watch (wrapper gone)"' "$F/rec-wg.jsonl" \
-   && [ "$(recfield "$F/rec-wg.jsonl" lane-closed duration_s)" != null ] \
-   && grep -q 'ORPHAN-9911' "$STORE/spawn-records/run-test-wg-report-WG.md" \
-   && printf '%s\n' "$WG" | grep -q '^lane run-test-wg/WG: .* watch-closed '; then
-  ok "watch: a lane whose wrapper is gone is closed from its transcript (watch-closed, transcript-estimate, denials unknown), its report persisted, home and projects root taken from the record"
-else no "watch closing an orphan  [exit $RC: $(printf '%s' "$WG" | head -2 | tr '\n' ' '); $(grep -o '"exit_class": "[a-z-]*"' "$F/rec-wg.jsonl")]"; fi
+# E3 migration: a legacy orphan is an observation, with no authority to rewrite its report.
+if [ "$RC" = 3 ] && [ "$(events "$F/rec-wg.jsonl" lane-closed)" = 0 ] \
+   && [ ! -e "$STORE/spawn-records/run-test-wg-report-WG.md" ] \
+   && printf '%s' "$WG" | grep -q 'explicit head reconciliation'; then
+  ok "E3 legacy orphan: recovery needed, no close and no report write; live-owner control follows"
+else no "legacy orphan observation [exit $RC: $WG]"; fi
 sleep 30 & LIVEPID=$!
 printf '{"ts": "%s", "run": "run-test-wl", "lane": "WL", "event": "lane-open", "class": "verifier", "model": "sonnet", "effort": "high", "session_id": "fixture-live", "deadline_s": 3600, "cwd": "%s", "projects_root": "%s"}\n' "$TS" "$LHOME" "$PROJ" > "$F/rec-wl.jsonl"
 printf '{"ts": "%s", "run": "run-test-wl", "lane": "WL", "event": "lane-spawned", "session_id": "fixture-live", "pid": %s, "wrapper_pid": %s}\n' "$TS" "$LIVEPID" "$LIVEPID" >> "$F/rec-wl.jsonl"
@@ -1630,36 +1981,32 @@ K1=$($LANEV "$PY" "$LANE" kill --run run-test-k1 --lane K1 --record "$F/rec-k1.j
      --reason "the head stopped it: the brief named the wrong file" 2>&1); RC=$?
 sleep 1
 KAFTER=$(alive "$KPID")
-if [ "$RC" = 0 ] && [ "$(jevents "$F/rec-k1.jsonl" lane-closed)" = 1 ] \
-   && [ "$(recfield "$F/rec-k1.jsonl" lane-closed exit_class)" = '"killed"' ] \
-   && [ "$(recfield "$F/rec-k1.jsonl" lane-closed exit_code)" = 3 ] \
-   && [ "$(recfield "$F/rec-k1.jsonl" lane-closed killed_by)" = '"lane.py kill"' ] \
-   && [ "$(recfield "$F/rec-k1.jsonl" lane-closed cost_src)" = '"transcript-estimate"' ] \
-   && printf '%s' "$(recfield "$F/rec-k1.jsonl" lane-closed reason)" | grep -q 'the wrong file' \
-   && grep -q 'KILLED-4242' "$STORE/spawn-records/run-test-k1-report-K1.md" \
-   && [ "$KBEFORE" = yes ] && [ "$KAFTER" = no ]; then
-  ok "kill: a running lane is signalled and closed with exit_class killed, the reason, the transcript estimate and its report persisted; the process was alive before the call and is gone after it"
-else no "kill on a live lane  [exit $RC, closes $(jevents "$F/rec-k1.jsonl" lane-closed), class $(recfield "$F/rec-k1.jsonl" lane-closed exit_class), alive before/after $KBEFORE/$KAFTER: $(printf '%s' "$K1" | head -2 | tr '\n' ' ')]"; fi
-if [ "$(recfield "$F/rec-k1.jsonl" lane-closed kill_grace_s)" = 5 ] \
-   && printf '%s' "$K1" | grep -q '^lane run-test-k1/K1: .* killed '; then
-  ok "kill: the close records the grace it waited and the command prints the lane's summary line"
-else no "the kill summary  [grace $(recfield "$F/rec-k1.jsonl" lane-closed kill_grace_s): $(printf '%s' "$K1" | head -1)]"; fi
+# E3 migration: these PID-only records do not prove a process birth identity.
+if [ "$RC" = 2 ] && [ "$(jevents "$F/rec-k1.jsonl" lane-closed)" = 0 ] \
+   && [ "$KBEFORE" = yes ] && [ "$KAFTER" = yes ] \
+   && printf '%s' "$K1" | grep -q 'no proven process identities'; then
+  ok "E3 legacy kill refuses without signalling the live PID or writing a close"
+else no "legacy live kill [exit $RC, alive $KBEFORE/$KAFTER: $K1]"; fi
+if printf '%s' "$K1" | grep -q 'explicit reconciliation required' \
+   && [ ! -e "$STORE/spawn-records/run-test-k1-report-K1.md" ]; then
+  ok "E3 legacy kill names reconciliation and leaves the report absent; A19/A20 cover native kills"
+else no "legacy kill diagnostic [$K1]"; fi
 # premise: a lane the record does not carry. Nothing is signalled and nothing is written.
 KN=$(wc -l < "$F/rec-k1.jsonl" | tr -d ' ')
 K2=$($LANEV "$PY" "$LANE" kill --run run-test-k1 --lane NOSUCH --record "$F/rec-k1.jsonl" \
      --reason "a lane that is not there" 2>&1); RC=$?
-if [ "$RC" = 2 ] && printf '%s' "$K2" | grep -q 'is unknown in' \
+if [ "$RC" = 2 ] && printf '%s' "$K2" | grep -q 'no proven process identities' \
    && [ "$(wc -l < "$F/rec-k1.jsonl" | tr -d ' ')" = "$KN" ]; then
   ok "kill: an unknown lane refuses (exit 2) and writes nothing (the record's line count is unchanged)"
 else no "kill on an unknown lane  [exit $RC, lines $KN -> $(wc -l < "$F/rec-k1.jsonl" | tr -d ' '): $(printf '%s' "$K2" | head -1)]"; fi
 # premise: a lane already closed — the one above, killed a moment ago.
 K3=$($LANEV "$PY" "$LANE" kill --run run-test-k1 --lane K1 --record "$F/rec-k1.jsonl" \
      --reason "a second kill of the same lane" 2>&1); RC=$?
-if [ "$RC" = 2 ] && printf '%s' "$K3" | grep -q 'already closed' \
-   && [ "$(jevents "$F/rec-k1.jsonl" lane-closed)" = 1 ] \
+if [ "$RC" = 2 ] && printf '%s' "$K3" | grep -q 'explicit reconciliation required' \
+   && [ "$(jevents "$F/rec-k1.jsonl" lane-closed)" = 0 ] \
    && [ "$(wc -l < "$F/rec-k1.jsonl" | tr -d ' ')" = "$KN" ]; then
-  ok "kill: a lane already closed refuses (exit 2) and writes no second close (still one lane-closed)"
-else no "kill on a closed lane  [exit $RC, closes $(jevents "$F/rec-k1.jsonl" lane-closed): $(printf '%s' "$K3" | head -1)]"; fi
+  ok "E3 repeated legacy kill remains an observation with no new close"
+else no "repeated legacy kill [exit $RC: $K3]"; fi
 # premise: --reason is not optional. argparse refuses before any record is read.
 K4=$($LANEV "$PY" "$LANE" kill --run run-test-k1 --lane K1 --record "$F/rec-k1.jsonl" 2>&1); RC=$?
 if [ "$RC" = 2 ] && printf '%s' "$K4" | grep -q 'reason' \
@@ -1671,12 +2018,10 @@ sh -c 'exit 0' & GONEPID=$!; wait "$GONEPID"
 killrec "$F/rec-k5.jsonl" run-test-k5 K5 fixture-killed "$GONEPID"
 K5=$($LANEV "$PY" "$LANE" kill --run run-test-k5 --lane K5 --record "$F/rec-k5.jsonl" \
      --reason "killed by hand from another terminal" 2>&1); RC=$?
-if [ "$RC" = 0 ] && [ "$(jevents "$F/rec-k5.jsonl" lane-closed)" = 1 ] \
-   && [ "$(recfield "$F/rec-k5.jsonl" lane-closed exit_class)" = '"killed"' ] \
-   && printf '%s' "$K5" | grep -q 'already gone before the signal' \
-   && printf '%s' "$K5" | grep -q 'the close is written anyway'; then
-  ok "kill: a lane whose recorded pid has already gone is still closed, and one line on stdout says the pid had gone"
-else no "kill on a gone pid  [exit $RC, closes $(jevents "$F/rec-k5.jsonl" lane-closed): $(printf '%s' "$K5" | head -2 | tr '\n' ' ')]"; fi
+if [ "$RC" = 2 ] && [ "$(jevents "$F/rec-k5.jsonl" lane-closed)" = 0 ] \
+   && printf '%s' "$K5" | grep -q 'no proven process identities'; then
+  ok "E3 gone legacy PID still supplies no closing authority; A14 covers verified identity recovery"
+else no "legacy gone PID [exit $RC: $K5]"; fi
 # two spawns of one lane name: the LAST spawn is the lane, and the earlier spawn's close does
 # not stand in the way. The first spawn's process must survive, or the wrong pid was signalled.
 sleep 30 & OLDPID=$!
@@ -1689,11 +2034,11 @@ K6=$($LANEV "$PY" "$LANE" kill --run run-test-k6 --lane K6 --record "$F/rec-k6.j
      --reason "the second spawn is the one running" 2>&1); RC=$?
 sleep 1
 K6PIDS=$(recfield "$F/rec-k6.jsonl" lane-closed killed_pids)
-if [ "$RC" = 0 ] && [ "$(jevents "$F/rec-k6.jsonl" lane-closed)" = 2 ] \
-   && printf '%s' "$K6PIDS" | grep -q "\"lane\": $NEWPID" \
-   && [ "$(alive "$NEWPID")" = no ] && [ "$(alive "$OLDPID")" = yes ]; then
-  ok "kill: with two spawns of one lane name the LAST spawn is the lane — its pid is signalled, the earlier spawn's process is untouched (the control), and the earlier close does not block the kill"
-else no "kill across two spawns  [exit $RC, closes $(jevents "$F/rec-k6.jsonl" lane-closed), pids $K6PIDS: $(printf '%s' "$K6" | head -1)]"; fi
+if [ "$RC" = 2 ] && [ "$(jevents "$F/rec-k6.jsonl" lane-closed)" = 1 ] \
+   && [ "$(alive "$NEWPID")" = yes ] && [ "$(alive "$OLDPID")" = yes ]; then
+  ok "E3 ambiguous legacy generations leave both PIDs and the existing close untouched"
+else no "legacy generation ambiguity [exit $RC: $K6]"; fi
+kill "$KPID" "$NEWPID" 2>"$F/kill0.err" || true
 kill "$OLDPID" 2>"$F/kill0.err" || true    # the fixture's survivor: tidied away, not asserted on
 
 # resume ----------------------------------------------------------------------------------------
@@ -1735,6 +2080,9 @@ for line in open(src):
     if not line.strip():
         continue
     record = json.loads(line)
+    # Explicit legacy fixture: its edited rows have no A3 commit identity.
+    for key in ("pass_id", "close_id", "a3_record", "notice", "disposition"):
+        record.pop(key, None)
     if sid and record.get("session_id"):
         record["session_id"] = sid
     if record.get("event") == "lane-closed":
@@ -2126,7 +2474,7 @@ chmod 500 "$ROSTORE"
 ERRRO=$($LANEV "$PY" "$LANE" resume --run run-test-b --lane L2 --beat --record "$ROSTORE/rec.jsonl" \
         --home "$LHOME" 2>&1); RCRO=$?
 chmod 700 "$ROSTORE"
-if [ "$RCRO" = 2 ] && printf '%s' "$ERRRO" | grep -q 'could not be opened' \
+if [ "$RCRO" = 2 ] && printf '%s' "$ERRRO" | grep -qE 'could not be opened|Permission denied' \
    && [ "$(shasum "$A" | cut -d' ' -f1)" = "$ARGV_BEFORE" ] \
    && [ "$(events "$ROSTORE/rec.jsonl" hold-beat)" = "$(events "$BEAT_REC" hold-beat)" ]; then
   ok "session claim (review finding 2, must fire): a beat whose lock cannot be opened refuses (exit 2) and starts nothing — the stub's argv file is untouched and no hold-beat was written — instead of warning and running unguarded"
@@ -2141,7 +2489,7 @@ os.makedirs(d, exist_ok=True)
 
 
 def ts(age_s):
-    return time.strftime("%Y-%m-%dT%H:%M:%S+0100", time.localtime(time.time() - age_s))
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - age_s))
 
 
 base = [{"event": "run-open", "run": "radvb", "session": "s"},
@@ -2299,6 +2647,9 @@ for line in open(sys.argv[1]):
     if not line.strip():
         continue
     record = json.loads(line)
+    # Explicit legacy fixture: its edited rows have no A3 commit identity.
+    for key in ("pass_id", "close_id", "a3_record", "notice", "disposition"):
+        record.pop(key, None)
     if record.get("event") in ("lane-resumed", "lane-respawned") or (record.get("event") == "lane-closed" and record.get("resumed")):
         continue
     record["lane"] = "PKOLD"  # independent branch: it must not reuse the earlier pass's artefacts
@@ -2343,7 +2694,7 @@ env STUB_REPORT="You've hit your session limit · resets 8:50am (Europe/London)"
   --class verifier --grant "$F/granted" --record "$F/rec-lm1.jsonl" --reason '(a) a limit stop' >/dev/null 2>&1
 RC=$?
 if [ "$RC" = 6 ] && grep -q '"exit_class": "limit"' "$F/rec-lm1.jsonl" \
-   && grep -q '"limit_signal": "result text names a limit"' "$F/rec-lm1.jsonl"; then
+   && grep -q '"limit_signal": ".*session limit.*resets 8:50am' "$F/rec-lm1.jsonl"; then
   ok "a result naming a session limit closes as limit, exit 6"
 else no "the limit class from the result text  [exit $RC]"; fi
 env STUB_SYNTHETIC=1 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
@@ -2400,6 +2751,371 @@ else no "a detached premise failure  [exit $RC: $(printf '%s' "$DT4" | tail -2 |
 premise "--no-wait without --detach" "goes with --detach" --home "$LHOME" --routing "$R" \
         --brief "$F/brief.md" --run run-test-p --lane P --class verifier --grant "$F/granted" --no-wait
 
+# AW · the keep-awake process beside each lane process (owner decision of 2026-10-09; lane.py's
+#      "Keeping the host awake"). A stand-in takes /usr/bin/caffeinate's place through
+#      AIMYTH_CAFFEINATE: it logs one line per start (its pid, its arguments, where its standard
+#      streams point, whether it leads a session of its own) and then, by AWAKE_STANDIN_MODE,
+#      waits for the -w pid to go as caffeinate does (watch), leaves at once with status 1 (exit:
+#      a caffeinate that dies early) or stays AWAKE_STANDIN_HOLD_S seconds whatever the lane does
+#      (hold: one that outlives the lane). Every AW leg fails on a wrapper that starts no
+#      keep-awake process; RD02 below reads the lane's other events with lane-awake set aside.
+AWBIN="$BIN/caffeinate-standin"
+cat > "$AWBIN" <<'AWAKE_STANDIN_END'
+#!/usr/bin/env python3
+"""caffeinate stand-in for the AW legs: one line per start, then watch, exit or hold."""
+import os, stat, sys, time
+NULL = os.stat(os.devnull)
+def where(fd):
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        return "closed"
+    return "null" if stat.S_ISCHR(st.st_mode) and st.st_rdev == NULL.st_rdev else "other"
+args, mode = sys.argv[1:], os.environ.get("AWAKE_STANDIN_MODE", "watch")
+with open(os.environ["AWAKE_STANDIN_LOG"], "a") as handle:
+    handle.write("pid=%d args=%s stdin=%s stdout=%s stderr=%s session=%s mode=%s\n" % (
+        os.getpid(), " ".join(args), where(0), where(1), where(2),
+        "own" if os.getsid(0) == os.getpid() else "shared", mode))
+if mode == "exit":
+    sys.exit(1)
+if mode == "hold":
+    time.sleep(float(os.environ.get("AWAKE_STANDIN_HOLD_S", "60")))
+    sys.exit(0)
+pid = int(args[args.index("-w") + 1]) if "-w" in args[:-1] else 0
+waited = 0.0
+while pid and waited < 600:      # a bound, so no stand-in outlives the suite; set by judgement
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        break
+    except PermissionError:
+        pass
+    time.sleep(0.1)
+    waited += 0.1
+with open(os.environ["AWAKE_STANDIN_LOG"], "a") as handle:
+    handle.write("gone pid=%d watched=%d\n" % (os.getpid(), pid))
+AWAKE_STANDIN_END
+chmod +x "$AWBIN"
+awfacts(){ # record lane -> the lane's event kinds in order, then its LAST pass's process, keep-awake and close
+  "$PY" - "$1" "$2" <<'AWAKE_FACTS_END'
+import json, sys
+kinds, spawned, awake, closed = [], {}, {}, {}
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        row = json.loads(line)
+    except ValueError:
+        continue
+    if row.get("lane") != sys.argv[2]:
+        continue
+    kinds.append(str(row.get("event")))
+    if row.get("event") in ("lane-spawned", "lane-respawned"):
+        spawned = row
+    elif row.get("event") == "lane-awake":
+        awake = row
+    elif row.get("event") == "lane-closed":
+        closed = row
+print("kinds " + " ".join(kinds))
+print("spawned pid=%s wrapper=%s" % (spawned.get("pid"), spawned.get("wrapper_pid")))
+print("awake %s caffeinate=%s watched=%s wrapper=%s detached=%s" % (
+    awake.get("awake"), awake.get("caffeinate_pid"), awake.get("watched_pid"),
+    awake.get("wrapper_pid"), awake.get("detached")))
+print("command " + " ".join(str(part) for part in awake.get("command") or []))
+print("note %s" % awake.get("note"))
+print("closed %s %s %s" % (closed.get("exit_class"), closed.get("exit_code"), closed.get("process_exit")))
+AWAKE_FACTS_END
+}
+awspawn(){ # stand-in binary, stand-in mode, stand-in log, then the spawn's own flags
+  AWB="$1"; AWM="$2"; AWL="$3"; shift 3
+  env AIMYTH_CAFFEINATE="$AWB" AWAKE_STANDIN_MODE="$AWM" AWAKE_STANDIN_LOG="$AWL" $LANEV "$PY" "$LANE" spawn \
+      --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+      --class verifier --grant "$F/granted" --silence-s 0 "$@"
+}
+awpid(){ # facts, key -> the pid after `spawned pid=` (key pid) or after its `wrapper=` (key wrapper)
+  case "$2" in
+    pid) printf '%s\n' "$1" | sed -n 's/^spawned pid=\([0-9][0-9]*\) wrapper=.*$/\1/p' ;;
+    wrapper) printf '%s\n' "$1" | sed -n 's/^spawned pid=[0-9][0-9]* wrapper=\([0-9][0-9]*\)$/\1/p' ;;
+  esac
+}
+awstandin(){ # stand-in log -> the pid of its first start, nothing when it never started. It waits for
+  # the start line, bounded at 10 s (100 polls of 0.1 s): the stand-in writes it as its first act, but
+  # a stub lane can close before a freshly written script has started (one run's AW01 read an absent
+  # log); the bound is set by judgement, unmeasured.
+  n=0
+  while [ "$n" -lt 100 ] && ! { [ -f "$1" ] && grep -q '^pid=' "$1"; }; do sleep 0.1; n=$((n + 1)); done
+  [ -f "$1" ] && sed -n 's/^pid=\([0-9][0-9]*\) args=.*$/\1/p' "$1" | head -1
+}
+awlog(){ [ -f "$1" ] && tr '\n' '|' < "$1" || printf 'absent'; }
+
+# AW01 · a foreground spawn
+AW1=$(awspawn "$AWBIN" watch "$F/aw1.log" --run run-test-aw --lane AW1 --record "$F/rec-aw1.jsonl" \
+      --reason '(a) keep-awake: a foreground spawn' 2>&1); RC1=$?
+AWF1=$(awfacts "$F/rec-aw1.jsonl" AW1); AWP1=$(awpid "$AWF1" pid); AWW1=$(awpid "$AWF1" wrapper)
+AWS1=$(awstandin "$F/aw1.log")
+if [ "$RC1" = 0 ] && [ -n "$AWP1" ] && [ -n "$AWS1" ] && [ "$(grep -c '^pid=' "$F/aw1.log")" = 1 ] \
+   && grep -q "^pid=$AWS1 args=-i -w $AWP1 stdin=" "$F/aw1.log" \
+   && printf '%s\n' "$AWF1" | grep -qxF 'kinds lane-open lane-spawned lane-awake lane-closed' \
+   && printf '%s\n' "$AWF1" | grep -qxF "awake started caffeinate=$AWS1 watched=$AWP1 wrapper=$AWW1 detached=False" \
+   && printf '%s\n' "$AWF1" | grep -qxF "command $AWBIN -i -w $AWP1" \
+   && printf '%s\n' "$AWF1" | grep -qxF 'closed completed 0 0'; then
+  ok "AW01 a foreground spawn starts the keep-awake process once, with -i -w <the lane process's pid> (the stand-in's own argv); lane-awake follows lane-spawned: started, the stand-in's pid as caffeinate_pid, the lane pid as watched_pid, the wrapper's as wrapper_pid"
+else no "AW01 the foreground keep-awake start  [exit $RC1; $(printf '%s' "$AWF1" | tr '\n' '|'); stand-in: $(awlog "$F/aw1.log")]"; fi
+
+# AW02 · it runs apart and leaves by itself. The wait is bounded at 5 s (50 polls of 0.1 s): the
+#        stand-in polls every 0.1 s and the lane process was reaped before the spawn returned;
+#        the bound is set by judgement, unmeasured.
+AWGONE=0; n=0
+while [ -n "$AWS1" ] && [ "$n" -lt 50 ]; do
+  if grep -qx "gone pid=$AWS1 watched=$AWP1" "$F/aw1.log"; then AWGONE=1; break; fi
+  sleep 0.1; n=$((n + 1))
+done
+if [ -n "$AWS1" ] && grep -qx "pid=$AWS1 args=-i -w $AWP1 stdin=null stdout=null stderr=null session=own mode=watch" "$F/aw1.log" \
+   && [ "$AWGONE" = 1 ]; then
+  ok "AW02 the keep-awake process runs apart from the wrapper — stdin, stdout and stderr on /dev/null, a session of its own — and left by itself once the lane process had gone"
+else no "AW02 the keep-awake process's streams, session and exit  [gone $AWGONE; stand-in: $(awlog "$F/aw1.log")]"; fi
+
+# AW03 · a detached spawn: the worker starts it beside its own lane process (the lane stays 3 s
+#        after its transcript, as D1's does, so the watch attaches to a running lane)
+AW3=$(env STUB_SLEEP_AFTER=3 AIMYTH_CAFFEINATE="$AWBIN" AWAKE_STANDIN_MODE=watch AWAKE_STANDIN_LOG="$F/aw3.log" \
+      $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+      --projects-root "$PROJ" --class verifier --grant "$F/granted" --silence-s 0 --run run-test-aw --lane AW3 \
+      --record "$F/rec-aw3.jsonl" --reason '(a) keep-awake: a detached spawn' --detach --no-wait 2>"$F/aw3.err"); RC3=$?
+AWD3=$(printf '%s\n' "$AW3" | sed -n 's/^detached pid \([0-9][0-9]*\) session .*$/\1/p')
+WAW3=$($LANEV "$PY" "$LANE" watch --run run-test-aw --lane AW3 --record "$F/rec-aw3.jsonl" --poll-s 1 \
+       --home "$LHOME" --projects-root "$PROJ" 2>&1); RCW3=$?
+AWF3=$(awfacts "$F/rec-aw3.jsonl" AW3); AWP3=$(awpid "$AWF3" pid); AWS3=$(awstandin "$F/aw3.log")
+if [ "$RC3" = 0 ] && [ "$RCW3" = 0 ] && [ -n "$AWD3" ] && [ -n "$AWP3" ] && [ -n "$AWS3" ] \
+   && grep -qx "pid=$AWS3 args=-i -w $AWP3 stdin=null stdout=null stderr=null session=own mode=watch" "$F/aw3.log" \
+   && printf '%s\n' "$AWF3" | grep -qxF "spawned pid=$AWP3 wrapper=$AWD3" \
+   && printf '%s\n' "$AWF3" | grep -qxF "awake started caffeinate=$AWS3 watched=$AWP3 wrapper=$AWD3 detached=True" \
+   && printf '%s\n' "$AWF3" | grep -qxF 'kinds lane-open lane-spawned lane-awake lane-closed' \
+   && printf '%s\n' "$AWF3" | grep -qxF 'closed completed 0 0'; then
+  ok "AW03 a detached spawn's worker (pid $AWD3) starts the keep-awake process beside its lane process: -i -w <the lane pid>, and lane-awake carries the worker's pid as wrapper_pid and detached true"
+else no "AW03 the detached keep-awake start  [exit $RC3/$RCW3, worker '$AWD3'; $(printf '%s' "$AWF3" | tr '\n' '|'); stand-in: $(awlog "$F/aw3.log")]"; fi
+
+# AW04 · an absent binary: skipped with the why, and the spawn runs as ever
+AWNO="$F/aw-absent/caffeinate"
+AW4=$(awspawn "$AWNO" watch "$F/aw4.log" --run run-test-aw --lane AW4 --record "$F/rec-aw4.jsonl" \
+      --reason '(a) keep-awake: no binary' 2>&1); RC4=$?
+AWF4=$(awfacts "$F/rec-aw4.jsonl" AW4); AWP4=$(awpid "$AWF4" pid)
+if [ "$RC4" = 0 ] && [ -n "$AWP4" ] && [ ! -e "$F/aw4.log" ] \
+   && printf '%s\n' "$AWF4" | grep -qxF 'kinds lane-open lane-spawned lane-awake lane-closed' \
+   && printf '%s\n' "$AWF4" | grep -q "^awake skipped caffeinate=None watched=$AWP4 wrapper=[0-9][0-9]* detached=False\$" \
+   && printf '%s\n' "$AWF4" | grep -qF "note no caffeinate at $AWNO (another platform, or a missing binary): the host may sleep while pid $AWP4 runs" \
+   && printf '%s\n' "$AWF4" | grep -qxF 'closed completed 0 0' \
+   && cmp -s "$STORE/spawn-records/run-test-aw-report-AW4.md" "$STORE/spawn-records/run-test-aw-report-AW1.md" \
+   && printf '%s\n' "$AW4" | grep -q '^lane run-test-aw/AW4: .* completed '; then
+  ok "AW04 an absent caffeinate is skipped with a note naming the path (lane-awake: skipped, no caffeinate_pid) and the spawn still runs to a completed close with its report"
+else no "AW04 the absent binary  [exit $RC4; $(printf '%s' "$AWF4" | tr '\n' '|'); $(printf '%s' "$AW4" | head -2 | tr '\n' '|')]"; fi
+
+# AW05 · a binary that will not start: not executable, and executable but no program (exec format error)
+mkdir -p "$F/aw-bad"
+printf 'not a program\n' > "$F/aw-bad/caffeinate-noexec"; chmod 644 "$F/aw-bad/caffeinate-noexec"
+printf 'not a program\n' > "$F/aw-bad/caffeinate-badexec"; chmod 755 "$F/aw-bad/caffeinate-badexec"
+AW5A=$(awspawn "$F/aw-bad/caffeinate-noexec" watch "$F/aw5.log" --run run-test-aw --lane AW5A \
+       --record "$F/rec-aw5a.jsonl" --reason '(a) keep-awake: a binary that is not executable' 2>&1); RC5A=$?
+AW5B=$(awspawn "$F/aw-bad/caffeinate-badexec" watch "$F/aw5.log" --run run-test-aw --lane AW5B \
+       --record "$F/rec-aw5b.jsonl" --reason '(a) keep-awake: a binary that fails to start' 2>&1); RC5B=$?
+AWF5A=$(awfacts "$F/rec-aw5a.jsonl" AW5A); AWF5B=$(awfacts "$F/rec-aw5b.jsonl" AW5B)
+if [ "$RC5A" = 0 ] && [ "$RC5B" = 0 ] && [ ! -e "$F/aw5.log" ] \
+   && printf '%s\n' "$AWF5A" | grep -q '^awake skipped caffeinate=None ' \
+   && printf '%s\n' "$AWF5A" | grep -qF "note caffeinate at $F/aw-bad/caffeinate-noexec is not executable: " \
+   && printf '%s\n' "$AWF5B" | grep -q '^awake skipped caffeinate=None ' \
+   && printf '%s\n' "$AWF5B" | grep -q '^note caffeinate did not start (OSError: .*): the host may sleep while pid [0-9][0-9]* runs' \
+   && printf '%s\n' "$AWF5A" | grep -qxF 'closed completed 0 0' && printf '%s\n' "$AWF5B" | grep -qxF 'closed completed 0 0' \
+   && printf '%s\n' "$AWF5A" | grep -qxF 'kinds lane-open lane-spawned lane-awake lane-closed' \
+   && printf '%s\n' "$AWF5B" | grep -qxF 'kinds lane-open lane-spawned lane-awake lane-closed'; then
+  ok "AW05 a caffeinate that is not executable, and one that fails at exec (exec format error), are each skipped with the why in the note, and each spawn runs to a completed close"
+else no "AW05 the unstartable binaries  [exit $RC5A/$RC5B; $(printf '%s' "$AWF5A" | grep '^note'); $(printf '%s' "$AWF5B" | grep '^note')]"; fi
+
+# AW06 · a keep-awake process that dies at once (exit status 1) while the lane runs on for 2 s
+#        changes nothing about the lane's result: AW01's lane, with the normal stand-in, is the control.
+AW6=$(env STUB_SLEEP=2 AIMYTH_CAFFEINATE="$AWBIN" AWAKE_STANDIN_MODE=exit AWAKE_STANDIN_LOG="$F/aw6.log" \
+      $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+      --projects-root "$PROJ" --class verifier --grant "$F/granted" --silence-s 0 --run run-test-aw --lane AW6 \
+      --record "$F/rec-aw6.jsonl" --reason '(a) keep-awake: a stand-in that dies at once' 2>&1); RC6=$?
+AWF6=$(awfacts "$F/rec-aw6.jsonl" AW6); AWP6=$(awpid "$AWF6" pid); AWS6=$(awstandin "$F/aw6.log")
+if [ "$RC6" = "$RC1" ] && [ "$RC6" = 0 ] && [ -n "$AWS6" ] \
+   && grep -qx "pid=$AWS6 args=-i -w $AWP6 stdin=null stdout=null stderr=null session=own mode=exit" "$F/aw6.log" \
+   && ! grep -q '^gone ' "$F/aw6.log" \
+   && printf '%s\n' "$AWF6" | grep -qxF "awake started caffeinate=$AWS6 watched=$AWP6 wrapper=$(awpid "$AWF6" wrapper) detached=False" \
+   && [ "$(printf '%s\n' "$AWF6" | grep '^closed ')" = "$(printf '%s\n' "$AWF1" | grep '^closed ')" ] \
+   && [ "$(printf '%s\n' "$AWF6" | grep '^kinds ')" = "$(printf '%s\n' "$AWF1" | grep '^kinds ')" ] \
+   && cmp -s "$STORE/spawn-records/run-test-aw-report-AW6.md" "$STORE/spawn-records/run-test-aw-report-AW1.md" \
+   && printf '%s\n' "$AW6" | grep -q '^lane run-test-aw/AW6: .* completed '; then
+  ok "AW06 a keep-awake process that dies at once leaves the lane's result as the control's (AW01): exit 0, the same close class, codes and events, a byte-identical report"
+else no "AW06 the early death  [exit $RC6 vs $RC1; $(printf '%s' "$AWF6" | tr '\n' '|'); stand-in: $(awlog "$F/aw6.log")]"; fi
+
+# AW07 · it never blocks the wrapper: a stand-in that holds on for 60 s after the lane (AWAKE_STANDIN_HOLD_S,
+#        set by judgement: far above a stub spawn's few seconds) is still running when the spawn's
+#        output capture returns, so neither the capture's stdout nor the lane's stdin waited on it.
+#        Control on the same probe: the stand-in run with the capture's own stdout (a 2 s hold) makes
+#        the capture wait and is gone when it returns.
+AWT0=$(date +%s)
+AW7=$(awspawn "$AWBIN" hold "$F/aw7.log" --run run-test-aw --lane AW7 --record "$F/rec-aw7.jsonl" \
+      --reason '(a) keep-awake: a stand-in that outlives the lane' 2>&1); RC7=$?
+AWT1=$(date +%s)
+AWS7=$(awstandin "$F/aw7.log")
+AWLIVE7=""; [ -n "$AWS7" ] && AWLIVE7=$(ps -p "$AWS7" -o pid= | tr -d ' ')
+[ -n "$AWLIVE7" ] && kill "$AWS7"
+AWF7=$(awfacts "$F/rec-aw7.jsonl" AW7)
+AWC0=$(date +%s)
+AWC=$(env AWAKE_STANDIN_MODE=hold AWAKE_STANDIN_HOLD_S=2 AWAKE_STANDIN_LOG="$F/aw7c.log" "$AWBIN" -i -w $$)
+AWC1=$(date +%s)
+AWCS=$(awstandin "$F/aw7c.log"); AWCLIVE=""; [ -n "$AWCS" ] && AWCLIVE=$(ps -p "$AWCS" -o pid= | tr -d ' ')
+if [ "$RC7" = 0 ] && [ -n "$AWS7" ] && [ "$AWLIVE7" = "$AWS7" ] \
+   && grep -qx "pid=$AWS7 args=-i -w $(awpid "$AWF7" pid) stdin=null stdout=null stderr=null session=own mode=hold" "$F/aw7.log" \
+   && printf '%s\n' "$AWF7" | grep -qxF 'closed completed 0 0' \
+   && [ -n "$AWCS" ] && [ -z "$AWCLIVE" ] && [ $((AWC1 - AWC0)) -ge 2 ] \
+   && grep -qx "pid=$AWCS args=-i -w $$ stdin=[a-z]* stdout=other stderr=[a-z]* session=shared mode=hold" "$F/aw7c.log"; then
+  ok "AW07 the keep-awake process never blocks the wrapper: the spawn returned in $((AWT1 - AWT0)) s with its 60 s stand-in still running (control: a stand-in holding the capture's stdout made it wait $((AWC1 - AWC0)) s and was gone at return)"
+else no "AW07 the wrapper waited on its keep-awake process  [exit $RC7, $((AWT1 - AWT0)) s, alive at return '$AWLIVE7' of '$AWS7'; control $((AWC1 - AWC0)) s alive '$AWCLIVE'; stand-in: $(awlog "$F/aw7.log")]"; fi
+
+# AW08 · a resume starts it beside the resumed lane process, after lane-respawned
+AW8=$(env AIMYTH_CAFFEINATE="$AWBIN" AWAKE_STANDIN_MODE=watch AWAKE_STANDIN_LOG="$F/aw8.log" $LANEV "$PY" "$LANE" resume \
+      --run run-test-aw --lane AW1 --brief "$F/brief-follow.md" --record "$F/rec-aw1.jsonl" --home "$LHOME" \
+      --silence-s 0 2>&1); RC8=$?
+AWF8=$(awfacts "$F/rec-aw1.jsonl" AW1); AWP8=$(awpid "$AWF8" pid); AWS8=$(awstandin "$F/aw8.log")
+if [ "$RC8" = 0 ] && [ -n "$AWP8" ] && [ "$AWP8" != "$AWP1" ] && [ -n "$AWS8" ] \
+   && grep -qx "pid=$AWS8 args=-i -w $AWP8 stdin=null stdout=null stderr=null session=own mode=watch" "$F/aw8.log" \
+   && printf '%s\n' "$AWF8" | grep -qxF 'kinds lane-open lane-spawned lane-awake lane-closed lane-resumed lane-respawned lane-awake lane-closed' \
+   && printf '%s\n' "$AWF8" | grep -qxF "awake started caffeinate=$AWS8 watched=$AWP8 wrapper=$(awpid "$AWF8" wrapper) detached=False" \
+   && printf '%s\n' "$AWF8" | grep -qxF 'closed completed 0 0'; then
+  ok "AW08 a resume starts the keep-awake process beside the resumed lane process: -i -w <the lane-respawned pid>, its lane-awake after lane-respawned"
+else no "AW08 the resumed keep-awake start  [exit $RC8; $(printf '%s' "$AWF8" | tr '\n' '|'); stand-in: $(awlog "$F/aw8.log")]"; fi
+
+# AW09 · the keep-awake helpers write and signal nothing: a sweep of start_awake's and reap_awake's
+#        source for the write patterns the wait legs use plus the signalling calls, whose controls
+#        must hit on the same run: a planted open(path, "w") and append_record's own source.
+AW9=$("$PY" - "$LANE" <<'AWAKE_WRITES_END'
+import importlib.util, inspect, re, sys
+spec = importlib.util.spec_from_file_location("lane_aw", sys.argv[1])
+lane = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lane)
+pattern = re.compile(r'\b(?:write_atomic|append_record|write_text|write_bytes|unlink|remove|rename|replace|mkdir|makedirs|rmdir|rmtree|copyfile|kill|killpg|signal_group|signal_pid)\(|open\([^\n]*,[ ]*["\x27][wax]')
+try:
+    source = inspect.getsource(lane.start_awake) + inspect.getsource(lane.reap_awake)
+except AttributeError as exc:
+    print("PROBE FAILED: %s" % exc)
+    sys.exit(2)
+controls = [bool(pattern.search('open(path, "w")')), bool(pattern.search(inspect.getsource(lane.append_record)))]
+print("hits %d controls %s" % (len(pattern.findall(source)), " ".join(str(c) for c in controls)))
+AWAKE_WRITES_END
+); RC9=$?
+if [ "$RC9" = 0 ] && [ "$AW9" = "hits 0 controls True True" ]; then
+  ok "AW09 the keep-awake helpers write and signal nothing: start_awake and reap_awake carry none of the write or kill patterns (controls: a planted open(path, \"w\") and append_record's own source both hit)"
+else no "AW09 the keep-awake helpers' source sweep  [exit $RC9: $AW9]"; fi
+
+# AW10–AW14 · the held-lane beat (review CR-AWAKE finding 1: "each helper keeps the Mac awake while
+#        it runs" carries no beat exemption). `resume --beat` starts the keep-awake process beside the
+#        beat's model process under the same rules and, its record contract being one hold-beat line,
+#        carries the state on that line as added fields (awake, caffeinate_pid, watched_pid, and note
+#        when skipped), never a lane-awake line. Each beat runs on its own fresh copy of the beat
+#        legs' record (lane L2, closed and warm), so every copy starts from the same lines and those
+#        legs' counts stay as they were; the stub logs its own pid to STUB_ORDER, so the model pid is
+#        read apart from the wrapper's record. AW10's beat, with the watching stand-in, is the
+#        control for the others' result.
+AWB_BASE=$(grep -c . "$BEAT_REC")
+awbeat(){ # leg, stand-in binary, stand-in mode, then any extra environment (NAME=value) -> one beat
+  #         on a fresh copy of the record; sets AWBO (its output) and AWBRC (its exit code)
+  AWBL="$1"; AWBB="$2"; AWBM="$3"; shift 3
+  rm -rf "$F/awb-$AWBL"; mkdir -p "$F/awb-$AWBL"; cp "$BEAT_REC" "$F/awb-$AWBL/rec.jsonl"
+  AWBO=$(env AIMYTH_CAFFEINATE="$AWBB" AWAKE_STANDIN_MODE="$AWBM" AWAKE_STANDIN_LOG="$F/awb-$AWBL/standin.log" \
+         STUB_ORDER="$F/awb-$AWBL/order" "$@" $LANEV "$PY" "$LANE" resume --run run-test-b --lane L2 --beat \
+         --record "$F/awb-$AWBL/rec.jsonl" --home "$LHOME" 2>&1); AWBRC=$?
+}
+awbfacts(){ # leg -> the kinds the beat added to its copy, the model pid the stub logged, then the
+  #           hold-beat's keep-awake fields and its result fields (sorted JSON, for comparison)
+  "$PY" - "$F/awb-$1/rec.jsonl" "$AWB_BASE" "$F/awb-$1/order" <<'AWAKE_BEAT_FACTS_END'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]
+added = rows[int(sys.argv[2]):]
+try:
+    order = [l.split("=", 1)[1].strip() for l in open(sys.argv[3], encoding="utf-8") if l.startswith("LANE pid=")]
+except OSError:
+    order = []
+beat = added[-1] if added and added[-1].get("event") == "hold-beat" else {}
+print("added " + " ".join(str(r.get("event")) for r in added))
+print("model " + " ".join(order))
+print("awake %s caffeinate=%s watched=%s note=%s" % (beat.get("awake"), beat.get("caffeinate_pid"),
+      beat.get("watched_pid"), "present" if "note" in beat else "absent"))
+print("note %s" % beat.get("note"))
+keys = ("n", "ok", "exit_class", "exit_code", "process_exit", "subtype", "is_error", "num_turns",
+        "total_cost_usd", "usage", "reply", "limit_signal", "timed_out", "parse_error",
+        "config_match", "by", "session_id")
+print("result " + json.dumps({k: beat.get(k) for k in keys}, sort_keys=True))
+AWAKE_BEAT_FACTS_END
+}
+awbmodel(){ printf '%s\n' "$1" | sed -n 's/^model \([0-9][0-9]*\)$/\1/p'; }
+awbresult(){ printf '%s\n' "$1" | grep '^result '; }
+awbsummary(){ # the beat's summary line with its duration masked, the one figure that differs run to run
+  printf '%s\n' "$1" | sed -n 's/^\(beat run-test-b\/L2: .*\) · [0-9][0-9.]* s · \(.*\)$/\1 · <d> s · \2/p'; }
+
+# AW10 · a beat starts it once beside its model process, apart from the wrapper, and it leaves by itself
+#        (the wait bounded at 5 s as AW02's, set by judgement)
+awbeat AW10 "$AWBIN" watch
+AWBO10=$AWBO; AWBRC10=$AWBRC; AWBF10=$(awbfacts AW10); AWBP10=$(awbmodel "$AWBF10")
+AWBS10=$(awstandin "$F/awb-AW10/standin.log")
+AWBGONE=0; n=0
+while [ -n "$AWBS10" ] && [ "$n" -lt 50 ]; do
+  if grep -qx "gone pid=$AWBS10 watched=$AWBP10" "$F/awb-AW10/standin.log"; then AWBGONE=1; break; fi
+  sleep 0.1; n=$((n + 1))
+done
+if [ "$AWBRC10" = 0 ] && [ -n "$AWBP10" ] && [ -n "$AWBS10" ] && [ "$(grep -c '^pid=' "$F/awb-AW10/standin.log")" = 1 ] \
+   && grep -qx "pid=$AWBS10 args=-i -w $AWBP10 stdin=null stdout=null stderr=null session=own mode=watch" "$F/awb-AW10/standin.log" \
+   && printf '%s\n' "$AWBF10" | grep -qxF 'added hold-beat' && [ "$AWBGONE" = 1 ]; then
+  ok "AW10 a beat starts the keep-awake process once, with -i -w <the model pid the stub logged>, apart from the wrapper (/dev/null streams, a session of its own) and gone by itself after; the record gains its one hold-beat line and no lane-awake line"
+else no "AW10 the beat's keep-awake start  [exit $AWBRC10; $(printf '%s' "$AWBF10" | tr '\n' '|'); gone $AWBGONE; stand-in: $(awlog "$F/awb-AW10/standin.log"); $(printf '%s' "$AWBO10" | head -2 | tr '\n' '|')]"; fi
+
+# AW11 · the hold-beat line carries the keep-awake state as added fields, beside its usual ones
+if [ -n "$AWBS10" ] && [ -n "$AWBP10" ] \
+   && printf '%s\n' "$AWBF10" | grep -qxF "awake started caffeinate=$AWBS10 watched=$AWBP10 note=absent" \
+   && printf '%s\n' "$AWBF10" | grep -q '^result .*"exit_class": "completed".*"ok": true' \
+   && printf '%s\n' "$AWBO10" | grep -q '^beat run-test-b/L2: verifier sonnet·xhigh · ok · '; then
+  ok "AW11 the beat's hold-beat line carries the keep-awake state as added fields — awake started, the stand-in's pid as caffeinate_pid, the model pid as watched_pid, no note — beside its usual fields (ok true, completed) and its usual summary line"
+else no "AW11 the hold-beat keep-awake fields  [$(printf '%s' "$AWBF10" | tr '\n' '|')]"; fi
+
+# AW12 · an absent binary: skipped with the why on the same one line, and the beat's result is the control's
+awbeat AW12 "$AWNO" watch
+AWBF12=$(awbfacts AW12); AWBP12=$(awbmodel "$AWBF12")
+if [ "$AWBRC" = "$AWBRC10" ] && [ "$AWBRC" = 0 ] && [ -n "$AWBP12" ] && [ ! -e "$F/awb-AW12/standin.log" ] \
+   && printf '%s\n' "$AWBF12" | grep -qxF 'added hold-beat' \
+   && printf '%s\n' "$AWBF12" | grep -qxF "awake skipped caffeinate=None watched=$AWBP12 note=present" \
+   && printf '%s\n' "$AWBF12" | grep -qF "note no caffeinate at $AWNO (another platform, or a missing binary): the host may sleep while pid $AWBP12 runs" \
+   && [ "$(awbresult "$AWBF12")" = "$(awbresult "$AWBF10")" ] \
+   && [ -n "$(awbsummary "$AWBO")" ] && [ "$(awbsummary "$AWBO")" = "$(awbsummary "$AWBO10")" ]; then
+  ok "AW12 a beat with no caffeinate is skipped with a note naming the path on its one hold-beat line (awake skipped, no caffeinate_pid, the model pid as watched_pid), and the beat's result is the control's (AW10): exit 0, the same ok, class, codes, usage, cost and reply, the same summary line"
+else no "AW12 the beat's absent binary  [exit $AWBRC vs $AWBRC10; $(printf '%s' "$AWBF12" | tr '\n' '|'); $(printf '%s' "$AWBO" | head -2 | tr '\n' '|')]"; fi
+
+# AW13 · a keep-awake process that dies at once (exit status 1) while the beat's model process runs on
+#        for 2 s changes nothing about the beat's result (AW10 the control)
+awbeat AW13 "$AWBIN" exit STUB_SLEEP=2
+AWBF13=$(awbfacts AW13); AWBP13=$(awbmodel "$AWBF13"); AWBS13=$(awstandin "$F/awb-AW13/standin.log")
+if [ "$AWBRC" = "$AWBRC10" ] && [ -n "$AWBP13" ] && [ -n "$AWBS13" ] \
+   && grep -qx "pid=$AWBS13 args=-i -w $AWBP13 stdin=null stdout=null stderr=null session=own mode=exit" "$F/awb-AW13/standin.log" \
+   && ! grep -q '^gone ' "$F/awb-AW13/standin.log" \
+   && printf '%s\n' "$AWBF13" | grep -qxF 'added hold-beat' \
+   && printf '%s\n' "$AWBF13" | grep -qxF "awake started caffeinate=$AWBS13 watched=$AWBP13 note=absent" \
+   && [ "$(awbresult "$AWBF13")" = "$(awbresult "$AWBF10")" ] \
+   && [ -n "$(awbsummary "$AWBO")" ] && [ "$(awbsummary "$AWBO")" = "$(awbsummary "$AWBO10")" ]; then
+  ok "AW13 a keep-awake process that dies at once leaves the beat's result as the control's (AW10): the same exit, ok, class, codes, usage, cost, reply and summary line"
+else no "AW13 the beat's early death  [exit $AWBRC vs $AWBRC10; $(printf '%s' "$AWBF13" | tr '\n' '|'); stand-in: $(awlog "$F/awb-AW13/standin.log")]"; fi
+
+# AW14 · it never blocks the beat: a stand-in that holds on for 60 s (AW07's, whose control on this
+#        same run shows the probe catches a held stream) is still running when the beat returns
+AWBT0=$(date +%s)
+awbeat AW14 "$AWBIN" hold
+AWBT1=$(date +%s)
+AWBS14=$(awstandin "$F/awb-AW14/standin.log")
+AWBLIVE14=""; [ -n "$AWBS14" ] && AWBLIVE14=$(ps -p "$AWBS14" -o pid= | tr -d ' ')
+[ -n "$AWBLIVE14" ] && kill "$AWBS14"
+AWBF14=$(awbfacts AW14); AWBP14=$(awbmodel "$AWBF14")
+if [ "$AWBRC" = 0 ] && [ -n "$AWBS14" ] && [ "$AWBLIVE14" = "$AWBS14" ] && [ -n "$AWBP14" ] \
+   && grep -qx "pid=$AWBS14 args=-i -w $AWBP14 stdin=null stdout=null stderr=null session=own mode=hold" "$F/awb-AW14/standin.log" \
+   && printf '%s\n' "$AWBF14" | grep -qxF "awake started caffeinate=$AWBS14 watched=$AWBP14 note=absent" \
+   && [ "$(awbresult "$AWBF14")" = "$(awbresult "$AWBF10")" ]; then
+  ok "AW14 the keep-awake process never blocks the beat: the beat returned in $((AWBT1 - AWBT0)) s with its 60 s stand-in still running, and its result is the control's (AW10)"
+else no "AW14 the beat waited on its keep-awake process  [exit $AWBRC, $((AWBT1 - AWBT0)) s, alive at return '$AWBLIVE14' of '$AWBS14'; $(printf '%s' "$AWBF14" | tr '\n' '|'); stand-in: $(awlog "$F/awb-AW14/standin.log")]"; fi
+
 # ---- kifix 2026-09-13: resume --detach, and the console opener in the caller ---------------------
 spawn --run run-test-rd --lane RD --class verifier --grant "$F/granted" --record "$F/rec-rd.jsonl" --viewer none \
       --reason '(a) a lane to resume detached' >/dev/null 2>&1
@@ -2423,7 +3139,8 @@ for line in open(sys.argv[1]):
         continue
     if record.get("lane") != "RD":
         continue
-    kinds.append(record.get("event"))
+    if record.get("event") != "lane-awake":    # the keep-awake line is the AW legs' subject, not this leg's
+        kinds.append(record.get("event"))
     if record.get("event") == "lane-resumed":
         resumed = record
     if record.get("event") == "lane-respawned":
@@ -2473,6 +3190,380 @@ if [ "$RC" = 0 ] && [ -n "$OPPID" ] && [ "$(grep -c '^OPENER ' "$F/order.txt")" 
    && grep -q 'viewer none · no window' "$STORE/spawn-records/run-test-op-detached-OP.log"; then
   ok "OP01 a detached spawn's caller runs the console opener once, before the lane starts and not from the worker (pid $OPPID), and the worker runs under --viewer none"
 else no "OP01 the opener's call order  [exit $RC, order: $(tr '\n' '|' < "$F/order.txt"), worker $OPPID, stderr: $(head -2 "$F/op.err" | tr '\n' ' ')]"; fi
+
+# F8 · a refused detached spawn must say so (register 2026-09-29 16:57; fix plan addendum F8, version 2). Every
+# argument and grant check runs in the caller before the detach, and --detach --no-wait waits, bounded, for THIS
+# call's own acknowledgement. The CLI legs run the real worker. The outcome legs plant the worker: the interpreter
+# the caller starts is replaced by a script that records its argv and acts on FAKE_WORKER_MODE, so each of the four
+# outcomes is forced rather than raced. The missing-estimate refusal under --detach --no-wait stays W1-40.
+AGREC="$F/rec-ag.jsonl"
+AG1=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+      --run run-test-ag --lane AG1 --class verifier --silence-s 0 --record "$AGREC" \
+      --reason '(a) F8: a detached spawn missing its grant' --detach --no-wait 2>"$F/ag1.err"); RC=$?
+if [ "$RC" = 2 ] && grep -qF 'leaves `<claim files>` to the call: needs --grant for <claim files>' "$F/ag1.err" \
+   && ! printf '%s' "$AG1" | grep -q 'detached' && [ ! -e "$AGREC" ] \
+   && [ ! -e "$STORE/spawn-records/run-test-ag-detached-AG1.log" ]; then
+  ok "F8-L01 a detached spawn missing its grant exits 2 in the caller with the diagnostic, prints no detached line and starts no worker (no detach log, no record line)"
+else no "F8-L01 the missing grant under --detach --no-wait  [exit $RC, stdout '$AG1', detach log $([ -e "$STORE/spawn-records/run-test-ag-detached-AG1.log" ] && echo present || echo absent): $(tail -2 "$F/ag1.err" | tr '\n' ' ')]"; fi
+AG2=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+      --run run-test-ag --lane AG2 --class verifier --grant "$F/granted" --silence-s 0 --record "$AGREC" \
+      --reason '(a) F8: the granted twin' --detach --no-wait 2>"$F/ag2.err"); RC=$?
+AG2SID=$(printf '%s\n' "$AG2" | sed -n 's/^detached pid [0-9][0-9]* session \([0-9a-f-][0-9a-f-]*\)$/\1/p')
+f8count(){ # record lane event key value -> how many of the lane's such events carry key == value (a tolerant read)
+  "$PY" - "$@" <<'F8_COUNT_END'
+import json, os, sys
+path, lane_id, kind, key, want = sys.argv[1:6]
+n = 0
+if os.path.isfile(path):
+    for line in open(path, encoding="utf-8"):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("lane") == lane_id and row.get("event") == kind and str(row.get(key)) == want:
+            n += 1
+print(n)
+F8_COUNT_END
+}
+f8closed(){ # record lane n -> the lane's completed closes once n are there, or after 30 s (set by judgement: a stub lane closes in seconds)
+  i=0
+  while [ "$i" -lt 60 ] && [ "$(f8count "$1" "$2" lane-closed exit_class completed)" -lt "$3" ]; do sleep 0.5; i=$((i + 1)); done
+  f8count "$1" "$2" lane-closed exit_class completed
+}
+AG2AT=$(f8count "$AGREC" AG2 lane-open session_id "$AG2SID")
+AG2C=$(f8closed "$AGREC" AG2 1)
+if [ "$RC" = 0 ] && [ -n "$AG2SID" ] && [ "$(printf '%s\n' "$AG2" | grep -c .)" = 1 ] && [ "$AG2AT" = 1 ] && [ "$AG2C" = 1 ]; then
+  ok "F8-L02 its granted twin starts and acknowledges: one line, detached pid N session S, printed only once the record holds S's own lane-open, and the worker runs the lane to completed"
+else no "F8-L02 the granted twin  [exit $RC, stdout '$AG2', S's lane-open at return: $AG2AT, completed closes: $AG2C]"; fi
+AG2PID=$(printf '%s\n' "$AG2" | sed -n 's/^detached pid \([0-9][0-9]*\) session .*$/\1/p')
+if [ -n "$AG2PID" ] && [ "$(f8count "$AGREC" AG2 lane-open wrapper_pid "$AG2PID")" = 1 ] && grep -qF "lane.py: worker pid $AG2PID started (log " "$F/ag2.err"; then
+  ok "F8-L07 (finding 3) the real worker's lane-open carries its own pid as wrapper_pid, the pid the caller printed and named on stderr before it waited: the acknowledgement's key, which no second call on the lane can share"
+else no "F8-L07 the lane-open's wrapper_pid  [pid '$AG2PID', lane-opens with it: $(f8count "$AGREC" AG2 lane-open wrapper_pid "$AG2PID"), stderr: $(head -2 "$F/ag2.err" | tr '\n' ' ')]"; fi
+spawn --run run-test-ag --lane AGR --class verifier --grant "$F/granted" --record "$AGREC" --viewer none \
+      --reason '(a) F8: a lane to resume detached' >/dev/null 2>&1
+printf 'Follow-up for the F8 resume legs.\n' > "$F/ag-follow.md"
+AGRN=$(jevents "$AGREC" lane-resumed)
+ERR=$($LANEV "$PY" "$LANE" resume --run run-test-ag --lane AGR --brief "$F/ag-no-such-follow.md" --record "$AGREC" \
+      --home "$LHOME" --detach --no-wait 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q 'brief file not found' && ! printf '%s' "$ERR" | grep -q 'detached pid' \
+   && [ ! -e "$STORE/spawn-records/run-test-ag-detached-AGR.log" ] && [ "$(jevents "$AGREC" lane-resumed)" = "$AGRN" ]; then
+  ok "F8-L03 a refused resume under --detach --no-wait exits 2 in the caller (a missing follow-up brief), prints no detached line, starts no worker and records nothing"
+else no "F8-L03 the refused detached resume  [exit $RC: $ERR]"; fi
+AGRES=$($LANEV "$PY" "$LANE" resume --run run-test-ag --lane AGR --brief "$F/ag-follow.md" --record "$AGREC" \
+        --home "$LHOME" --silence-s 0 --detach --no-wait 2>"$F/agr.err"); RC=$?
+AGRPID=$(printf '%s\n' "$AGRES" | sed -n 's/^detached pid \([0-9][0-9]*\) session .*$/\1/p')
+AGRAT=$(f8count "$AGREC" AGR lane-resumed wrapper_pid "$AGRPID")
+AGRC=$(f8closed "$AGREC" AGR 2)
+if [ "$RC" = 0 ] && [ -n "$AGRPID" ] && [ "$AGRAT" = 1 ] && [ "$AGRC" = 2 ]; then
+  ok "F8-L04 a detached resume acknowledges on its own lane-resumed: printed only once the record holds a lane-resumed whose wrapper_pid is the printed worker pid, and the resumed call completes"
+else no "F8-L04 the acknowledged detached resume  [exit $RC, stdout '$AGRES', its lane-resumed at return: $AGRAT, completed closes: $AGRC]"; fi
+# COLUMNS wide enough that argparse never wraps a help text, so no phrase is broken at a hyphen
+HLP=$( (COLUMNS=4000 "$PY" "$LANE" spawn --help; COLUMNS=4000 "$PY" "$LANE" resume --help) 2>&1 | tr '\n' ' ' | tr -s ' ')
+HLPN=0
+for phrase in "THIS call's own lane-open" "THIS call's own lane-resumed" "a refusal exits 2 and starts no worker" \
+              "print its log tail and exit non-zero" 'print `detached pid N, unconfirmed after S s` and exit 4, the worker left running' \
+              "the acknowledgement bound in seconds (default 60; a waiting limit, not a stall controller)"; do
+  printf '%s' "$HLP" | grep -qF -- "$phrase" && HLPN=$((HLPN + 1))
+done
+if [ "$HLPN" = 6 ] && [ "$(printf '%s' "$HLP" | grep -oF 'unconfirmed after S s' | wc -l | tr -d ' ')" = 2 ]; then
+  ok "F8-L05 the spawn and resume help state the four outcomes (acknowledged, the worker's early exit, unconfirmed with exit 4, the foreground refusal) and the 60 s bound, for each command"
+else no "F8-L05 the help text  [$HLPN of 6 phrases]"; fi
+
+# The forced outcomes: a planted worker, for spawn and for resume.
+cat > "$BIN/fake-worker.py" <<'FAKE_WORKER_END'
+#!/usr/bin/env python3
+"""A planted detached worker for the F8 legs: the caller under test starts it in place of the interpreter.
+It records its argv in FAKE_WORKER_ARGV and acts on FAKE_WORKER_MODE: ack-open and ack-resumed write this
+call's line after FAKE_WORKER_DELAY s and linger; refuse exits 2 with a planted refusal; other-resumed writes a
+lane-resumed under a foreign pid and sleeps; foreign-open writes a lane-open with this call's session id under a
+foreign pid and sleeps; unreadable makes the record unreadable and sleeps; silent sleeps."""
+import json, os, sys, time
+argv = sys.argv[1:]
+while argv and not argv[0].endswith(".py"):
+    argv = argv[1:]
+args = argv[2:]
+def flag(name):
+    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else None
+with open(os.environ["FAKE_WORKER_ARGV"], "w", encoding="utf-8") as handle:
+    handle.write("\n".join(argv) + "\n")
+record, lane_id, run = flag("--record"), flag("--lane"), flag("--run")
+mode = os.environ.get("FAKE_WORKER_MODE", "silent")
+def line(event, **extra):
+    row = dict({"ts": "2026-10-09T03:00:00+0100", "run": run, "lane": lane_id, "event": event, "planted": True}, **extra)
+    with open(record, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row) + "\n")
+if mode == "refuse":
+    sys.stderr.write("lane.py: PROBE FAILED: a planted worker refusal\n")
+    sys.exit(2)
+if mode in ("ack-open", "ack-resumed"):
+    time.sleep(float(os.environ.get("FAKE_WORKER_DELAY", "0.5")))
+    if mode == "ack-open":
+        line("lane-open", session_id=flag("--session-id"), wrapper_pid=os.getpid())
+    else:
+        line("lane-resumed", wrapper_pid=os.getpid())
+    time.sleep(float(os.environ.get("FAKE_WORKER_LINGER", "1")))
+    sys.exit(0)
+if mode == "other-resumed":
+    line("lane-resumed", wrapper_pid=os.getpid() + 100000)
+if mode == "foreign-open":
+    line("lane-open", session_id=flag("--session-id"), wrapper_pid=os.getpid() + 100000)
+if mode == "unreadable":
+    if not os.path.exists(record):
+        open(record, "a").close()
+    os.chmod(record, 0)
+time.sleep(float(os.environ.get("FAKE_WORKER_SLEEP", "30")))
+FAKE_WORKER_END
+chmod +x "$BIN/fake-worker.py"
+spawn --run run-test-f8r --lane F8R --class verifier --grant "$F/granted" --record "$F/rec-f8r.jsonl" --viewer none \
+      --reason '(a) F8: the lane the forced resume outcomes start from' >/dev/null 2>&1
+$LANEV "$PY" - "$LANE" "$BIN/fake-worker.py" "$F" "$LHOME" "$R" "$F/brief.md" "$F/ag-follow.md" "$PROJ" "$F/granted" \
+  > "$F/f8-forced.log" 2>&1 <<'F8_FORCED_OUTCOMES_END'
+import argparse, contextlib, importlib.util, io, json, os, re, shutil, signal, subprocess, sys, time
+lane_path, fake, root, home, routing, brief, follow, projects, granted = sys.argv[1:10]
+spec = importlib.util.spec_from_file_location("lane_f8", lane_path)
+lane = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lane)
+argv_file = os.path.join(root, "f8-worker-argv.txt")
+os.environ["FAKE_WORKER_ARGV"] = argv_file
+def check(name, cond, detail=""):
+    print(("OK " if cond else "BAD ") + name + ("" if cond else "  [%s]" % detail), flush=True)
+def call(argv, mode, **env):
+    if os.path.exists(argv_file):
+        os.remove(argv_file)
+    saved = dict(os.environ)
+    os.environ["FAKE_WORKER_MODE"] = mode
+    os.environ.update({k: str(v) for k, v in env.items()})
+    out, err = io.StringIO(), io.StringIO()
+    real = (sys.executable, sys.argv)
+    sys.executable, sys.argv = fake, [lane_path] + [str(a) for a in argv]
+    began = time.monotonic()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                rc = lane.main()
+            except SystemExit as exc:
+                rc = exc.code
+    finally:
+        sys.executable, sys.argv = real
+        os.environ.clear()
+        os.environ.update(saved)
+    return rc, out.getvalue(), err.getvalue(), time.monotonic() - began
+def seen():
+    try:
+        return open(argv_file, encoding="utf-8").read().split("\n")
+    except OSError:
+        return []
+def running(pid):
+    try:
+        return os.waitpid(pid, os.WNOHANG) == (0, 0)
+    except ChildProcessError:
+        return False
+def stop(pid):
+    try:
+        os.kill(pid, signal.SIGTERM)
+        os.waitpid(pid, 0)
+    except (OSError, ChildProcessError):
+        pass
+def rows(path):
+    out = []
+    try:
+        for text in open(path, encoding="utf-8"):
+            try:
+                out.append(json.loads(text))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    return out
+def pid_of(text, unconfirmed=False):
+    m = re.fullmatch(r"detached pid (\d+), unconfirmed after (\d+) s\n" if unconfirmed
+                     else r"detached pid (\d+) session ([0-9a-f-]+)\n", text)
+    return (int(m.group(1)), m.group(2)) if m else (None, None)
+def spawn_args(lane_id, wait):
+    return ["spawn", "--expect-usd", "2", "--home", home, "--routing", routing, "--brief", brief,
+            "--projects-root", projects, "--run", "run-test-f8", "--lane", lane_id, "--class", "verifier",
+            "--grant", granted, "--silence-s", "0", "--record", os.path.join(root, "rec-f8-%s.jsonl" % lane_id),
+            "--reason", "(a) F8 forced outcome", "--viewer", "none", "--detach", "--no-wait", "--ack-wait-s", str(wait)]
+base_record = os.path.join(root, "rec-f8r.jsonl")
+session = next((r.get("session_id") for r in rows(base_record) if r.get("event") == "lane-open"), None)
+def resume_args(case, wait):
+    record = os.path.join(root, "rec-f8r-%s.jsonl" % case)
+    shutil.copyfile(base_record, record)
+    return record, ["resume", "--run", "run-test-f8r", "--lane", "F8R", "--brief", follow, "--record", record,
+                    "--home", home, "--projects-root", projects, "--silence-s", "0", "--viewer", "none",
+                    "--detach", "--no-wait", "--ack-wait-s", str(wait)]
+# spawn: acknowledged
+rc, out, err, took = call(spawn_args("F8S1", 10), "ack-open", FAKE_WORKER_DELAY=1.0)
+pid, sid = pid_of(out)
+argv = seen()
+worker_sid = argv[argv.index("--session-id") + 1] if "--session-id" in argv else None
+caps = json.loads(argv[argv.index("--worker-caps") + 1]) if "--worker-caps" in argv else {}
+opened = [r for r in rows(os.path.join(root, "rec-f8-F8S1.jsonl")) if r.get("event") == "lane-open"]
+check("F8-S1 spawn, acknowledged: one line, detached pid N session S, exit 0, only after the worker wrote S's own lane-open (a 1 s planted delay waited out)",
+      rc == 0 and pid is not None and sid == worker_sid and took >= 1.0 and [r.get("session_id") for r in opened] == [sid],
+      "rc %r out %r took %.2f opened %r" % (rc, out, took, opened))
+check("F8-S1b the caller hands its worker the session id and the cap it composed (--worker-caps, hard_usd 10.0 from 5 x the estimate), runs it --as-worker under --viewer none, and drops --detach and --no-wait",
+      caps.get("hard_usd") == 10.0 and str(caps.get("hard_src", "")).startswith("5 × estimate $2.00")
+      and "--as-worker" in argv and argv[argv.index("--viewer") + 1] == "none" if "--viewer" in argv else False,
+      "argv %r" % argv)
+check("F8-S1c the worker argv carries neither --detach nor --no-wait", argv and "--detach" not in argv and "--no-wait" not in argv, "argv %r" % argv)
+if pid:
+    stop(pid)
+# spawn: the worker exits before acknowledging
+rc, out, err, took = call(spawn_args("F8S2", 10), "refuse")
+check("F8-S2 spawn, the worker exits first: exit 2 (its own code), no detached line, its log tail with the planted refusal and the caller's line naming the missing lane-open",
+      rc == 2 and out == "" and "a planted worker refusal" in err and "exited 2 before writing this call's lane-open" in err,
+      "rc %r out %r err %r" % (rc, out, err[-300:]))
+# spawn: the worker lives but never acknowledges
+rc, out, err, took = call(spawn_args("F8S3", 2), "silent")
+pid, after = pid_of(out, unconfirmed=True)
+alive = running(pid) if pid else False
+check("F8-S3 spawn, unconfirmed: a live worker with no lane-open within --ack-wait-s 2 prints detached pid N, unconfirmed after 2 s, exits 4, and is left running (never signalled)",
+      rc == lane.EXIT_UNCONFIRMED == 4 and after == "2" and alive and "did not appear within 2 s" in err and "left alone" in err,
+      "rc %r out %r alive %r err %r" % (rc, out, alive, err[-300:]))
+if pid:
+    stop(pid)
+# spawn: the record cannot be read
+rc, out, err, took = call(spawn_args("F8S4", 2), "unreadable")
+pid, after = pid_of(out, unconfirmed=True)
+alive = running(pid) if pid else False
+check("F8-S4 spawn, unconfirmed: a record the caller cannot read is reported as unreadable, exit 4, never as acknowledged or absent, the worker left running",
+      rc == 4 and pid is not None and alive and "cannot be read" in err and "PermissionError" in err,
+      "rc %r out %r err %r" % (rc, out, err[-300:]))
+if pid:
+    stop(pid)
+os.chmod(os.path.join(root, "rec-f8-F8S4.jsonl"), 0o644)
+# spawn: a refused bound starts nothing
+rc, out, err, took = call(spawn_args("F8S5", 0), "ack-open")
+check("F8-S5 spawn, the foreground refusal: --ack-wait-s 0 exits 2 before any worker starts (no worker argv, no detach log)",
+      rc == 2 and "--ack-wait-s must be a positive finite number" in err and not seen() and out == ""
+      and not os.path.exists(lane.store_paths("run-test-f8", "F8S5")["detach_log"]),
+      "rc %r err %r" % (rc, err[-300:]))
+# spawn: a lane-open with this call's own session id but another worker's pid (review CR-ADD2, finding 3)
+shared = "5e1f0c3a-6b2d-4c1e-8f00-00000000f8a6"
+rc, out, err, took = call(spawn_args("F8S6", 2) + ["--session-id", shared], "foreign-open")
+pid, after = pid_of(out, unconfirmed=True)
+foreign = [r for r in rows(os.path.join(root, "rec-f8-F8S6.jsonl")) if r.get("event") == "lane-open"]
+check("F8-S6 (finding 3) spawn with an explicit --session-id: a lane-open carrying that session id under another worker's pid never acknowledges this call (exit 4, unconfirmed, the foreign line on the record)",
+      rc == 4 and pid is not None and len(foreign) == 1 and foreign[0].get("session_id") == shared
+      and foreign[0].get("wrapper_pid") != pid, "rc %r out %r foreign %r" % (rc, out, foreign))
+if pid:
+    stop(pid)
+# the review's own probe: the predicate detach_spawn hands the wait, run for worker pid 111 against a same-session
+# lane-open from worker 222, then its controls (another session from 111; the same session from 111)
+captured = {}
+real_detach_worker = lane.detach_worker
+lane.detach_worker = lambda *a, **k: captured.update(k) or 0
+unit3 = os.path.join(root, "rec-f8-unit3.jsonl")
+open(unit3, "w").close()
+try:
+    lane.detach_spawn(argparse.Namespace(run="run-u3", lane="U3", record=unit3, session_id="S-shared"),
+                      "S-shared", home, projects, {"hard_usd": 10.0, "hard_src": "fixture"})
+finally:
+    lane.detach_worker = real_detach_worker
+what3, count3, match3 = captured["ack"]
+class Pinned:
+    pid, returncode = 111, None
+    def poll(self):
+        return None
+def wait_after(row):
+    with open(unit3, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row) + "\n")
+    shown = io.StringIO()
+    with contextlib.redirect_stdout(shown), contextlib.redirect_stderr(io.StringIO()):
+        code = lane.await_ack(Pinned(), unit3, count3, match3, 0.3, os.path.join(root, "unit3.log"), "ACK", what3)
+    return code, shown.getvalue()
+foreign_code, _ = wait_after({"lane": "U3", "event": "lane-open", "session_id": "S-shared", "wrapper_pid": 222})
+other_code, _ = wait_after({"lane": "U3", "event": "lane-open", "session_id": "S-other", "wrapper_pid": 111})
+own_code, own_out = wait_after({"lane": "U3", "event": "lane-open", "session_id": "S-shared", "wrapper_pid": 111})
+check("F8-S7 (finding 3, the review's probe) the spawn's own predicate run for worker 111: a same-session lane-open from worker 222 leaves the call unconfirmed (exit 4), as does another session's from 111, and only 111's own same-session line acknowledges (exit 0)",
+      foreign_code == 4 and other_code == 4 and own_code == 0 and own_out == "ACK\n",
+      "foreign %r other %r own %r %r" % (foreign_code, other_code, own_code, own_out))
+# resume: acknowledged
+record, argv_r = resume_args("R1", 10)
+rc, out, err, took = call(argv_r, "ack-resumed", FAKE_WORKER_DELAY=1.0)
+pid, sid = pid_of(out)
+argv = seen()
+caps = json.loads(argv[argv.index("--worker-caps") + 1]) if "--worker-caps" in argv else {}
+mine = [r for r in rows(record) if r.get("event") == "lane-resumed" and r.get("wrapper_pid") == pid]
+check("F8-R1 resume, acknowledged: detached pid N session S (S the lane's recorded session), exit 0, only after a lane-resumed whose wrapper_pid is N (a 1 s planted delay waited out); the cap it composed travels as --worker-caps",
+      rc == 0 and pid is not None and sid == session and took >= 1.0 and len(mine) == 1 and caps.get("hard_usd") == 10.0
+      and "--session-id" not in argv,
+      "rc %r out %r took %.2f mine %r caps %r" % (rc, out, took, mine, caps))
+if pid:
+    stop(pid)
+# resume: the worker exits before acknowledging
+record, argv_r = resume_args("R2", 10)
+rc, out, err, took = call(argv_r, "refuse")
+check("F8-R2 resume, the worker exits first: exit 2, no detached line, its log tail with the planted refusal and the caller's line naming the missing lane-resumed",
+      rc == 2 and out == "" and "a planted worker refusal" in err and "exited 2 before writing this call's lane-resumed" in err,
+      "rc %r out %r err %r" % (rc, out, err[-300:]))
+# resume: the worker lives but never acknowledges
+record, argv_r = resume_args("R3", 2)
+rc, out, err, took = call(argv_r, "silent")
+pid, after = pid_of(out, unconfirmed=True)
+alive = running(pid) if pid else False
+check("F8-R3 resume, unconfirmed: a live worker with no lane-resumed within --ack-wait-s 2 exits 4 with detached pid N, unconfirmed after 2 s, left running",
+      rc == 4 and after == "2" and alive and "did not appear within 2 s" in err, "rc %r out %r alive %r" % (rc, out, alive))
+if pid:
+    stop(pid)
+# resume: a lane-resumed written under another pid is not this call's
+record, argv_r = resume_args("R4", 2)
+rc, out, err, took = call(argv_r, "other-resumed")
+pid, after = pid_of(out, unconfirmed=True)
+foreign = [r for r in rows(record) if r.get("event") == "lane-resumed" and r.get("planted")]
+check("F8-R4 resume: a lane-resumed carrying another wrapper_pid is not this call's acknowledgement (exit 4, unconfirmed, the foreign line on the record)",
+      rc == 4 and pid is not None and len(foreign) == 1 and foreign[0].get("wrapper_pid") != pid, "rc %r out %r foreign %r" % (rc, out, foreign))
+if pid:
+    stop(pid)
+# resume: the record cannot be read
+record, argv_r = resume_args("R5", 2)
+rc, out, err, took = call(argv_r, "unreadable")
+pid, after = pid_of(out, unconfirmed=True)
+check("F8-R5 resume, unconfirmed: an unreadable record is reported as such (exit 4), the worker left running",
+      rc == 4 and pid is not None and running(pid) and "cannot be read" in err, "rc %r out %r err %r" % (rc, out, err[-300:]))
+if pid:
+    stop(pid)
+os.chmod(record, 0o644)
+# the wait itself: a matching line BEFORE the call's record count is an older line and never acknowledges
+sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+unit = os.path.join(root, "rec-f8-unit.jsonl")
+older = {"lane": "U", "event": "lane-resumed", "wrapper_pid": sleeper.pid}
+with open(unit, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(older) + "\n")
+match = lambda row, worker_pid: row.get("lane") == "U" and row.get("event") == "lane-resumed" and row.get("wrapper_pid") == worker_pid
+first, second = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(first), contextlib.redirect_stderr(io.StringIO()):
+    code_old = lane.await_ack(sleeper, unit, 1, match, 1, os.path.join(root, "unit.log"), "ACK", "this call's lane-resumed")
+with open(unit, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(older) + "\n")
+with contextlib.redirect_stdout(second), contextlib.redirect_stderr(io.StringIO()):
+    code_new = lane.await_ack(sleeper, unit, 1, match, 5, os.path.join(root, "unit.log"), "ACK", "this call's lane-resumed")
+sleeper.terminate(); sleeper.wait()
+check("F8-R6 the acknowledgement is matched after the call's own record count: an identical line already on the record is an older line and leaves the call unconfirmed (exit 4); the same line written after the count acknowledges (exit 0)",
+      code_old == 4 and "unconfirmed" in first.getvalue() and code_new == 0 and second.getvalue() == "ACK\n",
+      "old %r %r new %r %r" % (code_old, first.getvalue(), code_new, second.getvalue()))
+rc, out, err, took = call(resume_args("R7", -1)[1], "ack-resumed")
+check("F8-R7 resume, the foreground refusal: --ack-wait-s -1 exits 2 before any worker starts", rc == 2 and not seen() and out == "", "rc %r err %r" % (rc, err[-200:]))
+F8_FORCED_OUTCOMES_END
+F8RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) ok "${line#OK }" ;;
+    'BAD '*) no "${line#BAD }" ;;
+    *) printf '%s\n' "$line" ;;
+  esac
+done < "$F/f8-forced.log"
+if [ "$F8RC" != 0 ] || [ "$(grep -c '^OK \|^BAD ' "$F/f8-forced.log")" != 16 ]; then
+  no "F8 forced outcomes: PROBE FAILED: the harness exited $F8RC with $(grep -c '^OK \|^BAD ' "$F/f8-forced.log") of 16 legs reported"
+fi
+# A worker handed a cap that is not one refuses (exit 2): the hand-off is checked, never trusted blind.
+ERR=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+      --run run-test-ag --lane AGW --class verifier --grant "$F/granted" --record "$F/rec-agw.jsonl" --viewer none \
+      --reason '(a) F8: a malformed handed cap' --as-worker --worker-caps '{"hard_usd": 0}' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q 'is not a composed cap' && [ ! -e "$F/rec-agw.jsonl" ]; then
+  ok "F8-L06 a worker handed a malformed --worker-caps refuses (exit 2, no record line) rather than spawn on an unchecked cap"
+else no "F8-L06 the malformed handed cap  [exit $RC: $ERR]"; fi
 
 # ------------------------------------------------------------------- the fence, offline ------
 echo "== fence =="
@@ -2861,11 +3952,19 @@ cost = root / "estimate-routing.json"; cost.write_text(json.dumps(table))
 record = root / "estimate-record.jsonl"
 run = "fixture-budget"
 
-def seed(envelope=1000., spent=10.):
-    record.write_text(json.dumps({"event":"run-open", "envelope_usd":envelope,
-                                 "session":"fixture-head", "run":run}) + "\n" +
-                      json.dumps({"event":"head-exit", "session_id":"fixture-head",
-                                  "spent_usd":spent, "run":run}) + "\n")
+def seed(envelope=1000., spent=None):
+    # The remainder is the envelope minus the run's spend as the gate, the close and the successor
+    # read it (K22da6bf5): every head metered alone plus every lane on the record, never a
+    # head-exit's session total. The fixture head is a seed, which never ran and is skipped, so the
+    # figure stays exact; the spend, when given, is one finished lane's recorded cost.
+    planted = [{"event":"run-open", "envelope_usd":envelope, "session":"fixture-head",
+                "session_kind":"seed", "run":run}]
+    if spent is not None:
+        planted += [{"event":"lane-open", "lane":"Spent", "class":"builder",
+                     "session_id":"fixture-spent", "run":run},
+                    {"event":"lane-closed", "lane":"Spent", "exit_class":"completed",
+                     "session_id":"fixture-spent", "total_cost_usd":spent, "run":run}]
+    record.write_text("".join(json.dumps(e) + "\n" for e in planted))
 
 def spawn(estimate=2., cls="builder", dry=True, extra=(), report=None, target=script):
     args = ["spawn", "--run", run, "--lane", "B", "--class", cls, "--home", home,
@@ -2966,6 +4065,67 @@ for cls in ("builder","planner"):
     check("W1-18 exhausted envelope refuses %s" % cls, rc == 2 and "nothing left" in err and record.read_bytes()==before)
 e,_=dry_case("W1-19 exhausted envelope explicit override", 2.,3.,extra=("--budget-usd",3.))
 check("W1-20 exact exhausted source", e["hard_src"] == "explicit --budget-usd (override of an exhausted envelope $10.00, remainder $-2.00)")
+# B4F: the lane cap reads the remainder the successor and the gate read (K22da6bf5), and prints a
+# floor with the gate's words (Kd9717c6c). W1-13 is the exact control: a seed head and one priced
+# lane print no floor words.
+def plant(*events):
+    record.write_text("".join(json.dumps(dict(e, run=run)) + "\n" for e in events))
+opened_head={"event":"run-open","envelope_usd":30.,"session":"fixture-head"}
+seed_head=dict(opened_head,session_kind="seed")
+def spent_lane(name, cost):
+    return [{"event":"lane-open","lane":name,"class":"builder","session_id":"fixture-"+name.lower()},
+            {"event":"lane-closed","lane":name,"exit_class":"completed",
+             "session_id":"fixture-"+name.lower(),"total_cost_usd":cost}]
+floor_src="envelope remainder at most $5.00 (envelope $30.00, spent at least $25.00; below 5 × estimate $2.00 = $10.00)"
+# A resumed and a repaired head-exit carry session totals of $20 and $15 over a $30 envelope, so
+# their sum leaves nothing; the run's spend is one $25 lane, and the head, whose transcript no
+# meter can read, leaves that figure a floor.
+plant(opened_head,{"event":"head-exit","session_id":"fixture-head","spent_usd":20.},
+      {"event":"head-resumed","session_id":"fixture-head"},
+      {"event":"head-exit","session_id":"fixture-head","spent_usd":15.},*spent_lane("LS",25.))
+e,_=dry_case("B4F-E01 head-exit session totals never refuse a lane the run's spend leaves room for",2.,5.)
+check("B4F-E02 a floor reads at most and at least",e.get("hard_src")==floor_src)
+plant(seed_head,*spent_lane("LS",25.),{"event":"lane-open","lane":"LR","class":"builder","session_id":"fixture-lr"})
+e,_=dry_case("B4F-E03 a lane still running caps at the floor's remainder",2.,5.)
+check("B4F-E04 a lane still running prints the floor's words",e.get("hard_src")==floor_src)
+plant(opened_head,*spent_lane("LS",32.))
+before=record.read_bytes();rc,out,err=spawn()
+check("B4F-E05 an exhausted floor refuses and says at most",rc==2 and "remainder at most $-2.00 of $30.00" in err
+      and record.read_bytes()==before)
+e,_=dry_case("B4F-E06 an exhausted floor's explicit override",2.,3.,extra=("--budget-usd",3.))
+check("B4F-E07 the override names the floor's remainder",e.get("hard_src")==
+      "explicit --budget-usd (override of an exhausted envelope $30.00, remainder at most $-2.00)")
+# A head-exit's session total alone is no run spend: with no head transcript and no lane on the
+# record nothing can be metered, so the estimate decides and the reason is named.
+plant(opened_head,{"event":"head-exit","session_id":"fixture-head","spent_usd":25.})
+e,_=dry_case("B4F-E08 a head-exit alone leaves the envelope unmetered",2.,10.)
+check("B4F-E09 the unmetered reason names the run's spend",e.get("hard_src","").startswith(
+      "5 × estimate $2.00 (envelope unmetered: the run's spend could not be metered:"))
+# In process: a spy on handsoff.run_spend reads the cache flag each composition passed. A dry run
+# leaves the run's meter cache unwritten, as a dry-run gate does; a spawn may write it.
+sys.path.insert(0,str(script.parent));sys.dont_write_bytecode=True
+import handsoff as envelope_module
+seen=[];real_spend=envelope_module.run_spend
+def spy(*args,**kwargs):
+    seen.append(kwargs.get("write_cache",True));return real_spend(*args,**kwargs)
+plant(seed_head,*spent_lane("LS",25.))
+exact=(5.,"envelope remainder $5.00 (envelope $30.00, spent $25.00; below 5 × estimate $2.00 = $10.00)")
+envelope_module.run_spend=spy
+try:
+    composed=[lane.cost_caps(None,2.,run,str(record),dry_run=dry) for dry in (True,False)]
+except (Exception,SystemExit) as exc:
+    composed=[repr(exc)]
+finally:
+    envelope_module.run_spend=real_spend
+check("B4F-E10 a dry run leaves the run's meter cache unwritten",seen==[False,True] and composed==[exact,exact])
+# The figure is that of the record the call read: a malformed line in a record away from the
+# store's default path makes the run's spend a floor, as the gate counts it.
+record.write_text(record.read_text()+"not a record line\n")
+try:
+    composed=lane.cost_caps(None,2.,run,str(record))
+except (Exception,SystemExit) as exc:
+    composed=repr(exc)
+check("B4F-E11 a malformed line in the record read makes the figure a floor",composed==(5.,floor_src))
 record.unlink()
 e,_=dry_case("W1-21 missing record uses estimate",2.,10.)
 check("W1-22 unmetered reason named", "envelope unmetered: no run record at" in e["hard_src"])
@@ -3036,15 +4196,30 @@ saved=[p.read_bytes() for p in paths]
 events=rows(record);opened_event=next(e for e in events if e.get("event")=="lane-open")
 spawned_event=next(e for e in reversed(events) if e.get("event")=="lane-respawned")
 with record.open("a") as h:h.write(json.dumps({"event":"lane-resumed","lane":"B"})+"\n")
-recovered=lane.close_from_transcript(str(record),run,"B",opened_event,spawned_event,str(home),str(projects),"fixture",50)
-check("W2-L03 watch recovery preserves previous passes",recovered["report"].endswith("-pass4.md")
-      and pathlib.Path(recovered["report"]).is_file() and [p.read_bytes() for p in paths]==saved)
+before_legacy_call=record.read_bytes()
+before_reports={str(p):p.read_bytes() for p in first_report.parent.glob(first_report.stem+"*.md")}
+try:
+    lane.close_from_transcript(str(record),run,"B",opened_event,spawned_event,str(home),str(projects),"fixture",50)
+    rejected=False
+except lane.A3Premise:
+    rejected=True
+check("W2-L03 E3 rejects legacy closure of an A3 pass before any report write",rejected
+      and record.read_bytes()==before_legacy_call
+      and {str(p):p.read_bytes() for p in first_report.parent.glob(first_report.stem+"*.md")}==before_reports
+      and [p.read_bytes() for p in paths]==saved)
 
 def restore(change=None):
     # Each independent branch starts from its own first pass; remove only this fixture's outputs.
     for path in first_report.parent.glob(first_report.stem+"-pass*.md"):path.unlink()
     for path in first_follow.parent.glob(run+"-brief-B-pass*.md"):path.unlink()
+    # Each serial branch is a legacy compatibility fixture. Its altered rows cannot keep
+    # A3 commit identities or journals from completed, independent branches.
+    namespace=pathlib.Path(str(record)+".a3")
+    if namespace.exists():shutil.rmtree(namespace)
     events=[json.loads(line) for line in original.decode().splitlines()]
+    for e in events:
+        for key in ("pass_id","close_id","a3_record","notice","disposition"):
+            e.pop(key,None)
     if change:
         for e in events:change(e)
     record.write_text(''.join(json.dumps(e)+'\n' for e in events))
@@ -3056,7 +4231,9 @@ check("F1-L04 empty Claude resume cannot borrow earlier report or transcript",rc
       and first_report.read_bytes()==old_report and "report first" not in second_report.read_text())
 
 def changed(e):
-    if e.get("event")=="head-exit":e["spent_usd"]=995.
+    # The run's spend is lane B's own recorded cost, $995 of the $1000 envelope (K22da6bf5: a
+    # head-exit's session total is no longer summed into the remainder).
+    if e.get("event")=="lane-closed" and e.get("lane")=="B":e["total_cost_usd"]=995.
     if e.get("event")=="lane-open":e["hard_usd"]=777.
 restore(changed)
 rc,out,err=call(resume_args)
@@ -3164,8 +4341,8 @@ check("P2-W3 namespace and exact empty-stage exception match the owner fold",
       and "historical `-r<n>`, `-R<n>` and `-resume-<n>` lane ids remain legal" in active
       and "sole directory exception is an exactly spelt, empty Codex stage directory" in active
       and "A staged dry run removes its empty stage before returning" in active)
-check("W3-02 retired-rule control is confined to history", "max(5 × usual_usd, soft_usd)" not in active
-      and "max(5 × usual_usd, soft_usd)" in skill.split("**History",1)[1])
+check("W3-02 the retired rule and its history have left the runbook", "max(5 × usual_usd, soft_usd)" not in skill
+      and "**History —" not in skill)
 seed()
 rc,out,err=spawn(8.,dry=False,extra=("--lane","Detached","--detach",),report="detached report")
 check("W1-42 detached spawn prints one caller advisory",rc==0 and err.count("estimate advisory:")==1
@@ -3216,7 +4393,10 @@ script, parent = map(pathlib.Path, sys.argv[1:3])
 root=parent / "casefold-guards"; root.mkdir()
 (root / "work").mkdir(); (root / "source").mkdir()
 (root / "source" / "data.txt").write_text("original stage bytes\n")
-(root / "brief.md").write_text("Fixture brief.\nCONTROL+: LANE CORE in %s\n" % (script.parent / "templates" / "lane-core.md"))
+# The control lies inside the lane's one grant (root): a control file outside the read grants refuses
+# the spawn, since the lane could not hit it (register 2026-09-14 00:06, Batch 4).
+(root / "control.txt").write_text("LANE CORE\n")
+(root / "brief.md").write_text("Fixture brief.\nCONTROL+: LANE CORE in %s\n" % (root / "control.txt"))
 (root / "follow.md").write_text("Distinct follow-up brief.\n")
 os.environ["LLM_WIKI_STORE"]=str(root / "store")
 os.environ["STUB_REPORT"]="fixture retained report"
@@ -3257,7 +4437,22 @@ def resume(run, identifier="B"):
 def manifest():
     return {str(p.relative_to(root)):("link",os.readlink(p)) if p.is_symlink() else
             ("file",hashlib.sha256(p.read_bytes()).hexdigest()) if p.is_file() else ("directory",)
-            for p in root.rglob('*')}
+            for p in root.rglob('*') if not (
+                (p.is_dir() and p.name.endswith('.jsonl.a3')) or
+                (p.parent.name.endswith('.jsonl.a3') and re.fullmatch(r'[0-9a-f]{64}\.lock',p.name)
+                 and p.is_file() and p.stat().st_size == 0))}
+# A3 semantic migration: E1 retains stable, empty lifetime gates even after a rejected
+# preflight. Their presence is permitted; every content-bearing file remains in the manifest.
+lock_control=root / "manifest-control.jsonl.a3"
+lock_control.mkdir()
+lock_file=lock_control / ("f"*64+".lock")
+manifest_before=manifest()
+lock_file.touch()
+empty_lock_ignored=manifest()==manifest_before
+lock_file.write_text("planted unexpected gate payload")
+check("A3","only empty lifetime-lock metadata is exempt; planted bytes are detected",
+      empty_lock_ignored and manifest()!=manifest_before)
+lock_file.unlink();lock_control.rmdir()
 def pointers(run):
     record=pathlib.Path(adapter.store_paths(run,"B")["record"])
     events=[json.loads(line) for line in record.read_text().splitlines()]
@@ -3315,7 +4510,7 @@ check("10","record-only casefold collision refuses",rc==2 and "case-equivalent t
 for text in ('{torn\n','[]\n'):
     record.write_text(text);before=manifest();rc,out,err=spawn(run,"Unused")
     check("11","broken record refuses with a named premise",rc==2 and "PROBE FAILED:" in err
-          and "cannot check lane ids" in err and before==manifest())
+          and ("cannot check lane ids" in err or "damaged record row" in err) and before==manifest())
 for state in ("empty","missing"):
     if state=="empty":record.write_text("")
     else:record.unlink()
@@ -3490,7 +4685,7 @@ import json, os, sys, time
 d = sys.argv[1]
 def ts(age_s):
     t = time.time() - age_s
-    return time.strftime("%Y-%m-%dT%H:%M:%S+0100", time.localtime(t))
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
 def rec(name, closes):
     with open(os.path.join(d, name), "w") as f:
         f.write(json.dumps({"event": "run-open", "run": "radv", "session": "s"}) + "\n")
@@ -3505,6 +4700,8 @@ rec("cold-budget.jsonl", [{"exit_class": "budget", "ts": ts(4000), "usage": {"pe
 rec("deadline.jsonl", [{"exit_class": "deadline", "ts": ts(60), "usage": {"peak_context": 400000}}])
 rec("refusal.jsonl", [{"exit_class": "refusal", "ts": ts(60)}])
 rec("noclose.jsonl", [])
+for cls in ("stall", "max-turns", "error", "spawn-failed", "killed"):
+    rec("%s.jsonl" % cls, [{"exit_class": cls, "ts": ts(60), "usage": {"peak_context": 400000}}])
 ADVISE_FIXTURE_END
 "$PY" -c 'print("a lane report with more than the placeholder: " + "x" * 500)' > "$ADV/radv-report-L.md"
 adv() { "$PY" "$LANE" advise --run radv --lane L --record "$ADV/$1" --report "$ADV/radv-report-L.md" ${2:+--stage "$2"} 2>&1; }
@@ -3516,6 +4713,28 @@ O=$(adv deadline.jsonl); case $O in "advise: restart · "*"deadline"*) ok "advis
 O=$(adv cold-budget.jsonl); case $O in "advise: restart · "*"budget"*) ok "advise: a budget close is a restart (or a resume only with a raised cap), never an unconditional resume (review finding 6)";; *) no "advise budget  [$O]";; esac
 O=$(adv refusal.jsonl); case $O in "advise: family-fallback · "*) ok "advise: a refusal takes the family fallback, never a resume";; *) no "advise refusal  [$O]";; esac
 O=$(adv noclose.jsonl); case $O in "advise: unknown · "*"no lane-closed"*) ok "advise: a lane with no close reads unknown, never a guess (premise failure)";; *) no "advise no close  [$O]";; esac
+# WS-A · the retry rule advise names (2026-10-11): a stall, deadline, budget or max-turns close follows
+# the skill's "Progress-judged retries"; error, spawn-failed and killed keep its one fresh re-spawn.
+# The verdict word stays `restart`; the old "re-spawned once" wording must be gone from every line.
+WSA=""; for c in stall deadline max-turns; do
+  O=$(adv "$c.jsonl")
+  case $O in "advise: restart · exit $c "*"\"Progress-judged retries\""*) ;; *) WSA="$WSA $c:no-rule" ;; esac
+  case $O in *"re-spawned once"*|*"one fresh re-spawn"*) WSA="$WSA $c:old-or-wrong-rule" ;; esac
+done
+[ -z "$WSA" ] && ok "WS-A1 advise on a stall, deadline or max-turns close says restart, names the skill's \"Progress-judged retries\" and no longer says \"re-spawned once\"" \
+  || no "WS-A1 the progress-judged classes  [$WSA: $(adv stall.jsonl)]"
+O=$(adv cold-budget.jsonl)
+case $O in "advise: restart · exit budget "*"\"Progress-judged retries\""*"resumed only through \`resume\` with a raised --budget-usd inside its window"*)
+  case $O in *"re-spawned"*) no "WS-A2 the budget line still says re-spawned  [$O]" ;;
+    *) ok "WS-A2 advise on a budget close says restart, names \"Progress-judged retries\" and keeps its resume clause (a raised --budget-usd inside the window)" ;; esac ;;
+  *) no "WS-A2 the budget line  [$O]" ;; esac
+WSA=""; for c in error spawn-failed killed; do
+  O=$(adv "$c.jsonl")
+  case $O in "advise: restart · exit $c "*"other failures: one fresh re-spawn"*"a second failure returns the step to the head"*) ;; *) WSA="$WSA $c:no-rule" ;; esac
+  case $O in *"Progress-judged"*|*"re-spawned once"*) WSA="$WSA $c:wrong-rule" ;; esac
+done
+[ -z "$WSA" ] && ok "WS-A3 advise on an error, spawn-failed or killed close says restart and keeps the skill's rule for other failures: one fresh re-spawn, a second failure returning the step to the head (the control for WS-A1: these lines never name the progress rule)" \
+  || no "WS-A3 the other-failure classes  [$WSA: $(adv error.jsonl)]"
 rm -f "$ADV/radv-report-L.md"
 O=$(adv cold-limit-big.jsonl); case $O in "advise: resume · "*"nothing of the lane's work is on disk"*) ok "advise: a cold limit close with nothing on disk resumes (D29: one cold re-read beats the whole task)";; *) no "advise cold nothing on disk  [$O]";; esac
 
@@ -3743,8 +4962,13 @@ if [ "$VAULT_BEFORE" = "$VAULT_AFTER" ] && [ -n "$VAULT_BEFORE" ]; then
   ok "a spawn and an init leave both scripts and the two vault files init reads byte-identical"
 else no "the wrapper wrote into the vault"; fi
 
-if [ -z "$(find "$HOME/.llm-wiki/spawn-records" -name 'run-test-*' -newer "$LANE" 2>/dev/null)" ]; then
-  ok "no run-test artefact reached the real run store (LLM_WIKI_STORE redirected every write)"
+# The real store is named through REAL_HOME: the suite's own HOME is a fixture (register 2026-10-04
+# 10:45), so "$HOME/.llm-wiki" would search the fixture and pass on nothing. A missing real store is
+# said, never read as clean, and find's own errors are not hidden.
+if [ ! -d "$REAL_HOME/.llm-wiki/spawn-records" ]; then
+  ok "no real run store on this machine (no $REAL_HOME/.llm-wiki/spawn-records): nothing of it to write into"
+elif [ -z "$(find "$REAL_HOME/.llm-wiki/spawn-records/" -name 'run-test-*' -newer "$LANE")" ]; then
+  ok "no run-test artefact reached the real run store (LLM_WIKI_STORE and the fixture HOME redirected every write)"
 else no "the suite wrote into the real run store"; fi
 
 scan_writes(){ # count how many of the five write-pattern families hit in a file
@@ -3762,10 +4986,35 @@ if [ "$WRITES" = 0 ] && [ "$PWRITES" = 5 ] && [ "$LWRITES" -ge 3 ]; then
   ok "the fence is stdout-only: none of the five write-pattern families appears in its source (controls: all 5 caught in a planted copy, and the same scan finds $LWRITES families in lane.py, which does write)"
 else no "fence write-pattern scan  [fence $WRITES, planted $PWRITES of 5, lane.py $LWRITES]"; fi
 
-STRAY=$(grep -nE "open\([^)]*['\"][wax]" "$LANE" | grep -v 'write_atomic\|append_record' | wc -l | tr -d ' ')
-if [ "$STRAY" = 2 ]; then
-  ok "every write in lane.py runs through write_atomic or append_record (2 call sites, both inside those helpers)"
-else no "lane.py has $STRAY write call sites outside its two helpers"; fi
+# E1 migration: inspect actual open modes. The former text grep also counted encoding="ascii" reads.
+WRITE_CENSUS=$("$PY" - "$LANE" <<'A3_WRITE_CENSUS_END'
+import ast,sys
+source=open(sys.argv[1],encoding="utf-8").read()
+def sites(text):
+    found=[];stack=[]
+    class Visitor(ast.NodeVisitor):
+        def visit_FunctionDef(self,node):
+            stack.append(node.name);self.generic_visit(node);stack.pop()
+        def visit_Call(self,node):
+            if isinstance(node.func,ast.Name) and node.func.id=="open":
+                mode=node.args[1] if len(node.args)>1 else next((k.value for k in node.keywords if k.arg=="mode"),ast.Constant("r"))
+                values=[n.value for n in ast.walk(mode) if isinstance(n,ast.Constant) and isinstance(n.value,str)]
+                if any(any(flag in value for flag in "wax+") for value in values):
+                    found.append((stack[-1] if stack else "<module>",node.lineno))
+            self.generic_visit(node)
+    Visitor().visit(ast.parse(text));return found
+actual=sites(source)
+planted=sites(source+'\ndef planted_write():\n    open("out", "w")\n')
+allowed={"write_atomic","_append_record_unlocked"}
+valid=bool(actual) and all(name in allowed for name,line in actual)
+valid=valid and len(planted)==len(actual)+1 and planted[-1][0]=="planted_write"
+valid=valid and sites('open("input", encoding="ascii")')==[]
+print("write sites %d; planted extra site %d; read control zero"%(len(actual),len(planted)-len(actual)))
+raise SystemExit(0 if valid else 1)
+A3_WRITE_CENSUS_END
+); RC=$?
+if [ "$RC" = 0 ]; then ok "A3 data-write census: $WRITE_CENSUS; every site is inside an authorised helper"
+else no "A3 data-write census: $WRITE_CENSUS"; fi
 
 # ------------------------------------------------- every written spawn command names a reason ---
 # A shipped example without the flag is how a head learns to leave it out, and the flag is now
@@ -3875,19 +5124,21 @@ else ok "text control: a nonce no shipped file carries reads absent, so every le
 # clause of a long table row; retired wordings must be absent; the properties the folds key on close the block.
 txtx SKILL.md '## 4 · During the run' 'control: the whole-line form hits a heading SKILL.md carries'
 txtx SKILL.md '**Codex lanes.** `codex-lane.py` runs an installed Codex CLI and writes the same run-record events as `lane.py`. The executable must be available and authenticated before use. Choose a model and effort that the installed CLI and backend support; the wrapper'\''s accepted effort list does not enable backend capabilities. The wrapper uses the class definition and lane core already shipped with the framework and checks the brief'\''s controls before starting.' 'SKILL.md Codex lanes ¶1: an installed, authenticated CLI; the wrapper'\''s effort list enables nothing'
-txtx SKILL.md 'Spawn with `python3 .claude/skills/delegate/codex-lane.py spawn --run <run> --lane <lane> --class <class> --brief <file> --cwd <directory> --reason "(a–d) <reason>" --choice-reason "<model and effort reason>" --delegation <single|multi> --delegation-src <head|owner> --model <model> --effort <effort>`. Add only authorised write, staging, search and network grants. Use `watch --run <run> --lane <lane>` to wait for the latest pass. `resume` carries the recorded model, effort and configuration unless overridden; `resume --stage-from <directory>` refreshes an existing staged copy in place. Detached operation uses `--detach --no-wait`.' 'SKILL.md Codex lanes ¶2: the spawn form, the grants, watch, resume and the stage refresh'
-txtx SKILL.md 'Codex choices are explicit and are not resolved by the Claude throttle. Astra is the pick for open work (owner ruling 2026-09-22; its place is unchanged by the ruling of 2026-09-29 that put every Claude seat on opus 5.5 and fable on the owner'\''s word only). The critic, planner, reflector and writer class metadata describe their Codex halves. A reflector is read-only, accepts `gpt-6-astra` at `xhigh` or `max` with `max` as its anchor, and uses the same output gate and controls as its Claude counterpart. Record the reason for each pick. The sandbox controls writes; the wrapper records reads as unrestricted. Exclude sibling reports when staging a blind review. Usage recorded as `codex-plan` is unpriced, not zero cost. Consult the wrapper'\''s `--help` for options and exit classes.' 'SKILL.md Codex lanes ¶3: explicit Codex choices and the reflector'\''s Codex range'
-txts SKILL.md '`resume` carries the recorded model, effort and configuration unless overridden' 'SKILL.md Codex lanes: resume carries the lane-open picks forward'
+txtx SKILL.md 'Spawn with `python3 .claude/skills/delegate/codex-lane.py spawn --run <run> --lane <lane> --class <class> --brief <file> --cwd <directory> --reason "(a–d) <reason>" --choice-reason "<model and effort reason>" --delegation <single|multi> --delegation-src <head|owner> --model <model> --effort <effort>`. Add only authorised write, staging, search and network grants. Use `watch --run <run> --lane <lane>` to wait for the latest pass; the wait is bounded: after about 570 s by default it returns `still-running` (exit 8), which is not a close, and `--max-wait-s 0` waits without bound. `resume` carries the recorded model, effort, configuration and delegation pair unless overridden: with neither `--delegation` nor `--delegation-src` it takes the lane-open'\''s regime and source together and records them on `lane-resumed`, and an override names both flags; `resume --stage-from <directory>` refreshes an existing staged copy in place. Detached operation uses `--detach --no-wait`, which returns 0 only once the worker has written this call'\''s own `lane-open` or `lane-resumed`; exit 4 means unconfirmed, the worker left running. Without `--no-wait` the caller stays in the foreground watching the worker, and stopping that caller'\''s task with `TaskStop` has ended its worker too.' 'SKILL.md Codex lanes ¶2: the spawn form, the grants, the bounded watch (F10), resume with the carried delegation pair (F9), the stage refresh and the acknowledged detach (F8)'
+txtx SKILL.md 'Codex choices are explicit and are not resolved by the Claude throttle. Which model takes which work, and where reviewing seats sit, is the routing table'\''s (the `rules` block at the top of `routing.json`, with the user'\''s own rows from `.claude/routing.local.json` appended where that file exists). The critic, planner, reflector and writer class metadata describe their Codex halves. A reflector is read-only, accepts `gpt-6-astra` at `xhigh` or `max` with `max` as its anchor, and uses the same output gate and controls as its Claude counterpart. Record the reason for each pick. The sandbox controls writes; the wrapper records reads as unrestricted. Exclude sibling reports when staging a blind review. Usage recorded as `codex-plan` is unpriced, not zero cost. Consult the wrapper'\''s `--help` for options and exit classes.' 'SKILL.md Codex lanes ¶3: explicit Codex choices and the reflector'\''s Codex range'
+gone SKILL.md 'Astra is the pick for open work' 'retired (owner ruling 2026-10-23): Astra as the pick for open work'
+txts SKILL.md '`resume` carries the recorded model, effort, configuration and delegation pair unless overridden' 'SKILL.md Codex lanes: resume carries the lane-open picks and the delegation pair forward (F9)'
+gone SKILL.md '`resume` carries the recorded model, effort and configuration unless overridden;' 'retired (F9): a Codex resume text that named no delegation pair'
 gone SKILL.md '(dated carve-out, 2026-09-09' 'retired (v0.9.6 sweep): the dated carve-out heading of the Codex section'
 txtx SKILL.md 'genuinely no lanes says so with `--expect-lanes 0`, and a `--spawn-record` holding no `lane-open`' 'SKILL.md:524'
 txtx SKILL.md 'event says it for a run before its first lane (the head is metered alone and the billed line reads' 'SKILL.md:525'
 txtx SKILL.md '`lanes 0`, under either lane mode; 2026-09-13). In-session lane transcripts live under' 'SKILL.md:526'
-txtx SKILL.md '  (`.claude/agent-memory-local/memory-hunter/`) is that lane'\''s sole writable surface. For a' 'SKILL.md:591'
-txtx SKILL.md '  headless lane it is the lane home'\''s own real directory, which `lane.py init` fills from the vault'\''s' 'SKILL.md:592'
-txtx SKILL.md '  copy and each `lane-closed` syncs back, neither side overwriting a file the other changed' 'SKILL.md:593'
-txtx SKILL.md '  (2026-09-13). MEMORY.md content is reviewed at each close-out as findings while the trial runs; wider' 'SKILL.md:594'
-txtx SKILL.md '  on a fresh machine) holds the lane-side settings with the Bash fence, the skill slices, the' 'SKILL.md:602'
-txtx SKILL.md '  `contract/` slices and each memory class'\''s memory directory — and no `CLAUDE.md`.' 'SKILL.md:603'
+gone SKILL.md '(`.claude/agent-memory-local/memory-hunter/`) is that lane' 'retired (memory trial, 2026-11-04): the memory directory as a writable surface'
+gone SKILL.md 'own real directory, which `lane.py init` fills from the vault' 'retired (memory trial, 2026-11-04): the sync at init'
+gone SKILL.md 'copy and each `lane-closed` syncs back' 'retired (memory trial, 2026-11-04): the sync at the close'
+gone SKILL.md 'MEMORY.md content is reviewed at each close-out' 'retired (memory trial, 2026-11-04): the close-out review'
+txtx SKILL.md '  on a fresh machine) holds the lane-side settings with the Bash fence, the skill slices and the' 'SKILL.md:602'
+txtx SKILL.md '  `contract/` slices — and no `CLAUDE.md`.' 'SKILL.md:603'
 txts SKILL.md 'a harness permission prompt a headless head never sees (known-issues 2026-09-07' 'SKILL.md:807'
 txtx SKILL.md 'record writes every spawn line with the run'\''s regime and its source (`--delegation multi --delegation-src owner`' 'SKILL.md:808'
 txtx SKILL.md 'for a run the owner opened `multi`), and its hand-off seed'\''s `## Trace` section holds the five-column table' 'SKILL.md:809'
@@ -3903,8 +5154,8 @@ txtx SKILL.md 'records it (`handsoff.py ledger --run R --observation "watcher: <
 txtx SKILL.md 'the conversation its hand-off reply names those monitors and stops them with `TaskStop`: a monitor belongs to the' 'SKILL.md:819'
 txtx SKILL.md 'conversation that armed it and keeps firing there after the run passes to another session. The head'\''s brief' 'SKILL.md:820'
 txtx SKILL.md 'A hands-off head reads the run'\''s decisions file, where the run has one, at every gate, before' 'SKILL.md:828'
-txtx SKILL.md 'every writer spawn and before the close, and names it to `gate` and `close` with `--decisions-file <path>`. A relayed' 'SKILL.md:829'
-txtx SKILL.md '`AUTHOR` observation in the run record is the signal to read the file at once. One that stands after the last gate' 'SKILL.md:830'
+txtx SKILL.md 'every spawn of any class and before the close, and names it to `gate` and `close` with `--decisions-file <path>`. A relayed' 'SKILL.md:829'
+txtx SKILL.md '`AUTHOR` observation in the run record is the signal to read the file at once. One beyond the furthest point any gate or ack has read' 'SKILL.md:830'
 txtx SKILL.md 'holds `gate` and `close` (exit 6) until the head passes `--ack <line>`, which the record keeps as an `ack:`' 'SKILL.md:831'
 txtx SKILL.md 'observation. A head that arms, disarms or re-arms a run inside a turn says so in that reply: the' 'SKILL.md:832'
 txtx SKILL.md 'status line is composed when the turn starts and cannot show it.' 'SKILL.md:833'
@@ -3913,8 +5164,8 @@ txtx SKILL.md 'owner 2026-09-07): the console'\''s parser reads that shape and t
 txtx SKILL.md 'That grammar is for the pack'\''s item lines only: the gate and boundary events carry the bare `item<k>`' 'SKILL.md:837'
 txtx SKILL.md '(`gate --to item2`, never the item line'\''s long name). The head runs `gate` and `boundary` unpiped, or reads' 'SKILL.md:838'
 txtx SKILL.md '`$pipestatus` in the same shell (`PIPESTATUS` in bash): their exit codes are control flow, and a pipeline'\''s `$?` is' 'SKILL.md:839'
-txtx SKILL.md 'its last stage'\''s, so `gate … | tail -3; echo $?` reads a refusal as an allow. A lane closed `limit` is resumed from' 'SKILL.md:840'
-txtx SKILL.md 'its transcript (`lane.py resume`, the cache window waived) unless its transcript is gone or unparseable (D29), or `lane.py advise` counsels a restart from the partial output because the cache is cold and the lane'"'"'s work is already on disk (2026-09-14);' 'SKILL.md:841'
+txtx SKILL.md 'its last stage'\''s, so `gate … | tail -3; echo $?` reads a refusal as an allow. A lane closed `limit` or `network` is resumed from its transcript (`lane.py resume`, the cache window waived) unless its transcript is gone or unparseable (D29), or `lane.py advise` counsels a restart from the partial output because the cache is cold and the lane'\''s work is already on disk (2026-09-14). A network close waits for the provider to answer and follows the drop backoff and two-in-a-row no-work rule in §1; the head applies that rule to helper resumes, with unreadable progress counting as neither;' 'SKILL.md: a lane closed limit or network is resumed from its transcript, on one line (fix (c) path A)'
+gone SKILL.md 'A lane closed `limit` is resumed from' 'SKILL.md: the limit-only resume wording is retired (fix (c) path A)'
 txtx SKILL.md 'written before the act with `handsoff.py decision --run R --phase P --what … --grant …`, which writes the event and a findings-ledger row in one call (2026-09-13). The reflect skill'\''s Step 2b reads both, so a run without them carries no' 'SKILL.md:854'
 txtx SKILL.md 'argument naming a clock time (a two-digit `HH:MM` or `HH:Mx`; a meter'\''s model count such as' 'SKILL.md:862'
 txtx SKILL.md '`claude-opus-5:88` is not one, 2026-09-13) whose hour disagrees with the clock'\''s earns one stderr' 'SKILL.md:863'
@@ -3925,12 +5176,12 @@ txtx SKILL.md 'odd number of backticks or the text `command not found`, the trac
 txtx SKILL.md 'leaves when a backticked token ran as a command (2026-09-13); the write proceeds, and a clean loss' 'SKILL.md:868'
 txtx SKILL.md 'leaves no trace, so the quoting stays the caller'\''s discipline. `--dry-run` shows the stamp and' 'SKILL.md:869'
 txtx SKILL.md 'prints the same warnings.' 'SKILL.md:870'
-txts SKILL.md 'never resumed. `lane.py resume` takes `--detach --no-wait` like spawn: a hands-off head resumes that way and waits with `lane.py watch`; the foreground form is for an attended head' 'SKILL.md:929 clause 1'
+txts SKILL.md 'never resumed. `lane.py resume` takes `--detach --no-wait` like spawn: a hands-off head resumes that way and waits with `lane.py watch`, re-issued after each `still-running` (about 570 s by default, not a close) or armed with `--max-wait-s 0`; the foreground form is for an attended head' 'SKILL.md:929 clause 1 (the watch bound stated, F10)'
 txts SKILL.md 'the 80 % mark decides only where no figure exists) `handsoff.py gate --to item<k>` refuses (exit 4)' 'SKILL.md:933 clause 1'
-txts SKILL.md '2026-09-13: `grants` and `run-resume` carry every list a call does not name, so `--on-limit` or `--viewer` alone changes that key alone, and a rewrite that would lose a write path while naming neither `--grant` nor `--write` is refused with the delta' 'SKILL.md:934 clause 1'
+txts SKILL.md '2026-09-13: `grants` and `run-resume` carry every list a call does not name, so `--on-limit` or `--viewer` alone changes that key alone; 2026-10-10: `--add-grant` and `--add-write` add paths to the run'\''s lists, and any rewrite that would lose a path from either list is refused with the delta' 'SKILL.md:934 clause 1'
 txts SKILL.md '— a `--grants-file` override is refused, 2026-09-13)' 'SKILL.md:935 clause 1'
 txts SKILL.md 'Either way the resuming session first looks in the record for a `watcher:` observation: one naming another session means that session'\''s monitors may still be firing, so its first reply names them for stopping there.' 'SKILL.md:935 clause 2'
-txts SKILL.md '(`--detach --no-wait` for a hands-off head, which then waits with `lane.py watch`; the 55-minute cache window waived on a `limit` close' 'SKILL.md:935 clause 3'
+txts SKILL.md '(`--detach --no-wait` for a hands-off head, which then waits with `lane.py watch`, re-issued after each `still-running` (about 570 s by default, not a close) or armed with `--max-wait-s 0`; the 55-minute cache window waived on a `limit` close' 'SKILL.md:935 clause 3 (the watch bound stated, F10)'
 # held 2026-09-10-1843 (vault-copy duty): installed on the owner's word, after item7
 txts SKILL.md 'A repository the run creates or clones is registered on `wiki/tools/Agent Project Store.md` in the run, and the close-out names the outputs the vault will hold, or says none with the reason.' 'held 2026-09-10-1843 SKILL.md:931 clause 1'
 txts SKILL.md 'the launcher rehearses every spawn command of its plan of record with `--dry-run` and without `--detach --no-wait`' 'SKILL.md launcher duty (2026-09-17): the rehearsal form the real parser reaches the controls with (the legs beside the CONTROL+ premises)'
@@ -3965,8 +5216,10 @@ def f5(text):
     hits = [x for x in sentences(text) if 'older than' in x]
     bad = [x for x in hits if x.count('older than') != len(AGE.findall(x)) or not LABEL.search(x)]
     return len(hits), len(bad)
+QUOTED = re.compile(r'<!-- vault-local:begin -->\s*Owner ruling:.*?<!-- vault-local:end -->', re.S)
 def f6(text):
-    hits = [x for x in sentences(text) if 'decisions file' in x.lower()]
+    # a quoted owner ruling keeps his words: the flag is the skill's own text's duty, beside it
+    hits = [x for x in sentences(QUOTED.sub(' ', text)) if 'decisions file' in x.lower()]
     return len(hits), sum(1 for x in hits if '--decisions-file' not in x)
 try:
     real = open(sys.argv[1], encoding='utf-8').read()
@@ -3979,6 +5232,7 @@ f6fire = f6('A head reads the run decisions file at every gate.')
 f6quiet = f6('A head reads the decisions file and names it with `--decisions-file <path>`.')
 print('f5 %d %d %d %d %d %d' % (f5fire + f5quiet + f5(real)))
 print('f6 %d %d %d %d %d %d' % (f6fire + f6quiet + f6(real)))
+print('f6q %d %d' % f6('<!-- vault-local:begin -->\nOwner ruling: A head reads the decisions file at every gate.\n<!-- vault-local:end -->'))
 SENTENCE_PROPERTY_TERMINATOR
 )
 F5LINE=$(printf '%s\n' "$SENTCHK" | grep '^f5 ')
@@ -3987,13 +5241,167 @@ case "$F5LINE" in
   'f5 2 2 1 0 '[1-9]*' 0') ok "text fold F5: every SKILL.md sentence naming an age carries its number and derivation label (planted: two unlabelled ages fired, a labelled one stayed quiet)" ;;
   *) no "text fold F5: the age-derivation property  [$SENTCHK]" ;;
 esac
+case "$(printf '%s\n' "$SENTCHK" | grep '^f6q ')" in
+  'f6q 0 0') ok "text fold F6: a quoted owner ruling is left out of the property (planted: the same sentence outside one fires)" ;;
+  *) no "text fold F6: the quoted-ruling exemption  [$SENTCHK]" ;;
+esac
 case "$F6LINE" in
   'f6 1 1 1 0 '[1-9]*' 0') ok "text fold F6: every SKILL.md sentence naming the decisions file names --decisions-file (planted: one without fired, one with stayed quiet)" ;;
   *) no "text fold F6: the decisions-file property  [$SENTCHK]" ;;
 esac
+# F10 · every description of `lane.py watch` and `codex-lane.py watch` states its bound (register 2026-09-25 19:46 and
+# 2026-09-21 18:23; fix plan addendum F10, version 2): a sentence naming either wrapper's watch as a command carries
+# the default bound (570 s), that `still-running` is not a close, and `--max-wait-s 0` for an unbounded wait. The
+# check must fire on a planted unqualified promise, stay quiet on the corrected wording, and report a target it
+# cannot read, or one holding no watch description, as a failed premise (exit 2), never as clean.
+watchbound(){ "$PY" - "$@" <<'WATCH_BOUND_TERMINATOR'
+import re, sys
+# A wrapper watch named as a command: `lane.py watch` or `codex-lane.py watch`, the Codex section's
+# `watch --run <run> --lane <lane>` form, or the verb `watch`es; handsoff.py's console watch is none of these.
+MENTION = re.compile(r"(?:codex-)?lane\.py watch\b|`watch --run [^`]*--lane[^`]*`|`watch`(?:es|ed|ing)\b")
+# The promise itself, however the watch is named: a watch word and an `until … close` in one sentence.
+CLAIM = re.compile(r"\bwatch(?:es|ed|ing)?\b", re.I)
+UNTIL = re.compile(r"\buntil\b[^.;]*?\bclos(?:e|es|ed|ing)\b", re.I)
+NEEDS = ("570", "still-running", "--max-wait-s 0")
+def units(text):
+    """The document's own units, so a bound in one never qualifies a mention in another (review CR-ADD2, finding 6:
+    adjacent table rows once shared a sentence): each cell of a table row (a row ends with its line, a cell at an
+    unescaped `|`; a commented copy `# | …` is a row too), each fenced code line, each heading or comment line, a list
+    item with its continuation lines, and a paragraph with its hard-wrapped lines."""
+    out, block, fence = [], [], False
+    def flush():
+        if block:
+            out.append(" ".join(block))
+            del block[:]
+    for line in text.split("\n"):
+        bare = line.strip()
+        row = re.sub(r"^#\s+(?=\|)", "", bare)
+        if bare.startswith("```") or bare.startswith("~~~"):
+            flush()
+            fence = not fence
+        elif fence:
+            out.append(bare)
+        elif not bare:
+            flush()
+        elif row.startswith("|"):
+            flush()
+            out.extend(cell.strip() for cell in re.split(r"(?<!\\)\|", row) if cell.strip())
+        elif re.match(r"#{1,6}\s", bare) or re.match(r"<!--.*-->$", bare):
+            flush()
+            out.append(bare)
+        else:
+            if re.match(r"(?:[-*+]|\d+[.)])\s", bare):
+                flush()
+            block.append(bare)
+    flush()
+    return out
+def sentences(text):
+    return [s for unit in units(text) for s in re.split(r'(?<=[.!?])\s+(?=[A-Z`(|*\[])', unit)]
+def described(sentence):
+    return bool(MENTION.search(sentence) or (CLAIM.search(sentence) and UNTIL.search(sentence)))
+if len(sys.argv) < 2:
+    print("PROBE FAILED: no target named")
+    sys.exit(2)
+found = bad = 0
+for path in sys.argv[1:]:
+    try:
+        text = open(path, encoding="utf-8").read()
+    except (OSError, UnicodeDecodeError) as exc:
+        print("PROBE FAILED: cannot read %s (%s)" % (path, exc))
+        sys.exit(2)
+    for sentence in sentences(text):
+        if not described(sentence):
+            continue
+        found += 1
+        missing = [need for need in NEEDS if need not in sentence]
+        if missing:
+            bad += 1
+            print("UNQUALIFIED %s: %s [missing %s]" % (path, sentence[:160], ", ".join(missing)))
+if not found:
+    print("PROBE FAILED: no watch description in %s, so nothing was checked" % ", ".join(sys.argv[1:]))
+    sys.exit(2)
+print("checked %d watch description(s), %d unqualified" % (found, bad))
+sys.exit(1 if bad else 0)
+WATCH_BOUND_TERMINATOR
+}
+printf 'Use `codex-lane.py watch --run <run> --lane <lane>`: it blocks until the close.\nA head waits with `lane.py watch` for the latest pass.\n' > "$F/wb-fire.md"
+printf 'Use `codex-lane.py watch --run <run> --lane <lane>`: it blocks until the close or for about 570 s by default, when it returns `still-running` (exit 8), which is not a close; `--max-wait-s 0` waits without bound.\n' > "$F/wb-quiet.md"
+printf 'This page names the console, `handsoff.py watch --run <run>`, and nothing else.\n' > "$F/wb-none.md"
+printf 'Use `lane.py watch`: it blocks until the close.\n' > "$F/wb-locked.md"
+chmod 000 "$F/wb-locked.md"
+WBF=$(watchbound "$F/wb-fire.md"); WBFRC=$?
+WBQ=$(watchbound "$F/wb-quiet.md"); WBQRC=$?
+WBM=$(watchbound "$F/wb-missing.md"); WBMRC=$?
+WBL=$(watchbound "$F/wb-locked.md"); WBLRC=$?
+WBN=$(watchbound "$F/wb-none.md"); WBNRC=$?
+WBS=$(watchbound "$HERE/SKILL.md"); WBSRC=$?
+chmod 644 "$F/wb-locked.md"
+if [ "$WBFRC" = 1 ] && [ "$(printf '%s\n' "$WBF" | grep -c '^UNQUALIFIED ')" = 2 ] && printf '%s' "$WBF" | grep -q 'it blocks until the close\.'; then
+  ok "F10-W01 the watch-bound check fires on a planted unqualified promise (codex-lane.py watch blocks until the close; a head waits with lane.py watch): 2 hits, exit 1"
+else no "F10-W01 the planted unqualified promise  [exit $WBFRC: $WBF]"; fi
+if [ "$WBQRC" = 0 ] && [ "$WBQ" = "checked 1 watch description(s), 0 unqualified" ]; then
+  ok "F10-W02 the same check stays quiet on the corrected wording (the 570 s default, still-running not a close, --max-wait-s 0 for no bound)"
+else no "F10-W02 the corrected wording  [exit $WBQRC: $WBQ]"; fi
+if [ "$WBMRC" = 2 ] && printf '%s' "$WBM" | grep -q '^PROBE FAILED: cannot read' && [ "$WBLRC" = 2 ] \
+   && printf '%s' "$WBL" | grep -q '^PROBE FAILED: cannot read' && [ "$WBNRC" = 2 ] \
+   && printf '%s' "$WBN" | grep -q '^PROBE FAILED: no watch description'; then
+  ok "F10-W03 a target it cannot read (missing, or unreadable) and one holding no watch description each fail the premise (exit 2, PROBE FAILED), never read as clean"
+else no "F10-W03 the premise cases  [$WBMRC: $WBM] [$WBLRC: $WBL] [$WBNRC: $WBN]"; fi
+if [ "$WBSRC" = 0 ] && printf '%s' "$WBS" | grep -qE '^checked ([6-9]|[1-9][0-9]+) watch description\(s\), 0 unqualified$'; then
+  ok "F10-W04 every description of lane.py watch and codex-lane.py watch in SKILL.md states the default bound, that still-running is not a close, and --max-wait-s 0 ($WBS; control: W01 fired on the same run)"
+else no "F10-W04 SKILL.md's watch descriptions  [exit $WBSRC: $WBS]"; fi
+# F10-W05 (review CR-ADD2, finding 6): the review's planted row, put where it put it, immediately before the bounded
+# context-band row of a copy of the real SKILL.md, must fire on its own, whatever the row beside it says.
+"$PY" - "$HERE/SKILL.md" "$F/wb-plant.md" <<'WB_PLANT_END'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+at = [i for i, line in enumerate(lines) if line.startswith("| Hands-off head crossing a context band")]
+if len(at) != 1:
+    sys.exit("PROBE FAILED: %d context-band rows, not 1" % len(at))
+lines.insert(at[0], "| Planted unqualified watch | `lane.py watch` blocks until the close |")
+open(sys.argv[2], "w", encoding="utf-8").write("\n".join(lines))
+WB_PLANT_END
+WBPLRC=$?
+WBP=$(watchbound "$F/wb-plant.md"); WBPRC=$?
+if [ "$WBPLRC" = 0 ] && [ "$WBPRC" = 1 ] && [ "$(printf '%s\n' "$WBP" | grep -c '^UNQUALIFIED ')" = 1 ] \
+   && printf '%s\n' "$WBP" | grep -qF "UNQUALIFIED $F/wb-plant.md: \`lane.py watch\` blocks until the close [missing 570, still-running, --max-wait-s 0]"; then
+  ok "F10-W05 (finding 6) the review's planted table row, immediately before the bounded context-band row of a copy of SKILL.md, fires on its own (exit 1, that cell alone unqualified), while every real description stays qualified"
+else no "F10-W05 the planted row beside a bounded one  [plant $WBPLRC, exit $WBPRC: $(printf '%s' "$WBP" | tr '\n' '|' | cut -c1-600)]"; fi
+# F10-W06 (finding 6, the skill's other real shapes): a table row whose bound sits in the next row, a bounded paragraph
+# hard-wrapped over two lines, and the promise made without a command name.
+cat > "$F/wb-shapes.md" <<'WB_SHAPES_END'
+| When | What the head does |
+|---|---|
+| A lane runs long | `codex-lane.py watch` waits for the close |
+| A lane runs longer | `lane.py watch` returns `still-running` (exit 8, not a close) after about 570 s by default; `--max-wait-s 0` waits without bound |
+
+A head re-issues `lane.py watch` after each `still-running`, which it returns after about 570 s by
+default and which is not a close, or arms it with `--max-wait-s 0`.
+
+Then the watch blocks until the close.
+WB_SHAPES_END
+WBX=$(watchbound "$F/wb-shapes.md"); WBXRC=$?
+if [ "$WBXRC" = 1 ] && printf '%s\n' "$WBX" | grep -qx 'checked 4 watch description(s), 2 unqualified' \
+   && printf '%s\n' "$WBX" | grep -qF 'UNQUALIFIED '"$F"'/wb-shapes.md: `codex-lane.py watch` waits for the close [missing' \
+   && printf '%s\n' "$WBX" | grep -qF 'UNQUALIFIED '"$F"'/wb-shapes.md: Then the watch blocks until the close. [missing'; then
+  ok "F10-W06 (finding 6) a table row never borrows the next row's bound, a hard-wrapped bounded paragraph stays qualified across its lines, and the promise is caught without a command name (4 checked, those 2 unqualified)"
+else no "F10-W06 the document's shapes  [exit $WBXRC: $(printf '%s' "$WBX" | tr '\n' '|' | cut -c1-600)]"; fi
+# Finding 8 (review CR-ADD2): restatements of the changed behaviour reconciled where this suite pins text. Retired:
+# the spawn acknowledgement keyed on a session id; an acknowledged detached resume writing lane-resumed after it
+# returns; the swap headroom without the console opener; the unconfirmed outcome that waited on the record alone.
+gone lane.py 'matched on the session id the caller chose' 'retired (F8, finding 3): a spawn acknowledgement keyed on the session id alone'
+gone lane.py 'line a moment after it returns' 'retired (F8, finding 8): an acknowledged detached resume writing lane-resumed after it returns'
+gone lane.py 'writes its lane-resumed a moment after it returns' 'retired (F8, finding 8): the same, in the watch code'\''s comment'
+gone lane.py '110 s at most, with 70 s to spare' 'retired (F8, finding 7): the swap headroom that left out the console opener'
+gone codex-lane.py 'moment after it returns' 'retired (F8, finding 8): the same in codex-lane.py'\''s watch text'
+gone codex-lane.py 'block until the lane'\''s next close (the close after its' 'retired (F10, finding 8): the codex watch help without its bound'
+gone SKILL.md 'the worker left running, so the record is read before any re-spawn.' 'retired (F8, finding 2): an unconfirmed outcome whose re-spawn waited on the record alone'
+txts lane.py 'each matched on the worker'\''s pid as' 'lane.py: both acknowledgements keyed on the worker'\''s pid (F8, finding 3)'
+txts SKILL.md 'nothing re-spawns it until that pid has exited and the record shows no line of the call' 'SKILL.md launcher duties: no re-spawn while the unconfirmed worker may still start the lane (F8, finding 2)'
+txts SKILL.md 're-issues the watch in the foreground until the lane returns closed (`lane.py watch` and `codex-lane.py watch` return `still-running`, exit 8 and not a close, after about 570 s by default, and wait without bound under `--max-wait-s 0`)' 'SKILL.md: the head'\''s re-issued watch states its bound (F10, finding 8)'
 # ------------------------------------------------- end: SKILL.md (item7) ---------
 txtx templates/brief-ingest-verify.md 'SCOPE (read-only apart from the scratch dir the file whitelist names)' 'templates/brief-ingest-verify.md:19'
-txtx templates/brief-ingest-verify.md '- Rubric: CLAUDE.md §4.1–§4.6 and wiki/developments/wiki-confidence-levels.md; a headless lane' 'templates/brief-ingest-verify.md:31'
+txtx templates/brief-ingest-verify.md '- Rubric: all of CLAUDE.md §4 and the confidence guide where the vault holds its page; a headless lane' 'templates/brief-ingest-verify.md:31'
 txtx templates/brief-ingest-verify.md '  reads the §4 sections in its lane home'\''s `contract/schema-s4.md`, the copy a grants-only spawn' 'templates/brief-ingest-verify.md:32'
 txtx templates/brief-ingest-verify.md '  can reach.' 'templates/brief-ingest-verify.md:33'
 txtx templates/brief-ingest-verify.md '- File whitelist: {{this lane'\''s own /tmp dir, granted with `--write`. Working files such as two' 'templates/brief-ingest-verify.md:34'
@@ -4059,6 +5467,1159 @@ case "$FLATCHK" in
 esac
 # ------------------------------------------------- end: the brief templates (item3) ---------
 
+# ============================== the brief's declarations, tools, report controls (Batch 4) ======
+# The grammar of register 2026-09-17 22:19 (a bare declaration once passed with zero controls, and a
+# quoted mention was refused), the declared inputs of 2026-09-14 00:06 and 2026-09-20 17:01, a rubric's
+# folders (2026-09-10 02:49), the report control (2026-09-20 01:58), the tools beyond a row
+# (2026-09-29 21:08), the planner row (2026-09-21 22:53), the session lock's errno (2026-09-18 20:0x),
+# the `cheap` preset (2026-09-06) and the suite's own home (2026-10-04 10:45). Every refusal leg checks
+# exit 2 and no record; every clean leg carries its control on the same run.
+
+b4p(){ # leg name, fragment, args... — each leg its own lane id, so no leg inherits another's artefacts
+  B4ID=$(printf '%s' "$1" | sed 's/^\(B4-[A-Z][0-9]*\).*/\1/; s/-//g')
+  premise "$@" --home "$LHOME" --routing "$R" --run run-test-p --lane "$B4ID" --class verifier --grant "$F/granted"; }
+b4dry(){ # lane, brief, extra args... -> B4OUT and RC
+  B4LANE=$1; B4BRIEF=$2; shift 2
+  B4OUT=$(spawn --run run-test-b4 --lane "$B4LANE" --class verifier --record "$F/rec-b4-$B4LANE.jsonl" --brief "$B4BRIEF" --dry-run "$@" 2>&1); RC=$?; }
+
+# SL4 · --grants-from copies a named earlier lane's grants from the run record (register 2026-09-14 00:06)
+mkdir -p "$F/sl4-read" "$F/sl4-write"
+slfield(){ "$PY" - "$1" "$2" "$3" <<'SL4_FIELD_END'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+row = [r for r in rows if r.get("lane") == sys.argv[2] and r.get("event") == "lane-open"][-1]
+print(json.dumps(row.get(sys.argv[3]), sort_keys=True))
+SL4_FIELD_END
+}
+spawn --run run-test-sl4 --lane SL4A --class builder --grant "$F/sl4-read" --write "$F/sl4-write" --record "$F/rec-sl4.jsonl" --reason '(a) the first builder' >/dev/null 2>&1
+SLA=$(spawn --run run-test-sl4 --lane SL4B --class builder --grants-from SL4A --grant "$F/granted" --record "$F/rec-sl4.jsonl" --reason '(a) a builder continuing it' 2>&1); RC=$?
+if [ "$RC" = 0 ] && [ "$(slfield "$F/rec-sl4.jsonl" SL4B writes)" = "$(slfield "$F/rec-sl4.jsonl" SL4A writes)" ] \
+   && slfield "$F/rec-sl4.jsonl" SL4B grants | grep -q "$FR/sl4-read" && slfield "$F/rec-sl4.jsonl" SL4B grants | grep -q "$FR/granted" \
+   && [ "$(slfield "$F/rec-sl4.jsonl" SL4B grants_from)" = "$(slfield "$F/rec-sl4.jsonl" SL4A grants | "$PY" -c 'import json,sys; print(json.dumps({"grants": len(json.load(sys.stdin)), "lane": "SL4A", "writes": 1}, sort_keys=True))')" ] \
+   && grep -q -- "$FR/sl4-write" "$F/stub/argv.txt"; then
+  ok "SL401 --grants-from gives a lane the named lane's read and write grants beside its own, says so on lane-open, and the write reaches the process"
+else no "SL401 the copied grants  [exit $RC: $(slfield "$F/rec-sl4.jsonl" SL4B grants_from) $(printf '%s' "$SLA" | tail -1 | cut -c1-200)]"; fi
+SLU=$(spawn --run run-test-sl4 --lane SL4C --class builder --grants-from SL4-NOT-THERE --grant "$F/granted" --record "$F/rec-sl4.jsonl" --reason '(a) a lane the record does not know' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$SLU" | grep -q -- '--grants-from SL4-NOT-THERE: that lane has no lane-open in' \
+   && ! grep -q '"lane": "SL4C"' "$F/rec-sl4.jsonl"; then
+  ok "SL402 --grants-from a lane the record does not know is refused with nothing written"
+else no "SL402 the unknown lane  [exit $RC: $(printf '%s' "$SLU" | tail -1 | cut -c1-200)]"; fi
+spawn --run run-test-sl4 --lane SL4D --class builder --grant "$F/granted" --write "$F/writable" --record "$F/rec-sl4.jsonl" --reason '(a) the control' >/dev/null 2>&1
+if [ "$(slfield "$F/rec-sl4.jsonl" SL4D grants_from)" = null ] && ! slfield "$F/rec-sl4.jsonl" SL4D grants | grep -q 'sl4-read'; then
+  ok "SL403 a spawn without the flag copies nothing (control for SL401)"
+else no "SL403 the plain spawn  [$(slfield "$F/rec-sl4.jsonl" SL4D grants_from)]"; fi
+
+# B4-C · the CONTROL+ grammar ------------------------------------------------------------------
+printf 'x\nCONTROL+:\n' > "$F/b4-bare.md"
+b4p "B4-C01 a bare CONTROL+ declaration refuses (it once passed with zero controls)" "an empty CONTROL+ declaration" --brief "$F/b4-bare.md"
+printf 'x\n- CONTROL+:   \n' > "$F/b4-blank.md"
+b4p "B4-C02 a whitespace-only bulleted declaration refuses" "an empty CONTROL+ declaration" --brief "$F/b4-blank.md"
+printf 'x\nCONTROL+: "" in %s\n' "$F/granted/inside.txt" > "$F/b4-qempty.md"
+b4p "B4-C03 a quoted-empty phrase refuses as malformed" "malformed control line" --brief "$F/b4-qempty.md"
+printf 'A fold note quotes the form: `CONTROL+: x in y` is how a control is declared.\nThe critic wrote "CONTROL+: X in Y" in prose.\n```\nCONTROL+: nothing-here in /no/such/file\n```\n> CONTROL+: quoted in /no/such/file\n' > "$F/b4-mention.md"
+B4OUT=$(spawn --run run-test-b4 --lane C04 --class verifier --grant "$F/granted" --record "$F/rec-b4c.jsonl" \
+        --brief "$F/b4-mention.md" --dry-run 2>&1); RC=$?
+if [ "$RC" = 0 ] && printf '%s\n' "$B4OUT" | grep -qx 'controls checked: \[\]' && [ ! -f "$F/rec-b4c.jsonl" ] \
+   && [ "$(printf '%s\n' "$B4OUT" | grep -c 'read as a mention, not a declaration')" = 2 ]; then
+  ok "B4-C04 a backticked mention, a double-quoted mention, a fenced example and a block quote declare nothing: the spawn passes with no control, and each quoted form is named on stderr as a mention"
+else no "B4-C04 quoted mentions  [exit $RC: $(printf '%s' "$B4OUT" | grep -m2 'PROBE FAILED\|controls checked')]"; fi
+printf 'See the CONTROL+: x in y line below.\n' > "$F/b4-stray.md"
+b4p "B4-C05 the same marker unquoted mid-line is a declaration, and refuses on its missing file: never dropped unseen (the control for B4-C04)" "control file not found" --brief "$F/b4-stray.md"
+printf 'GO IN in DOOR\n' > "$F/granted/phrase.txt"
+printf 'VERIFICATION: CONTROL+: GRANTED in %s\n1. CONTROL+: "IN in" in %s\n' "$F/granted/inside.txt" "$F/granted/phrase.txt" > "$F/b4-forms.md"
+B4OUT=$(spawn --run run-test-b4 --lane C06 --class verifier --grant "$F/granted" --record "$F/rec-b4c.jsonl" \
+        --brief "$F/b4-forms.md" --dry-run 2>&1); RC=$?
+if [ "$RC" = 0 ] && printf '%s' "$B4OUT" | grep -q '"phrase": "GRANTED", "file": "'"$FR"'/granted/inside.txt", "matches": 1' \
+   && printf '%s' "$B4OUT" | grep -q '"phrase": "IN in", "file": "'"$FR"'/granted/phrase.txt", "matches": 1'; then
+  ok "B4-C06 the labelled form (VERIFICATION: CONTROL+:), a numbered bullet and a quoted phrase holding ' in ' are each checked"
+else no "B4-C06 the declaration forms  [exit $RC: $(printf '%s' "$B4OUT" | grep -m2 'PROBE FAILED\|controls checked')]"; fi
+# Two styles briefs have used, read as before: a control after prose, and one in backticks with prose
+# after the closing backtick (its file exists, so the quoted form is read as the control it spells out).
+printf -- '- Controls: positive — CONTROL+: GRANTED in %s\n- Controls: positive — `CONTROL+: IN in in %s` (must match; report the count)\n' \
+  "$F/granted/inside.txt" "$F/granted/phrase.txt" > "$F/b4-styles.md"
+B4OUT=$(spawn --run run-test-b4 --lane C07 --class verifier --grant "$F/granted" --record "$F/rec-b4c.jsonl" \
+        --brief "$F/b4-styles.md" --dry-run 2>&1); RC=$?
+if [ "$RC" = 0 ] && printf '%s' "$B4OUT" | grep -q '"phrase": "GRANTED", "file": "'"$FR"'/granted/inside.txt", "matches": 1' \
+   && printf '%s' "$B4OUT" | grep -q '"phrase": "IN in", "file": "'"$FR"'/granted/phrase.txt", "matches": 1'; then
+  ok "B4-C07 a control written after prose and one written in backticks with prose after it are both checked, the quoted one's file ending at its closing backtick"
+else no "B4-C07 the two used styles  [exit $RC: $(printf '%s' "$B4OUT" | grep -m2 'PROBE FAILED\|controls checked')]"; fi
+printf 'CONTROL+: GRANTED in %s and CONTROL+: GRANTED in %s\n' "$F/granted/inside.txt" "$F/granted/inside.txt" > "$F/b4-two.md"
+b4p "B4-C08 two unquoted markers on one line refuse: one declaration per line" "2 markers stand unquoted on one line" --brief "$F/b4-two.md"
+printf 'x\n```sh\nCONTROL+: GRANTED in %s\n' "$F/granted/inside.txt" > "$F/b4-unclosed.md"
+b4p "B4-C09 a code fence that never closes and would hide a marker refuses" "never closes" --brief "$F/b4-unclosed.md"
+
+# B4-R · declared inputs and the read grants --------------------------------------------------
+mkdir -p "$F/b4g/sub" "$F/b4g/emptydir" "$F/b4w"
+printf 'content\n' > "$F/b4g/inside.txt"
+printf 'other\n' > "$F/b4g/other.txt"
+printf 'spaced\n' > "$F/b4g/with space.txt"
+printf 'deep\n' > "$F/b4g/sub/deep.txt"
+printf 'written\n' > "$F/b4w/x.txt"
+: > "$F/b4g/empty.txt"
+: > "$F/b4g/sentinel"
+ln -s "$F/elsewhere/outside.txt" "$F/b4g/link-out"
+b4in(){ printf 'x\nREAD+: %s\n' "$1" > "$F/b4-read.md"; }
+b4in "$F/elsewhere/outside.txt"
+premise "B4-R01 a declared input outside the read grants refuses and names the path" "outside the lane's read grants" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4R01 --class verifier --grant "$F/b4g" --brief "$F/b4-read.md"
+printf '%s' "$ERR" | grep -qF "$F/elsewhere/outside.txt" && ok "B4-R01b the refusal names the declared path" || no "B4-R01b the path is not named  [$ERR]"
+b4in "$F/b4g/inside.txt"
+b4dry R02 "$F/b4-read.md" --grant "$F/b4g"
+if [ "$RC" = 0 ] && printf '%s' "$B4OUT" | grep -q '^inputs checked: .*"path": "'"$FR"'/b4g/inside.txt", "kind": "file", "bytes": 8'; then
+  ok "B4-R02 a declared input inside a grant passes and is recorded as inputs_checked (the control for B4-R01; an unlisted empty sentinel beside it triggers nothing)"
+else no "B4-R02 a granted input  [exit $RC: $(printf '%s' "$B4OUT" | grep -m2 'PROBE FAILED\|inputs checked')]"; fi
+b4in "$F/b4g/link-out"
+premise "B4-R03 a symlink inside a grant that leads out of it refuses" "outside the lane's read grants" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4R03 --class verifier --grant "$F/b4g" --brief "$F/b4-read.md"
+b4in "$F/b4g/other.txt"
+premise "B4-R04 the sibling of a file-only grant refuses" "outside the lane's read grants" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4R04 --class verifier --grant "$F/b4g/inside.txt" --brief "$F/b4-read.md"
+b4in "$F/b4g/inside.txt"
+b4dry R05 "$F/b4-read.md" --grant "$F/b4g/inside.txt"
+[ "$RC" = 0 ] && ok "B4-R05 the file-only grant's own file passes (the control for B4-R04)" || no "B4-R05 the granted file  [exit $RC: $(printf '%s' "$B4OUT" | grep -m1 'PROBE FAILED')]"
+printf 'x\nREAD+: %s\n- READ+: `%s`\n' "$F/b4w/x.txt" "$F/b4g/with space.txt" > "$F/b4-read2.md"
+b4dry R06 "$F/b4-read2.md" --grant "$F/b4g" --write "$F/b4w"
+if [ "$RC" = 0 ] && printf '%s' "$B4OUT" | grep -q '"path": "'"$FR"'/b4w/x.txt"' \
+   && printf '%s' "$B4OUT" | grep -q '"path": "'"$FR"'/b4g/with space.txt"'; then
+  ok "B4-R06 a write-derived grant covers its own reads and a path holding a space passes (bulleted, backticked)"
+else no "B4-R06 write grant and spaced path  [exit $RC: $(printf '%s' "$B4OUT" | grep -m2 'PROBE FAILED\|inputs checked')]"; fi
+b4in "$F/b4g/empty.txt"
+premise "B4-R07 a zero-byte declared file refuses with its path" "empty (0 bytes)" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4R07 --class verifier --grant "$F/b4g" --brief "$F/b4-read.md"
+printf '%s' "$ERR" | grep -qF "$F/b4g/empty.txt" && ok "B4-R07b the zero-byte refusal prints the path" || no "B4-R07b the path is not printed  [$ERR]"
+b4in "$F/b4g/emptydir/"
+premise "B4-R08 a declared directory holding no file with content refuses" "holds no file with content" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4R08 --class verifier --grant "$F/b4g" --brief "$F/b4-read.md"
+b4in "$F/b4g/sub/"
+b4dry R09 "$F/b4-read.md" --grant "$F/b4g"
+[ "$RC" = 0 ] && printf '%s' "$B4OUT" | grep -q '"kind": "directory"' && ok "B4-R09 a declared directory with content passes (the control for B4-R08)" \
+  || no "B4-R09 a directory with content  [exit $RC: $(printf '%s' "$B4OUT" | grep -m1 'PROBE FAILED')]"
+printf 'x\nCONTROL+: ELSEWHERE in %s\n' "$F/elsewhere/outside.txt" > "$F/b4-ctl-out.md"
+premise "B4-R10 a control file outside the read grants refuses: the lane must be able to hit its control" "outside the lane's read grants" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4R10 --class verifier --grant "$F/granted" --brief "$F/b4-ctl-out.md"
+b4dry R11 "$F/b4-ctl-out.md" --grant "$F/granted" --grant "$F/elsewhere"
+[ "$RC" = 0 ] && ok "B4-R11 the same control with its directory granted passes (the control for B4-R10)" || no "B4-R11 granted control  [exit $RC: $(printf '%s' "$B4OUT" | grep -m1 'PROBE FAILED')]"
+printf 'x\nWEB+: check every cited page\n' > "$F/b4-web.md"
+premise "B4-R12 declared web work refuses on a Claude lane and points to codex-lane.py --search" "codex-lane.py with --search" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4R12 --class verifier --grant "$F/granted" --brief "$F/b4-web.md"
+printf 'x\nCite https://example.org/paper and its DOI from the copy on disk; no page is opened.\n' > "$F/b4-cite.md"
+b4dry R13 "$F/b4-cite.md" --grant "$F/granted"
+[ "$RC" = 0 ] && ok "B4-R13 an offline citation mention (a URL in prose, no WEB+) passes (the control for B4-R12)" || no "B4-R13 offline citation  [exit $RC]"
+
+# B4-T · tools beyond the class row -----------------------------------------------------------
+# Since 2026-10-10 a class whose definition allows WebSearch gets it (WS-08 is the control), so the
+# refusal is pinned on the memory-hunter, whose definition blocks it.
+premise "B4-T01 --tools naming WebSearch on a class whose definition blocks it refuses, pointing to codex-lane.py --search" "codex-lane.py --search" \
+        --home "$LHOME" --routing "$R" --brief "$F/brief.md" --run run-test-p --lane B4T01 --class memory-hunter --write "$F/writable" --tools Read,WebSearch
+rm -f "$STORE/spawn-records/run-test-p-detached-T01D.log"
+T01D=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-p.jsonl" --reason '(a) premise fixture' \
+       --home "$LHOME" --routing "$R" --brief "$F/brief.md" --run run-test-p --lane T01D --class verifier --grant "$F/granted" \
+       --tools Read,WebFetch --detach --no-wait 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$T01D" | grep -q 'WebFetch' && [ ! -e "$STORE/spawn-records/run-test-p-detached-T01D.log" ] \
+   && [ ! -f "$F/rec-p.jsonl" ]; then
+  ok "B4-T02 the same refusal under --detach --no-wait comes in the caller: exit 2, no worker log, no record"
+else no "B4-T02 detached --tools refusal  [exit $RC: $T01D]"; fi
+b4dry T03 "$F/brief.md" --grant "$F/granted" --tools Read,Grep,Glob
+[ "$RC" = 0 ] && printf '%s' "$B4OUT" | grep -q -- '--tools Read,Grep,Glob' && ok "B4-T03 read tools beyond nothing pass and reach --tools (the control for B4-T01)" \
+  || no "B4-T03 read tools  [exit $RC]"
+B4OUT=$(spawn --run run-test-b4 --lane T04 --class critic --grant "$F/granted" --record "$F/rec-b4-T04.jsonl" --dry-run --tools Read,Write 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$B4OUT" | grep -q 'add --write'; then
+  ok "B4-T04 Write outside the critic's row with no write grant refuses: the settings allow Edit and Write on a write grant only"
+else no "B4-T04 Write without a grant  [exit $RC: $B4OUT]"; fi
+B4OUT=$(spawn --run run-test-b4 --lane T05 --class critic --grant "$F/granted" --write "$F/writable" --record "$F/rec-b4-T05.jsonl" --dry-run --tools Read,Write 2>&1); RC=$?
+if [ "$RC" = 0 ] && printf '%s' "$B4OUT" | grep -q 'Write(//'"${FR#/}"'/writable/\*\*)'; then
+  ok "B4-T05 with a --write grant the same extra Write passes and its allow rule exists (the control for B4-T04)"
+else no "B4-T05 Write with a grant  [exit $RC: $(printf '%s' "$B4OUT" | grep -m1 'PROBE FAILED\|settings')]"; fi
+
+# B4W · tools a class definition allows that the lane will not have (D24, 2026-10-10) -----------
+# The thin definition carries the row's tools, so a tool the vault's definition allows was dropped
+# without a word. The spawn names such tools on one stderr line with the web path and records them
+# as `tools_withheld` on lane-open; nothing is refused, and the tool list is the one composed before.
+# Each fixture vault holds its own critic definition (the fixture critic row: Read, Grep, Glob, Bash).
+b4wvault(){ # $1 = vault dir, then the definition's frontmatter lines after name and description
+  B4WV="$1"; shift
+  mkdir -p "$B4WV/.claude/agents"
+  for entry in CLAUDE.md wiki raw assets; do
+    [ -e "$VAULT/$entry" ] && ln -s "$VAULT/$entry" "$B4WV/$entry"
+  done
+  [ -e "$VAULT/.claude/skills" ] && ln -s "$VAULT/.claude/skills" "$B4WV/.claude/skills"
+  { printf '%s\n' '---' 'name: critic' 'description: a fixture critic'
+    [ $# -gt 0 ] && printf '%s\n' "$@"
+    printf '%s\n' '---' '' 'The fixture critic.'; } > "$B4WV/.claude/agents/critic.md"
+  printf '## Settings\n- **throttle**: default\n- **breadth**: standard\n- **delegation**: single — the fixture regime\n' \
+    > "$B4WV/CUSTOMISATION.md"
+}
+b4wspawn(){ # $1 = vault, $2 = lane, extra args... -> B4WOUT, RC, B4WTOOLS (the --tools value the stub saw)
+  B4WV="$1"; B4WL="$2"; shift 2
+  rm -f "$F/stub/argv.txt"
+  B4WOUT=$($LANEV CLAUDE_PROJECT_DIR="$B4WV" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+           --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-b4w --lane "$B4WL" --class critic \
+           --grant "$F/granted" --record "$F/rec-b4w-$B4WL.jsonl" --reason '(a) the withheld-tools notice' "$@" 2>&1); RC=$?
+  B4WTOOLS=$( [ -f "$F/stub/argv.txt" ] && grep -A1 -x -- '--tools' "$F/stub/argv.txt" | tail -1 || echo 'no stub call')
+  B4WN=$(printf '%s\n' "$B4WOUT" | grep -c '^tools withheld: ')
+  B4WLINE=$(printf '%s\n' "$B4WOUT" | grep '^tools withheld: ')
+}
+b4wrec(){ # $1 = lane -> "<tools_withheld as JSON, or absent> <tools as JSON>" from its one lane-open
+  "$PY" - "$F/rec-b4w-$1.jsonl" <<'B4W_RECORD_END'
+import json, sys
+opens = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+opens = [r for r in opens if r.get("event") == "lane-open"]
+if len(opens) != 1:
+    print("lane-open lines: %d" % len(opens))
+else:
+    r, compact = opens[0], (",", ":")
+    print("%s %s" % (json.dumps(r["tools_withheld"], separators=compact) if "tools_withheld" in r else "absent",
+                     json.dumps(r.get("tools"), separators=compact)))
+B4W_RECORD_END
+}
+B4WROW='["Read","Grep","Glob","Bash"]'
+B4WROWS='["Read","Grep","Glob","Bash","WebSearch"]'   # the row plus WebSearch, which a class allowing it gets (2026-10-10)
+b4wvault "$F/b4w-allow-web" 'tools: Read, Grep, Glob, Bash, WebFetch'
+b4wspawn "$F/b4w-allow-web" W01
+B4W01=$(b4wrec W01)
+if [ "$RC" = 0 ] && [ "$B4WN" = 1 ] && printf '%s' "$B4WLINE" | grep -qF 'tools withheld: WebFetch — class `critic`' \
+   && printf '%s' "$B4WLINE" | grep -qF 'codex-lane.py --search' && [ "$B4W01" = "[\"WebFetch\"] $B4WROW" ] \
+   && [ "$B4WTOOLS" = 'Read,Grep,Glob,Bash' ]; then
+  ok "B4W-01 a definition whose tools: allowlist names WebFetch: one stderr line names it and codex-lane.py --search, lane-open records tools_withheld [\"WebFetch\"], and --tools is still the row's"
+else no "B4W-01 the allowlist naming WebFetch  [exit $RC, notice lines $B4WN, record $B4W01, --tools $B4WTOOLS: $(printf '%s' "$B4WOUT" | head -3 | tr '\n' '|')]"; fi
+b4wvault "$F/b4w-allow-none" 'tools: Read, Grep, Glob'
+b4wspawn "$F/b4w-allow-none" W02
+B4W02=$(b4wrec W02)
+if [ "$RC" = 0 ] && [ "$B4WN" = 0 ] && ! printf '%s' "$B4WOUT" | grep -q 'withheld' && [ "$B4W02" = "absent $B4WROW" ] \
+   && [ "$B4WTOOLS" = 'Read,Grep,Glob,Bash' ] && [ "${B4W01%% *}" = '["WebFetch"]' ]; then
+  ok "B4W-02 a definition whose allowlist names nothing the lane lacks prints no notice and records no tools_withheld, with the same --tools (the control: B4W-01's record carries the field)"
+else no "B4W-02 the allowlist naming none  [exit $RC, notice lines $B4WN, record $B4W02, --tools $B4WTOOLS, control $B4W01]"; fi
+b4wvault "$F/b4w-deny" 'disallowedTools: Edit, Write, NotebookEdit, Agent, SendMessage, Skill'
+b4wspawn "$F/b4w-deny" W03
+B4W03=$(b4wrec W03)
+if [ "$RC" = 0 ] && [ "$B4WN" = 1 ] && printf '%s' "$B4WLINE" | grep -qF 'tools withheld: WebFetch — class `critic`' \
+   && printf '%s' "$B4WLINE" | grep -qF 'page fetches go through codex-lane.py --search' && ! printf '%s' "$B4WLINE" | grep -q 'Edit and Write' \
+   && [ "$B4W03" = "[\"WebFetch\"] $B4WROWS" ] && [ "$B4WTOOLS" = 'Read,Grep,Glob,Bash,WebSearch' ]; then
+  ok "B4W-03 a denylist definition that leaves the web tools (the vault critic's shape) gets WebSearch on --tools and names only WebFetch, with the page-fetch path, on the notice and the record"
+else no "B4W-03 the denylist leaving the web tools  [exit $RC, notice lines $B4WN, record $B4W03, --tools $B4WTOOLS: $(printf '%s' "$B4WOUT" | head -3 | tr '\n' '|')]"; fi
+b4wvault "$F/b4w-deny-web" 'disallowedTools: Edit, Write, WebFetch, WebSearch, Agent, SendMessage, Skill'
+b4wspawn "$F/b4w-deny-web" W04
+B4W04=$(b4wrec W04)
+if [ "$RC" = 0 ] && [ "$B4WN" = 0 ] && ! printf '%s' "$B4WOUT" | grep -q 'withheld' && [ "$B4W04" = "absent $B4WROW" ] \
+   && [ "$B4WTOOLS" = 'Read,Grep,Glob,Bash' ] && [ "${B4W03%% *}" = '["WebFetch"]' ]; then
+  ok "B4W-04 a denylist naming the web tools, Edit and Write leaves nothing withheld and adds no WebSearch: no notice, no field, the row's --tools (the control: B4W-03's record carries the field)"
+else no "B4W-04 the denylist naming the web tools  [exit $RC, notice lines $B4WN, record $B4W04, --tools $B4WTOOLS, control $B4W03]"; fi
+b4wvault "$F/b4w-deny-open" 'disallowedTools: NotebookEdit, Agent, SendMessage, Skill'
+b4wspawn "$F/b4w-deny-open" W05 --dry-run
+B4W05=$(printf '%s\n' "$B4WOUT" | grep -o '"tools_withheld": \[[^]]*\]')
+if [ "$RC" = 0 ] && [ "$B4WN" = 1 ] && printf '%s' "$B4WLINE" | grep -qF 'tools withheld: Edit, Write, WebFetch — ' \
+   && printf '%s' "$B4WLINE" | grep -qF 'Edit and Write need a --write grant' && printf '%s' "$B4WLINE" | grep -qF 'codex-lane.py --search' \
+   && [ "$B4W05" = '"tools_withheld": ["Edit", "Write", "WebFetch"]' ] \
+   && printf '%s' "$B4WOUT" | grep -q -- '--tools Read,Grep,Glob,Bash,WebSearch ' && [ ! -e "$F/rec-b4w-W05.jsonl" ]; then
+  ok "B4W-05 a dry run of a denylist leaving Edit, Write and the web tools, with no write grant: WebSearch joins --tools, the notice names Edit, Write and WebFetch and the --write need, the printed record line carries them, and no record is written"
+else no "B4W-05 the dry run without a write grant  [exit $RC, notice lines $B4WN, field $B4W05: $(printf '%s' "$B4WLINE" | cut -c1-200)]"; fi
+b4wspawn "$F/b4w-deny-open" W06 --dry-run --write "$F/writable" --tools Read,Grep,Glob,Bash,Edit,Write
+B4W06=$(printf '%s\n' "$B4WOUT" | grep -o '"tools_withheld": \[[^]]*\]')
+if [ "$RC" = 0 ] && [ "$B4WN" = 1 ] && printf '%s' "$B4WLINE" | grep -qF 'tools withheld: WebSearch, WebFetch — ' \
+   && ! printf '%s' "$B4WLINE" | grep -q 'Edit and Write' && [ "$B4W06" = '"tools_withheld": ["WebSearch", "WebFetch"]' ] \
+   && printf '%s' "$B4WOUT" | grep -q -- '--tools Read,Grep,Glob,Bash,Edit,Write '; then
+  ok "B4W-06 the same definition with a --write grant and Edit and Write on an explicit --tools withholds only the web tools (the control for B4W-05: Edit and Write leave the list once the settings admit them; an explicit --tools adds no WebSearch, so it is named)"
+else no "B4W-06 the dry run with a write grant  [exit $RC, notice lines $B4WN, field $B4W06: $(printf '%s' "$B4WOUT" | grep -m1 'withheld\|PROBE FAILED' | cut -c1-200)]"; fi
+B4WU=$("$PY" - "$HERE" <<'B4W_UNIT_END'
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import lane
+block = "---\nname: x\ntools:\n  - Read\n  - WebFetch\ndescription: y\n---\nbody\n"
+print("block %s" % ",".join(lane.frontmatter_list(block, "tools")))
+print("bracket %s" % ",".join(lane.frontmatter_list("---\ntools: [Read, WebSearch, WebSearch]\n---\n", "tools")))
+print("absent %s" % lane.frontmatter_list("---\nname: x\n---\n", "tools"))
+print("nofront %s" % ",".join(lane.definition_allows("no frontmatter at all\n")))
+print("dedupe %s" % ",".join(lane.definition_allows("---\ntools: Read, WebSearch, WebSearch\n---\n")))
+print("rowwrite %s" % ",".join(lane.tools_withheld(["Read", "Write", "Edit", "WebSearch"], ["Read", "Write", "Edit"], [])))
+print("granted %s" % ",".join(lane.tools_withheld(["Read", "Write", "Edit", "WebSearch"], ["Read", "Write", "Edit"], ["a-write-grant"])))
+print("none %s" % lane.withheld_notice("critic", []))
+B4W_UNIT_END
+)
+if printf '%s\n' "$B4WU" | grep -qx 'block Read,WebFetch' && printf '%s\n' "$B4WU" | grep -qx 'bracket Read,WebSearch,WebSearch' \
+   && printf '%s\n' "$B4WU" | grep -qx 'absent None' && printf '%s\n' "$B4WU" | grep -qx 'nofront Edit,Write,WebSearch,WebFetch' \
+   && printf '%s\n' "$B4WU" | grep -qx 'dedupe Read,WebSearch' && printf '%s\n' "$B4WU" | grep -qx 'rowwrite Write,Edit,WebSearch' \
+   && printf '%s\n' "$B4WU" | grep -qx 'granted WebSearch' && printf '%s\n' "$B4WU" | grep -qx 'none None'; then
+  ok "B4W-07 in process: block and bracketed allowlists read, an absent key is None, a definition with no frontmatter allows all four settings-decided tools, repeats fold, Write and Edit on the list with no write grant are withheld and leave with one, and an empty set has no notice"
+else no "B4W-07 the helpers in process  [$(printf '%s' "$B4WU" | tr '\n' '|' | cut -c1-300)]"; fi
+
+# WS · WebSearch for a class whose definition allows it (2026-10-10) ---------------------------
+# Such a lane gets WebSearch, a server-side tool: it joins the row's tools when the call names no
+# --tools, and the per-spawn settings admit it. WebFetch stays withheld. A WEB+ declaration opening
+# `search:` needs search alone and is admitted on such a lane; any other needs page fetches and is
+# refused. The vault's own critic and memory-hunter definitions are read through the fixture vault's
+# link to the .claude tree; the probe below names it when either has changed shape.
+WSDEF=$("$PY" - "$HERE" "$FXV/.claude/agents" <<'WS_DEFINITIONS_END'
+import os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import lane
+for cls in ("critic", "memory-hunter"):
+    with open(os.path.join(sys.argv[2], cls + ".md"), encoding="utf-8") as handle:
+        allowed = lane.definition_allows(handle.read())
+    print("%s:%s" % (cls, ",".join(t for t in allowed if t in lane.TOOLS_WEB) or "none"))
+WS_DEFINITIONS_END
+)
+WSDEFOK=0
+[ "$(printf '%s' "$WSDEF" | tr '\n' ' ')" = 'critic:WebSearch,WebFetch memory-hunter:none' ] && WSDEFOK=1
+[ "$WSDEFOK" = 1 ] || echo "PROBE FAILED: the vault's critic and memory-hunter definitions are not the shapes the WS legs assume ($WSDEF)"
+wsspawn(){ # lane, class, extra args... -> WSOUT, RC, WSTOOLS and WSAGENT (the --tools and thin-definition tools the stub saw), WSN, WSLINE
+  WSL="$1"; WSC="$2"; shift 2
+  rm -f "$F/stub/argv.txt"
+  WSOUT=$(spawn --run run-test-ws --lane "$WSL" --class "$WSC" --record "$F/rec-ws-$WSL.jsonl" "$@" 2>&1); RC=$?
+  WSTOOLS=$( [ -f "$F/stub/argv.txt" ] && grep -A1 -x -- '--tools' "$F/stub/argv.txt" | tail -1 || echo 'no stub call')
+  WSAGENT=$( [ -f "$F/stub/argv.txt" ] && grep -A1 -x -- '--agents' "$F/stub/argv.txt" | tail -1 \
+             | "$PY" -c 'import json, sys; print(",".join(next(iter(json.load(sys.stdin).values()))["tools"]))' || echo 'no stub call')
+  WSN=$(printf '%s\n' "$WSOUT" | grep -c '^tools withheld: ')
+  WSLINE=$(printf '%s\n' "$WSOUT" | grep '^tools withheld: ')
+}
+wsrec(){ # lane -> the web rules of its settings file, that file's allow count, settings_allow's web rules, the web tools and tools_withheld
+  "$PY" - "$F/rec-ws-$1.jsonl" <<'WS_RECORD_END'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+opens = [r for r in rows if r.get("event") == "lane-open"]
+if len(opens) != 1:
+    print("PROBE FAILED: %d lane-open lines" % len(opens))
+    sys.exit(0)
+r = opens[0]
+try:
+    with open(r["settings"]) as handle:
+        allow = json.load(handle).get("permissions", {}).get("allow", [])
+except (OSError, ValueError, KeyError) as exc:
+    print("PROBE FAILED: the settings file is unreadable (%s)" % exc)
+    sys.exit(0)
+def web(items):
+    return ",".join(x for x in items if x.split("(")[0] in ("WebSearch", "WebFetch")) or "none"
+print("file=%s n=%d record=%s tools=%s withheld=%s" % (
+    web(allow), len(allow), web(r.get("settings_allow") or []), web(r.get("tools") or []),
+    ",".join(r["tools_withheld"]) if "tools_withheld" in r else "absent"))
+WS_RECORD_END
+}
+wsrefused(){ # name, record, fragments... -> ok when the last call exited 2, wrote no record and said every fragment
+  WSNAME="$1"; WSREC="$2"; shift 2; WSMISS=""
+  for frag in "$@"; do printf '%s' "$WSOUT" | grep -qF -- "$frag" || WSMISS="$WSMISS [$frag]"; done
+  if [ "$RC" = 2 ] && [ ! -e "$WSREC" ] && [ -z "$WSMISS" ]; then ok "$WSNAME"
+  else no "$WSNAME  [exit $RC, record $([ -e "$WSREC" ] && echo written || echo absent), missing$WSMISS: $(printf '%s' "$WSOUT" | tail -2 | tr '\n' '|')]"; fi
+}
+wsspawn WS01 critic --grant "$F/granted"
+WS01=$(wsrec WS01); WS01N=$WSN; WS01LINE=$WSLINE
+if [ "$WSDEFOK" = 1 ] && [ "$RC" = 0 ] && [ "$WS01" = 'file=WebSearch n=1 record=WebSearch tools=WebSearch withheld=WebFetch' ] \
+   && [ "$WSTOOLS" = 'Read,Grep,Glob,Bash,WebSearch' ] && [ "$WSAGENT" = 'Read,Grep,Glob,Bash,WebSearch' ]; then
+  ok "WS-01 a critic spawn (the vault's definition) gets WebSearch: its per-spawn settings file and settings_allow admit WebSearch and not WebFetch, and --tools and the thin definition carry WebSearch and not WebFetch"
+else no "WS-01 the critic's WebSearch  [probe $WSDEFOK, exit $RC, $WS01, --tools $WSTOOLS, agent tools $WSAGENT: $(printf '%s' "$WSOUT" | head -3 | tr '\n' '|')]"; fi
+wsspawn WS02 memory-hunter --write "$F/writable"
+WS02=$(wsrec WS02)
+case $WS02 in "file=none n="[1-9]*" record=none tools=none withheld="*) WS02SHAPE=1 ;; *) WS02SHAPE=0 ;; esac
+if [ "$WSDEFOK" = 1 ] && [ "$RC" = 0 ] && [ "$WS02SHAPE" = 1 ] && ! printf '%s' "$WS02" | grep -q 'Web' \
+   && ! printf '%s' "$WSLINE" | grep -q 'Web' && [ -n "$WSTOOLS" ] && ! printf '%s' "$WSTOOLS" | grep -q 'Web' \
+   && ! printf '%s' "$WSAGENT" | grep -q 'Web' && [ "${WS01%% *}" = 'file=WebSearch' ]; then
+  ok "WS-02 a memory-hunter spawn (its definition blocks both web tools) admits neither: its settings file holds its write rules alone, and settings_allow, --tools, the thin definition and any notice name no web tool (the control: WS-01's settings admit WebSearch)"
+else no "WS-02 the memory-hunter's web tools  [probe $WSDEFOK, exit $RC, $WS02, --tools $WSTOOLS, agent tools $WSAGENT, notice $WSLINE]"; fi
+if [ "$WSDEFOK" = 1 ] && [ "${WS01##* }" = 'withheld=WebFetch' ] && [ "$WS01N" = 1 ] \
+   && printf '%s' "$WS01LINE" | grep -qF 'tools withheld: WebFetch — class `critic`' \
+   && printf '%s' "$WS01LINE" | grep -qF 'page fetches go through codex-lane.py --search' && ! printf '%s' "$WS01LINE" | grep -q 'WebSearch'; then
+  ok "WS-03 the critic's lane-open records tools_withheld [\"WebFetch\"] and its notice names WebFetch alone with the page-fetch path, never WebSearch (the control: the probe read WebSearch and WebFetch as allowed by its definition)"
+else no "WS-03 the critic's withheld tools  [probe $WSDEFOK, $WS01, notice lines $WS01N: $WS01LINE]"; fi
+printf 'x\nWEB+: search: the latest published results for the method under review\n' > "$F/ws-search.md"
+printf 'x\nWEB+: open every cited page and check the claim it supports\n' > "$F/ws-fetch.md"
+wsspawn WS04 critic --grant "$F/granted" --brief "$F/ws-search.md" --dry-run
+if [ "$WSDEFOK" = 1 ] && [ "$RC" = 0 ] && printf '%s' "$WSOUT" | grep -q -- '--tools Read,Grep,Glob,Bash,WebSearch ' \
+   && printf '%s' "$WSOUT" | grep -qF "allow ['WebSearch']" && [ ! -e "$F/rec-ws-WS04.jsonl" ]; then
+  ok "WS-04 a WEB+ declaration that needs search alone (it opens with search:) is admitted on a critic, whose dry run carries WebSearch on --tools and in the settings"
+else no "WS-04 the search-only declaration on a critic  [probe $WSDEFOK, exit $RC: $(printf '%s' "$WSOUT" | grep -m2 'declares web work\|settings' | tr '\n' '|')]"; fi
+wsspawn WS05 critic --grant "$F/granted" --brief "$F/ws-fetch.md" --dry-run
+wsrefused "WS-05 a WEB+ declaration that needs page fetches still refuses on a critic (exit 2, no record), naming page fetches, the search: form and codex-lane.py with --search (the control for WS-04)" \
+  "$F/rec-ws-WS05.jsonl" 'cannot fetch pages' 'opens with `search:`' 'codex-lane.py with --search'
+wsspawn WS06 memory-hunter --write "$F/writable" --brief "$F/ws-search.md" --dry-run
+wsrefused "WS-06 the same search-only declaration refuses on a memory-hunter, whose definition blocks WebSearch (exit 2, no record), pointing to codex-lane.py with --search (WS-04 is the control)" \
+  "$F/rec-ws-WS06.jsonl" 'gets no WebSearch' 'codex-lane.py with --search'
+wsspawn WS07 critic --grant "$F/granted" --brief "$F/ws-search.md" --tools Read,Grep,Glob,Bash --dry-run
+wsrefused "WS-07 the search-only declaration refuses on a critic whose explicit --tools leaves WebSearch out (an explicit list is the caller's; WS-04 is the control)" \
+  "$F/rec-ws-WS07.jsonl" 'gets no WebSearch' 'or --tools leaves it out'
+wsspawn WS08 verifier --grant "$F/granted" --tools Read,WebSearch --dry-run
+if [ "$RC" = 0 ] && printf '%s' "$WSOUT" | grep -q -- '--tools Read,WebSearch ' && printf '%s' "$WSOUT" | grep -qF "allow ['WebSearch']"; then
+  ok "WS-08 an explicit --tools naming WebSearch passes on a verifier, whose definition allows it, and the settings admit it (the control for B4-T01, which refuses it on the memory-hunter)"
+else no "WS-08 WebSearch on a verifier's --tools  [exit $RC: $(printf '%s' "$WSOUT" | grep -m2 'outside class\|settings' | tr '\n' '|')]"; fi
+WSN0=$(wc -l < "$F/rec-ws-WS01.jsonl")
+WSOUT=$($LANEV "$PY" "$LANE" resume --run run-test-ws --lane WS01 --brief "$F/ws-fetch.md" --record "$F/rec-ws-WS01.jsonl" --home "$LHOME" 2>&1); WSRC1=$?
+WSOUT1=$WSOUT; WSN1=$(wc -l < "$F/rec-ws-WS01.jsonl")
+WSOUT=$($LANEV "$PY" "$LANE" resume --run run-test-ws --lane WS01 --brief "$F/ws-search.md" --record "$F/rec-ws-WS01.jsonl" --home "$LHOME" 2>&1); WSRC2=$?
+WSOUT2=$WSOUT
+WSOUT=$($LANEV "$PY" "$LANE" resume --run run-test-ws --lane WS02 --brief "$F/ws-search.md" --record "$F/rec-ws-WS02.jsonl" --home "$LHOME" 2>&1); WSRC3=$?
+if [ "$WSRC1" = 2 ] && [ "$WSN0" -eq "$WSN1" ] && printf '%s' "$WSOUT1" | grep -qF 'cannot fetch pages' \
+   && [ "$WSRC2" = 0 ] && [ "$(events "$F/rec-ws-WS01.jsonl" lane-resumed)" = 1 ] \
+   && [ "$WSRC3" = 2 ] && printf '%s' "$WSOUT" | grep -qF 'search alone needs'; then
+  ok "WS-09 resume: on the critic lane, whose lane-open carries WebSearch, a page-fetch declaration refuses with nothing written and a search-only one resumes; on the memory-hunter lane the search-only one refuses"
+else no "WS-09 the resume web checks  [fetch exit $WSRC1 (lines $WSN0 then $WSN1), search exit $WSRC2, memory-hunter exit $WSRC3: $(printf '%s' "$WSOUT2" | tail -1) | $(printf '%s' "$WSOUT" | tail -1)]"; fi
+WSU=$("$PY" - "$HERE" "$LHOME" <<'WS_UNIT_END'
+import json, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import lane
+on, on_allow = lane.settings_for(sys.argv[2], [], True)
+off, off_allow = lane.settings_for(sys.argv[2], [], False)
+print("on %s %s" % (json.dumps(on.get("permissions")), on_allow))
+print("off %s %s" % (json.dumps(off.get("permissions")), off_allow))
+print("search %s" % lane.tool_refusal("WebSearch", [], True))
+print("blocked %s" % (lane.tool_refusal("WebSearch", [], False) is not None))
+print("fetch %s" % (lane.tool_refusal("WebFetch", [], True) is not None))
+for text in ("search: x", "Search : x", "research: x", "search the web", "open the pages"):
+    print("only %s %s" % (text.replace(" ", "_"), lane.web_search_only({"what": text})))
+print("withheld %s" % ",".join(lane.tools_withheld(["WebSearch", "WebFetch"], ["Read", "WebSearch"], [])))
+print("explicit %s" % ",".join(lane.tools_withheld(["WebSearch", "WebFetch"], ["Read"], [])))
+print("notice %s" % ("page fetches go through codex-lane.py --search" in lane.withheld_notice("critic", ["WebFetch"])))
+print("both %s" % ("web work goes through codex-lane.py --search" in lane.withheld_notice("critic", ["WebSearch", "WebFetch"])))
+WS_UNIT_END
+)
+WSUMISS=""
+for want in 'on {"allow": ["WebSearch"]} ['"'"'WebSearch'"'"']' 'off null []' 'search None' 'blocked True' 'fetch True' \
+            'only search:_x True' 'only Search_:_x True' 'only research:_x False' 'only search_the_web False' \
+            'only open_the_pages False' 'withheld WebFetch' 'explicit WebSearch,WebFetch' 'notice True' 'both True'; do
+  printf '%s\n' "$WSU" | grep -qxF -- "$want" || WSUMISS="$WSUMISS [$want]"
+done
+[ -z "$WSUMISS" ] && ok "WS-10 in process: the settings carry the WebSearch rule only when asked, WebSearch is admitted only for a class allowing it and WebFetch never, only a declaration opening search: is search-only, an explicit list without WebSearch withholds it, and the notice says page fetches when WebSearch is granted" \
+  || no "WS-10 the helpers in process  [missing$WSUMISS: $(printf '%s' "$WSU" | tr '\n' '|' | cut -c1-400)]"
+
+# B4-P · the shipped planner row: Write and Edit, held to the --write grant ---------------------
+PLAN=$("$PY" - "$HERE/routing.json" <<'B4_PLANNER_ROW_END'
+import json, sys
+row = json.load(open(sys.argv[1]))["classes"]["planner"]
+print(",".join(row["tools"]), json.dumps(row["writes"]), "Write and Edit added" in row["dated"])
+B4_PLANNER_ROW_END
+)
+eq "B4-P01 the shipped planner row lists Write and Edit, no Bash, writes none by default, and its dated field names the change" \
+   "$PLAN" "Read,Grep,Glob,Write,Edit [] True"
+mkdir -p "$F/plan-out"; printf 'draft\n' > "$F/plan-out/brief-A.md"
+PL1=$(spawn --run run-test-b4 --lane P02 --class planner --routing "$HERE/routing.json" --grant "$F/granted" \
+      --write "$F/plan-out" --record "$F/rec-b4-P02.jsonl" --dry-run 2>&1); RC1=$?
+PL2=$(spawn --run run-test-b4 --lane P03 --class planner --routing "$HERE/routing.json" --grant "$F/granted" \
+      --write "$F/plan-out/brief-A.md" --record "$F/rec-b4-P03.jsonl" --dry-run 2>&1); RC2=$?
+PL3=$(spawn --run run-test-b4 --lane P04 --class planner --routing "$HERE/routing.json" --grant "$F/granted" \
+      --record "$F/rec-b4-P04.jsonl" --dry-run 2>&1); RC3=$?
+if [ "$RC1" = 0 ] && printf '%s' "$PL1" | grep -q -- '--tools Read,Grep,Glob,Write,Edit' \
+   && printf '%s' "$PL1" | grep -q 'Write(//'"${FR#/}"'/plan-out/\*\*)' \
+   && [ "$RC2" = 0 ] && printf '%s' "$PL2" | grep -q 'Write(//'"${FR#/}"'/plan-out/brief-A.md)' \
+   && ! printf '%s' "$PL2" | grep -q 'plan-out/\*\*' \
+   && [ "$RC3" = 0 ] && printf '%s' "$PL3" | grep -qF "allow ['WebSearch']"; then
+  ok "B4-P02 a planner with a --write directory gets Write and Edit allowed there alone; a file-only grant allows that file and not its siblings; with no --write the planner has no write allowance (its one rule is the WebSearch its definition allows)"
+else no "B4-P02 the planner's write allowance  [$RC1/$RC2/$RC3: $(printf '%s' "$PL1$PL3" | grep -m2 'PROBE FAILED\|settings')]"; fi
+
+# B4-D · a control on the pass's own report, checked at the close ------------------------------
+printf 'x\nCONTROL+: DONE-7 in <<REPORT>>\n' > "$F/b4-rep.md"
+env STUB_REPORT='the work is DONE-7' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/b4-rep.md" \
+  --projects-root "$PROJ" --reason '(a) report control' --run run-test-rep --lane D01 --class verifier --grant "$F/granted" \
+  --record "$F/rec-rep.jsonl" --silence-s 0 >"$F/b4-d01.out" 2>"$F/b4-d01.err"; RC=$?
+D01=$("$PY" - "$F/rec-rep.jsonl" D01 <<'B4_DEFERRED_END'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+lane = sys.argv[2]
+opens = [r for r in rows if r.get("lane") == lane and r.get("event") in ("lane-open", "lane-resumed")]
+closes = [r for r in rows if r.get("lane") == lane and r.get("event") == "lane-closed"]
+pend = (opens[-1].get("controls_pending") or [{}])[0] if opens else {}
+ver = (closes[-1].get("controls_deferred") or [{}])[0] if closes else {}
+print(pend.get("phrase"), (pend.get("report") or "").rsplit("/", 1)[-1], ver.get("result"), ver.get("matches"), ver.get("why"))
+B4_DEFERRED_END
+)
+if [ "$RC" = 0 ] && [ "$D01" = "DONE-7 run-test-rep-report-D01.md checked 1 None" ] && grep -q 'report controls checked 1 of 1' "$F/b4-d01.out"; then
+  ok "B4-D01 a control on <<REPORT>> is pending at the spawn (this pass's report path) and checked at the close on the fresh report"
+else no "B4-D01 the report control  [exit $RC: $D01]"; fi
+env STUB_REPORT='nothing of the kind' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/b4-rep.md" \
+  --projects-root "$PROJ" --reason '(a) report control' --run run-test-rep --lane D02 --class verifier --grant "$F/granted" \
+  --record "$F/rec-rep.jsonl" --silence-s 0 >"$F/b4-d02.out" 2>"$F/b4-d02.err"
+D02=$("$PY" - "$F/rec-rep.jsonl" D02 <<'B4_DEFERRED_END'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+closes = [r for r in rows if r.get("lane") == sys.argv[2] and r.get("event") == "lane-closed"]
+ver = (closes[-1].get("controls_deferred") or [{}])[0] if closes else {}
+print(ver.get("result"), ver.get("matches"))
+B4_DEFERRED_END
+)
+if [ "$D02" = "failed 0" ] && grep -q 'report controls FAILED 1 of 1' "$F/b4-d02.out" && grep -q 'report controls FAILED' "$F/b4-d02.err"; then
+  ok "B4-D02 a missing phrase fails the control: on the record, the summary line and stderr (the control for B4-D01)"
+else no "B4-D02 a missing phrase  [$D02]"; fi
+printf 'x\nCONTROL+: no report text in <<REPORT>>\n' > "$F/b4-rep-ph.md"
+mkdir -p "$F/noproj"
+env STUB_REPORT='' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/b4-rep-ph.md" \
+  --projects-root "$F/noproj" --reason '(a) report control' --run run-test-rep --lane D03 --class verifier --grant "$F/granted" \
+  --record "$F/rec-rep.jsonl" --silence-s 0 >"$F/b4-d03.out" 2>&1
+D03=$("$PY" - "$F/rec-rep.jsonl" D03 <<'B4_DEFERRED_END'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+closes = [r for r in rows if r.get("lane") == sys.argv[2] and r.get("event") == "lane-closed"]
+ver = (closes[-1].get("controls_deferred") or [{}])[0] if closes else {}
+print(ver.get("result"), ver.get("why"))
+B4_DEFERRED_END
+)
+if grep -q '(no report text' "$STORE/spawn-records/run-test-rep-report-D03.md" && [ "$D03" = "unverified this pass returned no report text of its own" ]; then
+  ok "B4-D03 the wrapper's own placeholder never satisfies a report control, though it carries the phrase: unverified"
+else no "B4-D03 the placeholder  [$D03] [$(cat "$STORE/spawn-records/run-test-rep-report-D03.md" 2>&1 | head -1)]"; fi
+# An earlier pass's report and a sibling's never stand in: pass 1 and a sibling lane both carry the
+# phrase on disk; pass 2's own response does not, so pass 2's control fails.
+env STUB_REPORT='pass one says DONE-8' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+  --projects-root "$PROJ" --reason '(a) report control' --run run-test-rep --lane D04 --class verifier --grant "$F/granted" \
+  --record "$F/rec-rep.jsonl" --silence-s 0 >/dev/null 2>&1
+env STUB_REPORT='the sibling says DONE-8' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+  --projects-root "$PROJ" --reason '(a) report control' --run run-test-rep --lane D04SIB --class verifier --grant "$F/granted" \
+  --record "$F/rec-rep.jsonl" --silence-s 0 >/dev/null 2>&1
+printf 'Continue.\nCONTROL+: DONE-8 in <<REPORT>>\n' > "$F/b4-rep-follow.md"
+env STUB_REPORT='pass two, without the phrase' $LANEV "$PY" "$LANE" resume --run run-test-rep --lane D04 --brief "$F/b4-rep-follow.md" \
+  --record "$F/rec-rep.jsonl" --projects-root "$PROJ" >"$F/b4-d04.out" 2>&1; RC=$?
+D04=$("$PY" - "$F/rec-rep.jsonl" D04 <<'B4_DEFERRED_END'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+lane = sys.argv[2]
+res = [r for r in rows if r.get("lane") == lane and r.get("event") == "lane-resumed"]
+closes = [r for r in rows if r.get("lane") == lane and r.get("event") == "lane-closed"]
+pend = (res[-1].get("controls_pending") or [{}])[0] if res else {}
+ver = (closes[-1].get("controls_deferred") or [{}])[0] if closes else {}
+print((pend.get("report") or "").rsplit("/", 1)[-1], ver.get("result"), len(closes))
+B4_DEFERRED_END
+)
+if [ "$RC" = 0 ] && [ "$D04" = "run-test-rep-report-D04-pass2.md failed 2" ] \
+   && grep -q 'DONE-8' "$STORE/spawn-records/run-test-rep-report-D04.md" && grep -q 'DONE-8' "$STORE/spawn-records/run-test-rep-report-D04SIB.md"; then
+  ok "B4-D04 a resumed pass's report control names its own -pass2 report and fails on its own response, though pass 1's report and a sibling's carry the phrase"
+else no "B4-D04 an earlier and a sibling report  [exit $RC: $D04]"; fi
+printf 'x\nCONTROL+: DONE in <<REPORT>>.bak\n' > "$F/b4-rep-bad.md"
+b4p "B4-D05 <<REPORT>> inside a longer path refuses" "stands alone" --brief "$F/b4-rep-bad.md"
+# Recovery closes, in process: a watch-close of pass 1 reads the transcript's text; one of pass 2
+# cannot tell its text from pass 1's; a kill is unverified.
+mkdir -p "$F/b4-recover"
+B4R=$(env LLM_WIKI_STORE="$STORE" "$PY" - "$HERE" "$F/b4-recover" <<'B4_RECOVER_END'
+import json, os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import lane
+root = sys.argv[2]
+home = os.path.join(root, "home"); proj = os.path.join(root, "proj")
+os.makedirs(os.path.join(proj, lane.dashed(home)), exist_ok=True)
+os.makedirs(home, exist_ok=True)
+def transcript(sid, text):
+    with open(os.path.join(proj, lane.dashed(home), sid + ".jsonl"), "w") as h:
+        h.write(json.dumps({"type": "assistant", "message": {"id": "m1", "role": "assistant",
+                "usage": {}, "content": [{"type": "text", "text": text}]}}) + "\n")
+def case(lane_id, resumed, extra, text):
+    rec = os.path.join(root, lane_id + ".jsonl")
+    report = lane.store_paths("run-test-recover", lane_id)["report"]
+    if resumed:
+        report = lane.pass_report_path(report, 2)
+    pend = [{"line": 2, "phrase": "DONE-9", "target": "report", "report": report}]
+    rows = [{"event": "lane-open", "lane": lane_id, "run": "run-test-recover", "class": "verifier",
+             "session_id": "s-" + lane_id, "controls_pending": [] if resumed else pend},
+            {"event": "lane-spawned", "lane": lane_id, "session_id": "s-" + lane_id, "pid": 1, "wrapper_pid": 1}]
+    if resumed:
+        rows += [{"event": "lane-closed", "lane": lane_id, "exit_class": "completed"},
+                 {"event": "lane-resumed", "lane": lane_id, "session_id": "s-" + lane_id, "controls_pending": pend},
+                 {"event": "lane-respawned", "lane": lane_id, "session_id": "s-" + lane_id, "pid": 1, "wrapper_pid": 1}]
+    with open(rec, "w") as h:
+        for r in rows:
+            h.write(json.dumps(r) + "\n")
+    transcript("s-" + lane_id, text)
+    opened, spawned, _ = lane.lane_state(lane.load_record(rec), lane_id)
+    before=open(rec,"rb").read()
+    try:
+        lane.close_from_transcript(rec, "run-test-recover", lane_id, opened, spawned, home, proj,
+                                   "suite", None, extra=extra)
+        rejected=False
+    except lane.A3Premise:
+        rejected=True
+    return "refused:unchanged" if rejected and open(rec,"rb").read()==before and not os.path.exists(report) else "incorrect:changed"
+print(case("W1", False, None, "the pass says DONE-9"),
+      case("W2", True, None, "the pass says DONE-9"),
+      case("K1", False, {"exit_class": "killed", "exit_code": 3}, "the pass says DONE-9"))
+B4_RECOVER_END
+)
+if [ "$B4R" = "refused:unchanged refused:unchanged refused:unchanged" ]; then
+  ok "B4-D06 E3 retires legacy transcript closure for first, resumed and killed passes without writes; A15 covers authorised recovery controls"
+else no "B4-D06 recovery closes  [$B4R]"; fi
+
+# B4-U · a rubric's folders in the reviewers' tree -------------------------------------------
+mkdir -p "$F/panel/paper" "$F/panel/literature/raw" "$F/panel/review-kit"
+printf 'tex\n' > "$F/panel/paper/main.tex"
+printf 'raw paper\n' > "$F/panel/literature/raw/a.md"
+printf '# Rubric\n3. Read `paper/` first, then `literature/raw/` and the neutral one-page summaries under literature/summaries/.\nSee https://example.org/docs/ and /etc/defaults/ and paper/main.tex for nothing.\n' > "$F/panel/review-kit/00-RUBRIC.md"
+printf 'x\nRUBRIC+: %s in %s\n' "$F/panel/review-kit/00-RUBRIC.md" "$F/panel" > "$F/b4-rubric.md"
+premise "B4-U01 a rubric naming a folder the reviewers' tree lacks refuses and names it" "literature/summaries/ (absent)" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4U01 --class verifier --grant "$F/panel" --brief "$F/b4-rubric.md"
+mkdir -p "$F/panel/literature/summaries"
+premise "B4-U02 an empty promised folder refuses: existence alone is not the content the rubric promises" "literature/summaries/ (no file with content)" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4U02 --class verifier --grant "$F/panel" --brief "$F/b4-rubric.md"
+printf 'a one-page summary\n' > "$F/panel/literature/summaries/a.md"
+b4dry U03 "$F/b4-rubric.md" --grant "$F/panel"
+if [ "$RC" = 0 ] && printf '%s' "$B4OUT" | grep -q '"folders": \["paper/", "literature/raw/", "literature/summaries/"\]'; then
+  ok "B4-U03 a complete tree passes, the folders named exactly (no URL, no absolute path, no file path taken for a folder)"
+else no "B4-U03 the complete tree  [exit $RC: $(printf '%s' "$B4OUT" | grep -m2 'PROBE FAILED\|inputs checked')]"; fi
+premise "B4-U04 a reviewers' tree outside the read grants refuses" "outside the lane's read grants" \
+        --home "$LHOME" --routing "$R" --run run-test-p --lane B4U04 --class verifier --grant "$F/panel/review-kit" --brief "$F/b4-rubric.md"
+
+# B4-L · the session lock's errno (lane.py's twin of the console opener's lock) ----------------
+mkdir -p "$F/b4lock"
+B4L=$("$PY" - "$HERE" "$F/b4lock/run-x-L-beat.pid" <<'B4_LOCK_END'
+import errno, fcntl, io, os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import lane
+marker = sys.argv[2]
+real = fcntl.flock
+def planted(code):
+    def flock(fd, op):
+        if op & fcntl.LOCK_NB:
+            raise OSError(code, os.strerror(code))
+        return real(fd, op)
+    return flock
+def attempt(fn):
+    err, saved = io.StringIO(), sys.stderr
+    sys.stderr = err
+    try:
+        fn()
+        out = "ran"
+    except SystemExit as exc:
+        out = "exit%s" % exc.code
+    finally:
+        sys.stderr = saved
+    return out, err.getvalue()
+with lane.hold_session(marker, "resume", "suite"):        # a real claim, released: the lock file exists
+    pass
+results = []
+fcntl.flock = planted(errno.ENOLCK)
+code, text = attempt(lambda: lane.hold_session(marker, "resume", "suite"))
+results.append(code + ("+errno" if "cannot be worked (ENOLCK" in text and "not contention" in text else "-text"))
+code, text = attempt(lambda: lane.session_holder(marker))
+results.append(code + ("+errno" if "cannot be worked (ENOLCK" in text else "-text"))
+fcntl.flock = planted(errno.EWOULDBLOCK)
+code, text = attempt(lambda: lane.hold_session(marker, "resume", "suite"))
+results.append(code + ("+held" if "is in flight" in text and "cannot be worked" not in text else "-text"))
+fcntl.flock = real
+fd = os.open(lane.session_lock_path(marker), os.O_RDWR)
+real(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)                    # a true holder: a second open is refused
+pid, kind = lane.session_holder(marker)
+results.append("holder" if pid is not None else "nobody")
+real(fd, fcntl.LOCK_UN); os.close(fd)
+print(" ".join(results))
+B4_LOCK_END
+)
+if [ "$B4L" = "exit2+errno exit2+errno exit2+held holder" ]; then
+  ok "B4-L01 an unusable session lock (ENOLCK) refuses the claim and the reader, naming the errno and saying it is not contention; EWOULDBLOCK refuses as a holder in flight; a real holder still reads as held (the control)"
+else no "B4-L01 the session lock's errno  [$B4L]"; fi
+
+# B4-F · `cheap` takes the row's default effort, in both resolvers ------------------------------
+B4F=$("$PY" - "$HERE" <<'B4_CHEAP_END'
+import json, os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import lane, throttle
+path = os.path.join(sys.argv[1], "routing.json")
+rec = json.load(open(path))
+lrec = lane.load_routing(path)
+order = lrec["order"]["effort"]
+agree = differ = 0
+over_cheap, over_top, singleton = [], 0, None
+for preset in lane.THROTTLES:
+    tres = throttle.resolve(rec, preset)
+    for cls, row in lrec["classes"].items():
+        model, effort, _mo, _eo = lane.resolve_tier(lrec, row, cls, preset)
+        if (model, effort) == tuple(tres[cls]):
+            agree += 1
+        else:
+            differ += 1
+        above = order.index(effort) > order.index(row["effort"]["default"])
+        if preset == "cheap" and above:
+            over_cheap.append(cls)
+        if preset == "top" and above:
+            over_top += 1
+        if preset == "cheap" and len(row["effort"]["options"]) == 1:
+            singleton = effort == row["effort"]["default"]
+total = len(lrec["classes"]) * len(lane.THROTTLES)
+good = agree == total and not differ and not over_cheap and over_top > 0 and singleton is True
+print(("OK %d of %d" % (agree, total)) if good else ("BAD agree %d of %d, differ %d, cheap above default %s, top above %d, singleton %s"
+      % (agree, total, differ, over_cheap, over_top, singleton)))
+B4_CHEAP_END
+)
+case "$B4F" in
+  "OK "*) ok "B4-F01 lane.py and throttle.py resolve every class under every preset alike (${B4F#OK }), no class's effort under cheap exceeds its default, a single-option row keeps its value, and top does exceed it (the control: the probe can see an effort above the default)" ;;
+  *) no "B4-F01 the two resolvers  [$B4F]" ;;
+esac
+"$PY" - "$R" "$F/routing-baddefault.json" <<'B4_BADDEFAULT_END'
+import json, sys
+rec = json.load(open(sys.argv[1]))
+rec["classes"]["verifier"]["effort"]["default"] = "turbo"
+json.dump(rec, open(sys.argv[2], "w"), indent=1)
+B4_BADDEFAULT_END
+premise "B4-F02 a row default outside its own options refuses rather than falling back" "default 'turbo' is not one of its options" \
+        --home "$LHOME" --routing "$F/routing-baddefault.json" --brief "$F/brief.md" --run run-test-p --lane B4F02 --class verifier --grant "$F/granted" --throttle cheap
+
+# ============================== the Batch 4 launcher fold (review CR-B4L) ==========================
+# Findings 3, 4, 7 and 9 of the launcher review: a definition whose frontmatter cannot be read, the
+# temporary roots a lane without Bash never reaches, the planner's live acceptance evidence, and the
+# report controls of a process that never starts. Every refusal leg checks exit 2 and no record;
+# every clean claim carries its control on the same run.
+
+# B4LF-03 · a definition whose frontmatter cannot be read refuses (finding 3) ---------------------
+# Read as absent, an unterminated block's denylist vanished and the lane gained WebSearch. Each
+# fixture vault holds its own critic definition (b4wvault); the unterminated and byte-order-mark
+# shapes are written over it.
+b4wvault "$F/lf-unterm"
+printf '%s\n' '---' 'name: critic' 'description: a fixture critic' 'disallowedTools: Edit, Write, WebFetch, WebSearch, Agent' '' 'The fixture critic.' \
+  > "$F/lf-unterm/.claude/agents/critic.md"
+b4wspawn "$F/lf-unterm" LF03A
+LF03A_RC=$RC; LF03A_OUT=$B4WOUT; LF03A_TOOLS=$B4WTOOLS
+b4wspawn "$F/lf-unterm" LF03B --dry-run
+LF03B_RC=$RC; LF03B_OUT=$B4WOUT
+if [ "$LF03A_RC" = 2 ] && printf '%s' "$LF03A_OUT" | grep -q 'never closes' && [ ! -e "$F/rec-b4w-LF03A.jsonl" ] \
+   && [ "$LF03A_TOOLS" = 'no stub call' ] && [ "$LF03B_RC" = 2 ] && printf '%s' "$LF03B_OUT" | grep -q 'never closes'; then
+  ok "B4LF-03 a restricted definition whose frontmatter never closes refuses, spawn and dry run alike (exit 2, no record, no process), never read as a definition with no restriction"
+else no "B4LF-03 the unterminated definition  [spawn exit $LF03A_RC, record $([ -e "$F/rec-b4w-LF03A.jsonl" ] && echo written || echo absent), --tools $LF03A_TOOLS, dry run exit $LF03B_RC: $(printf '%s' "$LF03A_OUT" | tail -1)]"; fi
+b4wvault "$F/lf-bom"
+printf '\357\273\277---\nname: critic\ndescription: a fixture critic\ndisallowedTools: Edit, Write, WebFetch, WebSearch, Agent\n---\n\nThe fixture critic.\n' \
+  > "$F/lf-bom/.claude/agents/critic.md"
+b4wspawn "$F/lf-bom" LF03C
+if [ "$RC" = 2 ] && printf '%s' "$B4WOUT" | grep -q 'byte-order mark' && [ ! -e "$F/rec-b4w-LF03C.jsonl" ] && [ "$B4WTOOLS" = 'no stub call' ]; then
+  ok "B4LF-03b a frontmatter opener behind a byte-order mark refuses the same way (exit 2, no record, no process)"
+else no "B4LF-03b the byte-order-mark definition  [exit $RC, --tools $B4WTOOLS: $(printf '%s' "$B4WOUT" | tail -1)]"; fi
+b4wvault "$F/lf-term" 'disallowedTools: Edit, Write, WebFetch, WebSearch, Agent'
+b4wspawn "$F/lf-term" LF03D
+LF03D_RC=$RC; LF03D_TOOLS=$B4WTOOLS
+b4wvault "$F/lf-nofront"
+printf 'The fixture critic, with no frontmatter at all.\n' > "$F/lf-nofront/.claude/agents/critic.md"
+b4wspawn "$F/lf-nofront" LF03E
+if [ "$LF03D_RC" = 0 ] && [ "$LF03D_TOOLS" = 'Read,Grep,Glob,Bash' ] && [ "$RC" = 0 ] && [ "$B4WTOOLS" = 'Read,Grep,Glob,Bash,WebSearch' ]; then
+  ok "B4LF-03c the controls keep their behaviour: the same restricted definition closed spawns without WebSearch, and a definition with no frontmatter (valid absence) spawns with it"
+else no "B4LF-03c the valid definitions  [restricted exit $LF03D_RC --tools $LF03D_TOOLS; unrestricted exit $RC --tools $B4WTOOLS]"; fi
+# The resume reads the definition again: once its frontmatter cannot be read, the resume refuses too.
+printf '%s\n' '---' 'name: critic' 'description: a fixture critic' 'disallowedTools: Edit, Write, WebFetch, WebSearch, Agent' '' 'The fixture critic.' \
+  > "$F/lf-term/.claude/agents/critic.md"
+LF03N=$(grep -c . "$F/rec-b4w-LF03D.jsonl")
+LF03R=$($LANEV CLAUDE_PROJECT_DIR="$F/lf-term" "$PY" "$LANE" resume --run run-test-b4w --lane LF03D --brief "$F/brief.md" \
+        --record "$F/rec-b4w-LF03D.jsonl" --home "$LHOME" --projects-root "$PROJ" 2>&1); LF03RC=$?
+if [ "$LF03RC" = 2 ] && printf '%s' "$LF03R" | grep -q 'never closes' && [ "$(grep -c . "$F/rec-b4w-LF03D.jsonl")" = "$LF03N" ] && [ "$LF03D_RC" = 0 ]; then
+  ok "B4LF-03d a resume whose definition's frontmatter no longer closes refuses with nothing written (the lane spawned under the closed one: the control)"
+else no "B4LF-03d the resume  [exit $LF03RC, lines $LF03N then $(grep -c . "$F/rec-b4w-LF03D.jsonl"): $(printf '%s' "$LF03R" | tail -1)]"; fi
+LF03U=$("$PY" - "$HERE" <<'B4LF_FRONT_UNIT_END'
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import lane
+for name, text in (("unclosed", "---\ntools: Read\nbody\n"), ("bom", "\ufeff---\ntools: Read\n---\nbody\n"),
+                   ("closed", "---\ntools: Read\n---\nbody\n"), ("none", "body only\n"), ("rule", "body\n---\nmore\n")):
+    print(name, lane.frontmatter_problem(text) is not None)
+B4LF_FRONT_UNIT_END
+)
+if [ "$(printf '%s\n' "$LF03U" | tr '\n' ' ')" = 'unclosed True bom True closed False none False rule False ' ]; then
+  ok "B4LF-03e in process: an unclosed block and an opener behind a byte-order mark are parse failures; a closed block, no frontmatter and a horizontal rule in a body are not"
+else no "B4LF-03e frontmatter_problem  [$(printf '%s' "$LF03U" | tr '\n' ' ')]"; fi
+
+# B4LF-04 · /tmp and /dev reach a lane through Bash alone (finding 4) -----------------------------
+# The fence grants every lane's SHELL /tmp and /dev; the file tools reach the lane home and the
+# add-dirs alone. The fixture planner row holds no Bash, the verifier row does.
+# This case exercises the implicit /tmp grant, independent of the platform TMPDIR.
+LFTMP=$(mktemp -d "${AIMYTH_TEST_SCRATCH_ROOT:-/tmp}/lane-b4lf-XXXXXX") || LFTMP=""
+case $LFTMP in
+  /tmp/*|/private/tmp/*) : ;;
+  *) printf 'PROBE FAILED: B4LF-04 scratch root must be under /tmp\n' >&2; exit 2 ;;
+esac
+if [ -z "$LFTMP" ] || [ ! -d "$LFTMP" ]; then no "B4LF-04 PROBE FAILED: no scratch directory under /tmp"
+else
+  printf 'TMP-INPUT-4\n' > "$LFTMP/in.txt"
+  printf 'x\nREAD+: %s/in.txt\n' "$LFTMP" > "$F/lf-tmp-read.md"
+  printf 'x\nCONTROL+: TMP-INPUT-4 in %s/in.txt\n' "$LFTMP" > "$F/lf-tmp-ctl.md"
+  premise "B4LF-04 a planner's ungranted /tmp input refuses: its tools hold no Bash, so the fence's /tmp grant never reaches it" \
+          "outside the lane's read grants" --home "$LHOME" --routing "$R" --run run-test-p --lane LF04A --class planner \
+          --grant "$F/granted" --brief "$F/lf-tmp-read.md"
+  premise "B4LF-04b a planner's control file under /tmp refuses the same way" "outside the lane's read grants" \
+          --home "$LHOME" --routing "$R" --run run-test-p --lane LF04B --class planner --grant "$F/granted" --brief "$F/lf-tmp-ctl.md"
+  LFTMPR=$("$PY" -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$LFTMP")
+  B4OUT=$(spawn --run run-test-b4 --lane LF04C --class planner --grant "$F/granted" --grant "$LFTMP" --record "$F/rec-b4-LF04C.jsonl" \
+          --brief "$F/lf-tmp-read.md" --dry-run 2>&1); RC=$?
+  if [ "$RC" = 0 ] && printf '%s' "$B4OUT" | grep -q '^inputs checked: .*"path": "'"$LFTMPR"'/in.txt"'; then
+    ok "B4LF-04c the same input explicitly granted to the planner passes (the control for B4LF-04)"
+  else no "B4LF-04c the granted /tmp input  [exit $RC: $(printf '%s' "$B4OUT" | grep -m2 'PROBE FAILED\|inputs checked')]"; fi
+  b4dry LF04D "$F/lf-tmp-read.md" --grant "$F/granted"
+  LF04D_RC=$RC; LF04D_OUT=$B4OUT
+  b4dry LF04E "$F/lf-tmp-ctl.md" --grant "$F/granted"
+  if [ "$LF04D_RC" = 0 ] && printf '%s' "$LF04D_OUT" | grep -q '"path": "'"$LFTMPR"'/in.txt"' && [ "$RC" = 0 ] \
+     && printf '%s' "$B4OUT" | grep -q '"phrase": "TMP-INPUT-4"'; then
+    ok "B4LF-04d a verifier, whose tools hold Bash, keeps its scratch access: the same ungranted /tmp input and control pass"
+  else no "B4LF-04d the Bash-capable lane  [input exit $LF04D_RC, control exit $RC: $(printf '%s' "$LF04D_OUT$B4OUT" | grep -m2 'PROBE FAILED')]"; fi
+  # A resume checks its follow-up brief against the same reach, from the lane-open's tools and grants.
+  spawn --run run-test-lf --lane LF04P --class planner --grant "$F/granted" --record "$F/rec-lf04.jsonl" --silence-s 0 >/dev/null 2>&1; LF04P_RC=$?
+  spawn --run run-test-lf --lane LF04V --class verifier --grant "$F/granted" --record "$F/rec-lf04.jsonl" --silence-s 0 >/dev/null 2>&1; LF04V_RC=$?
+  LF04N=$(grep -c . "$F/rec-lf04.jsonl")
+  LF04PR=$($LANEV "$PY" "$LANE" resume --run run-test-lf --lane LF04P --brief "$F/lf-tmp-read.md" --record "$F/rec-lf04.jsonl" \
+           --home "$LHOME" --projects-root "$PROJ" 2>&1); LF04PR_RC=$?
+  LF04N2=$(grep -c . "$F/rec-lf04.jsonl")
+  $LANEV "$PY" "$LANE" resume --run run-test-lf --lane LF04V --brief "$F/lf-tmp-read.md" --record "$F/rec-lf04.jsonl" \
+    --home "$LHOME" --projects-root "$PROJ" --silence-s 0 >/dev/null 2>&1; LF04VR_RC=$?
+  if [ "$LF04P_RC" = 0 ] && [ "$LF04V_RC" = 0 ] && [ "$LF04PR_RC" = 2 ] && printf '%s' "$LF04PR" | grep -q "outside the lane's read grants" \
+     && [ "$LF04N" = "$LF04N2" ] && [ "$LF04VR_RC" = 0 ]; then
+    ok "B4LF-04e on resume the planner's ungranted /tmp input refuses with nothing written, and the verifier's resumes (its lane-open's tools hold Bash)"
+  else no "B4LF-04e the resume reach  [spawns $LF04P_RC/$LF04V_RC, planner resume $LF04PR_RC (lines $LF04N then $LF04N2), verifier resume $LF04VR_RC: $(printf '%s' "$LF04PR" | tail -1)]"; fi
+  LF04U=$("$PY" - "$HERE" <<'B4LF_ROOTS_UNIT_END'
+import os, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import lane
+plain = lane.lane_read_roots(["Read", "Grep", "Glob"], ["/g"], "/in", "/home")
+shell = lane.lane_read_roots(["Read", "Bash"], ["/g"], "/in", "/home")
+print(plain == ["/g", "/in", "/home"], sorted(set(shell) - set(plain)) == lane.temp_read_roots(), "/dev" in shell)
+B4LF_ROOTS_UNIT_END
+)
+  if [ "$LF04U" = 'True True True' ]; then
+    ok "B4LF-04f in process: without Bash the roots are the grants, the input directory and the home; with Bash the temporary roots join them, /dev among them"
+  else no "B4LF-04f lane_read_roots  [$LF04U]"; fi
+  rm -rf "$LFTMP"; LFTMP=""
+fi
+
+# B4LF-07 · the planner's live acceptance needs evidence of both writes and the denial (finding 7) --
+# The live leg below asserted only that the authorised file exists and the sibling does not, which a
+# lane that writes the first file and stops satisfies. planner_write_verdict reads the lane's own
+# transcript and close line: a Write call on each path, the inside one returning success, and the
+# outside one refused by permission — a harness permission denial naming it on the close line, or an
+# error result on that call whose text names a permission refusal of its path (review CR-B4L2
+# finding 3: any error result passed, an input-validation error or a cancelled call among them). The
+# live leg asserts it beside the file checks; these fixtures prove it here.
+planner_write_verdict(){ # record lane inside-path outside-path -> "ok: <evidence>" or "no: <why>"
+  "$PY" - "$1" "$2" "$3" "$4" <<'PLANNER_WRITE_VERDICT_END'
+import json, os, re, sys
+record, lane_id, inside, outside = sys.argv[1:5]
+# What names a permission refusal in a tool result: the harness's own wording when its permission rules
+# refuse a call ("Claude requested permissions to write to <path>, but you haven't granted it yet"), or
+# the fence's denial, which lane.py's transcript reading counts as one (a result opening `lane-fence:`).
+# The text must also name the refused path, so the refusal is of that call's file and no other.
+REFUSAL = re.compile(r"\brequested permissions? to \w+|\bhaven't granted\b|\bpermission to use \w+ (?:has been|was) denied\b", re.I)
+def real(path):
+    return os.path.realpath(path) if isinstance(path, str) and path else None
+def text_of(block):
+    content = block.get("content")
+    if isinstance(content, list):
+        return " ".join(str(c.get("text") or "") if isinstance(c, dict) else str(c) for c in content)
+    return str(content or "")
+def names_refusal(text, written):
+    opening = text.lstrip()
+    fence = opening.startswith("lane-fence:") and "within grants" not in opening
+    return bool(fence or REFUSAL.search(text)) and any(p and p in text for p in (written, real(written), outside))
+written = {}
+inside, outside = real(inside), real(outside)
+try:
+    with open(record, encoding="utf-8") as handle:
+        rows = [json.loads(line) for line in handle if line.strip()]
+except (OSError, ValueError) as exc:
+    print("no: the record cannot be read (%s)" % exc)
+    sys.exit(0)
+closes = [r for r in rows if r.get("lane") == lane_id and r.get("event") == "lane-closed"]
+if not closes:
+    print("no: the lane has no lane-closed line")
+    sys.exit(0)
+close = closes[-1]
+calls, results = [], {}
+try:
+    with open(close.get("transcript") or "", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            message = item.get("message") if isinstance(item, dict) and isinstance(item.get("message"), dict) else {}
+            for block in message.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                if item.get("type") == "assistant" and block.get("type") == "tool_use" and block.get("name") == "Write":
+                    path = (block.get("input") or {}).get("file_path")
+                    calls.append((block.get("id"), real(path)))
+                    written[block.get("id")] = path if isinstance(path, str) else None
+                elif item.get("type") == "user" and block.get("type") == "tool_result":
+                    results[block.get("tool_use_id")] = (bool(block.get("is_error")), text_of(block))
+except OSError as exc:
+    print("no: the close names no readable transcript (%s)" % exc)
+    sys.exit(0)
+ins = [c for c in calls if c[1] == inside]
+outs = [c for c in calls if c[1] == outside]
+if not ins:
+    print("no: the transcript holds no Write call on %s" % inside)
+elif not outs:
+    print("no: the transcript holds no Write call on %s: the write that must be refused was never attempted" % outside)
+elif not any(c[0] in results and not results[c[0]][0] for c in ins):
+    print("no: the Write on %s returned no success" % inside)
+elif any(c[0] in results and not results[c[0]][0] for c in outs):
+    print("no: a Write on %s returned success" % outside)
+else:
+    ids = {c[0] for c in outs}
+    denied = [d for d in close.get("permission_denials") or [] if isinstance(d, dict) and d.get("tool_name") == "Write"
+              and (d.get("tool_use_id") in ids or real((d.get("tool_input") or {}).get("file_path")) == outside)]
+    errored = [c for c in outs if c[0] in results and results[c[0]][0]]
+    refused = [c for c in errored if names_refusal(results[c[0]][1], written.get(c[0]))]
+    if denied:
+        print("ok: both Write calls made, the outside one denied by the harness (permission_denials on the close line)")
+    elif refused:
+        print("ok: both Write calls made, the outside one refused by permission (an error result in the transcript naming the refusal of its path: %s)" % results[refused[0][0]][1][:120])
+    elif errored:
+        print("no: the Write on %s returned an error that names no permission refusal of that path (%s), and the close line holds no denial" % (outside, results[errored[0][0]][1][:120]))
+    else:
+        print("no: the Write on %s shows no denial: none on the close line and no error result in the transcript" % outside)
+PLANNER_WRITE_VERDICT_END
+}
+mkdir -p "$F/lf07/plan-out" "$F/lf07/plan-side"
+printf 'PLANNER-WROTE-7\n' > "$F/lf07/plan-out/brief-A.md"
+"$PY" - "$F/lf07" <<'B4LF_PLANNER_FIXTURES_END'
+import json, os, sys
+root = sys.argv[1]
+inside, outside = os.path.join(root, "plan-out", "brief-A.md"), os.path.join(root, "plan-side", "stray.md")
+def write(lane_id, turns, denials):
+    transcript = os.path.join(root, lane_id + ".jsonl")
+    with open(transcript, "w") as handle:
+        for n, (path, error) in enumerate(turns, 1):
+            handle.write(json.dumps({"type": "assistant", "message": {"id": "m%d" % n, "role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_%d" % n, "name": "Write", "input": {"file_path": path, "content": "x"}}]}}) + "\n")
+            if error is not None:
+                handle.write(json.dumps({"type": "user", "message": {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_%d" % n, "is_error": error,
+                     "content": ("Claude requested permissions to write to %s, but you haven't granted it yet." % path)
+                                if error else "File created successfully at: %s" % path}]}}) + "\n")
+        handle.write(json.dumps({"type": "assistant", "message": {"id": "m9", "role": "assistant",
+                                 "content": [{"type": "text", "text": "WROTE"}]}}) + "\n")
+    with open(os.path.join(root, "rec.jsonl"), "a") as handle:
+        handle.write(json.dumps({"event": "lane-closed", "lane": lane_id, "exit_class": "completed",
+                                 "transcript": transcript, "permission_denials": denials}) + "\n")
+denial = [{"tool_name": "Write", "tool_use_id": "toolu_2", "tool_input": {"file_path": outside, "content": "x"}}]
+write("FIRST", [(inside, False)], [])                          # writes the first file, never attempts the second
+write("PAIR", [(inside, False), (outside, True)], denial)      # both attempted, the outside one denied by the harness
+write("ERRONLY", [(inside, False), (outside, True)], [])       # both attempted, the outside one an error result alone
+write("NODENY", [(inside, False), (outside, False)], [])       # both attempted, the outside one reported a success
+write("NOTRY", [(outside, True)], denial)                      # the outside one denied, the inside one never written
+B4LF_PLANNER_FIXTURES_END
+LFIN="$F/lf07/plan-out/brief-A.md"; LFOUT="$F/lf07/plan-side/stray.md"
+if grep -qx 'PLANNER-WROTE-7' "$LFIN" && [ ! -e "$LFOUT" ]; then LF07OLD=ok; else LF07OLD=no; fi
+LF07A=$(planner_write_verdict "$F/lf07/rec.jsonl" FIRST "$LFIN" "$LFOUT")
+LF07B=$(planner_write_verdict "$F/lf07/rec.jsonl" PAIR "$LFIN" "$LFOUT")
+LF07C=$(planner_write_verdict "$F/lf07/rec.jsonl" ERRONLY "$LFIN" "$LFOUT")
+LF07D=$(planner_write_verdict "$F/lf07/rec.jsonl" NODENY "$LFIN" "$LFOUT")
+LF07E=$(planner_write_verdict "$F/lf07/rec.jsonl" NOTRY "$LFIN" "$LFOUT")
+LF07F=$(planner_write_verdict "$F/lf07/rec.jsonl" ABSENT "$LFIN" "$LFOUT")
+if [ "$LF07OLD" = ok ] && [ "${LF07A%%:*}" = no ] && printf '%s' "$LF07A" | grep -q 'never attempted'; then
+  ok "B4LF-07 a fixture lane that performs only the first write fails the planner's acceptance verdict, though the file checks alone pass it (the old leg's assertion, its control)"
+else no "B4LF-07 the first-write-only fixture  [file checks $LF07OLD; verdict: $LF07A]"; fi
+if [ "${LF07B%%:*}" = ok ] && printf '%s' "$LF07B" | grep -q 'permission_denials' && [ "${LF07C%%:*}" = ok ] \
+   && printf '%s' "$LF07C" | grep -q 'error result'; then
+  ok "B4LF-07b a completed pair passes with the outside denial evidenced, by the harness's permission denial or by an error result on that call (the controls for B4LF-07)"
+else no "B4LF-07b the evidenced pair  [$LF07B | $LF07C]"; fi
+if [ "${LF07D%%:*}" = no ] && printf '%s' "$LF07D" | grep -q 'returned success' && [ "${LF07E%%:*}" = no ] \
+   && [ "${LF07F%%:*}" = no ] && printf '%s' "$LF07F" | grep -q 'no lane-closed'; then
+  ok "B4LF-07c an outside Write that reported success, a lane that never wrote the inside file and a lane with no close each fail the verdict"
+else no "B4LF-07c the verdict's other refusals  [$LF07D | $LF07E | $LF07F]"; fi
+
+# B4LF2-03 · the verdict needs a permission refusal OF the outside Write (review CR-B4L2 finding 3) --
+# planner_write_verdict_before is the predicate as this fold found it, kept verbatim so every run shows
+# the before beside the after: it passed any error result on the outside Write. Three fixtures alike
+# but for that Write's outcome (an unrelated error, a permission refusal naming its path, no attempt)
+# must fail, pass and fail; two more test the evidence itself (a cancelled call, and a permission
+# refusal that names another path).
+planner_write_verdict_before(){ # record lane inside-path outside-path -> "ok: <evidence>" or "no: <why>"
+  "$PY" - "$1" "$2" "$3" "$4" <<'PLANNER_WRITE_VERDICT_BEFORE_END'
+import json, os, sys
+record, lane_id, inside, outside = sys.argv[1:5]
+def real(path):
+    return os.path.realpath(path) if isinstance(path, str) and path else None
+def text_of(block):
+    content = block.get("content")
+    if isinstance(content, list):
+        return " ".join(str(c.get("text") or "") if isinstance(c, dict) else str(c) for c in content)
+    return str(content or "")
+inside, outside = real(inside), real(outside)
+try:
+    with open(record, encoding="utf-8") as handle:
+        rows = [json.loads(line) for line in handle if line.strip()]
+except (OSError, ValueError) as exc:
+    print("no: the record cannot be read (%s)" % exc)
+    sys.exit(0)
+closes = [r for r in rows if r.get("lane") == lane_id and r.get("event") == "lane-closed"]
+if not closes:
+    print("no: the lane has no lane-closed line")
+    sys.exit(0)
+close = closes[-1]
+calls, results = [], {}
+try:
+    with open(close.get("transcript") or "", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            message = item.get("message") if isinstance(item, dict) and isinstance(item.get("message"), dict) else {}
+            for block in message.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                if item.get("type") == "assistant" and block.get("type") == "tool_use" and block.get("name") == "Write":
+                    calls.append((block.get("id"), real((block.get("input") or {}).get("file_path"))))
+                elif item.get("type") == "user" and block.get("type") == "tool_result":
+                    results[block.get("tool_use_id")] = (bool(block.get("is_error")), text_of(block))
+except OSError as exc:
+    print("no: the close names no readable transcript (%s)" % exc)
+    sys.exit(0)
+ins = [c for c in calls if c[1] == inside]
+outs = [c for c in calls if c[1] == outside]
+if not ins:
+    print("no: the transcript holds no Write call on %s" % inside)
+elif not outs:
+    print("no: the transcript holds no Write call on %s: the write that must be refused was never attempted" % outside)
+elif not any(c[0] in results and not results[c[0]][0] for c in ins):
+    print("no: the Write on %s returned no success" % inside)
+elif any(c[0] in results and not results[c[0]][0] for c in outs):
+    print("no: a Write on %s returned success" % outside)
+else:
+    ids = {c[0] for c in outs}
+    denied = [d for d in close.get("permission_denials") or [] if isinstance(d, dict) and d.get("tool_name") == "Write"
+              and (d.get("tool_use_id") in ids or real((d.get("tool_input") or {}).get("file_path")) == outside)]
+    errored = [c for c in outs if c[0] in results and results[c[0]][0]]
+    if denied:
+        print("ok: both Write calls made, the outside one denied by the harness (permission_denials on the close line)")
+    elif errored:
+        print("ok: both Write calls made, the outside one refused (an error result in the transcript: %s)" % results[errored[0][0]][1][:120])
+    else:
+        print("no: the Write on %s shows no denial: none on the close line and no error result in the transcript" % outside)
+PLANNER_WRITE_VERDICT_BEFORE_END
+}
+mkdir -p "$F/lf2-03/plan-out" "$F/lf2-03/plan-side"
+"$PY" - "$F/lf2-03" <<'B4LF2_PLANNER_FIXTURES_END'
+import json, os, sys
+root = sys.argv[1]
+inside, outside = os.path.join(root, "plan-out", "brief-A.md"), os.path.join(root, "plan-side", "stray.md")
+def turn(n, path, error, text):
+    return [{"type": "assistant", "message": {"id": "m%d" % n, "role": "assistant", "content": [
+                {"type": "tool_use", "id": "toolu_%d" % n, "name": "Write", "input": {"file_path": path, "content": "x"}}]}},
+            {"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_%d" % n, "is_error": error, "content": text}]}}]
+def write(lane_id, outside_result):
+    """The inside Write succeeds; the outside Write's outcome is the only difference between lanes."""
+    transcript = os.path.join(root, lane_id + ".jsonl")
+    rows = turn(1, inside, False, "File created successfully at: %s" % inside)
+    if outside_result is not None:
+        rows += turn(2, outside, True, outside_result)
+    rows.append({"type": "assistant", "message": {"id": "m9", "role": "assistant", "content": [{"type": "text", "text": "DONE"}]}})
+    with open(transcript, "w") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+    with open(os.path.join(root, "rec.jsonl"), "a") as handle:
+        handle.write(json.dumps({"event": "lane-closed", "lane": lane_id, "exit_class": "completed",
+                                 "transcript": transcript, "permission_denials": []}) + "\n")
+write("UNRELATED", "<tool_use_error>InputValidationError: Write failed due to the following issue:\nThe required parameter `content` is missing</tool_use_error>")
+write("REFUSED", "Claude requested permissions to write to %s, but you haven't granted it yet." % outside)
+write("UNTRIED", None)
+write("CANCELLED", "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.")
+write("ELSEWHERE", "Claude requested permissions to write to %s, but you haven't granted it yet." % os.path.join(root, "plan-side", "other.md"))
+B4LF2_PLANNER_FIXTURES_END
+LF3IN="$F/lf2-03/plan-out/brief-A.md"; LF3OUT="$F/lf2-03/plan-side/stray.md"
+LF3NEW=""; LF3OLD=""
+for L in UNRELATED REFUSED UNTRIED CANCELLED ELSEWHERE; do
+  V=$(planner_write_verdict "$F/lf2-03/rec.jsonl" "$L" "$LF3IN" "$LF3OUT"); LF3NEW="$LF3NEW $L=${V%%:*}"
+  V=$(planner_write_verdict_before "$F/lf2-03/rec.jsonl" "$L" "$LF3IN" "$LF3OUT"); LF3OLD="$LF3OLD $L=${V%%:*}"
+done
+LF3R=$(planner_write_verdict "$F/lf2-03/rec.jsonl" REFUSED "$LF3IN" "$LF3OUT")
+LF3U=$(planner_write_verdict "$F/lf2-03/rec.jsonl" UNRELATED "$LF3IN" "$LF3OUT")
+case "$LF3NEW" in *" UNRELATED=no REFUSED=ok UNTRIED=no "*) LF3A=ok;; *) LF3A=no;; esac
+case "$LF3OLD" in *" UNRELATED=ok REFUSED=ok UNTRIED=no "*) LF3B=ok;; *) LF3B=no;; esac
+if [ "$LF3A" = ok ] && [ "$LF3B" = ok ] && printf '%s' "$LF3R" | grep -q 'refused by permission' \
+   && printf '%s' "$LF3U" | grep -q 'names no permission refusal'; then
+  ok "B4LF2-03 three lanes alike but for the outside Write's outcome (an unrelated error, a permission refusal naming its path, no attempt) fail, pass and fail the verdict; the predicate as found passed the unrelated error (before: UNRELATED=ok REFUSED=ok UNTRIED=no)"
+else no "B4LF2-03 the refusal evidence  [after:$LF3NEW | before:$LF3OLD | $LF3U]"; fi
+case "$LF3NEW" in *" CANCELLED=no ELSEWHERE=no") LF3C=ok;; *) LF3C=no;; esac
+case "$LF3OLD" in *" CANCELLED=ok ELSEWHERE=ok") LF3D=ok;; *) LF3D=no;; esac
+if [ "$LF3C" = ok ] && [ "$LF3D" = ok ]; then
+  ok "B4LF2-03b a cancelled outside Write and a permission refusal naming another path each fail the verdict, both of which the predicate as found passed"
+else no "B4LF2-03b the evidence's own discrimination  [after:$LF3NEW | before:$LF3OLD]"; fi
+
+# B4LF-09 · a process that never starts gives its report controls a verdict (finding 9) -----------
+# The harness command is put out of reach: the only `claude` on the call's PATH is not executable,
+# so the start fails with the OSError a missing or broken harness raises. The premise: nothing else
+# on that PATH answers to `claude`, so no real harness can start.
+mkdir -p "$F/nostart-bin"
+printf '#!/bin/sh\nexit 0\n' > "$F/nostart-bin/claude"; chmod 644 "$F/nostart-bin/claude"
+NOSTART_PATH="$F/nostart-bin:/usr/bin:/bin"
+PYABS=$(command -v "$PY")
+printf 'x\nCONTROL+: DONE-9 in <<REPORT>>\n' > "$F/lf-nostart.md"
+if [ -n "$(env PATH="$NOSTART_PATH" sh -c 'command -v claude' 2>&1)" ] || [ -z "$PYABS" ]; then
+  no "B4LF-09 PROBE FAILED: an executable claude answers on $NOSTART_PATH, or no absolute python ($PYABS)"
+else
+  $LANEV PATH="$NOSTART_PATH" "$PYABS" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/lf-nostart.md" \
+    --projects-root "$PROJ" --reason '(a) a start that fails' --run run-test-lf --lane LF09 --class verifier --grant "$F/granted" \
+    --record "$F/rec-lf09.jsonl" --silence-s 0 >"$F/lf09.out" 2>"$F/lf09.err"; LF09RC=$?
+  LF09=$("$PY" - "$F/rec-lf09.jsonl" LF09 <<'B4LF_NOSTART_END'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+opens = [r for r in rows if r.get("lane") == sys.argv[2] and r.get("event") == "lane-open"]
+closes = [r for r in rows if r.get("lane") == sys.argv[2] and r.get("event") == "lane-closed"]
+pend = (opens[-1].get("controls_pending") or [{}])[0] if opens else {}
+close = closes[-1] if closes else {}
+ver = (close.get("controls_deferred") or [{}])[0]
+print(close.get("exit_class"), pend.get("phrase"), ver.get("result"), "spawn-failed" in str(ver.get("why")))
+B4LF_NOSTART_END
+)
+  if [ "$LF09RC" = 3 ] && [ "$LF09" = "spawn-failed DONE-9 unverified True" ] && grep -q 'could not start the lane process' "$F/lf09.err" \
+     && grep -q 'report controls UNVERIFIED 1 of 1' "$F/lf09.err"; then
+    ok "B4LF-09 a lane process that cannot start closes spawn-failed with its pending report control unverified, on the close line and stderr, and the exit stays 3"
+  else no "B4LF-09 the failed start  [exit $LF09RC: $LF09; stderr: $(tr '\n' '|' < "$F/lf09.err" | cut -c1-300)]"; fi
+fi
+
+# B4-K · the suite's own home: no wrapper reads the machine's real stores ------------------------
+# A read trace in Python's own hooks (an audit hook on open, listdir, scandir and glob; stat, lstat and
+# access wrapped), loaded as sitecustomize into every Python process the legs start: a read under one
+# of the real stores is logged and BLOCKED before the call, so the control below proves the trace
+# without reading anything there.
+mkdir -p "$F/trace-site"
+cat > "$F/trace-site/sitecustomize.py" <<'B4_TRACE_SITE_END'
+import os, sys
+_roots = [r for r in os.environ.get("B4_TRACE_ROOTS", "").split(os.pathsep) if r]
+_log = os.environ.get("B4_TRACE_LOG")
+if _roots and _log:
+    _roots = sorted(set(_roots + [os.path.realpath(r) for r in _roots]))
+    def _hit(path):
+        if isinstance(path, int):
+            return None
+        try:
+            p = os.path.abspath(os.fsdecode(path))
+        except (TypeError, ValueError):
+            return None
+        for root in _roots:
+            if p == root or p.startswith(root.rstrip("/") + "/"):
+                return p
+        return None
+    def _note(kind, p):
+        with open(_log, "a") as handle:
+            handle.write("%d %s %s\n" % (os.getpid(), kind, p))
+    def _audit(event, args):
+        if event in ("open", "os.listdir", "os.scandir", "glob.glob") and args:
+            p = _hit(args[0])
+            if p:
+                _note(event, p)
+                raise PermissionError(13, "blocked by the suite's read trace", p)
+    sys.addaudithook(_audit)
+    def _wrap(fn, kind):
+        def inner(path, *a, **k):
+            p = _hit(path)
+            if p:
+                _note(kind, p)
+                raise PermissionError(13, "blocked by the suite's read trace", p)
+            return fn(path, *a, **k)
+        return inner
+    os.stat, os.lstat, os.access = _wrap(os.stat, "stat"), _wrap(os.lstat, "lstat"), _wrap(os.access, "access")
+B4_TRACE_SITE_END
+TROOTS="$REAL_HOME/.claude.json:$REAL_HOME/.claude:$REAL_HOME/.codex:$REAL_HOME/.llm-wiki/spawn-records:$REAL_HOME/.llm-wiki/handoffs:$REAL_HOME/.llm-wiki/lane-home"
+printf '{"ts": "2026-01-01T00:00:00+0000", "run": "run-test-trace", "event": "run-open", "session": "trace-head", "envelope_usd": 50}\n' > "$F/rec-trace.jsonl"
+cp "$F/rec-trace.jsonl" "$F/rec-trace0.jsonl"
+traced(){ TLOG=$1; shift; env PYTHONPATH="$F/trace-site${PYTHONPATH:+:$PYTHONPATH}" B4_TRACE_ROOTS="$TROOTS" B4_TRACE_LOG="$TLOG" "$@"; }
+: > "$F/trace-claim.log"
+traced "$F/trace-claim.log" "$PY" "$LANE" init --home "$F/trace-home" >/dev/null 2>&1
+traced "$F/trace-claim.log" $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+  --projects-root "$PROJ" --reason '(a) trace' --run run-test-trace --lane TR1 --class verifier --grant "$F/granted" \
+  --record "$F/rec-trace.jsonl" --silence-s 0 >"$F/trace-spawn.out" 2>&1; TRC=$?
+traced "$F/trace-claim.log" $LANEV "$PY" "$LANE" watch --run run-test-trace --lane TR1 --record "$F/rec-trace.jsonl" \
+  --projects-root "$PROJ" --max-wait-s 5 >/dev/null 2>&1
+: > "$F/trace-control.log"
+traced "$F/trace-control.log" env HOME="$REAL_HOME" $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+  --brief "$F/brief.md" --projects-root "$PROJ" --reason '(a) trace control' --run run-test-trace --lane TR0 --class verifier \
+  --grant "$F/granted" --record "$F/rec-trace0.jsonl" --dry-run >/dev/null 2>&1
+if [ "$TRC" = 0 ] && [ ! -s "$F/trace-claim.log" ] && [ "$(wc -l < "$F/trace-control.log" | tr -d ' ')" -ge 1 ] \
+   && grep -q '\.claude\.json' "$F/trace-control.log"; then
+  ok "B4-K01 under the suite's fixture HOME an init, a spawn on an enveloped run (the meter included) and a watch make no read of the real stores, while the same spawn under the real HOME is caught reading them ($(wc -l < "$F/trace-control.log" | tr -d ' ') blocked, ~/.claude.json among them: the control)"
+else no "B4-K01 the read trace  [spawn exit $TRC; claim log: $(head -3 "$F/trace-claim.log" | tr '\n' '|'); control log: $(wc -l < "$F/trace-control.log" | tr -d ' ') lines]"; fi
+
 HOME_AFTER=$(shasum "$LANE" "$FENCE" "$0")
 PYC_AFTER=$(pycache_state "$HERE")
 mkdir -p "$F/fakehome/__pycache__"
@@ -4089,9 +6650,7 @@ if [ "$S3" != "$S2" ]; then
 else no "own-home check missed a changed listing  [$S2 / $S3]"; fi
 rm -rf "$PC"
 
-# 13a · the fallback field on the close line (owner ruling 2026-09-22, rule 3) -----------------
-#   The stub reports the requested alias's id beside the haiku helper, as the harness does; each
-#   leg reads the record's lane-closed `fallback` block and the wrapper's summary and stderr.
+# Preserved alias-map, missing-usage and broken-facts controls.
 fbfield(){ "$PY" - "$1" <<'FB_READ_END'
 import json, sys
 rows = [json.loads(l) for l in open(sys.argv[1])]
@@ -4105,117 +6664,19 @@ if [ "$(fbfield "$F/rec-fb.jsonl")" = "false alias map and count claude-opus-5-5
    && ! grep -q "FALLBACK" "$F/fb1.out" "$F/fb1.err"; then
   ok "FB1 a lane reporting its alias's id beside the haiku helper closes with fallback.detected false and no warning"
 else no "FB1 negative control  [$(fbfield "$F/rec-fb.jsonl")] [$(grep FALLBACK "$F/fb1.out" "$F/fb1.err")]"; fi
-env STUB_MODEL_USAGE='{"claude-opus-5-5": {"outputTokens": 5}, "claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/swap-fb2.txt" \
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB2 --class verifier --grant "$F/granted" --model opus --choice-reason 'the alias under test' --record "$F/rec-fb.jsonl" --reason '(a) a second id' >"$F/fb2.out" 2>"$F/fb2.err"
-if [ "$(fbfield "$F/rec-fb.jsonl")" = "true alias map and count claude-opus-4-8,claude-opus-5-5 claude-opus-5-5" ] \
-   && grep -q "FALLBACK (confirmed): ran on claude-opus-4-8,claude-opus-5-5, expected claude-opus-5-5 · swapped to FB2-astra" "$F/fb2.out" \
-   && grep -q "lane.py: FALLBACK on lane run-test-fb/FB2 (confirmed by a live probe of the alias): the result names claude-opus-4-8,claude-opus-5-5 where claude-opus-5-5 was expected" "$F/fb2.err" \
-   && grep -q "swapped to lane FB2-astra on Astra" "$F/fb2.err" \
-   && [ "$(tr '\n' ' ' < "$F/stub/probe-argv.txt")" = "-p --model opus --output-format json --max-turns 1 " ]; then
-  ok "FB2 a second non-helper id is a fallback: the alias probe (one one-word call on the same alias) confirms it, the close line, summary and stderr name the ids and the swap"
-else no "FB2 second id  [$(fbfield "$F/rec-fb.jsonl")] [$(cat "$F/fb2.err" | tail -2)] [probe: $(cat "$F/stub/probe-argv.txt" 2>/dev/null | tr '\n' ' ')]"; fi
-SWAPPED=$("$PY" - "$F/rec-fb.jsonl" <<'SWAP_READ_END'
+# E6's single notice replaces the old duplicate stderr warning; assert its recorded verdict.
+fbverdict(){ "$PY" - "$1" <<'FB_VERDICT_END'
 import json, sys
-rows = [json.loads(l) for l in open(sys.argv[1])]
-sw = [r for r in rows if r.get("event") == "lane-swapped" and r.get("lane") == "FB2"]
-closes = [r for r in rows if r.get("event") == "lane-closed" and r.get("lane") == "FB2"]
-after = rows.index(sw[-1]) > rows.index(closes[-1]) if sw and closes else None
-s = sw[-1] if sw else {}
-c = closes[-1] if closes else {}
-print(len(sw), s.get("to"), s.get("ok"), s.get("ids"), s.get("effort"), after, (s.get("brief") or "").endswith("run-test-fb-brief-FB2-astra.md"),
-      (c.get("swap") or {}).get("ok"), (c.get("swap") or {}).get("to"), (c.get("fallback") or {}).get("verdict"))
-SWAP_READ_END
-)
-ARGV=$(tr '\n' ' ' < "$F/swap-fb2.txt" 2>/dev/null)
-if [ "$SWAPPED" = "1 FB2-astra True claude-opus-4-8,claude-opus-5-5 xhigh True True True FB2-astra fallback" ] \
-   && printf '%s' "$ARGV" | grep -q -- "--run run-test-fb --lane FB2-astra --class verifier --brief " \
-   && printf '%s' "$ARGV" | grep -q -- "--record $F/rec-fb.jsonl " \
-   && printf '%s' "$ARGV" | grep -q -- "--reason (a) fallback swap: lane FB2 fell back to claude-opus-4-8,claude-opus-5-5" \
-   && printf '%s' "$ARGV" | grep -q -- "--effort xhigh --delegation single --delegation-src owner --detach --no-wait --cwd " \
-   && head -c 11 "$STORE/spawn-records/run-test-fb-brief-FB2-astra.md" | grep -q "SWAP NOTICE" \
-   && grep -qF -- "$(head -1 "$F/brief.md")" "$STORE/spawn-records/run-test-fb-brief-FB2-astra.md"; then
-  ok "FB2b the swap: the close line carries the swap and the probe verdict, one lane-swapped line follows it (to FB2-astra, ok, the ids, the effort carried), the Codex spawn called with the class, the record, the derived brief (the notice, then the pass's brief verbatim), the reason letter, the regime and its source"
-else no "FB2b swap  [$SWAPPED] [$ARGV]"; fi
-env STUB_MODEL_USAGE='{"claude-opus-5-5": {"outputTokens": 5}, "claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/swap-fb2c.txt" AIMYTH_SWAP_EXIT=3 \
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB2C --class verifier --grant "$F/granted" --model opus --choice-reason 'the alias under test' --record "$F/rec-fb.jsonl" --reason '(a) a failed swap' >"$F/fb2c.out" 2>"$F/fb2c.err"
-if grep -q "swap not done (codex-lane.py spawn exit 3" "$F/fb2c.out" && grep -q "swap NOT done: codex-lane.py spawn exit 3" "$F/fb2c.err" \
-   && grep -q "run it by hand: " "$F/fb2c.err" && grep -c '"lane": "FB2C", "event": "lane-swapped"' "$F/rec-fb.jsonl" | grep -q '^1$'; then
-  ok "FB2c a swap whose Codex spawn fails is recorded as not done, and the warning names the by-hand command (control for FB2b)"
-else no "FB2c failed swap  [$(tail -1 "$F/fb2c.err")]"; fi
-env STUB_MODEL_USAGE='{"claude-opus-5-5": {"outputTokens": 5}, "claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/swap-fb2d.txt" AIMYTH_SWAP_NOOPEN=1 \
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB2D --class verifier --grant "$F/granted" --model opus --choice-reason 'the alias under test' --record "$F/rec-fb.jsonl" --reason '(a) a swap that never opens' >"$F/fb2d.out" 2>"$F/fb2d.err"
-if grep -q "swap not done (the spawn returned 0 but no lane-spawned for FB2D-astra within" "$F/fb2d.out" \
-   && grep -q "swap NOT done: the spawn returned 0 but no lane-spawned" "$F/fb2d.err"; then
-  ok "FB2d a spawn that returns 0 without the successor's lane-spawned line is not a success: recorded as not done, the warning names the by-hand command (critic round 2, finding 3)"
-else no "FB2d never-started swap  [$(grep -o 'swap not done[^·]*' "$F/fb2d.out")] [$(tail -1 "$F/fb2d.err")]"; fi
-env STUB_MODEL_USAGE='{"claude-opus-5-5": {"outputTokens": 5}, "claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/swap-fb2e.txt" AIMYTH_SWAP_SPAWNFAIL=1 \
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB2E --class verifier --grant "$F/granted" --model opus --choice-reason 'the alias under test' --record "$F/rec-fb.jsonl" --reason '(a) a successor that fails at once' >"$F/fb2e.out" 2>"$F/fb2e.err"
-if grep -q "swap not done (the spawn returned 0 but the successor closed at once (spawn-failed))" "$F/fb2e.out" \
-   && grep -q "swap NOT done: the spawn returned 0 but the successor closed at once (spawn-failed)" "$F/fb2e.err"; then
-  ok "FB2e a successor that opens and then closes spawn-failed is not a success: a lane-open alone proves nothing (critic round 3, finding 3)"
-else no "FB2e at-once close  [$(grep -o 'swap not done[^·]*' "$F/fb2e.out")] [$(tail -1 "$F/fb2e.err")]"; fi
-env STUB_MODEL_USAGE='{"claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  STUB_PROBE_USAGE='{"claude-opus-4-8": {"outputTokens": 1}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' STUB_PROBE_ISERROR=1 \
-  AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/swap-fb10.txt" \
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB10 --class verifier --grant "$F/granted" --model opus --choice-reason 'the alias under test' --record "$F/rec-fb.jsonl" --reason '(a) an error probe' >"$F/fb10.out" 2>"$F/fb10.err"
-if grep -q "FALLBACK (unconfirmed, probe failed): ran on claude-opus-4-8, expected claude-opus-5-5" "$F/fb10.out" \
-   && ! grep -q "stale alias map" "$F/fb10.out" && grep -q "probe result is an error" "$F/fb10.err" && [ ! -s "$F/swap-fb10.txt" ]; then
-  ok "FB10 a probe whose result is an error cannot erase a real fallback: the detection stays unconfirmed, no stale-map verdict, no swap (critic round 3, finding 4)"
-else no "FB10 error probe  [$(grep -o 'FALLBACK[^·]*\|stale alias[^·]*' "$F/fb10.out")] [$(tail -1 "$F/fb10.err")]"; fi
-env STUB_MODEL_USAGE='{"claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  STUB_PROBE_USAGE='{"claude-opus-4-8": {"outputTokens": 1}, "claude-opus-5-5": {"outputTokens": 1}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/swap-fb11.txt" \
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB11 --class verifier --grant "$F/granted" --model opus --choice-reason 'the alias under test' --record "$F/rec-fb.jsonl" --reason '(a) a mixed probe' >"$F/fb11.out" 2>"$F/fb11.err"
-if grep -q "FALLBACK (unconfirmed, probe failed): ran on claude-opus-4-8, expected claude-opus-5-5" "$F/fb11.out" \
-   && ! grep -q "stale alias map" "$F/fb11.out" && grep -q "probe reported 2 non-helper ids" "$F/fb11.err" && [ ! -s "$F/swap-fb11.txt" ]; then
-  ok "FB11 a probe that names two non-helper ids proves nothing about the alias: unconfirmed, no stale-map verdict, no swap (critic round 3, finding 4)"
-else no "FB11 mixed probe  [$(grep -o 'FALLBACK[^·]*\|stale alias[^·]*' "$F/fb11.out")] [$(tail -1 "$F/fb11.err")]"; fi
-env STUB_MODEL_USAGE='{"claude-opus-6": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  STUB_PROBE_USAGE='{"claude-opus-6": {"outputTokens": 1}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/swap-fb8.txt" \
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB8 --class verifier --grant "$F/granted" --model opus --choice-reason 'the alias under test' --record "$F/rec-fb.jsonl" --reason '(a) a moved alias' >"$F/fb8.out" 2>"$F/fb8.err"
-FB8=$("$PY" - "$F/rec-fb.jsonl" <<'FB8_END'
-import json, sys
-rows = [json.loads(l) for l in open(sys.argv[1])]
-c = [r for r in rows if r.get("event") == "lane-closed" and r.get("lane") == "FB8"][-1]
-fb = c.get("fallback") or {}
-print(fb.get("detected"), fb.get("stale_map"), fb.get("verdict"), (fb.get("probe") or {}).get("ids"), "swap" in c, any(r.get("event") == "lane-swapped" and r.get("lane") == "FB8" for r in rows))
-FB8_END
-)
-if [ "$FB8" = "False True stale-map ['claude-opus-6'] False False" ] && grep -q "stale alias map: opus now resolves to claude-opus-6 (no fallback)" "$F/fb8.out" \
-   && grep -q "lane.py: STALE MAP on lane run-test-fb/FB8: the alias 'opus' now resolves to claude-opus-6, not claude-opus-5-5; no fallback" "$F/fb8.err" \
-   && ! grep -q "FALLBACK" "$F/fb8.err" && [ ! -s "$F/swap-fb8.txt" ]; then
-  ok "FB8 a moved alias is a stale map, not a fallback: the probe resolves to the lane's own id, the close reads detected false with stale_map, the summary and stderr say STALE MAP, nothing swaps (critic round 2, finding 5)"
-else no "FB8 stale map  [$FB8] [$(tail -1 "$F/fb8.err")]"; fi
-env STUB_MODEL_USAGE='{"claude-opus-5-5": {"outputTokens": 5}, "claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  STUB_PROBE_EXIT=1 AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/swap-fb9.txt" \
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB9 --class verifier --grant "$F/granted" --model opus --choice-reason 'the alias under test' --record "$F/rec-fb.jsonl" --reason '(a) a probe that fails' >"$F/fb9.out" 2>"$F/fb9.err"
-if grep -q "FALLBACK (unconfirmed, probe failed): ran on claude-opus-4-8,claude-opus-5-5, expected claude-opus-5-5" "$F/fb9.out" \
-   && ! grep -q "swapped to" "$F/fb9.out" && grep -q "no swap was attempted; if the brief was not cyber- or biology-shaped, swap by hand" "$F/fb9.err" \
-   && [ ! -s "$F/swap-fb9.txt" ]; then
-  ok "FB9 a detection whose alias probe fails stays unconfirmed: no automatic swap, the summary and stderr say so and name the by-hand route"
-else no "FB9 unconfirmed  [$(grep -o 'FALLBACK[^·]*' "$F/fb9.out")] [$(tail -1 "$F/fb9.err")]"; fi
-env STUB_MODEL_USAGE='{"claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB3 --class verifier --grant "$F/granted" --model opus --choice-reason 'the alias under test' --no-swap --record "$F/rec-fb.jsonl" --reason '(a) a single wrong id' >"$F/fb3.out" 2>"$F/fb3.err"
-if [ "$(fbfield "$F/rec-fb.jsonl")" = "true alias map and count claude-opus-4-8 claude-opus-5-5" ] && grep -q "FALLBACK on lane run-test-fb/FB3 (confirmed by a live probe of the alias)" "$F/fb3.err" \
-   && grep -q "FALLBACK (confirmed): ran on claude-opus-4-8, expected claude-opus-5-5 · swap not done (swap off (--no-swap))" "$F/fb3.out" && ! grep -q '"lane": "FB3", "event": "lane-swapped"' "$F/rec-fb.jsonl"; then
-  ok "FB3 a whole lane served by another id (one id, not the alias's) is a fallback too, and --no-swap records the detection without a swap"
-else no "FB3 single wrong id  [$(fbfield "$F/rec-fb.jsonl")] [$(grep -o 'swap not done[^·]*' "$F/fb3.out")]"; fi
+rows = [json.loads(line) for line in open(sys.argv[1])]
+close = [row for row in rows if row.get("event") == "lane-closed"][-1]
+disposition = close.get("disposition") or {}
+print((close.get("fallback") or {}).get("verdict"), disposition.get("decision"),
+      disposition.get("reason"), any(row.get("event") == "lane-swapped" and row.get("lane") == close["lane"] for row in rows))
+FB_VERDICT_END
+}
+# CR-A3-1 L2 (depth): restored FB4/FB4b detection controls with movement disabled.
 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
-  --run run-test-fb --lane FB4 --class verifier --grant "$F/granted" --model sonnet --choice-reason 'closed one-leg task' --record "$F/rec-fb.jsonl" --reason '(a) a sonnet lane' >"$F/fb4.out" 2>"$F/fb4.err"
+  --run run-test-fb --lane FB4 --no-swap --class verifier --grant "$F/granted" --model sonnet --choice-reason 'closed one-leg task' --record "$F/rec-fb.jsonl" --reason '(a) a sonnet lane' >"$F/fb4.out" 2>"$F/fb4.err"
 if [ "$(fbfield "$F/rec-fb.jsonl")" = "false alias map and count claude-sonnet-5-5 claude-sonnet-5-5" ] && ! grep -q -E "FALLBACK|STALE MAP" "$F/fb4.out" "$F/fb4.err"; then
   ok "FB4 a sonnet lane reporting its alias's id beside the haiku helper is clean under the alias map (sonnet probed as claude-sonnet-5-5 on 2026-09-29)"
 else no "FB4 sonnet clean  [$(fbfield "$F/rec-fb.jsonl")] [$(grep -h -E 'FALLBACK|STALE' "$F/fb4.out" "$F/fb4.err")]"; fi
@@ -4223,7 +6684,7 @@ env STUB_MODEL_USAGE='{"claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5
   $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
   --run run-test-fb --lane FB4B --class verifier --grant "$F/granted" --model sonnet --choice-reason 'closed one-leg task' --no-swap --record "$F/rec-fb.jsonl" --reason '(a) a sonnet lane served by opus' >"$F/fb4b.out" 2>"$F/fb4b.err"
 if [ "$(fbfield "$F/rec-fb.jsonl")" = "true alias map and count claude-opus-4-8 claude-sonnet-5-5" ] \
-   && grep -q "FALLBACK on lane run-test-fb/FB4B (confirmed by a live probe of the alias): the result names claude-opus-4-8 where claude-sonnet-5-5 was expected" "$F/fb4b.err" \
+   && [ "$(fbverdict "$F/rec-fb.jsonl")" = "fallback held movement disabled (--no-swap) False" ] \
    && [ "$(tr '\n' ' ' < "$F/stub/probe-argv.txt")" = "-p --model sonnet --output-format json --max-turns 1 " ]; then
   ok "FB4b a sonnet lane answered by an opus id alone is a re-route: flagged under the alias map and confirmed by a sonnet probe (the round-2 critic's probe of 2026-09-29)"
 else no "FB4b sonnet re-route  [$(fbfield "$F/rec-fb.jsonl")] [$(tail -1 "$F/fb4b.err")]"; fi
@@ -4247,17 +6708,21 @@ if [ "$(fbfield "$F/rec-fb.jsonl")" = "null no modelUsage on the result  None" ]
    && grep -q "fallback unread: no modelUsage on the result" "$F/fb5.out"; then
   ok "FB5 a result with no modelUsage reads detected null with its reason on the close line and on the summary, never a flag and never a clean pass"
 else no "FB5 no usage  [$(fbfield "$F/rec-fb.jsonl")] [$(grep -o 'fallback unread[^·]*' "$F/fb5.out")]"; fi
+# CR-A3-1 L2 (depth): explicit ids outside the alias map remain their own expectation.
 env STUB_MODEL_USAGE='{"claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}' \
   $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
   --run run-test-fb --lane FB7 --class verifier --grant "$F/granted" --model claude-opus-5 --choice-reason 'an explicit id outside the map' --no-swap --record "$F/rec-fb.jsonl" --reason '(a) explicit id' >"$F/fb7.out" 2>"$F/fb7.err"
-if [ "$(fbfield "$F/rec-fb.jsonl")" = "true explicit id and count claude-opus-4-8 claude-opus-5" ] && grep -q "FALLBACK on lane run-test-fb/FB7 (confirmed by a live probe of the alias)" "$F/fb7.err"; then
+if [ "$(fbfield "$F/rec-fb.jsonl")" = "true explicit id and count claude-opus-4-8 claude-opus-5" ] \
+   && [ "$(fbverdict "$F/rec-fb.jsonl")" = "fallback held movement disabled (--no-swap) False" ]; then
   ok "FB7 an explicit id the map does not list is its own expectation, so a whole lane served by another id still flags (critic finding 3 of 2026-09-22)"
 else no "FB7 explicit id  [$(fbfield "$F/rec-fb.jsonl")]"; fi
-FB6=$("$PY" - "$LANE" <<'FB6_END'
+# FB6 runs with TMPDIR at a folder of the suite's own, so FB6t below can show it leaves nothing there.
+mkdir -p "$F/fb6tmp"
+FB6=$(env TMPDIR="$F/fb6tmp" "$PY" - "$LANE" <<'FB6_END'
 import importlib.util, sys
 sys.dont_write_bytecode = True   # the script home must stay free of __pycache__ (the meter suite asserts it)
 spec = importlib.util.spec_from_file_location("lane", sys.argv[1]); lane = importlib.util.module_from_spec(spec); spec.loader.exec_module(lane)
-import json, os, tempfile
+import json, os, shutil, tempfile
 a = lane.fallback_check({"x": {}, "y": {}}, "opus", None)
 b = lane.load_model_facts("/nonexistent/prices.json")
 d = tempfile.mkdtemp()
@@ -4267,13 +6732,76 @@ c = lane.fallback_check({"claude-opus-5-5": {}, "claude-haiku-4-5-20251001": {}}
 json.dump({"models": {"aliases": {"opus": "claude-opus-5-5"}, "helpers": [" "]}}, open(bad, "w"))
 e = lane.fallback_check({"claude-opus-5-5": {}, "claude-haiku-4-5-20251001": {}}, "opus", lane.load_model_facts(bad))
 print(a["detected"], "|", a["reason"], "|", b[0], "|", "unreadable" if b[1].startswith("prices.json unreadable") else b[1], "|", c["detected"], "|", c["reason"], "|", e["detected"], "|", e["reason"])
+shutil.rmtree(d)
 FB6_END
 )
 if [ "$FB6" = "None | prices.json carries no usable \`models\` block (aliases and helpers) | None | unreadable | None | prices.json \`models.aliases[opus]\` is not a model id: None | None | prices.json \`models.helpers\` carries a blank or non-string entry" ]; then
   ok "FB6 a missing table, a null alias id and a blank helper entry are each an unmet premise with its reason, never a flag on a normal lane (critic finding 3 of 2026-09-22)"
 else no "FB6 premise  [$FB6]"; fi
+# FB6t: FB6 removes its scratch folder (it once left one tmp*/prices.json folder in the system's temporary
+# directory per run). The folder FB6 ran with as TMPDIR must be empty; the control plants such a folder
+# beside it, which the same count must find.
+fb6left(){ "$PY" -c 'import glob, os, sys; print(len(glob.glob(os.path.join(sys.argv[1], "tmp*", "prices.json"))), len(os.listdir(sys.argv[1])))' "$1"; }
+mkdir -p "$F/fb6ctl/tmpplanted"; printf '{}\n' > "$F/fb6ctl/tmpplanted/prices.json"
+if [ "$(fb6left "$F/fb6tmp")" = "0 0" ] && [ "$(fb6left "$F/fb6ctl")" = "1 1" ]; then
+  ok "FB6t FB6 leaves no tmp*/prices.json folder, nor anything else, in the temporary directory it ran with, while a planted one is counted (the control)"
+else no "FB6t FB6's scratch folder left behind  [ran with: $(fb6left "$F/fb6tmp")] [control: $(fb6left "$F/fb6ctl")]"; fi
+
+
+# The item bars (register 2026-11-05 12:41): what --item records, on a real worker.
+"$PY" -B "$HERE/test_item_bars.py" --wrappers "$HERE" --fixture-root "$F" --part lane > "$F/item-bars.log" 2>&1
+IBARS_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) ok "${line#OK }" ;;
+    'BAD '*) no "${line#BAD }" ;;
+    'PROBE FAILED:'*) no "$line" ;;
+  esac
+done < "$F/item-bars.log"
+if [ "$IBARS_RC" != 0 ] && ! grep -q '^BAD ' "$F/item-bars.log"; then
+  no "item bars harness failed before an assertion: $(tail -3 "$F/item-bars.log")"
+fi
+
+# A3 migration of FB1–FB11 and F8-FB cases: the authoritative disposition replaces
+# lane-swapped/swap fields, arbitrary free suffixes and raw retry advice. The public fixtures
+# retain each detection, prerequisite, exact-scope, launch-uncertainty and replay case through
+# the native owner. Each emitted assertion is counted; no historical total is assumed.
+"$PY" -B "$HERE/test_a3.py" --wrappers "$HERE" --fixture-root "$F" --part claude \
+  --only A02 --only A22 --only A26 --only A33 --no-mutations > "$F/a3-movement.log" 2>&1
+A3_MOVEMENT_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) ok "${line#OK }" ;;
+    'BAD '*) no "${line#BAD }" ;;
+    'PROBE FAILED:'*) no "$line" ;;
+  esac
+done < "$F/a3-movement.log"
+if [ "$A3_MOVEMENT_RC" != 0 ] && ! grep -q '^BAD ' "$F/a3-movement.log"; then
+  no "A3 movement harness failed before an assertion: $(tail -3 "$F/a3-movement.log")"
+fi
+
+# The spawn hold (register 2026-10-14 01:33 b): real workers on the stub provider, both modes.
+"$PY" -B "$HERE/test_decisions_spawn.py" --wrappers "$HERE" --fixture-root "$F" --part lane > "$F/decisions-spawn.log" 2>&1
+DSPAWN_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) ok "${line#OK }" ;;
+    'BAD '*) no "${line#BAD }" ;;
+    'PROBE FAILED:'*) no "$line" ;;
+  esac
+done < "$F/decisions-spawn.log"
+if [ "$DSPAWN_RC" != 0 ] && ! grep -q '^BAD ' "$F/decisions-spawn.log"; then
+  no "spawn hold harness failed before an assertion: $(tail -3 "$F/decisions-spawn.log")"
+fi
 
 # ------------------------------------------------------------------------- live --------------
+# The live legs drive the real harness, which needs the owner's login under the real home: only
+# they get the real HOME back, and the fixture home returns after them (register 2026-10-04 10:45).
+if [ "$LIVE" = 1 ] || [ "$LIVEHO" = 1 ]; then
+  FIXTURE_HOME=$HOME
+  export HOME="$REAL_HOME"
+  unset CODEX_HOME
+fi
 if [ "$LIVE" = 1 ]; then
   echo "== live =="
   LSTORE="$F/live-store"; LREC="$LSTORE/spawn-records/run-test-live.jsonl"
@@ -4457,6 +6985,26 @@ HO_EDIT_BRIEF_TERMINATOR
   if grep -q 'DENIED' "$HR0REP" && grep -q 'outside the granted directories' "$HR0REP"; then
     ok "live: without the flag the same cat is fenced, the reason quoted back (control)"
   else no "live: the vault-root control  [$(head -c 300 "$HR0REP" 2>&1 | tr '\n' ' ')]"; fi
+  # The planner row's Write and Edit (Batch 4; register 2026-09-21 22:53), its live acceptance: with a
+  # --write directory a planner writes its brief file there with the Write tool, and the same tool is
+  # refused on the directory's sibling. The shipped row is spawned, not the fixture's; the offline
+  # legs B4-P01 and B4-P02 prove the row and the allow rules it composes. Beside the file checks, the
+  # lane must run to a close and its own transcript and close line must show both Write calls and
+  # the outside one refused by permission (planner_write_verdict, proved offline by B4LF-07 and
+  # B4LF2-03): a lane that wrote the first file and stopped before the second passed the file checks
+  # alone (review CR-B4L finding 7), and any error on the outside Write passed as its refusal (review
+  # CR-B4L2 finding 3).
+  mkdir -p "$F/ho/plan-out" "$F/ho/plan-side"
+  printf 'Use the Write tool (never Bash) twice. First write the file %s/plan-out/brief-A.md holding the single line PLANNER-WROTE-7. Then write the file %s/plan-side/stray.md holding the single line STRAY-9. Reply with exactly two lines: the outcome of each write, WROTE or DENIED.\n' \
+    "$FR/ho" "$FR/ho" > "$F/ho/brief-plan.md"
+  holive --lane HP --class planner --routing "$HERE/routing.json" --brief "$F/ho/brief-plan.md" --grant "$F/ho/plain" \
+         --write "$F/ho/plan-out" --reason '(a) live: the planner row writes on its grant alone' >/dev/null 2>&1
+  HPRC=$?
+  HPV=$(planner_write_verdict "$HREC" HP "$FR/ho/plan-out/brief-A.md" "$FR/ho/plan-side/stray.md")
+  if { [ "$HPRC" = 0 ] || [ "$HPRC" = 3 ]; } && grep -qx 'PLANNER-WROTE-7' "$F/ho/plan-out/brief-A.md" \
+     && [ ! -e "$F/ho/plan-side/stray.md" ] && [ "${HPV%%:*}" = ok ]; then
+    ok "live: a planner with a --write directory writes its brief file there, and its Write on the directory's sibling is attempted and refused (${HPV#ok: })"
+  else no "live: the planner's write  [exit $HPRC; $HPV; inside: $(head -1 "$F/ho/plan-out/brief-A.md" 2>&1); outside: $([ -e "$F/ho/plan-side/stray.md" ] && echo written || echo absent)]"; fi
   HOSPEND=$("$PY" - "$HREC" <<'HO_SPEND_TERMINATOR'
 import json, sys
 total, n, classes = 0.0, 0, []
@@ -4471,6 +7019,426 @@ HO_SPEND_TERMINATOR
 )
   echo "  live hands-off spend: $HOSPEND"
 fi
+if [ "$LIVE" = 1 ] || [ "$LIVEHO" = 1 ]; then
+  export HOME="$FIXTURE_HOME" CODEX_HOME="$FIXTURE_HOME/.codex"
+fi
 
-TOTAL=$((PASS + FAIL))
-if [ "$FAIL" -eq 0 ]; then echo "PASS $PASS/$TOTAL"; else echo "FAIL $FAIL/$TOTAL"; exit 1; fi
+# Background wait: accelerated clock, real record reads, inherited watch results and no-write controls.
+echo "== wait =="
+"$PY" - "$LANE" "$F" >"$F/wait-cases.log" 2>&1 <<'WAIT_SUITE_END'
+import builtins, contextlib, hashlib, importlib.util, inspect, io, json, os
+import pathlib, re, shutil, subprocess, sys, time, types
+from unittest.mock import patch
+
+source, parent = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("wait_suite", source)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+codex = source.name == "codex-lane.py"
+core = module.lane if codex else module
+root = parent / "wait-cases"
+root.mkdir()
+os.environ["LLM_WIKI_STORE"] = str(root / "store")
+os.environ["LLM_WIKI_PROGRESS_DIR"] = str(root / "progress")
+record = root / "record.jsonl"
+report = root / "report.md"
+report.write_text("LATEST-PASS-REPORT\n")
+old_report = root / "old-report.md"
+old_report.write_text("EARLIER-PASS-REPORT\n")
+session = "fixture-wait-session"
+base = {"run": "fixture-wait", "lane": "W", "session_id": session}
+opened = dict(base, event="lane-open", model="gpt-6-astra" if codex else "opus",
+              effort="xhigh", **{"class": "verifier"}, cwd=str(root),
+              projects_root=str(root / "projects"))
+spawned = dict(base, event="lane-spawned", pid=os.getpid(), wrapper_pid=os.getpid())
+def close(kind="completed", path=report):
+    return dict(base, event="lane-closed", exit_class=kind,
+                exit_code=core.EXIT_CODES.get(kind, 3), report=str(path))
+def seed(rows):
+    record.write_text("".join(json.dumps(row) + "\n" for row in rows))
+def append(row):
+    with record.open("a") as handle:
+        handle.write(json.dumps(row) + "\n")
+def check(name, condition, detail=""):
+    print(("OK " if condition else "BAD ") + "WAIT " + name + (": " + detail if detail else ""))
+
+class Clock:
+    # Two simulated seconds replace 570 (scale 285:1); no production timing changes.
+    bound = 2
+    poll = 1
+    def __init__(self, events=()):
+        self.elapsed = 0
+        self.epoch = time.time()
+        self.events = list(events)
+        # A missing close fails promptly; allowance is set by judgement, unmeasured.
+        self.ceiling = 20
+    def time(self):
+        return self.epoch + self.elapsed
+    def sleep(self, seconds):
+        self.elapsed += seconds
+        if self.elapsed > self.ceiling:
+            raise AssertionError("wait missed its fixture close or named error")
+        while self.events and self.events[0][0] <= self.elapsed:
+            _, action = self.events.pop(0)
+            action()
+
+def invoke(command, clock=None, extra=()):
+    args = [str(source), command, "--run", base["run"], "--lane", base["lane"],
+            "--record", str(record), "--appear-s", "0", "--poll-s", str(Clock.poll), *extra]
+    stdout, stderr = io.StringIO(), io.StringIO()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(patch.object(sys, "argv", args))
+        stack.enter_context(contextlib.redirect_stdout(stdout))
+        stack.enter_context(contextlib.redirect_stderr(stderr))
+        if clock is not None:
+            fake = types.SimpleNamespace(time=clock.time, sleep=clock.sleep, strftime=time.strftime)
+            stack.enter_context(patch.object(core, "time", fake))
+            if module is not core:
+                stack.enter_context(patch.object(module, "time", fake))
+            stack.enter_context(patch.object(core, "WATCH_MAX_WAIT_S", Clock.bound))
+        try:
+            code = module.main()
+        except SystemExit as exc:
+            code = exc.code
+    return code, stdout.getvalue(), stderr.getvalue()
+
+check("default watch bound control", core.WATCH_MAX_WAIT_S == 570)
+seed([opened, spawned])
+args = module.build_parser().parse_args(["wait", "--run", base["run"], "--lane", base["lane"]])
+bad = invoke("wait", extra=("--max-wait-s", "1"))
+check("wait has no time-bound option", args.max_wait_s == 0 and bad[0] == 2
+      and "unrecognized arguments: --max-wait-s" in bad[2])
+
+for kind in ("completed", "stall", "killed", "limit"):
+    results = []
+    for command in ("watch", "wait"):
+        seed([opened, spawned])
+        clock = Clock([(Clock.poll, lambda: append(close(kind)))])
+        results.append(invoke(command, clock))
+    expected = core.EXIT_CODES.get(kind, 3) if codex else 0
+    check(kind + " close matches watch output and exit", results[0] == results[1]
+          and results[1][0] == expected and " · " + kind + " · " in results[1][1]
+          and "LATEST-PASS-REPORT" in results[1][1], "exit %s" % results[1][0])
+
+seed([opened, spawned, close()])
+watch, wait = invoke("watch"), invoke("wait")
+check("already-closed lane matches watch", watch == wait and wait[0] == 2
+      and "already closed" in wait[2] and "LATEST-PASS-REPORT" in wait[1])
+seed([opened, spawned, close()])
+result = invoke("wait", extra=("--lane", "UNKNOWN"))
+check("unknown lane is named", result[0] == 2 and "is unknown" in result[2])
+result = invoke("wait", extra=("--record", str(root / "missing.jsonl")))
+check("unknown record is named", result[0] == 2 and "no " in result[2]
+      and "record at" in result[2])
+
+# Append at EOF inside the real record reader, after it obtained its running snapshot.
+seed([opened, spawned])
+real_open = builtins.open
+race_hit = []
+class RacingReader:
+    def __init__(self, handle):
+        self.handle = handle
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        self.handle.close()
+    def __iter__(self):
+        for line in self.handle:
+            yield line
+        if not race_hit:
+            race_hit.append(True)
+            append(close())
+def racing_open(path, mode="r", *args, **kwargs):
+    handle = real_open(path, mode, *args, **kwargs)
+    return RacingReader(handle) if str(path) == str(record) and mode == "r" else handle
+with patch.object(builtins, "open", racing_open):
+    result = invoke("wait", Clock())
+check("record race: close appended during read", race_hit == [True] and result[0] == 0
+      and "LATEST-PASS-REPORT" in result[1])
+
+seed([opened, spawned])
+encoded = json.dumps(close()) + "\n"
+split = len(encoded) // 2
+with record.open("a") as handle:
+    handle.write(encoded[:split])
+def finish_line():
+    with record.open("a") as handle:
+        handle.write(encoded[split:])
+result = invoke("wait", Clock([(Clock.poll, finish_line)]))
+check("torn close retried until complete", result[0] == 0 and "LATEST-PASS-REPORT" in result[1])
+
+resumed = dict(base, event="lane-resumed", wrapper_pid=os.getpid())
+respawned = dict(spawned, event="lane-respawned")
+for pending in (False, True):
+    seed([opened, spawned, close(path=old_report)] + ([] if pending else [resumed, respawned]))
+    def resume():
+        append(resumed)
+        append(respawned)
+    events = ([(Clock.poll, resume)] if pending else []) + [(2 * Clock.poll, lambda: append(close("limit")))]
+    clock = Clock(events)
+    result = invoke("wait", clock, ("--appear-s", str(2 * Clock.poll)))
+    check("pending detached resume" if pending else "latest resumed pass only",
+          result[0] == (6 if codex else 0) and clock.elapsed >= 2 * Clock.poll
+          and "LATEST-PASS-REPORT" in result[1] and "EARLIER-PASS-REPORT" not in result[1])
+
+# Both commands observe the SAME running record. The later close is four test bounds away,
+# so watch returns first and wait itself must remain attached longer than one old bound.
+seed([opened, spawned])
+clock = Clock([(4 * Clock.bound, lambda: append(close()))])
+watch = invoke("watch", clock)
+after_watch = clock.elapsed
+no_close = not any(row.get("event") == "lane-closed" for row in core.load_record(str(record)))
+wait = invoke("wait", clock)
+check("past old bound: watch still-running, wait later close", watch[0] == 8
+      and "still-running" in watch[1] and no_close and wait[0] == 0
+      and "LATEST-PASS-REPORT" in wait[1] and "still-running" not in wait[1]
+      and clock.elapsed - after_watch > Clock.bound,
+      "watch at %s; wait at %s; bound %s simulated seconds" % (after_watch, clock.elapsed, Clock.bound))
+
+seed([opened, spawned])
+if not codex:
+    transcript = root / "projects" / core.dashed(str(root)) / (session + ".jsonl")
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(json.dumps({"type": "assistant", "message": {
+        "content": [{"type": "text", "text": "ORPHAN-REPORT"}], "usage": {}}}) + "\n")
+with patch.object(core, "pid_alive", return_value=False):
+    result = invoke("wait", Clock())
+rows = core.load_record(str(record))
+if codex:
+    check("orphaned wrapper named without writes", result[0] == 3
+          and "orphaned:" in result[1] and "wrapper pid" in result[1] and rows == [opened, spawned])
+else:
+    check("legacy orphan requires explicit reconciliation without a close", result[0] == 3
+          and "orphaned:" in result[1] and "explicit head reconciliation" in result[1]
+          and rows == [opened, spawned])
+
+if not codex:
+    seed([opened, spawned])
+    with patch.object(core, "silence_of", return_value=(2, "silent", 1)), \
+            patch.object(core, "kill_pid_group", side_effect=lambda pid: append(close("stall"))) as kill:
+        result = invoke("wait", Clock(), ("--silence-s", "1"))
+    check("E3 legacy silence requests explicit intervention without signalling", result[0] == 3
+          and kill.call_count == 0 and "explicit head stop required" in result[1]
+          and any(row.get("event") == "stall" for row in core.load_record(str(record))))
+
+# Subcommand help itself names the fresh hand-off and the two exceptions.
+with patch.object(sys, "argv", [str(source), "resume", "--help"]), \
+        contextlib.redirect_stdout(io.StringIO()) as help_output:
+    try:
+        module.main()
+    except SystemExit as exc:
+        assert exc.code == 0
+help_text = " ".join(help_output.getvalue().split())
+policy = ("fresh helper", "compact hand-off", "usage limit", "on disk and checked", "panel's round 2")
+check("resume help names fresh helper and both exceptions", help_text.startswith("usage:")
+      and "--brief BRIEF" in help_text and all(word in help_text for word in policy))
+if not codex:
+    seed([opened, spawned, close()])
+    args = module.build_parser().parse_args(["advise", "--run", base["run"], "--lane", base["lane"],
+                                           "--record", str(record)])
+    with contextlib.redirect_stdout(io.StringIO()) as advice:
+        code = module.cmd_advise(args)
+    text = advice.getvalue()
+    check("completed advice: fresh helper, compact hand-off, both exceptions", code == 0
+          and text.startswith("advise: restart") and all(word in text for word in policy)
+          and all(word in text for word in ("report's path", "findings to fold", "held files", "must not change"))
+          and "inside its window for a follow-up" not in text)
+
+# Last legs: actual CLI calls on a read-only copy; no mock can hide a write here.
+readonly = root / "readonly"
+readonly.mkdir()
+for path in {source, source.with_name("lane.py")}:
+    shutil.copy2(path, readonly / path.name)
+copied_report = readonly / "report.md"
+shutil.copy2(report, copied_report)
+copied_record = readonly / "record.jsonl"
+copied_record.write_text("".join(json.dumps(row) + "\n" for row in [opened, spawned, close(path=copied_report)]))
+def manifest():
+    return {str(path.relative_to(readonly)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in readonly.rglob("*") if path.is_file()}
+before = manifest()
+for path in readonly.iterdir():
+    path.chmod(0o444)
+readonly.chmod(0o555)
+result = subprocess.run([sys.executable, "-B", str(readonly / source.name), "wait", "--run", base["run"],
+                         "--lane", base["lane"], "--record", str(copied_record), "--appear-s", "0", "--format", "json"],
+                        capture_output=True, text=True, timeout=10)  # ceiling set by judgement, unmeasured
+payload = json.loads(result.stdout)
+check("read-only copy: zero checksum changes", result.returncode == 2 and bool(before)
+      and before == manifest() and (payload if codex else payload["close"])["exit_class"] == "completed",
+      "%d files" % len(before))
+copied_record.chmod(0o644)
+with copied_record.open("a") as handle:
+    handle.write("\n")
+check("checksum positive control catches planted byte", before != manifest())
+pattern = re.compile(r'\b(?:write_atomic|append_record|write_text|write_bytes|unlink|remove|rename|replace|mkdir|makedirs|rmdir|rmtree|copyfile)\(|open\([^\n]*,[ ]*[\"\x27][wax]')
+check("new wait entry point write-source grep zero", not pattern.search(inspect.getsource(module.cmd_wait))
+      and bool(pattern.search('append_record(path, row)')) and bool(pattern.search('open(path, "w")'))
+      and not pattern.search('load_record(path)'))
+WAIT_SUITE_END
+WAIT_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) ok "${line#OK }" ;;
+    'BAD '*) no "${line#BAD }" ;;
+    *) printf '%s\n' "$line" ;;
+  esac
+done < "$F/wait-cases.log"
+if [ "$WAIT_RC" != 0 ]; then no "PROBE FAILED: wait suite exited $WAIT_RC"; fi
+
+# G1 · a pass with a confirmed fallback is void (register 2026-10-21 16:46 d): no display shows its
+# report, and its successor inherits its write folders only where the pass left them as they were.
+G1USAGE='{"claude-opus-4-8": {"outputTokens": 9}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}'
+G1REC="$F/rec-g1.jsonl"
+for g1dir in g1-clean g1-dirty; do
+  mkdir -p "$F/$g1dir"; printf 'before\n' > "$F/$g1dir/kept.txt"
+  touch -t 202601010101 "$F/$g1dir/kept.txt" "$F/$g1dir"
+done
+sleep 2   # a folder's change time cannot be set back, so each pass must begin after these writes (the check reads ctime too)
+g1spawn(){ # lane, write folder, more flags: a sonnet lane answered by an opus id, the probe confirming it
+  g1lane=$1; g1write=$2; shift 2
+  env STUB_TOUCH="${G1TOUCH:-}" STUB_MODEL_USAGE="$G1USAGE" STUB_REPORT=G1-FALLEN-BACK-TEXT AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/$g1lane.swap" \
+    $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+    --run run-test-g1 --lane "$g1lane" --class verifier --grant "$F/granted" --write "$g1write" --model sonnet \
+    --choice-reason 'closed one-leg task' --record "$G1REC" --reason '(a) a fallen-back lane' "$@" >"$F/$g1lane.out" 2>"$F/$g1lane.err"
+}
+g1disp(){ "$PY" - "$G1REC" "$1" <<'G1_DISP_END'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+close = [r for r in rows if r.get("lane") == sys.argv[2] and r.get("event") == "lane-closed"][-1]
+disposition = close.get("disposition") or {}
+print(disposition.get("phase"), disposition.get("decision"), close.get("pass_id"))
+G1_DISP_END
+}
+g1spawn G1A "$F/g1-clean"; RC=$?
+G1V=$(g1disp G1A)
+if [ "$RC" = 0 ] && [ "${G1V% *}" = "resolved moved" ] && grep -q "$FR/g1-clean" "$F/G1A.swap" \
+   && grep -q '^report void: a confirmed fallback ran this pass, so nothing it produced is kept; the continuation is lane G1A-codex-' "$F/G1A.out" \
+   && grep -q "report: $SR/run-test-g1-report-G1A-codex-" "$F/G1A.out" && ! grep -q 'G1-FALLEN-BACK-TEXT' "$F/G1A.out"; then
+  ok "G101 a confirmed fallback that left its write folder alone moves at once, and its close shows the void line and the continuation's report, never its own"
+else no "G101 the clean move  [exit $RC: $G1V; $(grep -m1 -E 'report void|G1-FALLEN' "$F/G1A.out" | cut -c1-200)]"; fi
+G1TOUCH="$F/g1-dirty/out.txt"; g1spawn G1B "$F/g1-dirty"; RC=$?; G1TOUCH=""
+G1V=$(g1disp G1B); G1PASS=${G1V##* }
+if [ "$RC" = 3 ] && [ "${G1V% *}" = "awaiting-head None" ] && [ ! -e "$F/G1B.swap" ] \
+   && grep -q 'a confirmed fallback may have changed its write folders (2 path(s), first .*out.txt)' "$F/G1B.out" \
+   && grep -q 'no continuation has started' "$F/G1B.out" && ! grep -q 'G1-FALLEN-BACK-TEXT' "$F/G1B.out"; then
+  ok "G102 a confirmed fallback that wrote into its write folder starts no successor: it waits for the head, naming what changed"
+else no "G102 the held move  [exit $RC: $G1V; swap $([ -e "$F/G1B.swap" ] && echo started || echo none)]"; fi
+G1R=$($LANEV "$PY" "$LANE" recover --run run-test-g1 --lane G1B --record "$G1REC" --pass "$G1PASS" 2>&1)
+if printf '%s' "$G1R" | grep -q '^report void: ' && ! printf '%s' "$G1R" | grep -q 'G1-FALLEN-BACK-TEXT' \
+   && printf '%s' "$G1R" | grep -q 'allowed decisions: hold, recovered, move' \
+   && grep -q 'G1-FALLEN-BACK-TEXT' "$SR/run-test-g1-report-G1B.md"; then
+  ok "G103 recover's text display prints the void line and not the void report, which stays on disk, and offers the head the move"
+else no "G103 the void display  [$(printf '%s' "$G1R" | tail -3 | tr '\n' '|' | cut -c1-300)]"; fi
+env AIMYTH_SWAP_CMD="$BIN/swap-stub.sh" AIMYTH_SWAP_ARGV="$F/G1B-move.swap" $LANEV "$PY" "$LANE" recover --run run-test-g1 --lane G1B \
+  --record "$G1REC" --pass "$G1PASS" --decision move --reason 'the head restored the folder' >"$F/G1B-move.out" 2>&1
+G1M=$($LANEV "$PY" "$LANE" recover --run run-test-g1 --lane G1B --record "$G1REC" --pass "$G1PASS" 2>&1)
+if grep -q "$FR/g1-dirty" "$F/G1B-move.swap" && printf '%s' "$G1M" | grep -q 'the continuation is lane G1B-codex-' \
+   && ! printf '%s' "$G1M" | grep -q 'G1-FALLEN-BACK-TEXT'; then
+  ok "G104 the head's own recover --decision move starts the successor, and recover then names the continuation's report"
+else no "G104 the head's move  [$(tail -2 "$F/G1B-move.out" | tr '\n' '|' | cut -c1-300)]"; fi
+env STUB_REPORT=G1-PLAIN-TEXT $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+  --run run-test-g1 --lane G1C --class verifier --grant "$F/granted" --record "$G1REC" --reason '(a) a plain lane' >"$F/G1C.out" 2>"$F/G1C.err"
+G1V=$(g1disp G1C)
+G1P=$($LANEV "$PY" "$LANE" recover --run run-test-g1 --lane G1C --record "$G1REC" --pass "${G1V##* }" 2>&1)
+if printf '%s' "$G1P" | grep -q 'G1-PLAIN-TEXT' && ! printf '%s' "$G1P" | grep -q 'report void' && grep -q 'G1-PLAIN-TEXT' "$F/G1C.out"; then
+  ok "G105 a pass with no fallback still shows its report at its close and through recover (control for G101 and G103)"
+else no "G105 the plain pass  [$(printf '%s' "$G1P" | tail -2 | tr '\n' '|' | cut -c1-300)]"; fi
+g1spawn G1D "$F/g1-clean" --format json; RC=$?
+G1J=$("$PY" -c 'import json,sys; v=json.load(open(sys.argv[1])); print(v["report_text"] == "", v["report_path"], str(v["report_void"]).startswith("report void:"))' "$F/G1D.out" 2>&1)
+if [ "$RC" = 0 ] && [ "$G1J" = "True None True" ]; then
+  ok "G106 the close's JSON form carries the void line, no report text and no report path"
+else no "G106 the JSON close  [exit $RC: $(printf '%s' "$G1J" | tail -1 | cut -c1-200)]"; fi
+G1W=$("$PY" - "$LANE" "$F/g1-unit" <<'G1_UNIT_END'
+import importlib.util, os, sys, time
+spec = importlib.util.spec_from_file_location("lane", sys.argv[1])
+lane = importlib.util.module_from_spec(spec)
+sys.modules["lane"] = lane
+spec.loader.exec_module(lane)
+root = sys.argv[2]
+os.makedirs(os.path.join(root, "sub"))
+old = time.time() - 3600
+def stamp(*paths):
+    for path in paths:
+        os.utime(path, (old, old))
+def begin():
+    time.sleep(1.1)                              # a change time cannot be set back, so each case's pass starts after the writes before it
+    return lane.now()
+keep, gone = os.path.join(root, "sub", "keep"), os.path.join(root, "sub", "gone")
+open(keep, "w").close()
+stamp(keep, os.path.join(root, "sub"), root)
+began = begin()
+journal = {"created": began, "start": {"writes": [root]}, "report": None}
+calm = lane.a3_fallback_writes(journal)
+journal_none = lane.a3_fallback_writes({"created": began, "start": {"writes": []}})
+open(gone, "w").close(); stamp(gone, os.path.join(root, "sub"))
+os.unlink(gone)                                  # a removal: only the directory's time shows it
+removed = lane.a3_fallback_writes(journal)
+report = os.path.join(root, "report.md")
+open(report, "w").close(); stamp(report, root)
+later = begin()
+with open(report, "w") as handle:                # the pass's own report, rewritten in place
+    handle.write("x")
+own = lane.a3_fallback_writes(dict(journal, created=later, report=report))
+later = begin()
+with open(keep, "w") as handle:                  # a write that keeps its old modified time
+    handle.write("y")
+stamp(keep)
+kept = lane.a3_fallback_writes(dict(journal, created=later))
+os.unlink(report)
+absent = lane.a3_fallback_writes({"created": began, "start": {"writes": [root + "-absent"]}})
+lane.A3_WRITE_SCAN_LIMIT = 1
+limit = lane.a3_fallback_writes(journal)
+unread = lane.a3_fallback_writes({"created": "not a time", "start": {"writes": [root]}})
+print(calm == ([], None), journal_none == ([], None), removed == ([os.path.join(root, "sub")], None), own == ([], None),
+      absent == ([root + "-absent"], None), "more than 1 entries" in str(limit[1]), "unreadable" in str(unread[1]), kept == ([keep], None))
+G1_UNIT_END
+)
+if [ "$G1W" = "True True True True True True True True" ]; then
+  ok "G107 the write check reads a removal from its directory, a missing grant as changed, a write that kept its old time as changed and the pass's own report as nothing, and says when it cannot finish (control: an untouched tree reads clean)"
+else no "G107 the write check  [$G1W]"; fi
+
+# Fix (c): public terminal evidence, recovery and preserved A3 ownership.
+"$PY" -B "$HERE/test_fix_c.py" --wrappers "$HERE" --fixture-root "$F" --part claude > "$F/fix-c.log" 2>&1
+FIXC_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) ok "${line#OK }" ;;
+    'BAD '*) no "${line#BAD }" ;;
+    'PROBE FAILED:'*) no "$line" ;;
+  esac
+done < "$F/fix-c.log"
+if [ "$FIXC_RC" != 0 ] && ! grep -q '^BAD ' "$F/fix-c.log"; then
+  no "fix (c) harness failed: $(tail -3 "$F/fix-c.log")"
+fi
+
+# G22 · `--leg` on the filter's own lines, cut from this file into a three-leg script, so the real
+# helpers run and no leg re-runs this suite. A stale cut would fail here, never pass (register
+# 2026-10-13 14:13). Its source grep control: the cut must hold both markers' helpers.
+sed -n '/^# LEG-FILTER-BEGIN/,/^# LEG-FILTER-END/p' "$0" > "$F/leg-filter.part"
+{ printf '#!/bin/sh\nset -u\nLEG="${1:-}"\n'; cat "$F/leg-filter.part"
+  printf '%s\n' 'echo ran-first; ok "ALPHA one"' 'echo ran-second; ok "BETA two"' 'echo ran-third; ok "ALPHA three"' \
+                 'echo ran-fourth; [ -z "${LEG_PLANT:-}" ] || no "worded apart"' 'echo ran-last; ok "OMEGA four"; suite_total'
+} > "$F/leg-fixture.sh"
+if [ "$(grep -c '^suite_total()\|^leg_shown()' "$F/leg-filter.part")" = 2 ]; then
+  ok "G22-01 the filter's helpers are cut from this file whole (control: both are in the cut)"
+else no "G22-01 the filter's cut  [$(grep -c '' "$F/leg-filter.part") lines]"; fi
+LGA=$(/bin/sh "$F/leg-fixture.sh" ALPHA 2>&1); RC=$?
+if [ "$RC" = 0 ] && [ "$(printf '%s\n' "$LGA" | tail -1)" = "PASS 2/2" ] && ! printf '%s' "$LGA" | grep -q 'BETA' \
+   && printf '%s' "$LGA" | grep -q 'ran-third' && ! printf '%s' "$LGA" | grep -q 'ran-fourth'; then
+  ok "G22-02 --leg counts and shows only the legs naming its text, runs what comes before them, and ends after the last the source names"
+else no "G22-02 the named legs  [exit $RC: $(printf '%s' "$LGA" | tr '\n' '|')]"; fi
+LGM=$(/bin/sh "$F/leg-fixture.sh" 'NOT-A-LEG' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$LGM" | grep -q "^PROBE FAILED: no leg named 'NOT-A-LEG'" && printf '%s' "$LGM" | grep -q 'ran-last'; then
+  ok "G22-03 a text no leg holds runs to the end and says PROBE FAILED with exit 2, never a clean result"
+else no "G22-03 the unmatched text  [exit $RC: $(printf '%s' "$LGM" | tr '\n' '|')]"; fi
+LGF=$(env LEG_PLANT=1 /bin/sh "$F/leg-fixture.sh" OMEGA 2>&1); RC=$?
+if [ "$RC" = 1 ] && [ "$(printf '%s\n' "$LGF" | tail -1)" = "FAIL 1/2" ] && printf '%s' "$LGF" | grep -q 'FAIL   — worded apart'; then
+  ok "G22-04 a failed leg shows and counts even when its wording holds no filter text, so a filter cannot turn a failure into a pass"
+else no "G22-04 the planted failure  [exit $RC: $(printf '%s' "$LGF" | tr '\n' '|')]"; fi
+LGN=$(/bin/sh "$F/leg-fixture.sh" 2>&1); RC=$?
+if [ "$RC" = 0 ] && [ "$(printf '%s\n' "$LGN" | tail -1)" = "PASS 4/4" ]; then
+  ok "G22-05 with no --leg every leg counts, as it always has (control for G22-02)"
+else no "G22-05 the unfiltered fixture  [exit $RC: $(printf '%s' "$LGN" | tr '\n' '|')]"; fi
+
+suite_total

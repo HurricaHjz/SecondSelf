@@ -1,5 +1,61 @@
 {
   "schema": 2,
+  "rules": [
+    {
+      "from": "this table",
+      "layer": "core",
+      "text": "The `rules` block has two halves: these shipped rows, and a user's own rows in `.claude/routing.local.json`, which follow them, and a user's row wins where the two disagree on the same point, so read both files before a seat pick. That file's `classes` entries merge over this table's rows through `routing_layers.py`, so read a class through `throttle.py resolve`, not from this file alone."
+    },
+    {
+      "from": "Compute posture",
+      "layer": "core",
+      "text": "Every routing-table update keeps the current model round's experience reusable for the next (stable task kinds and seat tests apart from the dated model mapping, with a per-generation changelog)."
+    },
+    {
+      "from": "Routing and rounds",
+      "layer": "core",
+      "text": "xhigh is the default for most work, and important, long-chain, essential or hard work takes max, with its reason given; the rule is not rigid (owner, 2 and 3 October 2026)."
+    },
+    {
+      "from": "Routing and rounds",
+      "layer": "core",
+      "text": "A reviewing seat takes the other model family from the author by default, a soft rule that never outranks performance, efficiency, effectiveness, limits (a family at its limit now, never one expected to reach it) or the owner's explicit word."
+    },
+    {
+      "from": "delegate skill §2",
+      "layer": "core",
+      "text": "The test, applied to the task in hand: a closed and precise brief → the anchor (`xhigh` for the closed-task classes builder, verifier, wiki-compile, memory-hunter and planner), or `high` for a closed one-leg task; on opus `max` only after an `xhigh` attempt failed, or for a genuinely hard or very extensive task, because max is slow and costly (owner ruling 2026-09-22 19:0x BST, which moved the `critic` and `reflector` Claude-half anchors from `max` to `xhigh`: `max` for a framework-changing or extensive review, `xhigh` for a narrow second pass); `gate-judge` is fixed at the executor's default tier."
+    },
+    {
+      "from": "delegate skill §2",
+      "layer": "core",
+      "text": "A model below the anchor only where the instructions are clear and a mistake is unlikely; `gate-judge` none, since a gate measures the routed step at its default tier and a second gate lane is a fresh spawn, never a resume."
+    },
+    {
+      "class": "builder",
+      "from": ".claude/agents/builder.md",
+      "layer": "core",
+      "text": "opus (Opus 5.5) by default for every build, the closed-work model; xhigh the anchor, max only after a failed xhigh attempt or for a genuinely hard or very extensive build; sonnet per call under the delegate skill §2 test, the reason recorded (owner ruling 2026-11-01)."
+    },
+    {
+      "class": "memory-hunter",
+      "from": ".claude/agents/memory-hunter.md",
+      "layer": "core",
+      "text": "per call: opus whenever relevance needs judgement, sonnet only for a closed one-leg lookup with the reason recorded (delegate skill §2 rule of 2026-09-06); the default is opus (Opus 5.5) at xhigh."
+    },
+    {
+      "class": "verifier",
+      "from": ".claude/agents/verifier.md",
+      "layer": "core",
+      "text": "per call: opus whenever the claims may need reasoning rather than lookup, a lower model only for a closed mechanical list with the reason recorded; verification is closed work, so opus (Opus 5.5) at xhigh, max only after a failed xhigh or for a genuinely hard or very extensive claim list (delegate skill §2 rules of 2026-09-06 and 2026-09-22)."
+    },
+    {
+      "class": "wiki-compile",
+      "from": ".claude/agents/wiki-compile.md",
+      "layer": "core",
+      "text": "opus (Opus 5.5) by default for every compile, the closed-work model (sonnet per call under the delegate skill §2 test, the reason recorded; owner ruling 2026-11-01), at xhigh, max only after a failed xhigh or for a genuinely hard or very extensive paper."
+    }
+  ],
   "order": {
     "model": [
       "haiku",
@@ -22,6 +78,7 @@
   },
   "classes": {
     "verifier": {
+      "layer": "core",
       "model": {
         "options": [
           "sonnet",
@@ -72,6 +129,7 @@
       "dated": "Defaults are release configuration; record local changes with their evidence."
     },
     "memory-hunter": {
+      "layer": "core",
       "model": {
         "options": [
           "sonnet",
@@ -95,15 +153,11 @@
           "raw"
         ]
       },
-      "writes": [
-        "<memory dir>"
-      ],
+      "writes": [],
       "tools": [
         "Read",
         "Grep",
-        "Glob",
-        "Write",
-        "Edit"
+        "Glob"
       ],
       "skills": {
         "default": [
@@ -120,6 +174,7 @@
       "dated": "Defaults are release configuration; record local changes with their evidence."
     },
     "wiki-compile": {
+      "layer": "core",
       "model": {
         "options": [
           "sonnet",
@@ -175,6 +230,7 @@
       "dated": "Defaults are release configuration; record local changes with their evidence."
     },
     "builder": {
+      "layer": "core",
       "model": {
         "options": [
           "sonnet",
@@ -224,10 +280,10 @@
       "dated": "Defaults are release configuration; record local changes with their evidence."
     },
     "writer": {
+      "layer": "core",
       "model": {
         "options": [
-          "opus",
-          "fable"
+          "opus"
         ],
         "default": "opus"
       },
@@ -249,12 +305,11 @@
           "effort": {
             "options": [
               "xhigh",
-              "max",
-              "ultra"
+              "max"
             ],
             "default": "xhigh"
           },
-          "note": "the Codex half, the default writer, spawned through codex-lane.py (which the throttle does not resolve; every pick carries --choice-reason); ultra only for a seat where extreme performance is needed, the reason recorded"
+          "note": "the Codex half, taken only on the owner's word per paper (opus is the default writer; owner, A1 ruling 2026-10-04), spawned through codex-lane.py (which the throttle does not resolve; every pick carries --choice-reason); ultra retired, opus at max being the top step for every seat, on the owner's answer of 2 November 2026"
         }
       },
       "grants": {
@@ -291,6 +346,7 @@
       "dated": "Defaults are release configuration; record local changes with their evidence."
     },
     "critic": {
+      "layer": "core",
       "model": {
         "options": [
           "opus"
@@ -345,16 +401,16 @@
           "effort": {
             "options": [
               "xhigh",
-              "max",
-              "ultra"
+              "max"
             ],
             "default": "max"
           },
-          "note": "the Codex half of the critic, admitted by the owner ruling of 2026-09-22 19:0x: the seat for open work, a review whose verdict turns on judgement about a framework change, a design or a plan (since the owner ruling of 2026-09-29 a deciding review may equally sit on the Claude half, opus 5.5, the rule that a deciding seat is fable or Astra being superseded); spawned through codex-lane.py with --class critic and --stage-from the artefact copy (the throttle does not resolve it; every pick carries --choice-reason); read-only; ultra only for a seat where extreme performance is needed, the reason recorded; the Claude half serves closed reviews, a build against a written spec or a claim list"
+          "note": "the Codex half of the critic, admitted by the owner ruling of 2026-09-22 19:0x; since the owner ruling of 2026-10-23 a review of open work (a framework change, a design or a plan) sits on the Claude half, opus 5.5, and this half serves a closed review of opus-built work by the family rule, and ultra is retired, opus at max being the top step for every seat, on the owner's answer of 2 November 2026; spawned through codex-lane.py with --class critic and --stage-from the artefact copy (the throttle does not resolve it; every pick carries --choice-reason); read-only; the Claude half serves closed reviews, a build against a written spec or a claim list"
         }
       }
     },
     "planner": {
+      "layer": "core",
       "model": {
         "options": [
           "opus"
@@ -381,7 +437,9 @@
       "tools": [
         "Read",
         "Grep",
-        "Glob"
+        "Glob",
+        "Write",
+        "Edit"
       ],
       "skills": {
         "default": [
@@ -411,11 +469,12 @@
             ],
             "default": "max"
           },
-          "note": "the Codex half of the planner, admitted by the owner ruling of 2026-09-22 19:0x: hard decomposition or framework-critical planning is open work and takes Astra through codex-lane.py with --class planner (the throttle does not resolve it; every pick carries --choice-reason); its output stays a proposal"
+          "note": "the Codex half of the planner, admitted by the owner ruling of 2026-09-22 19:0x: since the owner ruling of 2026-10-23 hard decomposition or framework-critical planning is open work and takes opus 5.5, this half staying for a pick the evidence favours, through codex-lane.py with --class planner (the throttle does not resolve it; every pick carries --choice-reason); its output stays a proposal"
         }
       }
     },
     "reflector": {
+      "layer": "core",
       "model": {
         "options": [
           "opus"
@@ -479,6 +538,7 @@
       }
     },
     "gate-judge": {
+      "layer": "core",
       "model": {
         "options": [
           "opus"

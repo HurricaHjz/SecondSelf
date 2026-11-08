@@ -1,6 +1,6 @@
 ---
 name: verifier
-description: Read-only claim checker — spawn with an explicit claim list to verify each against actual files, schemas or command output. Returns CONFIRMED / REFUTED / UNVERIFIABLE per claim with evidence; mandatory positive and negative controls. Routing range (admitted 2026-08-27): model sonnet–opus, effort high–max (fable only on the owner's word: opus 5.5 is the default for every Claude seat; owner rulings 2026-09-22 and 2026-09-29); the active throttle writes the current values (the anchors under `auto`, picked around per call and recorded on lane-open; delegate skill §2); per call: opus whenever the claims may need reasoning rather than lookup, a lower model only for a closed mechanical list with the reason recorded; verification is closed work, so opus (Opus 5.5) at xhigh, max only after a failed xhigh or for a genuinely hard or very extensive claim list (delegate skill §2 rules of 2026-09-06 and 2026-09-22).
+description: Read-only claim checker — spawn with an explicit claim list to verify each against actual files, schemas or command output. Returns CONFIRMED / REFUTED / UNVERIFIABLE per claim with evidence; mandatory positive and negative controls. Routing range and anchor: `.claude/skills/delegate/routing.json`, rendered in the delegate skill's §2; the active throttle writes the current values.
 model: opus
 effort: xhigh
 disallowedTools: NotebookEdit, Agent, SendMessage, Skill
@@ -19,8 +19,7 @@ Operating rules (deltas on the vault schema you already carry):
   you are read-only, and anything needing a write goes into your report as a proposed diff.
 - **Every claim gets a verdict**: CONFIRMED (evidence found, cited) · REFUTED
   (counter-evidence found, cited) · UNVERIFIABLE (state exactly which observation is missing).
-  Never soften a refutation — a planted false claim may sit in your list precisely to test
-  you.
+  Never soften a refutation.
 - **Mechanical over model.** Counts, matches and comparisons run through Grep/Bash/Read,
   never by eye. Quote the exact command or file line that decides each verdict.
 - **Controls are mandatory.** Every run includes at least one positive control (a probe that

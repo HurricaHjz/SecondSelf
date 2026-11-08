@@ -5,7 +5,8 @@ granted directories and no vault contract in its context. In-session lanes, whic
 `CLAUDE.md`, keep `_inherited.md`.
 
 The wrapper (`lane.py`) injects the block below once per spawn through a system-prompt append; a headless brief never pastes
-it, so it is never paid for twice. Shared lane text lives ONLY here; the prefills carry role deltas.
+it, so it is never paid for twice. This file is the one source for shared lane text: `_inherited.md`
+renders its conduct for in-session lanes, and the prefills carry role deltas.
 
 ```
 LANE CORE
@@ -14,8 +15,8 @@ slices, and `contract/` — the governing text your task needs, granted as files
 inherited. Two slices sit there, and you never restate their content from memory:
 - `contract/schema-s4.md` — the wiki page schema. Frontmatter fields and their values, naming
   conventions, the required sections per page type, the no-orphan and no-silent-overwrite rules,
-  and the confidence ordinal every page carries.
-- `contract/confidence-rubric.md` — the full rubric behind that ordinal, with the caps (present where the vault holds the rubric page; a fresh clone lacks it, and the schema slice's section 4.6 governs).
+  the confidence ordinal every page carries, and the dated owner notes (section 4.7).
+- `contract/confidence-rubric.md` — the grading guide: how the schema slice's section 4.6 is applied, with worked cases; section 4.6 settles every grade on its own and governs (the guide is present where the vault holds its page; a fresh clone lacks it).
 Read the slice your task needs. A rule you need that is in neither the slices, your skill nor your
 brief is a gap to report (GAPS below), never something to infer from what the vault probably says.
 
@@ -56,7 +57,8 @@ WHAT YOU MAY WRITE ABOUT WHAT YOU HAVE NOT READ
 CONTROLS
 Any check you report clean carries its positive control on the same run: the probe hitting a case
 you know is there, or a non-zero count on a control pattern. Where your brief defines a negative
-control, run it and report it. Never put `2>/dev/null` on a verification probe — it has hidden a
+control, run it and report it; your brief's named controls run as a separate first step before the
+task and are reported apart from your results. Never put `2>/dev/null` on a verification probe — it has hidden a
 scan that searched nothing and reported clean. A zero-hit probe shortly after a crash, or across
 concurrent writers, is a claim rather than a fact: retry once before recording it. If you are
 resumed after an interruption, re-verify your prior work against disk — content, not just
@@ -77,6 +79,11 @@ rewritten scope — costs more than the re-spawn it avoids, and a refused tool c
 transcript is a re-brief signal, not a finding. Reporting a gap is not a failure.
 
 SHELL
+- Write every program path and write path literally (owner decision 2026-10-05, option B).
+  Never hold a path in a shell variable for a program or a write, a local scp or rsync
+  destination included: the fence refuses it. A plain read such as `ls "$S/x"` passes.
+  Runbooks and head briefs give literal absolute paths in every command; the filled brief
+  supplies the paths for that run.
 - A piped exit code reports the last stage only. Drop the pipe where the exit code is the
   verification, or read the pipe array: `$pipestatus` (lowercase) in zsh, `PIPESTATUS` in bash and
   `sh` scripts — the other is empty in each.
@@ -117,7 +124,8 @@ SHELL
 WRITING
 Wiki prose is never hard-wrapped: one line per paragraph, list item or quote, because the renderer
 breaks on every newline (schema §1 line discipline). Frontmatter carries values only — no run id, lane
-id or evidence in a comment; evidence goes in your report. UK spelling on every page.
+id or evidence in a comment (a `confidence:` ground is a reason, not evidence); evidence goes in your
+report. UK spelling on every page.
 
 REPORT
 No restatement of what a file you wrote already holds: give the verdict, the

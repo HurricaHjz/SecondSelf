@@ -4,8 +4,8 @@
 # Run:  sh test_handsoff.sh                       (from beside handsoff.py)
 #       HANDSOFF=<path to handsoff.py> sh test_handsoff.sh
 #
-# Every fixture lives in a fresh directory under /tmp — never TMPDIR, which on this platform
-# points at a per-user root outside the temp directory a lane is granted — and is removed on
+# Every fixture lives in a fresh directory under AIMYTH_TEST_SCRATCH_ROOT (default /tmp),
+# explicitly set to a granted directory in a restricted lane, and is removed on
 # exit; HANDSOFF_KEEP=1 keeps it for a post-mortem. The suite writes nothing anywhere else,
 # and the last three legs are the proof: a checksum manifest of the shipped skill directory
 # and of the hooks directory taken before the legs and again after, that manifest's own
@@ -17,7 +17,21 @@
 # missing table, an armed band crossing, a second unmetered gate, a duplicate successor).
 #
 # The last line is PASS n/n or FAIL k/n; the exit code is 0 only when every leg passed.
+#
+# `sh test_handsoff.sh --leg TEXT` runs only the sections whose banner or verdict line holds TEXT,
+# as a fixed string, then the write proof (register entry 2026-10-13 14:13, the filter third). A
+# section may lean on one above it, so a filtered run is for iterating on a change and the whole
+# suite stays the verdict on it. A TEXT no section holds is PROBE FAILED, exit 2, never clean.
 set -u
+
+ONLY_LEG=""
+if [ $# -gt 0 ]; then
+  if [ "$1" != "--leg" ] || [ $# -ne 2 ] || [ -z "$2" ]; then
+    printf 'PROBE FAILED: the only argument is --leg TEXT, a fixed string of a leg name\n' >&2
+    exit 2
+  fi
+  ONLY_LEG=$2
+fi
 
 PY=${PYTHON:-python3}
 SRC=$0
@@ -29,6 +43,10 @@ command -v "$PY" >/dev/null || die "no python3 on PATH"
 command -v git >/dev/null || die "no git on PATH: the checkpoint-commit legs cannot run"
 [ -f "$H" ] || die "no handsoff.py at $H (pass HANDSOFF=<path>)"
 SKILL_DIR=$(cd "$(dirname "$H")" && pwd) || die "cannot resolve the directory of $H"
+# The handsoff path, resolved once to an absolute one: a stub head calls it from a fixture's own
+# working directory, so a path given relative (the suite started from beside the file, where $H
+# is ./handsoff.py) must never reach a leg.
+H="$SKILL_DIR/$(basename "$H")"
 # A staged copy names the shipped modules: HOOKS_DIR (context-watermark.py) and LANE_PY (the
 # lane wrapper, imported for its classifier); beside the vault's script tree both default.
 HOOKS_DIR=${HOOKS_DIR:-$(cd "$SKILL_DIR/../../hooks" 2>&1 && pwd)}
@@ -38,18 +56,32 @@ LANE_PY=${LANE_PY:-$SKILL_DIR/lane.py}
 export AIMYTH_HOOKS_DIR="$HOOKS_DIR"
 export AIMYTH_LANE_PY="$LANE_PY"
 
-WORK=$(mktemp -d /tmp/handsoff-suite.XXXXXX) || die "cannot make a temp directory under /tmp"
+# Retain the /tmp default while allowing an explicitly granted scratch root. Keep that root
+# outside SKILL_DIR and HOOKS_DIR so the source manifests do not include changing fixtures.
+case ${AIMYTH_TEST_SCRATCH_ROOT:-/tmp} in
+  /*) : ;;
+  *) die "AIMYTH_TEST_SCRATCH_ROOT must be absolute" ;;
+esac
+WORK=$(mktemp -d "${AIMYTH_TEST_SCRATCH_ROOT:-/tmp}/handsoff-suite.XXXXXX") || die "cannot make a temp directory under the scratch root"
 case $WORK in
-  /tmp/*|/private/tmp/*) : ;;
-  *) die "the temp directory $WORK is not under /tmp" ;;
+  "${AIMYTH_TEST_SCRATCH_ROOT:-/tmp}"/handsoff-suite.*) : ;;
+  *) die "the temp directory $WORK is not under the scratch root" ;;
 esac
 cleanup() { [ "${HANDSOFF_KEEP:-0}" = "1" ] || rm -rf "$WORK"; }
-trap cleanup EXIT INT TERM
+# EXIT runs the cleanup; INT and TERM end the run there, non-zero (128 + the signal), so a stopped
+# run never carries on without its temp folder.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # The target must import before anything else is claimed about it; the byte-code file goes to
 # the temp directory, because py_compile ignores -B and the vault takes no __pycache__.
 "$PY" -c 'import py_compile, sys; py_compile.compile(sys.argv[1], cfile=sys.argv[2], doraise=True)' \
       "$H" "$WORK/handsoff.pyc" || die "handsoff.py does not compile"
+# The interpreter as handsoff.py names it in every command it hands on (register entry 2026-09-30
+# 17:36): its own sys.executable, an absolute path, which the suite's legs expect by value.
+PYABS=$("$PY" -c 'import sys; sys.stdout.write(sys.executable)')
+case $PYABS in /*) : ;; *) die "the interpreter's own path is not absolute: '$PYABS'" ;; esac
 
 STORE="$WORK/store"
 PROJECTS="$WORK/projects"
@@ -59,7 +91,68 @@ REMOTE="$WORK/remote.git"
 MK="$WORK/mk.py"
 mkdir -p "$STORE/spawn-records" "$PROJECTS" "$STATE" "$VAULT" "$WORK/handoffs" "$WORK/starter" \
          "$WORK/psclaude" "$WORK/psnone" "$WORK/bin" "$WORK/openbin" "$WORK/openfail" \
-         "$WORK/pgrepslow" "$WORK/psslow" "$WORK/pssplit"
+         "$WORK/pgrepslow" "$WORK/psslow" "$WORK/pssplit" "$WORK/pgrepexit" "$WORK/gitfail" \
+         "$WORK/home" "$WORK/codex-home" "$WORK/claude-config" "$WORK/guard" "$WORK/pstable"
+
+# The real home directory, kept for the read guard below before HOME points at a fixture: the
+# home-directory stores (the Codex home, the harness's projects and configuration, the run store
+# and the hand-off directory) are fixtures for every call, and a read that still reaches a real
+# one is blocked and charged to the last leg (register entry 2026-10-04 10:45: the suites read
+# ~/.codex/sessions, ~/.claude/projects and ~/.claude.json).
+REALHOME=$("$PY" -c 'import os, sys; sys.stdout.write(os.path.realpath(os.path.expanduser("~")))')
+[ -n "$REALHOME" ] || die "the real home directory cannot be read"
+export HOME="$WORK/home"
+export CODEX_HOME="$WORK/codex-home"
+export CLAUDE_CONFIG_DIR="$WORK/claude-config"
+# The read guard: a sitecustomize.py on PYTHONPATH that every python process of the suite loads.
+# Its audit hook blocks (PermissionError) and logs an open, a directory listing or a glob under a
+# real home-directory store; the suite's own tree and the code under test are never under one.
+READ_GUARD_LOG="$WORK/read-guard.log"
+cat > "$WORK/guard/sitecustomize.py" <<'READGUARD'
+"""The suite's read guard (test_handsoff.sh): reads of the real home-directory stores are
+blocked before access and logged, one line each, to READ_GUARD_LOG."""
+import os
+import sys
+
+_ROOTS = [r for r in os.environ.get("READ_GUARD_ROOTS", "").split(os.pathsep) if r]
+_LOG = os.environ.get("READ_GUARD_LOG")
+
+
+def _guard(event, args):
+    if event not in ("open", "os.listdir", "os.scandir", "glob.glob", "os.open"):
+        return
+    target = args[0] if args else None
+    if isinstance(target, bytes):
+        target = target.decode("utf-8", "replace")
+    if not isinstance(target, str) or not target:
+        return
+    full = os.path.abspath(target)
+    for root in _ROOTS:
+        if full == root or full.startswith(root + os.sep):
+            if _LOG:
+                with open(_LOG, "a", encoding="utf-8") as handle:
+                    handle.write("%s %s %s\n" % (event, full, " ".join(sys.argv[:3])[:160]))
+            raise PermissionError("the suite's read guard blocked %s on %s" % (event, full))
+
+
+if _ROOTS and _LOG:
+    sys.addaudithook(_guard)
+READGUARD
+READ_GUARD_ROOTS="$REALHOME/.codex:$REALHOME/.claude:$REALHOME/.claude.json"
+for store_name in .llm-wiki .aimyth; do
+  for sub in spawn-records handoffs; do
+    READ_GUARD_ROOTS="$READ_GUARD_ROOTS:$REALHOME/$store_name/$sub"
+  done
+done
+export READ_GUARD_ROOTS READ_GUARD_LOG
+export PYTHONPATH="$WORK/guard${PYTHONPATH:+:$PYTHONPATH}"
+
+# The suite's own suffix, from its temporary directory's name: the run ids of every leg that
+# plants a console process carry it, so two copies of this suite running at once never see each
+# other's consoles (register entry 2026-09-22 20:28: fixed ids made sibling copies fail each
+# other's console legs).
+SFX=$(basename "$WORK" | sed 's/^handsoff-suite\.//; s/[^A-Za-z0-9]//g')
+[ -n "$SFX" ] || die "no suffix in the temp directory's name $WORK"
 
 # One environment for every call: the run store, the projects root, the arming marker root and
 # the vault are all fixtures, so no call can reach the real store, transcripts or work tree.
@@ -74,6 +167,11 @@ export LLM_WIKI_LANE_HOME="$WORK/lane-home"
 unset AIMYTH_HANDSOFF
 unset AIMYTH_WATERMARK_LOG
 unset AIMYTH_HANDSOFF_RUN
+# A caller's own settings never decide a leg (register entry 2026-10-04 10:45, the environment's
+# half): every knob handsoff.py reads that the suite does not set above is cleared here, and a leg
+# that wants one passes it on its own call. A run's wrapper exports AIMYTH_MAX_SUCCESSORS, and the
+# successor-cap control then read the caller's cap instead of the default.
+unset AIMYTH_MAX_SUCCESSORS AIMYTH_VIEWER AIMYTH_OPEN_BIN AIMYTH_BEAT_BY AIMYTH_BEAT_WRAPPER_DIR
 # The stub head reads these: it is started by the supervisor with the suite's environment.
 SUITE_WORK="$WORK"; SUITE_PY="$PY"; SUITE_MK="$MK"; SUITE_STORE="$STORE"
 export SUITE_WORK SUITE_PY SUITE_MK SUITE_STORE
@@ -235,6 +333,10 @@ def cmd_record(argv):
     ev = {"ts": stamp(base), "run": run, "event": "run-open", "session": session,
           "head": "fixture head", "regime": "multi", "regime_src": "owner",
           "handoff": os.path.realpath(handoff), "detail": "fixture run", "pid_src": "none"}
+    # The run's head model as a structured field (run-open --model), which a successor or a
+    # resume that names no --model inherits; `nomodel` plants a record that names none.
+    if "nomodel" not in argv[5:]:
+        ev["model"], ev["model_src"] = "fixture-model", "arg"
     if envelope != "none":
         ev["envelope_usd"] = float(envelope)
     if len(argv) > 5 and argv[5] == "seed":
@@ -583,6 +685,56 @@ def cmd_srcscan(argv):
     out("hits %d" % hits)
 
 
+def cmd_legs(argv):
+    """`--leg TEXT` as shell text: every function the legs define, then every section whose banner
+    or verdict line holds TEXT, then the write proof and the summary, which always run. A section
+    runs from one `# ---` banner to the next, the first being the one below the manifest; what
+    stands above it has run by then. Prints nothing and exits 2 when no section holds TEXT."""
+    lines, text = read_lines(argv[0]), argv[1]
+    start = next(i for i, line in enumerate(lines)
+                 if line.startswith("mk manifest") and "MANIFEST_BEFORE" in line)
+    banners = [i for i in range(start, len(lines)) if re.match(r"# -{3,}", lines[i])]
+    sections = [lines[a:b] for a, b in zip(banners, banners[1:] + [len(lines)])]
+    always = ("write proof", "summary")
+
+    def named(section):
+        return section[:1] + [x for x in section[1:] if x.lstrip().startswith("verdict ")]
+
+    picked = [s for s in sections if any(text in line for line in named(s))]
+    if not picked:
+        sys.stderr.write("PROBE FAILED: no leg's name holds %r\n" % text)
+        sys.exit(2)
+    functions = []
+    for section in sections:
+        i, heredoc = 0, None
+        while i < len(section):
+            line = section[i]
+            opens = re.search(r"<<-?\s*['\"]?([A-Za-z0-9_]+)", line)
+            if heredoc is not None:
+                heredoc = None if line == heredoc else heredoc
+            elif re.match(r"[A-Za-z_][A-Za-z0-9_]*\(\) *\{", line):
+                end, inner = i, None
+                if not line.rstrip().endswith("; }"):
+                    while inner is not None or section[end] != "}":
+                        starts = re.search(r"<<-?\s*['\"]?([A-Za-z0-9_]+)", section[end])
+                        if inner is not None:
+                            inner = None if section[end] == inner else inner
+                        elif starts:
+                            inner = starts.group(1)
+                        end += 1
+                functions.extend(section[i:end + 1])
+                i = end
+            elif opens:
+                heredoc = opens.group(1)
+            i += 1
+    kept = [s for s in sections if s in picked
+            or any(word in s[0] for word in always)]
+    out("printf 'leg filter: %d of %d section(s) hold the text, and the write proof runs\\n'"
+        % (len(picked), len(sections)))
+    out("\n".join(functions))
+    out("\n".join("\n".join(s) for s in kept))
+
+
 COMMANDS = {"handoff": cmd_handoff, "record": cmd_record, "append": cmd_append,
             "waste": cmd_waste, "transcript": cmd_transcript, "untranscript": cmd_untranscript,
             "pricedscript": cmd_pricedscript,
@@ -590,7 +742,7 @@ COMMANDS = {"handoff": cmd_handoff, "record": cmd_record, "append": cmd_append,
             "row": cmd_row, "section": cmd_section, "bullet": cmd_bullet,
             "manifest": cmd_manifest, "srcscan": cmd_srcscan, "xscript": cmd_xscript,
             "metascript": cmd_metascript, "replayscript": cmd_replayscript,
-            "toolscript": cmd_toolscript, "json": cmd_json}
+            "toolscript": cmd_toolscript, "json": cmd_json, "legs": cmd_legs}
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
@@ -610,7 +762,38 @@ cat > "$WORK/psnone/ps" <<'PSN'
 #!/bin/sh
 exit 1
 PSN
-# The harness stub: reads the resume prompt from standard input, as the real starter feeds it.
+# The process-table stub (the background-task check of `successor`, 2026-10-30): a table built
+# around the real caller. The caller is the stub's parent (handsoff.py) and the caller's parent S
+# is read with the real /bin/ps; the stub answers S's parent as a planted harness pid PSTABLE_H
+# (default 4194301, above any pid this platform issues) named `claude`, and its -A read lists S as
+# a session-leading zsh under that pid, plus, with PSTABLE_TASK=1, one session-leading zsh task
+# running `sleep 600`. It answers the parent walk (-o pid=,ppid=,comm= -p PID) and the table read
+# (-A -o pid=,ppid=,stat=,etime=,args=), nothing else, and logs every call to PSTABLE_LOG.
+cat > "$WORK/pstable/ps" <<'PSTABLE'
+#!/bin/sh
+printf '%s\n' "$*" >> "${PSTABLE_LOG:-/dev/null}"
+me=$PPID
+s=$(/bin/ps -o ppid= -p "$me" | tr -d ' ')
+h=${PSTABLE_H:-4194301}
+if [ "$1" = "-A" ]; then
+  printf '%s 1 Ss 01:00:00 /fixture/bin/claude --print\n' "$h"
+  printf '%s %s Ss 00:01 /bin/zsh -c the call and more\n' "$s" "$h"
+  printf '%s %s S 00:01 python3 handsoff.py successor\n' "$me" "$s"
+  if [ "${PSTABLE_TASK:-0}" = "1" ]; then
+    printf '4194302 %s Ss 12:34 /bin/zsh -c sleep 600; true\n' "$h"
+    printf '4194303 4194302 S 12:34 sleep 600\n'
+  fi
+  exit 0
+fi
+[ "$2" = "pid=,ppid=,comm=" ] || exit 1
+case $4 in
+  "$me") printf '%s %s python3\n' "$me" "$s" ;;
+  "$s") printf '%s %s /bin/zsh\n' "$s" "$h" ;;
+  "$h") printf '%s 1 /fixture/bin/claude\n' "$h" ;;
+  *) exit 1 ;;
+esac
+PSTABLE
+# The harness stub: reads the resume instruction from standard input, as the real starter feeds it.
 cat > "$WORK/bin/harness" <<STUB
 #!/bin/sh
 cat > "$WORK/harness-stdin.txt"
@@ -641,8 +824,56 @@ cat > "$SUITE_WORK/stub-$RUN.stdin.$n"
 sid=""; prev=""
 for arg in "$@"; do [ "$prev" = "--session-id" ] && sid=$arg; prev=$arg; done
 [ -n "$sid" ] && [ -n "${STUB_TOKENS:-}" ] && "$SUITE_PY" "$SUITE_MK" transcript "$sid" "$STUB_TOKENS" >/dev/null
+# STUB_RESUME=1: the head's own first act, as every head the starter starts runs it — its
+# run-resume naming its own session (the bootstrap of the resume instruction).
+[ -n "$sid" ] && [ "${STUB_RESUME:-0}" = "1" ] && "$SUITE_PY" "$SUITE_MK" append "$REC" "{\"event\":\"run-resume\",\"session\":\"$sid\",\"head\":\"stub head\",\"detail\":\"the head's own run-resume\",\"pid_src\":\"none\"}" >/dev/null
 if [ "$n" -le "${STUB_N:-1}" ]; then
-  case ${STUB_MODE:-complete} in
+  # The repeat-stop legs (2026-10-11): STUB_MODES (comma-separated) gives invocation n the nth
+  # word as its mode, else STUB_MODE applies. STUB_PROGRESS (comma-separated) is what invocation
+  # n records before it stops: `self`, a boundary whose caller_pid is this process; `selfresume`,
+  # that boundary and then a run-resume naming this same process; `foreign`, a boundary naming
+  # the supervisor's pid (another live process); `null`, a boundary with no caller_pid; `walk`,
+  # the real `boundary` command under the psclaude stub, so the parent walk names this process;
+  # `bad`, an unparseable record line; `none` or an empty word, nothing. The hand-over checks
+  # (2026-10-30): `refusedhandover`, a gate allowing item2, then the real `handoff --final --band
+  # 90`, `successor` and `handoff --final --band 90` again under the psclaude stub (each refused at
+  # the cap, exit 10); `oldhandover`, the shape before the call-time cap — a band-50 head-exit and
+  # the refusal observation appended by hand; `abortedstarter`, a packed head-exit and then the
+  # head's own starter's successor-aborted (timeout), appended by hand.
+  mode=${STUB_MODE:-complete}
+  [ -n "${STUB_MODES:-}" ] && mode=$(printf '%s\n' "$STUB_MODES" | awk -F, -v n="$n" '{print $n}')
+  prog=$(printf '%s\n' "${STUB_PROGRESS:-}" | awk -F, -v n="$n" '{print $n}')
+  cp=""
+  case $prog in
+    self|selfresume) cp=$$; cs=parent-walk ;;
+    foreign) cp=$PPID; cs=parent-walk ;;
+    null) cp=null; cs=none ;;
+  esac
+  [ -n "$cp" ] && "$SUITE_PY" "$SUITE_MK" append "$REC" "{\"event\":\"phase-boundary\",\"from\":\"s$n\",\"to\":\"s$n-next\",\"caller_pid\":$cp,\"caller_pid_src\":\"$cs\"}" >/dev/null
+  [ "$prog" = "selfresume" ] && "$SUITE_PY" "$SUITE_MK" append "$REC" "{\"event\":\"run-resume\",\"session\":\"${sid:-stub}\",\"head\":\"stub head\",\"detail\":\"the same process again\",\"pid\":$$,\"pid_src\":\"parent-walk\"}" >/dev/null
+  [ "$prog" = "walk" ] && env PATH="$SUITE_WORK/psclaude:$PATH" "$SUITE_PY" -B "$SUITE_H" boundary --run "$RUN" --from "s$n" --to "s$n-next" --disposition "a stub boundary" --waste none --next n --meter-line "$SUITE_METER" >>"$SUITE_WORK/stub-$RUN.boundary" 2>&1
+  [ "$prog" = "bad" ] && printf '%s\n' '{"event":"phase-boundary","from":"torn' >> "$REC"
+  if [ "$prog" = "refusedhandover" ]; then
+    "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"gate","item":"item2","decision":"allow","context":100000,"percent":10,"band":0,"armed":true,"metered":true}' >/dev/null
+    printf -- '- Next: item2, its next step\n- Needs: nothing\n- Decided: nothing\n' > "$SUITE_WORK/stub-$RUN.pack"
+    for c in final successor final; do
+      if [ "$c" = final ]; then
+        env PATH="$SUITE_WORK/psclaude:$PATH" "$SUITE_PY" -B "${SUITE_HABS:-$SUITE_H}" handoff --run "$RUN" --final --band 90 --inflight-file "$SUITE_WORK/stub-$RUN.pack" --meter-line "$SUITE_METER" >>"$SUITE_WORK/stub-$RUN.refused" 2>&1
+      else
+        env PATH="$SUITE_WORK/psclaude:$PATH" "$SUITE_PY" -B "${SUITE_HABS:-$SUITE_H}" successor --run "$RUN" --band 90 --meter-line "$SUITE_METER" --harness-bin "$SUITE_WORK/bin/stubhead" --wait-s 1 --max-wait-s 1 --tick-s 1 >>"$SUITE_WORK/stub-$RUN.refused" 2>&1
+      fi
+      printf 'rc %s %s\n' "$c" "$?" >> "$SUITE_WORK/stub-$RUN.refused"
+    done
+  fi
+  if [ "$prog" = "oldhandover" ]; then
+    "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"head-exit","band":50,"context":"stub","spent_usd":1.0,"pack":true}' >/dev/null
+    "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"observation","phase":"","what":"successor refused: no successor left","note":"planted: the shape before the call-time cap"}' >/dev/null
+  fi
+  if [ "$prog" = "abortedstarter" ]; then
+    "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"head-exit","band":60,"context":"stub","spent_usd":1.0,"pack":true}' >/dev/null
+    "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"successor-aborted","reason":"timeout","note":"planted: the starter this head called timed out"}' >/dev/null
+  fi
+  case $mode in
     limit) printf '%s\n' "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"result\":\"You've hit your session limit · resets 8:50am (Europe/London)\"}"; exit 1 ;;
     nolimit) printf '%s\n' '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Usage limit reached for this session"}'; exit 1 ;;
     fablelimit) printf '%s\n' "{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"result\":\"You've reached your Fable limit. Switch to another model, or manage usage credits at claude.ai/settings/usage, to continue.\"}"; exit 1 ;;
@@ -652,6 +883,8 @@ if [ "$n" -le "${STUB_N:-1}" ]; then
     nojson) printf 'stub: no result line at all\n'; exit 0 ;;
     handonly) "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"head-exit","band":60,"context":"stub","spent_usd":1.0,"pack":true}' >/dev/null
       printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"handed off, died before successor"}'; exit 0 ;;
+    handunpacked) "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"head-exit","band":60,"context":"stub","spent_usd":1.0,"pack":false}' >/dev/null
+      printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"exit recorded without a pack"}'; exit 0 ;;
   esac
 fi
 "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"head-exit","band":60,"context":"stub","spent_usd":1.0,"pack":true}' >/dev/null
@@ -698,7 +931,9 @@ for a in "$@"; do printf '%s\n' "$a" >> "$AIMYTH_VIEWER_ARGV"; last=$a; done
 printf '%s\n' "$*" >> "$AIMYTH_VIEWER_ARGV.calls"   # one line per call
 if [ "${STUB_OPEN_CONSOLE:-0}" = "1" ]; then
   run=$(basename "$last" -console.command)   # the command file is the LAST argument (after -g)
-  "$SUITE_PY" -c 'import time; time.sleep(60)' watch.py --run "$run" </dev/null >/dev/null 2>&1 &
+  # STUB_CONSOLE_LIFE_S: how long the planted console lives (60 s by default; a console that
+  # exits at its own start-up probe lives about a second).
+  "$SUITE_PY" -c 'import sys, time; time.sleep(float(sys.argv[1]))' "${STUB_CONSOLE_LIFE_S:-60}" watch.py --run "$run" </dev/null >/dev/null 2>&1 &
   printf '%s\n' "$!" > "$AIMYTH_VIEWER_ARGV.pid"
 fi
 exit 0
@@ -751,11 +986,34 @@ case $2 in
 esac
 exit 0
 PSSPLIT
+# A `pgrep` whose every call is scripted (critic finding 8 of the batch's design review: output
+# from a failed probe was taken for a sighting): call n prints PGREP_OUT_<n> and exits
+# PGREP_RC_<n>, else the last scripted call's pair; the calls are counted in PGREP_STATE.
+cat > "$WORK/pgrepexit/pgrep" <<'PGREPEXIT'
+#!/bin/sh
+n=0; [ -f "$PGREP_STATE" ] && n=$(cat "$PGREP_STATE"); n=$((n + 1)); printf '%s' "$n" > "$PGREP_STATE"
+i=$n
+while [ "$i" -gt 0 ]; do
+  eval "rc=\${PGREP_RC_$i:-}"
+  if [ -n "$rc" ]; then eval "out=\${PGREP_OUT_$i:-}"; break; fi
+  i=$((i - 1))
+done
+[ -n "${out:-}" ] && printf '%s\n' "$out"
+exit "${rc:-1}"
+PGREPEXIT
+# A `git` that fails the untracked listing and hands every other call to the real git.
+REALGIT=$(command -v git)
+cat > "$WORK/gitfail/git" <<GITFAIL
+#!/bin/sh
+case " \$* " in *" ls-files "*) echo "fatal: the listing fails on purpose" >&2; exit 128 ;; esac
+exec "$REALGIT" "\$@"
+GITFAIL
 mkdir -p "$WORK/nopath"          # an empty directory: no `open` on PATH, and no file for AIMYTH_OPEN_BIN to name
-chmod +x "$WORK/psclaude/ps" "$WORK/psnone/ps" "$WORK/bin/harness" "$WORK/bin/harness2" \
+chmod +x "$WORK/psclaude/ps" "$WORK/psnone/ps" "$WORK/pstable/ps" "$WORK/bin/harness" "$WORK/bin/harness2" \
          "$WORK/bin/stubhead" "$WORK/bin/viewer-stub.sh" "$WORK/bin/viewer-fail.sh" \
          "$WORK/openbin/open" "$WORK/openfail/open" "$WORK/bin/sleephead" \
-         "$WORK/pgrepslow/pgrep" "$WORK/psslow/ps" "$WORK/pssplit/ps"
+         "$WORK/pgrepslow/pgrep" "$WORK/psslow/ps" "$WORK/pssplit/ps" "$WORK/pgrepexit/pgrep" \
+         "$WORK/gitfail/git"
 export AIMYTH_VIEWER_CMD="$WORK/bin/viewer-stub.sh"
 export AIMYTH_VIEWER_ARGV="$WORK/viewer-default.argv"
 
@@ -781,15 +1039,30 @@ git -C "$VAULT" push -q -u origin HEAD || die "cannot set the fixture upstream"
 # ------------------------------------------------------------------------ leg plumbing -----
 N=0; PASSED=0; FAILED=0; why=""; RUNENV=""
 
+# RUNENV holds a leg's environment as NAME=value words separated by spaces. A value may itself hold
+# a space (this platform's PATH can carry an entry such as "Application Support"), so the words are
+# cut only where a space starts a new NAME= word, one per line, and env takes them with IFS a
+# newline and globbing off: a value with no space in it reaches env exactly as before.
+runenv() { # a command, run under env with RUNENV's assignments
+  set -f; runenv_ifs=$IFS; IFS='
+'
+  env $(printf '%s\n' "$RUNENV" | sed 's/ \{1,\}\([A-Za-z_][A-Za-z0-9_]*=\)/\
+\1/g') "$@"
+  runenv_rc=$?
+  IFS=$runenv_ifs; set +f
+  return "$runenv_rc"
+}
+
 run() {
   RC=0
-  env $RUNENV "$PY" -B "$H" "$@" >"$WORK/out" 2>"$WORK/err" || RC=$?
+  runenv "$PY" -B "$H" "$@" >"$WORK/out" 2>"$WORK/err" || RC=$?
   cat "$WORK/out" "$WORK/err" >"$WORK/both"
   RUNENV=""
 }
 
 mk() { "$PY" "$MK" "$@"; }
 real() { "$PY" -c 'import os, sys; sys.stdout.write(os.path.realpath(sys.argv[1]))' "$1"; }
+sha_file() { "$PY" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"; }
 # handsoff.py resolves the store to its real path (a symlinked /tmp on this platform), so the
 # paths it prints and records are compared against this spelling.
 REALSTORE=$(real "$STORE")
@@ -824,7 +1097,7 @@ wait_field() { # $1 record, $2 kind, $3 key, $4 value, $5 tries of 0.5 s: a deta
 }
 starter() { # a foreground starter run: the stubs exit at once, so the loop ends by itself
   RC=0
-  env $RUNENV "$PY" -B "$H" _starter "$@" >"$WORK/out" 2>"$WORK/err" || RC=$?
+  runenv "$PY" -B "$H" _starter "$@" >"$WORK/out" 2>"$WORK/err" || RC=$?
   cat "$WORK/out" "$WORK/err" >"$WORK/both"
   RUNENV=""
 }
@@ -920,6 +1193,15 @@ printf 'fixtures %s · vault fixture %s\n\n' "$WORK" "$VAULT"
 MANIFEST_BEFORE="$WORK/manifest-before.txt"
 mk manifest "$SKILL_DIR" "$HOOKS_DIR" > "$MANIFEST_BEFORE"
 
+# The filter's section list, sourced here so every fixture and function above stands; its summary
+# section ends the run.
+if [ -n "$ONLY_LEG" ]; then
+  mk legs "$SRC" "$ONLY_LEG" > "$WORK/legs.sh" || exit 2
+  sh -n "$WORK/legs.sh" || die "the filter's section list does not parse"
+  . "$WORK/legs.sh"
+  die "the filter's section list ended before its summary"
+fi
+
 # ------------------------------------------------------------------------- run-open --------
 HO="$WORK/handoffs/open-handoff.md"; mk handoff "$HO" >/dev/null
 REC="$STORE/spawn-records/ropen.jsonl"; rm -f "$REC"
@@ -978,6 +1260,55 @@ need_rc 0
 need_out "dry run"
 need_nofile "$REC5"
 verdict "run-open: --dry-run prints the event and writes no record"
+
+# SL-2 (register 2026-09-20 20:0x): a runbook that never names the boundary command. The planted
+# case is the entry's own, the bare word on a hand-off row; the controls are a runbook naming the
+# command, in each spelling, and a stage with no runbook at all, which opens and says so.
+RBOOK="$WORK/runbook-none.md"
+printf '# RUNBOOK\n- Items: item0, item1\n- The hand-off row is written at each boundary.\n' > "$RBOOK"
+REC6="$STORE/spawn-records/ropen6.jsonl"; rm -f "$REC6"
+run run-open --run ropen6 --session sid-open6 --head "h" --regime multi --regime-src owner \
+    --handoff "$HO" --detail "no boundary line" --runbook "$RBOOK"
+need_rc 2
+need_out "never names .handsoff.py boundary."
+need_out "nothing written"
+need_lines
+need_nofile "$REC6"
+run run-open --run ropen6 --session sid-open6 --head "h" --regime multi --regime-src owner \
+    --handoff "$HO" --detail "no boundary line" --runbook "$RBOOK" --dry-run
+need_rc 2
+need_nofile "$REC6"
+mkdir -p "$STORE/stages/ropen7"
+cp "$RBOOK" "$STORE/stages/ropen7/RUNBOOK.md"
+REC7="$STORE/spawn-records/ropen7.jsonl"; rm -f "$REC7"
+run run-open --run ropen7 --session sid-open7 --head "h" --regime multi --regime-src owner \
+    --handoff "$HO" --detail "the stage's own runbook"
+need_rc 2
+need_out "stages/ropen7/RUNBOOK.md never names"
+need_nofile "$REC7"
+printf -- '- Each item ends with `handsoff.py boundary --run R`.\n' >> "$STORE/stages/ropen7/RUNBOOK.md"
+run run-open --run ropen7 --session sid-open7 --head "h" --regime multi --regime-src owner \
+    --handoff "$HO" --detail "the stage's own runbook"
+need_rc 0
+need_out "names the boundary command"
+need_file "$REC7"
+printf -- '- `boundary` and `close` run without --commit.\n' > "$WORK/runbook-tick.md"
+REC8="$STORE/spawn-records/ropen8.jsonl"; rm -f "$REC8"
+run run-open --run ropen8 --session sid-open8 --head "h" --regime multi --regime-src owner \
+    --handoff "$HO" --detail "the command in backticks" --runbook "$WORK/runbook-tick.md"
+need_rc 0
+need_file "$REC8"
+run run-open --run ropen9 --session sid-open9 --head "h" --regime multi --regime-src owner \
+    --handoff "$HO" --detail "no such file" --runbook "$WORK/no-such-runbook.md"
+need_rc 2
+need_out "is not a file"
+REC10="$STORE/spawn-records/ropen10.jsonl"; rm -f "$REC10"
+run run-open --run ropen10 --session sid-open10 --head "h" --regime multi --regime-src owner \
+    --handoff "$HO" --detail "no runbook anywhere"
+need_rc 0
+need_out "so no boundary line was checked"
+need_file "$REC10"
+verdict "SL-2 (fails on old): run-open refuses a runbook, named or the stage's own, that never names the boundary command, writing nothing, and opens on one that names it or where there is none, saying which"
 
 # ------------------------------------------------------------------------ run-resume -------
 fixture rres 200
@@ -1327,6 +1658,65 @@ need_out "--evidence"
 need_out "--observation"
 verdict "ledger: a partial row form names the flags it lacks and the observation form (exit 2)"
 
+# ---- SL-1 (register 2026-10-15 01:33 d): a typed clock placeholder in the head's own text ----
+# Each writer is planted with a token and must refuse, naming the flag, with nothing written. The
+# controls are a register heading in its brackets, a whole time, and two shapes that are no token.
+fixture rclock 200
+CLOCKN=$(mk lines "$REC")
+CLOCKH=$(sha_file "$HO")
+run ledger --run rclock --phase 1 --what "the owner's go at 14:3x" --evidence "the prompt" --routing "none"
+need_rc 2
+need_out "ledger: --what carries the typed clock placeholder 14:3x"
+need_out "nothing written"
+need_lines
+run ledger --run rclock --observation "scored at 00:5x"
+need_rc 2
+need_out "--observation carries the typed clock placeholder 00:5x"
+run ledger --run rclock --phase 1 --what "fine" --evidence "read at 19:1x" --routing "none" --dry-run
+need_rc 2
+need_out "--evidence carries the typed clock placeholder 19:1x"
+run decision --run rclock --phase 1 --what "go on" --grant "owner message 13:1x"
+need_rc 2
+need_out "decision: --grant carries the typed clock placeholder 13:1x"
+run boundary --run rclock --from 1 --to 2 --disposition "closed at 23:2X" --waste "none" --next "n" --meter-line "$METER"
+need_rc 2
+need_out "boundary: --disposition carries the typed clock placeholder 23:2X"
+run boundary --run rclock --from 1 --to 2 --disposition "closed" --waste "wait from 05:0x" --next "n" --meter-line "$METER"
+need_rc 2
+need_out "boundary: --waste carries"
+run handoff --run rclock --inflight "$(printf -- '- Next: at 01:1x\n- Needs: nothing\n- Decided: nothing')"
+need_rc 2
+need_out "handoff: --inflight carries the typed clock placeholder 01:1x"
+run handoff --run rclock --set "shipped=the build, at 02:2x"
+need_rc 2
+need_out "handoff: --set shipped carries"
+printf 'the bullet, at 22:4x\n' > "$WORK/clock-bullet.txt"
+run handoff --run rclock --set-file "shipped=$WORK/clock-bullet.txt"
+need_rc 2
+need_out "handoff: --set-file shipped carries"
+need_eq "$(mk lines "$REC")" "$CLOCKN" "no refusal wrote a record line"
+need_eq "$(sha_file "$HO")" "$CLOCKH" "no refusal touched the hand-off"
+run ledger --run rclock --observation "entry [2026-09-20 20:0x] and [2026-09-23 20:3x b] stand"
+need_rc 0
+run ledger --run rclock --phase 1 --what "at 12:30:05, a 1:5x zoom and the label 12:3xy" --evidence "e" --routing "r"
+need_rc 0
+need_eq "$(mk lines "$REC")" "$((CLOCKN + 2))" "the controls wrote their lines"
+verdict "SL-1 (fails on old): ledger, decision, boundary and handoff refuse a typed clock placeholder in the head's text, dry run or not, naming the flag and writing nothing, while a bracketed register stamp, a whole time and a longer token pass"
+
+mkdir -p "$STORE/stages/rclock2"
+fixture rclock2 200
+printf 'the head typed 19:5x here\n' > "$STORE/stages/rclock2/notes.md"
+printf 'no token, a whole 19:53:02\n' > "$STORE/stages/rclock2/clean.md"
+printf 'an older 20:1x\n' > "$STORE/stages/rclock2/older.md"
+"$PY" -c 'import os, sys, time; t = time.time() - 100000; os.utime(sys.argv[1], (t, t))' "$STORE/stages/rclock2/older.md"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run boundary --run rclock2 --from 1 --to 2 --disposition "closed" --waste "none" --next "n" --meter-line "$METER"
+need_rc 0
+need_out "boundary: warn: the stage document .*notes.md carries the typed clock placeholder 19:5x"
+need_absent "clean.md"
+need_absent "older.md"
+verdict "SL-1 (fails on old): a boundary warns of a stage document changed since the last boundary that carries a placeholder, and stays quiet on a clean one and on one older than that boundary"
+
 # the clean control: the same --observation on a record that HAS a run-open appends the
 # observation and NO ledger row (the head's aside that is not a finding)
 fixture rledobs 200
@@ -1446,7 +1836,7 @@ spec = importlib.util.spec_from_file_location("hs", sys.argv[1])
 hs = importlib.util.module_from_spec(spec); spec.loader.exec_module(hs)
 base = [json.loads(l) for l in open(sys.argv[2]) if l.strip()]
 def stop(cls, age):
-    ts = time.strftime("%Y-%m-%dT%H:%M:%S+0100", time.localtime(time.time() - age))
+    ts = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - age))
     return base + [{"event": "observation", "what": "head exited", "exit_class": cls, "ts": ts}]
 out = []
 for label, cls, age, ctx in (("refusal", "refusal", 60, 50000), ("error", "error", 60, 50000), ("cold-large", "limit", 4000, 140000), ("warm-small", "limit", 60, 50000)):
@@ -1457,6 +1847,64 @@ FITGUARD_END
 )
 need_eq "$RES" "refusal=resume-refused error=resume-refused cold-large=resume-unfit warm-small=ok" "the hand-run resume guard"
 verdict "resume-head guard: a refusal or an error stop is refused, a cold large resume is unfit, a warm small limit stop is ok (review finding 4, must fire and must not)"
+
+# G71 (register 2026-09-23 20:3x): the planted case is the entry's own: an item measured at 480,959
+# tokens at its gate, most of it done, with the hand-off saying what is left. On the estimate the
+# resume does not fit; the control runs the same record with no `Remaining:` line and stays unfit.
+fixture rfitrem 200
+arm_resume rfitrem
+mk append "$REC" '{"event":"gate","item":"one","context":100000,"percent":10,"band":0,"decision":"allow","metered":true}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"two","context":580959,"percent":58,"band":0,"decision":"allow","metered":true}' >/dev/null
+mk transcript sid-rfitrem 600000 >/dev/null
+sleep 1
+run handoff --run rfitrem --inflight "$(printf -- '- Next: two\n- Needs: nothing\n- Decided: nothing\n- Remaining: 20k')"
+need_rc 0
+mk append "$REC" '{"event":"observation","phase":"","what":"head exited","exit_class":"limit"}' >/dev/null
+RUNENV="STUB_MODE=complete STUB_N=0 AIMYTH_CONTEXT_WINDOW=1000000"
+run _resume-head --run rfitrem --session sid-rfitrem --out "$WORK/starter/rfitrem-head-1.out" \
+    --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --wait-s 5 --tick-s 1
+need_rc 0
+need_eq "$(mk count "$REC" head-resumed)" "1" "the resume sized on the pack's figure fits"
+RES=$(env AIMYTH_CONTEXT_WINDOW=1000000 "$PY" - "$H" "$REC" "$HO" "$WORK/handoffs/rfitrem-plain.md" <<'FITREM_END'
+import importlib.util, json, sys, time
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("hs", sys.argv[1])
+hs = importlib.util.module_from_spec(spec); spec.loader.exec_module(hs)
+events = [json.loads(l) for l in open(sys.argv[2]) if l.strip()]
+events = events[:[e.get("event") for e in events].index("head-resumed")]
+m, ho, plain = {"context": 600000, "percent": 60}, sys.argv[3], sys.argv[4]
+pack = hs.pack_remaining(events, ho)
+text = open(ho, encoding="utf-8").read()
+open(plain, "w", encoding="utf-8").write(text.replace("- Remaining: 20k\n", ""))
+later = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() + 3600))
+print(pack, hs.pack_remaining(events, plain), hs.pack_remaining(events, "/no/such/hand-off"),
+      hs.pack_remaining(events + [{"event": "gate", "ts": later}], ho),
+      hs.resume_guard(events, m, 0, pack)[0], hs.resume_guard(events, m, 0, None)[0])
+FITREM_END
+)
+need_eq "$RES" "20000 None None None ok resume-unfit" "the figure, no line, no file, an older pack, the fit with it and without it"
+verdict "G71 (fails on old): an in-place resume is sized on the pack's Remaining line when the pack is no older than the last gate, and with no line, no hand-off or an older pack on the estimate, which stays unfit"
+
+# G71, the review's F1: a figure in a notation the line does not hold must read as no figure, so the
+# estimate stands: read as a number prefix, `1.2M` was 1 token and `20 000` was 20, either of which
+# admits an oversized resume. The planted cases are those two; the controls keep their value.
+RES=$(env AIMYTH_CONTEXT_WINDOW=1000000 "$PY" - "$H" "$REC" "$HO" "$WORK/handoffs/rfitrem-form.md" <<'FITFORM_END'
+import importlib.util, json, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("hs", sys.argv[1])
+hs = importlib.util.module_from_spec(spec); spec.loader.exec_module(hs)
+events = [json.loads(l) for l in open(sys.argv[2]) if l.strip()]
+events = events[:[e.get("event") for e in events].index("head-resumed")]
+text = open(sys.argv[3], encoding="utf-8").read()
+out = []
+for form in ("1.2M", "20 000", "about 20k", "1,2", "20k", "20,000", "20000 tokens", "20 k tokens"):
+    open(sys.argv[4], "w", encoding="utf-8").write(text.replace("- Remaining: 20k\n", "- Remaining: %s\n" % form))
+    out.append(str(hs.pack_remaining(events, sys.argv[4])))
+print(" ".join(out))
+FITFORM_END
+)
+need_eq "$RES" "None None None None 20000 20000 20000 20000" "four unsupported notations, then four valid ones"
+verdict "G71 F1 (fails on old): a Remaining figure in unsupported notation reads as no figure, so the estimate stands, while 20k, 20,000 and a figure followed by tokens keep their value"
 
 # Hard stops (owner ruling 2026-09-14): the close's third warnings bullet names every non-limit stop.
 fixture rhard 200
@@ -1477,6 +1925,27 @@ case $RES in
   *) why="$why; hard stops text: $RES" ;;
 esac
 verdict "hard stops: the close's bullet names the band stop and the deadline close and skips the completed lane (must fire, with the completed lane as its control)"
+
+# INV-1 (register 2026-10-31 01:57): a completed lane that met denials is no stop. The planted case
+# is one such lane beside one real stop; the control is the real stop, which stays counted.
+fixture rhard2 200
+mk append "$REC" '{"event":"lane-closed","lane":"B-Z","exit_class":"killed"}' >/dev/null
+mk append "$REC" '{"event":"lane-closed","lane":"B-W","exit_class":"completed","denials":{"sandbox":3}}' >/dev/null
+mk append "$REC" '{"event":"lane-closed","lane":"B-V","exit_class":"completed"}' >/dev/null
+RES=$("$PY" - "$H" "$REC" <<'FITHARD2_END'
+import importlib.util, json, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("hs", sys.argv[1])
+hs = importlib.util.module_from_spec(spec); spec.loader.exec_module(hs)
+events = [json.loads(l) for l in open(sys.argv[2]) if l.strip()]
+print(hs.report_hardstops_text(events))
+FITHARD2_END
+)
+case $RES in
+  *"1 lane(s) closed other than completed or limit: B-Z at "*"(killed) · 1 completed lane(s) met denials, none a stop: B-W at "*"(sandbox 3) · read from"*) : ;;
+  *) why="$why; hard stops text: $RES" ;;
+esac
+verdict "INV-1 (fails on old): the close's bullet counts only exit classes other than completed or limit as stops, and gives a completed lane with denials a count of its own"
 
 # ------------------------------------------------------------------------------ gate -------
 fixture rgate 200
@@ -1557,6 +2026,38 @@ need_rc 0
 need_out "first miss"
 need_absent "second consecutive"
 verdict "gate: the unmetered count is scoped to the last session event (a run-resume resets it)"
+
+# PAT-2 (critic F4 of the design round): a head told how to see a rule file changed since the run
+# began. The planted cases are the two start messages on this run, with its run-open's own time;
+# the control is a record with no run-open, which has no time to name and gets no sentence.
+fixture rpat2 200
+arm_resume rpat2
+mk append "$REC" '{"event":"gate","item":"one","context":100000,"percent":10,"band":0,"decision":"allow","metered":true}' >/dev/null
+mk transcript sid-rpat2 120000 >/dev/null
+sleep 1
+run handoff --run rpat2 --inflight "$(printf -- '- Next: two\n- Needs: nothing\n- Decided: nothing')"
+need_rc 0
+mk append "$REC" '{"event":"observation","phase":"","what":"head exited","exit_class":"limit"}' >/dev/null
+RUNENV="STUB_MODE=complete STUB_N=0 AIMYTH_CONTEXT_WINDOW=1000000"
+run _resume-head --run rpat2 --session sid-rpat2 --out "$WORK/starter/rpat2-head-1.out" \
+    --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --wait-s 5 --tick-s 1
+need_rc 0
+RTS=$(mk field "$REC" run-open ts)
+RULES="git log --oneline --since=$RTS -- CLAUDE.md CUSTOMISATION.md CUSTOMISATION-definitions.md .claude/skills/delegate/SKILL.md. A line there, or one of those files in the status, means a rule file changed since the run began"
+grep -q -F "$RULES" "$WORK/stub-rpat2.stdin.1" || why="$why; a head resumed in place was not told how to read a rule-file change"
+RES=$(env LLM_WIKI_STORE="$STORE" "$PY" - "$H" rpat2 "$HO" "$WORK/pat2-plain.jsonl" <<'PAT2_END'
+import importlib.util, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("hs", sys.argv[1])
+hs = importlib.util.module_from_spec(spec); spec.loader.exec_module(hs)
+print(hs.resume_instruction(sys.argv[2], sys.argv[3]))
+open(sys.argv[4], "w").write('{"event":"lane-open","lane":"L"}\n')
+print("plain[%s]" % hs.rule_files_note(sys.argv[4]))
+PAT2_END
+)
+case $RES in *"$RULES"*) : ;; *) why="$why; a fresh head's first message does not carry the sentence" ;; esac
+case $RES in *"plain[]"*) : ;; *) why="$why; control: a record with no run-open still named a time" ;; esac
+verdict "PAT-2 (fails on old): both start messages name git log since the run-open's time, and a record with no run-open gets no sentence"
 
 # ------------------------------------------------------------------ gate: the envelope -------
 # Register entry 2026-09-07: an envelope the pre-flight states is measured at every gate, or its
@@ -1792,6 +2293,8 @@ NOPRICE="$WORK/noprice"
 rm -rf "$NOPRICE"
 mkdir -p "$NOPRICE"
 cp "$H" "$NOPRICE/handsoff.py"
+# CR-A3-1 H1 (spec), E1: the copied supervisor still needs its shared record-lock module.
+cp "$LANE_PY" "$NOPRICE/lane.py"
 cp "$SKILL_DIR/fable-share.py" "$NOPRICE/fable-share.py"
 fixture rnop 100
 mk pricedscript sid-rnop-h1 2 >/dev/null
@@ -1831,6 +2334,8 @@ SLOWRUN="$WORK/slowrun"
 rm -rf "$SLOWRUN"
 mkdir -p "$SLOWRUN"
 cp "$H" "$SLOWRUN/handsoff.py"
+# CR-A3-1 H1 (spec), E1: the copied supervisor still needs its shared record-lock module.
+cp "$LANE_PY" "$SLOWRUN/lane.py"
 printf '%s\n' 'import time' 'time.sleep(4)' "print('$METER')" > "$SLOWRUN/fable-share.py"
 RC=0
 "$PY" -B "$SLOWRUN/handsoff.py" run-spend --run rnop --budget-s 2 --no-cache >"$WORK/out" 2>"$WORK/err" || RC=$?
@@ -1881,7 +2386,9 @@ verdict "run figure cache: a dry run writes no cache, the first call meters and 
 # in hand), an earlier close $7, the lane resumed and running with a transcript worth $12 (two
 # calls of 1.5 million input tokens at the opus rate: over the $10 the envelope leaves at any
 # rate above $3.34), envelope $20: the run spends $22 and the
-# gate refuses with exit 5, no floor.
+# gate refuses with exit 5. A lane still running — here the open pass — makes the figure a floor
+# (register entry 2026-09-30 03:21): `at least`, the remainder `at most`, and the gate refuses on
+# the floor as it would on the figure.
 TWELVE=$("$PY" -c 'import sys; print("%.2f" % (2 * 1.5 * float(sys.argv[1])))' "$OPUS_IN")
 RESUMED=$("$PY" -c 'import sys; print("%.2f" % (10 + max(7.0, 2 * 1.5 * float(sys.argv[1]))))' "$OPUS_IN")
 RESLEFT=$("$PY" -c 'import sys; v = 20 - (10 + max(7.0, 2 * 1.5 * float(sys.argv[1]))); print(("-$%.2f" % -v) if v < 0 else ("$%.2f" % v))' "$OPUS_IN")
@@ -1892,27 +2399,29 @@ mk append "$REC" '{"event":"lane-open","lane":"L","session_id":"sid-rres-l"}' >/
 mk append "$REC" '{"event":"lane-closed","lane":"L","session_id":"sid-rres-l","exit_class":"limit","total_cost_usd":7.0}' >/dev/null
 mk append "$REC" '{"event":"lane-resumed","lane":"L","session_id":"sid-rres-l"}' >/dev/null
 run run-spend --run rres --meter-line "$METER10"
-need_rc 0
+need_rc 1
 need_out "lane L: \$$TWELVE · the larger of the transcript's \$$TWELVE (an open pass after the last close (latest event lane-resumed); sid-rres: \$$TWELVE (metered (transcript)"
 need_out "and the recorded \$7.00 (1 close cost(s) as recorded)"
-need_out "\$$RESUMED of \$20.00, remainder $RESLEFT"
-need_absent "at least"
+need_out "at least \$$RESUMED of \$20.00, remainder at most $RESLEFT"
+need_out "still running: L (the figure is a floor while a lane spends)"
 run gate --run rres --to "item one" --meter-line "$METER10"
 need_rc 5
-need_out "envelope: \$$RESUMED of \$20.00, remainder $RESLEFT"
-need_absent "at least"
+need_out "envelope: at least \$$RESUMED of \$20.00, remainder at most $RESLEFT"
 need_eq "$(mk field "$REC" stop-condition which)" "envelope" "stop-condition envelope"
-verdict "resumed lane (fold, must fire): an active pass after a priced close is metered from the whole transcript — head \$10.00 + max(\$7.00, \$$TWELVE) = \$$RESUMED over \$20.00 — and the gate refuses with exit 5, no floor"
+verdict "resumed lane (fold, must fire): an active pass after a priced close is metered from the whole transcript — head \$10.00 + max(\$7.00, \$$TWELVE) = \$$RESUMED over \$20.00 — and, the lane still running, the figure is a floor (Kd9717c6c) on which the gate refuses with exit 5"
 
-# The control: the lane closed again (its latest event a lane-closed) is read from its recorded
-# costs alone — $7 + $5 = $12 — and no transcript is metered; and a transcript shared by several
-# passes counts once: closes $3 + $4 = $7 with the lane resumed again take max($7, $12) = $12,
-# never $19.
+# The control: the lane closed again (its latest event a lane-closed) is no floor — $7 + $5 = $12
+# recorded, its transcript, unchanged and so served from the cache with no meter call, taken only
+# where larger (Kd9717c6c) — and a transcript shared by several passes counts once: closes $3 +
+# $4 = $7 with the lane resumed again take max($7, $12) = $12, never $19, a floor while it runs.
+LARGER=$("$PY" -c 'import sys; print("%.2f" % max(12.0, float(sys.argv[1])))' "$TWELVE")
 mk append "$REC" '{"event":"lane-closed","lane":"L","session_id":"sid-rres-l","exit_class":"completed","total_cost_usd":5.0}' >/dev/null
 run run-spend --run rres --meter-line "$METER10"
 need_rc 0
-need_out "lane L: \$12.00 · 2 close cost(s) as recorded"
+need_out "lane L: \$$LARGER · "
+need_out "2 close cost(s) as recorded"
 need_out "0 meter call(s)"
+need_absent "at least"
 fixture rres2 100
 mk pricedscript sid-rres2-l 2 lane-home-dir 1500000 >/dev/null
 mk append "$REC" '{"event":"lane-open","lane":"L","session_id":"sid-rres2-l"}' >/dev/null
@@ -1921,11 +2430,12 @@ mk append "$REC" '{"event":"lane-resumed","lane":"L","session_id":"sid-rres2-l"}
 mk append "$REC" '{"event":"lane-closed","lane":"L","session_id":"sid-rres2-l","exit_class":"limit","total_cost_usd":4.0}' >/dev/null
 mk append "$REC" '{"event":"lane-resumed","lane":"L","session_id":"sid-rres2-l"}' >/dev/null
 run run-spend --run rres2 --meter-line "$METER10"
-need_rc 0
+need_rc 1
+need_out "still running: L (the figure is a floor while a lane spends)"
 need_out "lane L: \$$TWELVE · the larger of the transcript's \$$TWELVE (an open pass after the last close (latest event lane-resumed)"
 need_out "and the recorded \$7.00 (2 close cost(s) as recorded)"
 need_absent "\$19.00"
-verdict "resumed lane (fold, must not fire): a lane whose latest event is a close reads its recorded costs alone (no meter call), and a transcript shared by several passes counts once — max(\$7.00, \$$TWELVE), never \$19.00"
+verdict "resumed lane (fold, must not fire): a lane whose latest event is a close is no floor, its recorded \$12.00 set against its cached transcript (no meter call), and a transcript shared by several passes counts once — max(\$7.00, \$$TWELVE), never \$19.00 — the resumed lane a floor while it runs (Kd9717c6c)"
 
 # Fold (critic 2026-09-17, high): a gate whose run-spend figure cannot be computed is an unmetered
 # gate for the two-unmetered-gates rule. Valid context (a transcript the watermark hook measures),
@@ -1981,6 +2491,64 @@ need_absent "unmetered spend"
 need_eq "$(mk count "$REC" stop-condition)" "0" "no stop-condition in the sequence"
 verdict "unmetered spend (fold, must not fire): a measured gate resets the count (0, 0, 0, 0) and two measured gates read 0 and 0; the missing-context control keeps its own 0-then-7 leg above"
 
+# ---- G57 (register 2026-10-16 10:04): a helper's closes repeat its session's running total ----
+# Each case is a lane whose true spend differs from the sum of its closes, or must not. The reading
+# is the weekly reader's own, so the suite needs it beside this tree (WEEKLY_WASTE names a copy).
+# run: a one-off model carried unchanged, so $3 then $5 is $5. beat: the same, with a later beat.
+# pass: a model dropped, so costs per pass and the sum. plain: neither, the sum and a note.
+# nosid, damaged and absent are the three cases no reading can place, each the sum and a note.
+WEEKLY_WASTE=${WEEKLY_WASTE:-$SKILL_DIR/../weekly-audit/weekly-waste.py}
+need_file "$WEEKLY_WASTE"
+fixture rspend 200
+RSP=$(env AIMYTH_WEEKLY_WASTE="$WEEKLY_WASTE" "$PY" - "$H" "$REC" "$WORK/rspend-damaged.jsonl" <<'RSPEND_END'
+import importlib.util, json, os, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("hs", sys.argv[1])
+hs = importlib.util.module_from_spec(spec); spec.loader.exec_module(hs)
+base = [json.loads(l) for l in open(sys.argv[2]) if l.strip()]
+def usage(**models):
+    return {"modelUsage": {name: {"costUSD": cost, "inputTokens": tokens, "outputTokens": 1, "cacheReadInputTokens": 0,
+                                  "cacheCreationInputTokens": 0} for name, (cost, tokens) in models.items()}}
+def close(lane, sid, total, models):
+    ev = {"event": "lane-closed", "lane": lane, "exit_class": "completed", "cost_src": "result",
+          "total_cost_usd": total, "usage": usage(**models)}
+    if sid:
+        ev["session_id"] = sid
+    return ev
+def beat(lane, sid, total):
+    return {"event": "hold-beat", "lane": lane, "session_id": sid, "cost_src": "result", "total_cost_usd": total, "ok": True,
+            "usage": {"models": ["big", "tiny"], "input_tokens": 900, "output_tokens": 9, "cache_read_input_tokens": 0,
+                      "cache_creation_input_tokens": 0}}
+one_off = (0.5, 10)
+cases = {
+    "run": [close("L", "s1", 3.0, {"big": (2.5, 100), "tiny": one_off}), close("L", "s1", 5.0, {"big": (4.5, 200), "tiny": one_off})],
+    "beat": [close("L", "s1", 3.0, {"big": (2.5, 100), "tiny": one_off}), close("L", "s1", 5.0, {"big": (4.5, 200), "tiny": one_off}), beat("L", "s1", 6.0)],
+    "pass": [close("L", "s1", 3.0, {"big": (2.5, 100), "tiny": one_off}), close("L", "s1", 2.0, {"big": (2.0, 50)})],
+    "plain": [close("L", "s1", 3.0, {"big": (3.0, 100)}), close("L", "s1", 5.0, {"big": (5.0, 200)})],
+    "nosid": [close("L", "s1", 3.0, {"big": (2.5, 100), "tiny": one_off}), close("L", None, 5.0, {"big": (4.5, 200), "tiny": one_off})],
+    "two": [close("L", "s1", 3.0, {"big": (2.5, 100), "tiny": one_off}), close("L", "s1", 5.0, {"big": (4.5, 200), "tiny": one_off}),
+            close("L", "s2", 1.0, {"big": (1.0, 20)})],
+}
+out = []
+for name in ("run", "beat", "pass", "plain", "nosid", "two"):
+    spend = hs.run_spend(base + cases[name], "rspend", None, use_cache=False)
+    row = spend["lanes"][0]
+    out.append("%s %.2f %s" % (name, spend["lanes_usd"], "note" if "·" in row[2] else "bare"))
+damaged = sys.argv[3]
+with open(damaged, "w", encoding="utf-8") as handle:
+    handle.write("".join(json.dumps(ev) + "\n" for ev in base + cases["run"]) + "{torn\n")
+spend = hs.run_spend(base + cases["run"], "rspend", damaged, use_cache=False)
+out.append("damaged %.2f %s %s" % (spend["lanes_usd"], "floor" if spend["floor"] else "exact", "note" if "damaged" in spend["lanes"][0][2] else "bare"))
+hs._WEEKLY = None
+os.environ["AIMYTH_WEEKLY_WASTE"] = "/no/such/reader.py"
+spend = hs.run_spend(base + cases["run"], "rspend", None, use_cache=False)
+out.append("absent %.2f %s" % (spend["lanes_usd"], "note" if "no weekly reader" in spend["lanes"][0][2] else "bare"))
+print("; ".join(out))
+RSPEND_END
+)
+need_eq "$RSP" "run 5.00 note; beat 6.00 note; pass 5.00 bare; plain 8.00 note; nosid 8.00 note; two 6.00 note; damaged 8.00 floor note; absent 8.00 note" "each lane's recorded figure, and whether it says how"
+verdict "G57 (fails on old): a session whose costs read as running totals counts its last, never the sum, a beat included, and per-pass costs sum; a session that reads as neither, a line naming no session, a damaged record line or a missing reader keep the sum and say so"
+
 # --------------------------------------------------------------------------- handoff -------
 fixture rho 200
 run handoff --run rho --inflight "- lane B2b: the suite, running."
@@ -2029,16 +2597,42 @@ REALHO=$("$PY" -c 'import os, sys; sys.stdout.write(os.path.realpath(sys.argv[1]
 need_eq "$(mk field "$REC" head-exit handoff)" "$REALHO" "head-exit hand-off path"
 verdict "handoff --final --band: a head-exit event with the band and the hand-off path"
 
+# ---- R1-9 (register 2026-11-05 12:41): an item the hand-off calls done with no boundary ----
+# The planted case is the entry's own line, in a lead's form. The controls are an item whose
+# boundary stands, one still running, one negated and a line that opens on no declared item.
+fixture ritem 200
+mk append "$REC" '{"event":"expect-items","items":{"item1":1000,"item2":1000,"item3":1000,"item4":1000}}' >/dev/null
+mk append "$REC" '{"event":"phase-boundary","from":"item1","to":"item2","next":"n"}' >/dev/null
+run handoff --run ritem --inflight "$(printf -- '- Next: item5\n- Needs: nothing\n- Decided: nothing\nitem1 map · done, all of it\nitem2 build · done, the suite green\nitem3 reading · still running\nitem4 install · not yet done\nitem9 stray · done')"
+need_rc 0
+need_out "handoff: warn: the hand-off names item2 done with no completion on the record"
+need_absent "names item1"
+need_absent "item3"
+need_absent "item4 done"
+need_absent "item9"
+run handoff --run ritem --dry-run --inflight "$(printf -- '- Next: item5\n- Needs: nothing\n- Decided: nothing\nitem2 build · done')"
+need_rc 0
+need_absent "warn: the hand-off names"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run boundary --run ritem --from item3 --to item4 --disposition "item3 closed" --waste "none" --next "n" --meter-line "$METER"
+need_rc 0
+need_out "boundary: warn: the hand-off names item2 done with no completion on the record"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run boundary --run ritem --from item2 --to item3 --disposition "the late record" --waste "none" --next "n" --meter-line "$METER"
+need_rc 0
+need_absent "warn: the hand-off names"
+verdict "R1-9 (fails on old): handoff and boundary warn when the hand-off names an item done with no boundary from it on the record, while a bounded, running, negated or undeclared line stays quiet, and the late boundary clears it"
+
 # ------------------------------------------------------------------------- successor -------
 fixture rsuc 200
 RUNENV="PATH=$WORK/psnone:$PATH"
 run successor --run rsuc --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
 need_rc 0
-need_out "budget \$183.44"
-need_out "minus session \$16.56"
+need_out "budget \$187.66"
+need_out "minus the run's spend \$12.34 (run_spend: heads \$12.34 (1 metered)"
 need_eq "$(mk count "$REC" head-exit)" "0" "head-exit events"
 need_eq "$(mk lines "$REC")" "1" "record lines"
-verdict "successor --dry-run: the budget is the envelope minus the session total, nothing written"
+verdict "successor --dry-run: the budget is the envelope minus the run's spend as the gate reads it (200 − the head's \$12.34 in the billed line in hand, K22da6bf5), nothing written"
 
 fixture rsuc2 200
 mk append "$REC" '{"event":"head-exit","band":80,"context":"800,000 tokens (80 %)"}' >/dev/null
@@ -2083,8 +2677,10 @@ need_rc 0
 need_out "head-successor pid"
 need_eq "$(mk field "$REC" head-successor budget)" "1.0" "the last head-successor is the stub's own hand-over"
 need_file "$WORK/starter/rst-head-1.out"
-if ! grep -q "Resume the fixture run" "$WORK/stub-rst.stdin.1"; then
-  why="$why; the resume prompt did not reach the head on standard input"
+# What reaches the head is the fixed resume instruction naming the run, never the hand-off's
+# `## Resume prompt` (register entry 2026-10-08 23:12; the P1 legs below test the exclusion).
+if ! grep -q -F "hands-off run rst," "$WORK/stub-rst.stdin.1"; then
+  why="$why; the resume instruction did not reach the head on standard input"
 fi
 need_eq "$(cat "$WORK/stub-rst.env")" "rst" "AIMYTH_HANDSOFF_RUN seen by the head"
 need_eq "$(mk field "$REC" supervise mode)" "launched" "supervise event"
@@ -2147,6 +2743,891 @@ need_eq "$(mk field "$REC" successor-aborted reason)" "duplicate" "abort reason"
 need_nofile "$WORK/harness2-stdin.txt"
 verdict "_starter: a head-successor already following the head-exit aborts (duplicate)"
 
+# ------------------------------ the head's first message (register entry 2026-10-08 23:12) ---
+# Every head handsoff.py starts fresh receives a fixed resume instruction composed from the run id
+# and the hand-off's real path. The hand-off's `## Resume prompt` is the owner's prompt for the
+# next attended session and reaches no head: a launcher writes it through the shipped
+# `resume-prompt` key, as each plant below is written, and the head that starts must not see it.
+PLANT_ID="PLANTED-OWNER-PROMPT-4417"
+PLANT_OWNER="$PLANT_ID walk me through the report"
+first_ok() { # $1 captured first message, $2 run, $3 hand-off path: the fixed instruction's content
+  [ -f "$1" ] || { why="$why; no first message captured at $1"; return 0; }
+  if grep -q -F "$PLANT_ID" "$1"; then why="$why; the owner's planted prompt reached the head ($1)"; fi
+  grep -q -F "hands-off run $2," "$1" || why="$why; the first message does not name the run $2 ($1)"
+  grep -q -F "Hand-off: $3" "$1" || why="$why; the first message does not name the hand-off $3 ($1)"
+  grep -q -F 'starting with its `## In flight` section' "$1" || why="$why; the first message does not send the head to In flight ($1)"
+  grep -q -F 'the RUNBOOK and the decisions file' "$1" || why="$why; the first message does not name the RUNBOOK and the decisions file ($1)"
+  grep -q -F 'is not an instruction to you' "$1" || why="$why; the first message does not set the owner's prompt aside ($1)"
+  # The bootstrap (the delegate skill's section 4; the fix's review of 2026-10-09): EVERY head,
+  # the run's first included (the fix's second review: the session meter partitions a run's
+  # lanes by run-open and run-resume alone), reads the record's tail and `git status`, then runs
+  # run-resume through the script under test, before any item work; the record then decides
+  # only where the head starts (the first head's gate, else on from In flight).
+  grep -q -F "Before any item work, whether you are the run's first head or a later one: read the tail of the run record $REALSTORE/spawn-records/$2.jsonl and \`git status\`, then run \`$PYABS -B " "$1" || why="$why; the first message does not send every head, the first included, to the record's tail, git status and the command, through the absolute interpreter ($1)"
+  grep -q -F " run-resume --run $2 --session auto --head '<your model and effort>' --detail '<the item you start or resume>'\`. That registers your session on the record, which the session meter needs to count your helpers as yours." "$1" || why="$why; the first message does not carry the run-resume command for $2 with its reason ($1)"
+  grep -q -F "Then, if that record shows no \`gate\` event written by an earlier head of this run, begin, as the run's first head does, at the gate In flight names; otherwise continue the run from In flight." "$1" || why="$why; the first message does not say where a first and a later head start ($1)"
+  # The command is never inside a condition: no line that carries run-resume opens a branch
+  # (scanned with its backtick spans and absolute paths cut, so a path can never decide it).
+  fo_words=$(grep -F 'run-resume' "$1" | sed -e 's/`[^`]*`//g' -e 's|/[^ ]*||g')
+  [ -n "$fo_words" ] || why="$why; no line of the first message carries run-resume ($1)"
+  if printf '%s\n' "$fo_words" | grep -q -i -E '(^|[^a-z])(if|otherwise|unless|where)([^a-z]|$)'; then
+    why="$why; the run-resume step sits under a condition: $(printf '%s' "$fo_words" | cut -c1-160) ($1)"
+  fi
+  fo_script=$(sed -n 's/.*`[^ `]* -B \([^ `]*\) run-resume .*/\1/p' "$1")
+  if [ -z "$fo_script" ] || [ "$(real "$fo_script")" != "$(real "$H")" ]; then
+    why="$why; the run-resume command names '$fo_script', not the script under test ($1)"
+  fi
+  return 0
+}
+plant_owner() { # $1 run: the owner's next-session prompt, written through the shipped key; the control
+  run handoff --run "$1" --set "resume-prompt=$PLANT_OWNER"
+  need_rc 0
+  need_eq "$(grep -c -F "$PLANT_ID" "$HO")" "1" "control: the plant sits in the hand-off once"
+  need_eq "$(mk section "$HO" "Resume prompt")" "$PLANT_OWNER" "control: the plant is the hand-off's whole Resume prompt"
+}
+first_wait() { # $1 file, $2 fixed string, $3 tries of 0.5 s: a detached supervisor ends late
+  i=0
+  while [ "$i" -lt "$3" ]; do
+    if [ -f "$1" ] && grep -q -F -- "$2" "$1"; then return 0; fi
+    sleep 0.5; i=$((i + 1))
+  done
+  why="$why; no '$2' in $1 within $3 half-seconds"; return 0
+}
+
+# P1-a: the successor command (the launch kit's path: `handoff --set resume-prompt=…`, then
+# `successor`), its head captured by the stub harness through the starter it detaches.
+fixture rfirst 200
+viewer_use rfirst
+plant_owner rfirst
+sh -c 'exit 0' &
+FIRSTDEAD=$!
+wait "$FIRSTDEAD" || :
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run rfirst --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --predecessor-pid "$FIRSTDEAD" --wait-s 5 --max-wait-s 5 --tick-s 1
+need_rc 0
+need_out "the fixed resume instruction"
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+first_wait "$REALSTORE/spawn-records/rfirst-head-1.out.starter.log" "— ended" 60
+first_ok "$WORK/stub-rfirst.stdin.1" rfirst "$(real "$HO")"
+need_eq "$(cat "$WORK/stub-rfirst.count")" "1" "heads started"
+# The watermark hook reads a successor's first prompt for the hand-off it names: it must still
+# find the hand-off in the composed instruction.
+HOOKNAMED=$("$PY" - "$HOOKS_DIR/context-watermark.py" "$WORK/stub-rfirst.stdin.1" <<'HOOKFIRST'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("cw_first", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+try:
+    with open(sys.argv[2], encoding="utf-8") as handle:
+        print(mod.named_handoff(handle.read()) or "none")
+except OSError as exc:
+    print("unreadable: %s" % exc)
+HOOKFIRST
+)
+need_eq "$HOOKNAMED" "$(real "$HO")" "the hand-off the watermark hook reads off the first message"
+verdict "P1-a (register entry 2026-10-08 23:12): the head the successor command starts receives the fixed resume instruction — the run id, the hand-off's real path, In flight as the authority, the RUNBOOK and the decisions file, the bootstrap every head runs, the run's first included (the named record's tail and git status, then run-resume through the script under test, before any item work, under no condition; the record then decides only where the head starts: the first head's gate, else on from In flight), the owner's prompt set aside — and never the hand-off's Resume prompt, whose planted owner prompt is absent (control: the plant is that section, once); the watermark hook still names the hand-off from it"
+
+# P1-b: the supervisor's own start path. The starter starts head 1, which completes with no
+# hand-off; the supervisor records its head-exit and starts head 2 through succeed_exit and
+# start_head. Both first messages are the fixed instruction.
+fixture rfirst2 200
+plant_owner rfirst2
+mk append "$REC" '{"event":"head-exit","band":80,"context":"800,000 tokens (80 %)"}' >/dev/null
+RUNENV="STUB_MODE=complete STUB_N=1"
+starter --run rfirst2 --handoff "$HO" --budget 3.50 --out "$WORK/starter/rfirst2-head-1.out" \
+        --wait-s 5 --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
+need_rc 0
+need_eq "$(cat "$WORK/stub-rfirst2.count")" "2" "heads started (the starter's, then the supervisor's own)"
+SUPCHAIN=$("$PY" - "$REC" <<'SUPCHAIN'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    evs = [json.loads(line) for line in handle if line.strip()]
+kinds = [e.get("event") for e in evs]
+own = [i for i, e in enumerate(evs) if e.get("event") == "head-exit" and e.get("exit_class") == "completed"]
+print("%d %s" % (len(own), bool(own) and "head-successor" in kinds[own[0] + 1:]))
+SUPCHAIN
+)
+need_eq "$SUPCHAIN" "1 True" "the supervisor's own head-exit, then its head-successor"
+first_ok "$WORK/stub-rfirst2.stdin.1" rfirst2 "$(real "$HO")"
+first_ok "$WORK/stub-rfirst2.stdin.2" rfirst2 "$(real "$HO")"
+verdict "P1-b (register entry 2026-10-08 23:12): on the supervisor's start path — the starter's head and the head the supervisor itself starts after a completed head with no hand-off (its head-exit, then its head-successor) — each first message is the fixed resume instruction with the run id, the hand-off path and the run-resume bootstrap, never the planted owner prompt (control: the plant is the hand-off's Resume prompt)"
+
+# P1-c: the console's item names from a hand-off in the section shape a real night run's hand-off
+# has (Resume prompt holding the owner's prompt, then In flight, Plan of record, Grants, Pointers,
+# Trace, Findings ledger, Morning report). watch.py reads the Resume prompt's item lines first and
+# the whole pack when that section names none, so the owner's prompt there must leave the item
+# names the hand-off carries elsewhere readable. The control moves one item line under the Resume
+# prompt, which must then win: the night shape's result is the fall-through, not a missed read.
+NIGHT="$WORK/handoffs/rnight-handoff.md"
+NIGHTOLD="$WORK/handoffs/rnight-old-handoff.md"
+cat > "$NIGHT" <<'NIGHTHO'
+# Hand-off: rnight (hands-off; a suite fixture in a night run's section shape)
+
+Written by the attended launcher. From the launch on, this file is the run's hand-off.
+
+## Resume prompt
+PLANTED-OWNER-PROMPT-4417 walk me through the report
+
+## In flight
+- pack written: 2001-01-01T07:55:30+0100
+Next: the run is closed; the owner's next session walks through the report.
+
+Needs: the owner's decisions on the held fixes.
+
+Decided: every item done or held; nothing pushed.
+
+## Plan of record
+The RUNBOOK beside the run's stage: items item0 to item2, each opening with a gate.
+- item0 orientation — the RUNBOOK, the pre-flight and the decisions file
+- item1 the compile — one compile lane over the inbox
+- item2 close — the reflection, the report and the closing commit
+
+## Grants
+Those of the pre-flight, as confirmed by the owner's go.
+
+## Pointers
+- The close report: the run's report in the vault's output directory
+
+## Trace
+| Time | Item | Decision and its rule | Billed line | Waste so far |
+|---|---|---|---|---|
+| 23:15 | item0 → item1 | orientation done | billed (fixture) | none |
+
+## Findings ledger
+| Time | Item | Finding | Evidence | Routing |
+|---|---|---|---|---|
+| 23:15 | item0 | the fixture's one finding | fixture | none |
+
+## Morning report
+- **Spend against the envelope:** fixture
+- **Warnings raised and handling:** see `## Findings ledger` (1 line)
+NIGHTHO
+"$PY" - "$NIGHT" "$NIGHTOLD" <<'NIGHTOLDPY'
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    text = handle.read()
+line = "- item7 DECOY-IN-RESUME — an item line under the Resume prompt\n"
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write(text.replace("## Resume prompt\n", "## Resume prompt\n" + line, 1))
+NIGHTOLDPY
+NIGHTP=$("$PY" - "$SKILL_DIR/watch.py" "$NIGHT" "$NIGHTOLD" <<'NIGHTPY'
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("w_night", sys.argv[1])
+w = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(w)
+for tag, path in (("NIGHT", sys.argv[2]), ("OLD", sys.argv[3])):
+    items, src = w.pack_items([{"event": "run-open", "run": "rnight", "handoff": path}])
+    print("%sITEMS %s %s" % (tag, json.dumps(items, sort_keys=True), src == path))
+NIGHTPY
+)
+need_eq "$(printf '%s\n' "$NIGHTP" | grep '^NIGHTITEMS')" 'NIGHTITEMS {"item0": "orientation", "item1": "the compile", "item2": "close"} True' "the night shape's item names, read from the hand-off itself"
+need_eq "$(printf '%s\n' "$NIGHTP" | grep '^OLDITEMS')" 'OLDITEMS {"item7": "DECOY-IN-RESUME"} True' "control: an item line under the Resume prompt is read first"
+verdict "P1-c (register entry 2026-10-08 23:12): the console's item names still parse from a hand-off in a night run's section shape whose Resume prompt holds the owner's prompt — item0 to item2 from the Plan of record, the owner's prompt never an item — and the control's item line under the Resume prompt wins, so the result is the parser's fall-through"
+
+# P1-c2: the item-name inputs a real night run's hand-off gives the console (the fix's second
+# review, 2026-10-09, finding 4), as a literal fixture of that shape: the hand-off names no item
+# rows of its own — its Plan of record points to a RUNBOOK, its Trace and ledger rows open with
+# a pipe — and the pre-flight it names under Grants lists the items as colon rows
+# (`- item0 orientation: …`), which the console's grammar (`item<k> <name> —`) does not read;
+# the run-open carries expect_items for item0 to item9, as the launch writes them. What the
+# console shows today, asserted rather than assumed: ten rows, item0 to item9, every name blank
+# (the colon rows stay unnamed), the owner's prompt in Resume prompt never an item, and the
+# source the hand-off itself. watch.py is unchanged by the fix, so this is what is preserved.
+# The control proves the pre-flight is read and that a row in the grammar still parses: the
+# same fixture with item3's row alone in the em-dash form names item3, its source the pre-flight.
+cat > "$WORK/rnightreal-handoff.tmpl" <<'RNHO'
+# Hand-off: @RUN@ (hands-off, a night run; head at max; a suite fixture in a real night hand-off's shape)
+
+Written by the attended launcher. From the launch on, this file is the run's hand-off. Vault root V = @W@/vault.
+
+## Resume prompt
+researcher, shortest. Walk me through V/output/reports/night-report.md and the lessons note V/output/notes/lessons.md, highlights first, each with your recommendation, and take my decisions on whatever the night held. The run's hand-off is @W@/handoffs/@RUN@-handoff.md.
+
+## In flight
+- pack written: 2001-01-01T07:55:30+0100
+Next: the run is closed. The owner's morning session walks through V/output/reports/night-report.md and the lessons note, highlights first, each with its recommendation, and takes his decisions (the Resume prompt above is his prompt for it).
+
+Needs: the owner's decisions on the held fixes, each with options and a recommendation in the report.
+
+Decided: (decisions.md D1 to D5; findings ledger rows 1 to 2) the compile, check and lessons note done; two fixes held with their staged builds kept in the stage; nothing pushed.
+
+## Plan of record
+@W@/stage/RUNBOOK.md: items item0 to item9. Each item opens with `handsoff.py gate` and ends with `handsoff.py boundary` in the direct form (RUNBOOK rule 10).
+
+## Grants
+Those of the pre-flight @W@/handoffs/@RUN@-preflight.md, revision 1 (the Grants table and the Stop conditions), as confirmed by the owner's go in @W@/stage/decisions.md.
+
+## Pointers
+- The fix plan, final version, with its review rounds and dispositions: @W@/stage/fix-plan.md
+- Helper reports of this run: @W@/store/spawn-records/@RUN@-report-<lane>.md
+- The close report: V/output/reports/night-report.md
+
+## Trace
+| Time | Item | Decision and its rule | Billed line | Waste so far |
+|---|---|---|---|---|
+| 23:15 | item0 → item1 | orientation done: RUNBOOK, pre-flight, decisions.md, the fix plan read; usage at start recorded | billed (fixture) · head $2.05 · lanes $0.00 · session $2.05 | none beyond orientation |
+| 23:51 | item1 → item2 | the compile helper completed: five source pages, four concept pages | billed (fixture) · head $7.34 · lanes $0.00 · session $7.34 | none |
+
+
+## Findings ledger
+| Time | Item | Finding | Evidence | Routing |
+|---|---|---|---|---|
+| 23:15 | item0 | the head started with the owner's morning prompt as its first message and proceeded on In flight | the head's first message | register entry; morning report |
+| 00:53 | item6 | decision: the hold rule judged not met, so the fix proceeds | grant G3 | morning report |
+
+
+## Morning report
+- **Spend against the envelope:** billed (fixture) · head $49.10 · lanes $0.00 · session $49.10 · envelope $500.0
+- **Warnings raised and handling:** see `## Findings ledger` (2 lines)
+RNHO
+cat > "$WORK/rnightreal-preflight.tmpl" <<'RNPF'
+# Pre-flight: @RUN@ (hands-off, a night run; head at max; a suite fixture in a real pre-flight's shape)
+
+Status: revision 2, written by the attended session on the owner's ask. Fix plan: @W@/stage/fix-plan.md, version 3, after two independent review rounds.
+
+## What the run does, in order
+- item0 orientation: the RUNBOOK, this pre-flight, decisions.md, the fix plan with its review reports; both usage windows read.
+- item1 the compile: a one-word probe of the open-work model, then one compile helper over the five sources in the raw inbox.
+- item2 the check: the verify helper under the ingest Verify step (M0 file, raw slices, plant); the head settles every non-zero score.
+- item3 the lessons: the head writes a lessons note for the morning walk-through, each lesson with its source page and confidence tier.
+- item4 fixes F1 and F2 (both helper launchers): one builder in one combined staged copy, a review, folds as needed, then both installed together.
+- item5 fix F3 (the stray tool-tag check): a design review first, then a builder, a review and the install.
+- item6 fix F5 (the compile source budget): the bound derived from item2's verify scores, a review, the install.
+- item7 fix F6: two register entries closed after their grep is re-run with a control.
+- item8 declined (D2 no: no spine exists yet): skipped.
+- item9 close: the cross-reflection over the run's transcript, the head's single reflect --yes, the morning report, the final hand-off and the closing commit.
+
+## Lanes
+| Lane | Task | Model | Effort | Ultra |
+|---|---|---|---|---|
+| C5 | compile the five sources | the open-work model after a one-word probe | xhigh | no |
+| V1 | verify C5's pages | the closed-work model | xhigh | no |
+
+## Parameters
+- Head: at max, launched by handsoff.py successor.
+- Envelope: soft USD 100; hard stop USD 500.
+
+## Grants
+| # | Value on go |
+|---|---|
+| G1 | items in order, item0 to item9 (item8 only on D2); each opens with gate and ends with boundary |
+| G9 | soft USD 100, hard stop USD 500 |
+
+## Stop conditions
+- A suite still red after one fix cycle at an install: restore the backup and hold that fix.
+
+## Decisions for the owner's go
+- D1 · go for items 0 to 7 and 9. Recommended: yes.
+- D2 · item8, the two first drafts. Recommended: yes.
+
+## Close report
+V/output/reports/night-report.md, walked through with the owner in the morning.
+RNPF
+RNREAL=$("$PY" - "$SKILL_DIR/watch.py" "$WORK" "$VAULT" <<'RNREALPY'
+import importlib.util
+import json
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("w_nightreal", sys.argv[1])
+w = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(w)
+work, vault = sys.argv[2], sys.argv[3]
+expect = {"item%d" % k: 40000 for k in range(10)}   # the launch's expect_items keys, item0 to item9
+
+
+def fill(tmpl, run, dst, swap=None):
+    with open(os.path.join(work, tmpl), encoding="utf-8") as handle:
+        text = handle.read().replace("@W@", work).replace("@RUN@", run)
+    if swap:
+        assert text.count(swap[0]) == 1, "the control's row is not in the fixture once"
+        text = text.replace(swap[0], swap[1])
+    with open(dst, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    return text
+
+
+def record(run, handoff):
+    path = os.path.join(work, "%s.jsonl" % run)
+    rows = [{"ts": "2001-01-01T23:12:27+0100", "run": run, "event": "run-open", "session": run + "-seed",
+             "session_kind": "seed", "handoff": handoff, "expect_items": expect},
+            {"ts": "2001-01-01T23:15:38+0100", "run": run, "event": "gate", "item": "item0",
+             "decision": "allow"}]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("".join(json.dumps(r) + "\n" for r in rows))
+    return path, rows
+
+
+row3 = "- item3 the lessons: the head writes"
+for tag, run, swap in (("REAL", "rnightreal", None),
+                       ("CTRL", "rnightrealc", (row3, "- item3 the lessons — the head writes"))):
+    ho = os.path.join(work, "handoffs", "%s-handoff.md" % run)
+    pf = os.path.join(work, "handoffs", "%s-preflight.md" % run)
+    hotext = fill("rnightreal-handoff.tmpl", run, ho)
+    pftext = fill("rnightreal-preflight.tmpl", run, pf, swap)
+    rec, rows = record(run, ho)
+    items, src = w.pack_items(rows)
+    shown = w.Run(run, rec, vault)
+    print("%sHO %s" % (tag, json.dumps(w.parse_items(hotext), sort_keys=True)))
+    print("%sPF %s" % (tag, json.dumps(w.parse_items(pftext), sort_keys=True)))
+    print("%sPACK %s %s" % (tag, json.dumps(items, sort_keys=True),
+                            "handoff" if src == ho else "preflight" if src == pf else src))
+    print("%sCONSOLE %s | %s" % (tag, " ".join(shown.item_order),
+                                 " ".join("%s=%s" % (k, shown.names.get(k, "") or "-")
+                                          for k in shown.item_order)))
+    print("%sCANDIDATES %s" % (tag, json.dumps([c == pf for c in w.preflight_candidates(hotext, ho, run)])))
+RNREALPY
+)
+rnr() { printf '%s\n' "$RNREAL" | grep "^$1 " | cut -d' ' -f2-; }
+BLANK10='{"item0": "", "item1": "", "item2": "", "item3": "", "item4": "", "item5": "", "item6": "", "item7": "", "item8": "", "item9": ""}'
+ORDER10="item0 item1 item2 item3 item4 item5 item6 item7 item8 item9"
+need_eq "$(rnr REALHO)" "{}" "the real shape's hand-off names no item row of its own (Resume prompt, Plan of record, Trace and ledger alike)"
+need_eq "$(rnr REALCANDIDATES)" "[true]" "control: the console finds the pre-flight the hand-off names"
+need_eq "$(rnr REALPF)" "{}" "the pre-flight's colon rows are outside the console's grammar"
+need_eq "$(rnr REALPACK)" "$BLANK10 handoff" "the console's items: item0 to item9 from expect_items, every name blank, the source the hand-off"
+need_eq "$(rnr REALCONSOLE)" "$ORDER10 | item0=- item1=- item2=- item3=- item4=- item5=- item6=- item7=- item8=- item9=-" "the console's item rows as its model holds them"
+need_eq "$(rnr CTRLPF)" '{"item3": "the lessons"}' "control: one em-dash row in the same pre-flight parses"
+need_eq "$(rnr CTRLPACK)" '{"item0": "", "item1": "", "item2": "", "item3": "the lessons", "item4": "", "item5": "", "item6": "", "item7": "", "item8": "", "item9": ""} preflight' "control: that name reaches the console from the pre-flight, the colon rows still blank"
+need_eq "$(rnr CTRLCONSOLE)" "$ORDER10 | item0=- item1=- item2=- item3=the lessons item4=- item5=- item6=- item7=- item8=- item9=-" "control: the console's rows with the one parsed name"
+need_eq "$(printf '%s\n' "$RNREAL" | grep -c .)" "10" "every probe answered"
+verdict "P1-c2 (the fix's second review, 2026-10-09, finding 4): on a literal fixture of a real night hand-off's item-name inputs — a hand-off whose Plan of record points to a RUNBOOK, a pre-flight it names under Grants whose item rows use colons, expect_items for item0 to item9 — the console shows today ten rows, item0 to item9, every name blank, from the hand-off, and the owner's Resume prompt is never an item: what the fix preserves is exactly this (names that parse still parse; unnamed rows stay unnamed), since watch.py is unchanged (control: one em-dash row in the same pre-flight is read and named, so the pre-flight is consulted and the blanks are the grammar's)"
+
+# P1-d: the seed launch (the launch kit's own path: a seeded run-open, the owner's next-session
+# prompt written through the shipped key, then `successor --pack-fresh`). The run's first head
+# starts on the fixed instruction and never on the plant. The record holds no gate, so the
+# message's branch for this head is the first head's, and the text is the same as every start's.
+seed_fixture rfirstseed 200
+viewer_use rfirstseed
+plant_owner rfirstseed
+need_eq "$(mk field "$REC" run-open session_kind)" "seed" "control: the run-open is a launcher's seed"
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run rfirstseed --pack-fresh --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --wait-s 5 --max-wait-s 5 --tick-s 1
+need_rc 0
+need_out "successor: pid none (run-open, seed: no pid)"
+need_out "the fixed resume instruction"
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+SEEDLOG="$REALSTORE/spawn-records/rfirstseed-head-1.out.starter.log"
+first_wait "$SEEDLOG" "— ended" 60
+need_eq "$(grep -c '"what": "pack-fresh"' "$REC")" "1" "control: the --pack-fresh observation"
+if ! grep -q -F "pack: fresh — --pack-fresh recorded at" "$SEEDLOG"; then
+  why="$why; control: the starter did not take the --pack-fresh word: $(grep -F 'pack:' "$SEEDLOG")"
+fi
+need_eq "$(mk count "$REC" gate)" "0" "control: no gate on the record before the first head"
+need_eq "$(cat "$WORK/stub-rfirstseed.count")" "1" "heads started"
+first_ok "$WORK/stub-rfirstseed.stdin.1" rfirstseed "$(real "$HO")"
+verdict "P1-d (register entry 2026-10-08 23:12): on the seed launch's path — a seeded run-open, the owner's prompt planted through the shipped resume-prompt key, then successor --pack-fresh — the run's first head receives the fixed resume instruction with its bootstrap, which sends this first head too to run-resume before any item work, and never the planted owner prompt (controls: the plant is the hand-off's whole Resume prompt, the record is seeded, the starter took the --pack-fresh word, no gate precedes the head)"
+
+# P1-e: the meter partition on the seed launch (the fix's second review, 2026-10-09, finding 1).
+# fable-share.py places a lane in the partition the latest run-open or run-resume opened and reads
+# no head-successor, so the run's first head owns its helpers only once its own run-resume is on
+# the record. The seed launch runs for real (`successor --pack-fresh` on a seeded record); its head
+# is the bootstrap stub below, which does mechanically what the first message's bootstrap says
+# before any item work: it takes the one run-resume command the message carries, fills its two
+# placeholders, waits for its own head-successor, runs the command as written, then spawns one
+# helper (the lane events the wrapper writes) and hands over as the stub head does. The record is
+# then the seed launch's (run-open, the seed's head-exit, head-successor, the first head's
+# run-resume, one helper's lane events), and the session meter's own reader and matcher
+# (read_spawn_record, session_matches, partition_label: the selection main() applies) give the
+# helper to the started head. Control, the review's: the same record with the run-resume dropped
+# gives that head no helper and the billed line's `recorded under no partition` label.
+cat > "$WORK/bin/boothead" <<'BOOTHEAD'
+#!/bin/sh
+RUN=${AIMYTH_HANDSOFF_RUN:-none}
+REC="$SUITE_STORE/spawn-records/$RUN.jsonl"
+CF="$SUITE_WORK/boot-$RUN.count"; n=0; [ -f "$CF" ] && n=$(cat "$CF"); n=$((n + 1)); echo "$n" > "$CF"
+cat > "$SUITE_WORK/boot-$RUN.stdin.$n"
+sid=""; prev=""
+for arg in "$@"; do [ "$prev" = "--session-id" ] && sid=$arg; prev=$arg; done
+if [ "$n" = "1" ]; then
+  i=0
+  while [ "$i" -lt 40 ] && ! grep -q -F -- "$sid" "$REC"; do sleep 0.25; i=$((i + 1)); done
+  sed -n 's/.*`\([^ `]* -B [^`]* run-resume [^`]*\)`.*/\1/p' "$SUITE_WORK/boot-$RUN.stdin.$n" \
+    | sed -e 's/<your model and effort>/stub-model stub-effort/' -e 's/<the item you start or resume>/item0/' \
+    > "$SUITE_WORK/boot-$RUN.cmd"
+  rc=0
+  sh "$SUITE_WORK/boot-$RUN.cmd" > "$SUITE_WORK/boot-$RUN.resume.out" 2>&1 || rc=$?
+  echo "$rc" > "$SUITE_WORK/boot-$RUN.resume.rc"
+  "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"lane-open","lane":"H1","reason":"(a) the first head'"'"'s helper"}' >/dev/null
+  "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"lane-spawned","lane":"H1","session_id":"sid-boot-helper"}' >/dev/null
+  "$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"lane-closed","lane":"H1","exit_class":"completed","total_cost_usd":0.5}' >/dev/null
+fi
+"$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"head-exit","band":60,"context":"stub","spent_usd":1.0,"pack":true}' >/dev/null
+"$SUITE_PY" "$SUITE_MK" append "$REC" '{"event":"head-successor","session_id":"sid-by-the-head","pid":1,"budget":1.0}' >/dev/null
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"handed over"}'
+exit 0
+BOOTHEAD
+chmod +x "$WORK/bin/boothead"
+seed_fixture rmeter 200
+viewer_use rmeter
+need_eq "$(mk field "$REC" run-open session_kind)" "seed" "control: the run-open is a launcher's seed"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run rmeter --pack-fresh --meter-line "$METER" --harness-bin "$WORK/bin/boothead" \
+    --wait-s 5 --max-wait-s 5 --tick-s 1
+need_rc 0
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+first_wait "$REALSTORE/spawn-records/rmeter-head-1.out.starter.log" "— ended" 60
+need_eq "$(cat "$WORK/boot-rmeter.count")" "1" "heads started"
+first_ok "$WORK/boot-rmeter.stdin.1" rmeter "$(real "$HO")"
+need_eq "$(grep -c . "$WORK/boot-rmeter.cmd")" "1" "one run-resume command in the first message"
+need_eq "$(cat "$WORK/boot-rmeter.resume.rc")" "0" "the run-resume the message carries, run as written ($(tail -c 300 "$WORK/boot-rmeter.resume.out"))"
+METERP=$("$PY" - "$SKILL_DIR/fable-share.py" "$REC" "$WORK/rmeter-without-resume.jsonl" <<'METERPY'
+import importlib.util
+import json
+import sys
+
+spec = importlib.util.spec_from_file_location("fs_meter", sys.argv[1])
+fs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fs)
+rec, without = sys.argv[2], sys.argv[3]
+with open(rec, encoding="utf-8") as handle:
+    lines = [line for line in handle if line.strip()]
+evs = [json.loads(line) for line in lines]
+kinds = [e.get("event") for e in evs]
+head = next(e["session_id"] for e in evs if e.get("event") == "head-successor")   # the started head
+resumes = [e for e in evs if e.get("event") == "run-resume"]
+first = lambda kind: kinds.index(kind) if kind in kinds else -1
+print("SHAPE %s" % (0 <= first("run-open") < first("head-exit") < first("head-successor")
+                    < first("run-resume") < first("lane-open")))
+print("RESUMES %d %s" % (len(resumes), all(e.get("session") == head for e in resumes)))
+with open(without, "w", encoding="utf-8") as handle:   # the control: the run-resume dropped
+    handle.write("".join(line for line, e in zip(lines, evs) if e.get("event") != "run-resume"))
+
+
+def meter(path):
+    lanes, _, parts, marked, _, _, _ = fs.read_spawn_record(path)
+    mine = set(i for i, part in enumerate(parts) if fs.session_matches(part["session"], head))
+    picked = [lane["name"] for lane in lanes
+              if (not marked) or any(span["partition"] in mine for span in lane["spans"])]
+    chosen = sorted(set(span["partition"] for lane in lanes for span in lane["spans"]
+                        if span["partition"] in mine))
+    label = fs.partition_label(parts, chosen, head) if marked else "no markers"
+    return picked, label.replace(head[:8], "HEAD"), len(lanes)
+
+
+for tag, path in (("WITH", rec), ("WITHOUT", without)):
+    picked, label, total = meter(path)
+    print("%s %d of %d %s · %s" % (tag, len(picked), total, ",".join(picked) or "-", label))
+METERPY
+)
+mtr() { printf '%s\n' "$METERP" | grep "^$1 " | cut -d' ' -f2-; }
+need_eq "$(mtr SHAPE)" "True" "control: run-open, the seed's head-exit, head-successor, the first head's run-resume, then the helper"
+need_eq "$(mtr RESUMES)" "1 True" "one run-resume, naming the started head's session"
+need_eq "$(mtr WITH)" "1 of 1 H1 · recorded under run-resume HEAD" "the session meter's partition with the first head's run-resume"
+need_eq "$(mtr WITHOUT)" "0 of 1 - · recorded under no partition for HEAD" "control: the same record without the run-resume"
+verdict "P1-e (the fix's second review, 2026-10-09, finding 1): on the seed launch (successor --pack-fresh on a seeded record), the first head, doing what its first message's bootstrap says before any item work, runs the run-resume command the message carries through the script under test; on the record that leaves (run-open, the seed's head-exit, head-successor, the first head's run-resume, one helper's lane events) the session meter's reader gives the helper to the started head, 1 of 1 recorded under its run-resume (control, the review's: the same record without the run-resume gives that head 0 of 1, recorded under no partition)"
+
+# ------------------------- the repeat-exit guard and a refused gate (register 2026-09-23 12:4x) ---
+# start_guards' item_before reads only the head's latest start window. A refusal on an item
+# never allowed in that window names no attempt, whatever the gate order. Allowed items less
+# completed boundaries must leave exactly one unfinished item. The must-fire controls are
+# two exits after allowed gates on one item and a head that also refused that same item.
+# A completed boundary (`phase-boundary`, which cmd_boundary writes with `from` and `to`) ends the
+# backward read with no item (the fix's review, 2026-10-09): a head that completed item15 and was
+# refused at item16 made no attempt on item15. P2-c and P2-d are that case at 80 and at 90; their
+# no-boundary variants also name no item because item16 was never allowed. A boundary BEFORE
+# the allowed gate on a different item must not hide a repeat (P2-b).
+REX=$("$PY" - "$H" <<'REXPY'
+import ast
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("h_rex", sys.argv[1])
+h = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(h)
+# Exercise the nested attribution directly for the first-head projection, without changing
+# production visibility or running a starter. Both baseline and current source use this name.
+tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
+guard = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "start_guards")
+item_fn = next(n for n in guard.body if isinstance(n, ast.FunctionDef) and n.name == "item_before")
+item_code = compile(ast.Module(body=[item_fn], type_ignores=[]), sys.argv[1], "exec")
+
+
+def item_at_exit(evs):
+    scope = dict(vars(h), events=evs)
+    exec(item_code, scope)
+    return scope["item_before"](len(evs) - 1)
+
+
+def gate(item, decision):
+    return {"event": "gate", "item": item, "decision": decision, "metered": True,
+            "fit": decision == "allow"}
+
+
+def chain(first, second, first_band=80, second_band=90, before=()):
+    evs = [{"event": "run-open", "session": "sid-a"}] + list(before)
+    evs += [first, {"event": "head-exit", "band": first_band, "pack": True},
+            {"event": "head-successor", "session_id": "sid-b", "pid": 1, "budget": 1.0}]
+    evs += list(second) if isinstance(second, (list, tuple)) else [second]
+    evs += [{"event": "head-exit", "band": second_band, "pack": True}]
+    return evs
+
+
+def boundary(src, dst):
+    # the fields cmd_boundary writes: from, to, disposition, next
+    return {"event": "phase-boundary", "from": src, "to": dst, "disposition": "done",
+            "next": dst}
+
+
+def reason(evs):
+    hi = max(i for i, e in enumerate(evs) if e.get("event") == "head-exit")
+    return h.start_guards(evs, hi)[0]
+
+
+refused, allowed = gate("item15", "refuse"), gate("item15", "allow")
+completed = [allowed, boundary("item15", "item16"), gate("item16", "refuse")]
+for name, evs in (("REFUSED80", chain(refused, allowed)),
+                  ("REFUSED90", chain(refused, allowed, 90, 80)),
+                  ("OTHERITEM", chain(refused, allowed, before=(gate("item14", "allow"),))),
+                  ("ALLOWED", chain(allowed, allowed)),
+                  ("WORKED", chain(refused, allowed, before=(gate("item15", "allow"),))),
+                  ("BAND60", chain(allowed, allowed, 80, 60)),
+                  ("COMPLETED80", chain(allowed, completed, 80, 80)),
+                  ("COMPLETED90", chain(allowed, completed, 80, 90)),
+                  ("NOBOUNDARY", chain(allowed, [allowed, gate("item16", "refuse")], 80, 80)),
+                  ("NOBOUNDARY90", chain(allowed, [allowed, gate("item16", "refuse")], 80, 90)),
+                  ("BOUNDARYFIRST", chain(allowed, allowed, 80, 90,
+                                          before=(boundary("item14", "item15"),)))):
+    print("%s %s" % (name, reason(evs)))
+# T1 projects the incident onto the fields the guards read: seed, two starts per head,
+# gates and exits. Its 17 events are synthetic; no record session or run identifiers ship.
+t1 = [{"event": "run-open", "session": "seed"}, {"event": "head-exit", "band": 0},
+      {"event": "head-successor", "session_id": "sid-a"},
+      {"event": "run-resume", "session": "sid-a"}, gate("item0", "allow"),
+      boundary("item0", "item1"), gate("item1", "refuse"), gate("item6", "refuse"),
+      gate("item7", "allow"), {"event": "head-exit", "band": 80},
+      {"event": "head-successor", "session_id": "sid-b"},
+      {"event": "run-resume", "session": "sid-b"}, gate("item1", "allow"),
+      gate("item6", "allow"), gate("item7", "allow"), gate("item8", "refuse"),
+      {"event": "head-exit", "band": 80}]
+l1 = [{"event": "run-open", "session": "sid-a"}, gate("item1", "refuse"),
+      gate("item6", "refuse"), gate("item7", "allow"), {"event": "head-exit", "band": 80}]
+x, y = gate("X", "allow"), gate("Y", "allow")
+for name, evs in (("T1", t1),
+                  ("T3b", chain(x, x, 80, 80, before=(gate("Y", "refuse"),))),
+                  ("T4", chain(y, [x, y], 80, 80, before=(x,))),
+                  ("T5", chain(gate("Y", "refuse"), [x, gate("Y", "refuse")],
+                               80, 80, before=(x,))),
+                  ("T2r", [{"event": "run-open", "session": "older"}, y,
+                            {"event": "head-exit", "band": 0}] + chain(x, x, 80, 80)),
+                  ("SUBTRACT", chain(x, [x, y, boundary("Y", "Z"), x], 80, 80)),
+                  ("MALFORMED", chain(x, [x, {"event": "gate", "item": "X"}], 80, 80)),
+                  ("BADITEM", chain(x, [gate([], "allow"), x], 80, 80)),
+                  ("BADBOUNDARY", chain(x, [{"event": "phase-boundary"}, x], 80, 80)),
+                  ("NOSTART", [x, {"event": "head-exit", "band": 80}, x,
+                               {"event": "head-exit", "band": 80}])):
+    print("%s %s" % (name, reason(evs)))
+print("L1 %s" % item_at_exit(l1))
+REXPY
+) || die "repeat-exit in-memory premises failed"
+rex() { printf '%s\n' "$REX" | grep "^$1 " | cut -d' ' -f2; }
+need_eq "$(rex REFUSED80)" "None" "a refused gate before the 80 exit, an allowed one before the 90 exit"
+need_eq "$(rex REFUSED90)" "None" "the same at 90 then 80"
+need_eq "$(rex OTHERITEM)" "None" "the first head's allowed gate on another item, then a refused one"
+# 11 existing cases, 5 requested projections, one residual loop and 5 premise/set controls.
+need_eq "$(printf '%s\n' "$REX" | grep -c .)" "22" "every case answered"
+verdict "P2-a (register entry 2026-09-23 12:4x, must not fire): a refused item never allowed in that head's window names no attempt, including when another item was allowed"
+need_eq "$(rex ALLOWED)" "repeat-exit" "two exits at 80 and 90, each after an allowed gate on item15"
+need_eq "$(rex WORKED)" "repeat-exit" "an allowed gate on item15, then a refused one, before the first exit"
+need_eq "$(rex BOUNDARYFIRST)" "repeat-exit" "a boundary into item15 before head A's allowed gate on it, then head B's allowed gate"
+need_eq "$(rex BAND60)" "None" "control: the band rule is unchanged (a 60 exit never counts)"
+verdict "P2-b (register entry 2026-09-23 12:4x, must fire): two band exits at 80 and 90, each after an ALLOWED gate on the same unfinished item, fire repeat-exit, as does a head that worked the item before its refused gate, and a boundary into the item before the first head's allowed gate hides nothing; the band rule is unchanged (control: a 60 exit does not fire)"
+need_eq "$(rex COMPLETED80)" "None" "head A allowed item15 and exited at 80; head B allowed item15, completed item15 → item16, was refused at item16 and exited at 80"
+need_eq "$(rex NOBOUNDARY)" "None" "the same at 80 without the completed boundary names no item: item16 was never allowed"
+need_eq "$(rex ALLOWED)" "repeat-exit" "control: one unfinished allowed item per head still fires"
+verdict "P2-c (must not fire): the completed boundary ends the backward read; without it, the refusal on item16, never allowed in this window, also names no item (control: ALLOWED fires)"
+need_eq "$(rex COMPLETED90)" "None" "the same with head B's exit at 90"
+need_eq "$(rex NOBOUNDARY90)" "None" "the same at 90 without the completed boundary names no item: item16 was never allowed"
+need_eq "$(rex WORKED)" "repeat-exit" "control: refusing the same item after allowing it still fires"
+verdict "P2-d (must not fire): the boundary and no-boundary cases also name no item at band 90 (control: WORKED fires)"
+for name in T1 T3b T4 T5 L1; do
+  need_eq "$(rex "$name")" "None" "$name: no attributable single-item attempt"
+done
+need_eq "$(rex T2r)" "repeat-exit" "T2r: another head's earlier unfinished item cannot hide a loop"
+verdict "repeat-exit window projections: T1, L1 and T3b clear; T4 and T5 pin the accepted residual (multiple unfinished items, or re-allowed work and a never-allowed refusal); T2r still catches the single-item loop (control)"
+for name in MALFORMED BADITEM BADBOUNDARY NOSTART; do
+  need_eq "$(rex "$name")" "None" "$name: an unreadable premise names no item"
+done
+need_eq "$(rex SUBTRACT)" "repeat-exit" "control: completing Y leaves X as the sole unfinished item"
+verdict "repeat-exit window premises: malformed gates and boundaries or no start cannot fire; completed items are subtracted (control)"
+
+# P2-c through the starter: the completed-boundary record starts its successor; the boundary is
+# written in cmd_boundary's own shape (from, to, disposition, next).
+fixture rrexc 200
+mk append "$REC" '{"event":"gate","item":"item15","decision":"allow","metered":true,"fit":true}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":80,"context":"800,000 tokens (80 %)","pack":true}' >/dev/null
+mk append "$REC" '{"event":"head-successor","session_id":"sid-rrexc-2","pid":1,"budget":1.0}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"item15","decision":"allow","metered":true,"fit":true}' >/dev/null
+mk append "$REC" '{"event":"phase-boundary","from":"item15","to":"item16","disposition":"done","next":"item16: the next item"}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"item16","decision":"refuse","metered":true,"fit":false}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":80,"context":"810,000 tokens (81 %)","pack":true}' >/dev/null
+RUNENV="STUB_MODE=complete STUB_N=0"
+starter --run rrexc --handoff "$HO" --budget 3.50 --out "$WORK/starter/rrexc-head-1.out" --wait-s 5 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
+need_rc 0
+need_eq "$(mk count "$REC" successor-aborted)" "0" "successor-aborted events"
+need_absent "repeat-exit"
+need_file "$WORK/stub-rrexc.stdin.1"
+verdict "P2-c through the starter: head A's band-80 exit after an allowed gate on item15, then head B's band-80 exit after completing item15 → item16 and a refused gate on item16, starts the successor (no successor-aborted)"
+
+# The same two cases through the starter: the refused-gate record starts its head, the allowed one
+# aborts before any head with successor-aborted repeat-exit.
+fixture rrexa 200
+mk append "$REC" '{"event":"gate","item":"item15","decision":"refuse","metered":true,"fit":false}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":80,"context":"560,000 tokens (56 %)","pack":true}' >/dev/null
+mk append "$REC" '{"event":"head-successor","session_id":"sid-rrexa-2","pid":1,"budget":1.0}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"item15","decision":"allow","metered":true,"fit":true}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":90,"context":"900,000 tokens (90 %)","pack":true}' >/dev/null
+RUNENV="STUB_MODE=complete STUB_N=0"
+starter --run rrexa --handoff "$HO" --budget 3.50 --out "$WORK/starter/rrexa-head-1.out" --wait-s 5 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
+need_rc 0
+need_eq "$(mk count "$REC" successor-aborted)" "0" "successor-aborted events"
+need_file "$WORK/stub-rrexa.stdin.1"
+verdict "P2-a through the starter: a band exit after a refused gate, then a band exit after an allowed gate on the same item, starts the successor (no successor-aborted)"
+
+fixture rrexb 200
+mk append "$REC" '{"event":"gate","item":"item15","decision":"allow","metered":true,"fit":true}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":80,"context":"800,000 tokens (80 %)","pack":true}' >/dev/null
+mk append "$REC" '{"event":"head-successor","session_id":"sid-rrexb-2","pid":1,"budget":1.0}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"item15","decision":"allow","metered":true,"fit":true}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":90,"context":"900,000 tokens (90 %)","pack":true}' >/dev/null
+rm -f "$WORK/harness2-stdin.txt"
+run _starter --run rrexb --handoff "$HO" --budget 1.00 --out "$WORK/starter/rrexb-head-1.out" \
+    --wait-s 5 --harness-bin "$WORK/bin/harness2" --transcript ""
+need_rc 1
+need_eq "$(mk field "$REC" successor-aborted reason)" "repeat-exit" "abort reason"
+need_out "the last two head-exits followed a gate on the same item (item15)"
+need_nofile "$WORK/harness2-stdin.txt"
+verdict "P2-b through the starter: two band exits after allowed gates on the same item abort with successor-aborted repeat-exit and start no head"
+
+# P2-e: the no-progress rule (the fix's second review, 2026-10-09, finding 2). A refused gate is
+# no attempt on its item, so the attempt comparison skips it; two heads in turn that are each
+# refused at the same pending item have still made no progress, and a third start would only be
+# refused again. start_guards' second repeat-exit rule stops such a chain: the last two exits by
+# two different heads (the sessions their latest run-open, run-resume or head-successor name),
+# each at band 80 or 90, each after a refused gate on the same item, with no allowed gate and no
+# completed boundary between the two refusals. All four band pairings must stop; the controls
+# must not (an allowed gate or a completed boundary between the refusals, another item, a band-60
+# exit, one head resumed in place, unreadable sessions, one refusal answered by two exits of one
+# head). P2-a (refused, then allowed: proceeds), P2-b (two allowed attempts: stops), P2-c and
+# P2-d (a completed boundary, then a refusal: proceeds) above are unchanged and still hold.
+REXE=$("$PY" - "$H" <<'REXEPY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("h_rexe", sys.argv[1])
+h = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(h)
+
+
+def gate(item, decision):
+    return {"event": "gate", "item": item, "decision": decision, "metered": True,
+            "fit": decision == "allow"}
+
+
+def boundary(src, dst):
+    return {"event": "phase-boundary", "from": src, "to": dst, "disposition": "done", "next": dst}
+
+
+def chain(first, second, first_band, second_band, start=None, opener=None):
+    evs = [opener or {"event": "run-open", "session": "sid-a"}] + list(first)
+    evs += [{"event": "head-exit", "band": first_band, "pack": True}]
+    evs += [start or {"event": "head-successor", "session_id": "sid-b", "pid": 1, "budget": 1.0}]
+    evs += list(second) + [{"event": "head-exit", "band": second_band, "pack": True}]
+    return evs
+
+
+def answer(evs):
+    hi = max(i for i, e in enumerate(evs) if e.get("event") == "head-exit")
+    reason, detail = h.start_guards(evs, hi)
+    return "%s%s" % (reason, " no-progress" if detail and "no progress" in detail else "")
+
+
+refused = gate("item15", "refuse")
+cases = [("NP%d%d" % (a, b), chain([refused], [refused], a, b)) for a in (80, 90) for b in (80, 90)]
+cases += [
+    ("NPTWICE", chain([refused], [refused, refused], 80, 90)),
+    ("NPALLOWED", chain([refused], [gate("item15", "allow"), refused], 80, 90)),
+    ("NPBOUNDARY", chain([refused], [boundary("item14", "item15"), refused], 80, 90)),
+    ("NPOTHER", chain([refused], [gate("item16", "refuse")], 80, 90)),
+    ("NPBAND60", chain([refused], [refused], 60, 80)),
+    ("NPBAND60B", chain([refused], [refused], 90, 60)),
+    ("NPRESUMED", chain([refused], [refused], 80, 90,
+                        start={"event": "head-resumed", "session_id": "sid-a", "pid": 1})),
+    ("NPNOSESSION", chain([refused], [refused], 80, 90, start={"event": "head-successor", "pid": 1},
+                          opener={"event": "run-open"})),
+    ("NPONEHEAD", [{"event": "run-open", "session": "sid-a"},
+                   {"event": "head-successor", "session_id": "sid-b", "pid": 1},
+                   refused, {"event": "head-exit", "band": 80, "pack": True},
+                   {"event": "head-exit", "band": 90, "pack": True}]),
+    ("NPEMPTYITEM", chain([gate("", "refuse")], [gate("", "refuse")], 80, 90)),
+    ("NPLISTITEM", chain([gate([], "refuse")], [gate([], "refuse")], 80, 90)),
+]
+for name, evs in cases:
+    print("%s %s" % (name, answer(evs)))
+REXEPY
+) || die "no-progress in-memory premises failed"
+rexe() { printf '%s\n' "$REXE" | grep "^$1 " | cut -d' ' -f2-; }
+need_eq "$(rexe NP8080)" "repeat-exit no-progress" "two heads in turn refused at item15, exits at 80 and 80"
+need_eq "$(rexe NP8090)" "repeat-exit no-progress" "the same at 80 and 90"
+need_eq "$(rexe NP9080)" "repeat-exit no-progress" "the same at 90 and 80"
+need_eq "$(rexe NP9090)" "repeat-exit no-progress" "the same at 90 and 90"
+need_eq "$(rexe NPTWICE)" "repeat-exit no-progress" "the second head refused twice at item15, nothing allowed between"
+need_eq "$(rexe NPALLOWED)" "None" "control: an allowed gate on item15 between the two refusals"
+need_eq "$(rexe NPBOUNDARY)" "None" "control: a completed boundary between the two refusals"
+need_eq "$(rexe NPOTHER)" "None" "control: the second head refused at another item"
+need_eq "$(rexe NPBAND60)" "None" "control: the first exit at band 60"
+need_eq "$(rexe NPBAND60B)" "None" "control: the second exit at band 60"
+need_eq "$(rexe NPRESUMED)" "None" "control: one head resumed in place (one session) is not two heads"
+need_eq "$(rexe NPNOSESSION)" "None" "control: no session readable on the record, so two heads cannot be shown"
+need_eq "$(rexe NPONEHEAD)" "None" "control: one head's one refusal answered by two exits"
+need_eq "$(rexe NPEMPTYITEM)" "None" "an empty refused item cannot prove no progress"
+need_eq "$(rexe NPLISTITEM)" "None" "a non-string refused item cannot prove no progress"
+# 13 existing no-progress cases plus two unreadable-item cases.
+need_eq "$(printf '%s\n' "$REXE" | grep -c .)" "15" "every case answered"
+verdict "P2-e (the fix's second review, 2026-10-09, must fire): two heads in turn, each exiting at band 80 or 90 after a refused gate on the same item with no allowed gate and no completed boundary between the two refusals, stop with repeat-exit in all four band pairings (80/80, 80/90, 90/80, 90/90; and a second head refused twice) — no progress; none of the controls fires: an allowed gate or a completed boundary between the refusals, another item, a band-60 exit on either side, one head resumed in place, unreadable sessions, one refusal answered by two exits of one head"
+
+# P2-e through the starter: the 80/90 pairing on a real record aborts before any head.
+fixture rrexe 200
+mk append "$REC" '{"event":"gate","item":"item15","decision":"refuse","metered":true,"fit":false}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":80,"context":"420,000 tokens (42 %)","pack":true}' >/dev/null
+mk append "$REC" '{"event":"head-successor","session_id":"sid-2-rrexe","pid":1,"budget":1.0}' >/dev/null
+mk append "$REC" '{"event":"run-resume","session":"sid-2-rrexe","head":"fixture head 2","detail":"item15"}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"item15","decision":"refuse","metered":true,"fit":false}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":90,"context":"430,000 tokens (43 %)","pack":true}' >/dev/null
+rm -f "$WORK/harness2-stdin.txt"
+run _starter --run rrexe --handoff "$HO" --budget 1.00 --out "$WORK/starter/rrexe-head-1.out" \
+    --wait-s 5 --harness-bin "$WORK/bin/harness2" --transcript ""
+need_rc 1
+need_eq "$(mk field "$REC" successor-aborted reason)" "repeat-exit" "abort reason"
+need_out "each followed a refused gate on the same item (item15) with no allowed gate and no completed boundary between the two refusals: no progress"
+need_nofile "$WORK/harness2-stdin.txt"
+need_eq "$(mk count "$REC" head-successor)" "1" "no head-successor written after the abort"
+verdict "P2-e through the starter: head A refused at item15 and exiting at band 80, then head B (its own session, run-resumed) refused at item15 and exiting at band 90, abort with successor-aborted repeat-exit, the no-progress detail, and no head started"
+
+# P2-f: one session in two spellings is one head (the fix's third review, 2026-10-09, finding 1).
+# A head writes run-open with the eight-character id the status hook shows; the wrapper and an
+# explicit `run-resume --session` carry the full id, which cmd_run_resume records as given. The
+# session convention (fable-share.py's session_matches) takes an id and a prefix of it at least
+# eight characters long for one session, and no_progress now reads sessions the same way: a head
+# resumed in place, named short at one exit and full at the other, is one head, and its two
+# refusals are no chain of heads. Short then full and full then short, each at 80/80, 80/90, 90/80
+# and 90/90, must proceed, as must the review's own counterexample (run-open short, a refused gate
+# and an exit at 80, head-resumed, run-resume full, a refused gate and an exit at 90), which also
+# runs through the starter on a real record. Two distinct heads refused in turn must still stop:
+# a short id beside another session's full id, two full ids, the short-then-full record with the
+# full id of another session, and a shared prefix under eight characters (not the short id). The
+# full ids are assembled from parts, so this file's own source carries no session-id literal (the
+# pattern the ship-safe leg sweeps for).
+SHORTSID=12345678
+FULLSID="$SHORTSID-1234-1234-1234-123456789abc"
+REXF=$("$PY" - "$H" "$SHORTSID" "$FULLSID" <<'REXFPY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("h_rexf", sys.argv[1])
+h = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(h)
+SHORT, FULL = sys.argv[2], sys.argv[3]
+OTHER = "87654321" + FULL[len(SHORT):]   # another session's full id: no prefix shared with FULL
+
+
+def gate(item, decision):
+    return {"event": "gate", "item": item, "decision": decision, "metered": True,
+            "fit": decision == "allow"}
+
+
+def exit_at(band):
+    return {"event": "head-exit", "band": band, "pack": True}
+
+
+def resumed(opened, named, first_band, second_band):
+    # one head resumed in place: run-open as `opened`, refused at item15, exit; head-resumed (the
+    # supervisor's event, which names no new session); run-resume as `named`, refused again, exit
+    refused = gate("item15", "refuse")
+    return [{"event": "run-open", "session": opened}, refused, exit_at(first_band),
+            {"event": "head-resumed", "session_id": opened, "pid": 1, "resume_n": 1},
+            {"event": "run-resume", "session": named}, refused, exit_at(second_band)]
+
+
+def two_heads(first, second):
+    # two heads in turn: head A opens as `first`, head B starts and run-resumes as `second`; each
+    # is refused at item15 and exits, at 80 and then 90
+    refused = gate("item15", "refuse")
+    return [{"event": "run-open", "session": first}, refused, exit_at(80),
+            {"event": "head-successor", "session_id": second, "pid": 1, "budget": 1.0},
+            {"event": "run-resume", "session": second}, refused, exit_at(90)]
+
+
+def answer(evs):
+    hi = max(i for i, e in enumerate(evs) if e.get("event") == "head-exit")
+    reason, detail = h.start_guards(evs, hi)
+    return "%s%s" % (reason, " no-progress" if detail and "no progress" in detail else "")
+
+
+# the review's counterexample, event for event
+REVIEW = [{"event": "run-open", "session": SHORT}, gate("item15", "refuse"), exit_at(80),
+          {"event": "head-resumed", "session_id": SHORT, "pid": 1},
+          {"event": "run-resume", "session": FULL}, gate("item15", "refuse"), exit_at(90)]
+cases = [("SF%d%d" % (a, b), resumed(SHORT, FULL, a, b)) for a in (80, 90) for b in (80, 90)]
+cases += [("FS%d%d" % (a, b), resumed(FULL, SHORT, a, b)) for a in (80, 90) for b in (80, 90)]
+cases += [
+    ("REVIEW", REVIEW),
+    ("DISTINCT", two_heads(SHORT, OTHER)),
+    ("DISTINCTFULL", two_heads(FULL, OTHER)),
+    ("SFOTHER", resumed(SHORT, OTHER, 80, 90)),
+    ("UNDER8", two_heads(SHORT[:7], FULL)),
+]
+for name, evs in cases:
+    print("%s %s" % (name, answer(evs)))
+REXFPY
+)
+rexf() { printf '%s\n' "$REXF" | grep "^$1 " | cut -d' ' -f2-; }
+for c in SF8080 SF8090 SF9080 SF9090; do
+  need_eq "$(rexf "$c")" "None" "$c: one session, run-open short then run-resume full"
+done
+for c in FS8080 FS8090 FS9080 FS9090; do
+  need_eq "$(rexf "$c")" "None" "$c: one session, run-open full then run-resume short"
+done
+need_eq "$(rexf REVIEW)" "None" "the review's counterexample"
+need_eq "$(rexf DISTINCT)" "repeat-exit no-progress" "control: head A by its short id, head B by another session's full id"
+need_eq "$(rexf DISTINCTFULL)" "repeat-exit no-progress" "control: two heads by two different full ids"
+need_eq "$(rexf SFOTHER)" "repeat-exit no-progress" "control: the short-then-full record with the full id of another session"
+need_eq "$(rexf UNDER8)" "repeat-exit no-progress" "control: a shared prefix of seven characters is not the short id"
+need_eq "$(printf '%s\n' "$REXF" | grep -c .)" "13" "every case answered"
+# The review's counterexample through the starter: the record on disk, the stub head as P2-c's.
+HO="$WORK/handoffs/rrexsid-handoff.md"
+REC="$STORE/spawn-records/rrexsid.jsonl"
+rm -f "$REC"
+mk handoff "$HO" >/dev/null
+mk record "$REC" rrexsid "$SHORTSID" "$HO" 200 >/dev/null
+mk append "$REC" '{"event":"gate","item":"item15","decision":"refuse","metered":true,"fit":false}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":80,"context":"420,000 tokens (42 %)","pack":true}' >/dev/null
+mk append "$REC" '{"event":"head-resumed","session_id":"'"$SHORTSID"'","pid":1,"context":90000,"waited_s":1,"reset_source":"x","resume_n":1}' >/dev/null
+mk append "$REC" '{"event":"run-resume","session":"'"$FULLSID"'","head":"fixture head","detail":"item15"}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"item15","decision":"refuse","metered":true,"fit":false}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":90,"context":"430,000 tokens (43 %)","pack":true}' >/dev/null
+need_eq "$(mk field "$REC" run-open session)" "$SHORTSID" "control: run-open names the short id"
+need_eq "$(mk field "$REC" run-resume session)" "$FULLSID" "control: run-resume names the full id"
+RUNENV="STUB_MODE=complete STUB_N=0"
+starter --run rrexsid --handoff "$HO" --budget 3.50 --out "$WORK/starter/rrexsid-head-1.out" --wait-s 5 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
+need_rc 0
+need_eq "$(mk count "$REC" successor-aborted)" "0" "successor-aborted events"
+need_absent "repeat-exit"
+need_file "$WORK/stub-rrexsid.stdin.1"
+verdict "P2-f (the fix's third review, 2026-10-09, finding 1, must not fire): one session written short then full and full then short, across 80/80, 80/90, 90/80 and 90/90, is one head and no repeat-exit; the review's counterexample (run-open short, refused at item15, exit at 80, head-resumed, run-resume full, refused at item15, exit at 90) proceeds, and through the starter on a real record starts its head (no successor-aborted); two distinct heads refused in turn still stop with the no-progress detail (a short id beside another session's full id, two full ids, the short-then-full record with another session's full id, a seven-character shared prefix)"
+
 # ------------------------------------------------------------------------- wait-reset ------
 fixture rwait 200
 # +5 s against a 2 s block bound: the call must give the window back, not the reset.
@@ -2174,6 +3655,37 @@ run wait-reset --run rwait3 --stop-text "limit reached; the window resets at 203
 need_rc 0
 need_out "stop text ISO 2030-01-02T03:04:05+0100"
 verdict "wait-reset: an ISO reset time in the stop text is parsed"
+
+# A reset time of day across a clock change (Europe/London, 25 October 2026, a 25-hour day):
+# next_clock builds each day's candidate from that day's date, never today's plus 86,400 s.
+# Must hold: Saturday 23:00 BST waiting for 03:00 lands on Sunday 03:00 GMT, not 02:00; Sunday
+# 23:30 GMT waiting for 00:30 lands on Monday 00:30 GMT, never at or before now; the repeated hour
+# (01:30 on the change night) takes its later instant; an ordinary day is unchanged.
+why=""
+NC_OUT=$(TZ=Europe/London "$PY" -B - "$H" 2>&1 <<'NCPY'
+import ast, sys, time
+src = open(sys.argv[1]).read()
+fn = [n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef) and n.name == "next_clock"][0]
+ns = {"time": time}
+exec(compile(ast.Module(body=[fn], type_ignores=[]), "next_clock", "exec"), ns)
+nc = ns["next_clock"]
+def ts(y, mo, d, h, mi, dst):
+    return time.mktime((y, mo, d, h, mi, 0, 0, 0, dst))
+cases = [
+    ("sat-2300-to-0300", ts(2026, 10, 24, 23, 0, 1), 3, 0, "2026-10-25 03:00 GMT"),
+    ("sun-2330-to-0030", ts(2026, 10, 25, 23, 30, 0), 0, 30, "2026-10-26 00:30 GMT"),
+    ("repeated-hour", ts(2026, 10, 25, 0, 30, 1), 1, 30, "2026-10-25 01:30 GMT"),
+    ("ordinary-day", ts(2026, 10, 23, 13, 0, 1), 9, 0, "2026-10-24 09:00 BST"),
+]
+for name, now, h, m, want in cases:
+    got = time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(nc(h, m, now)))
+    print("%s %s" % (name, "ok" if got == want else "got %s, wanted %s" % (got, want)))
+NCPY
+)
+for c in sat-2300-to-0300 sun-2330-to-0030 repeated-hour ordinary-day; do
+  grep -q -- "^$c ok$" <<<"$NC_OUT" || why="$why; $c: $(grep -- "^$c" <<<"$NC_OUT" | head -1)"
+done
+verdict "next_clock: a reset time of day across the 25 October 2026 clock change lands on the right instant (Saturday's 03:00 at 03:00 GMT, Sunday night's 00:30 on Monday, the repeated hour at its later instant, an ordinary day unchanged)"
 
 # The probe is opt-in and off by default (owner ruling 2026-09-06): with no reset time to sleep
 # to and no --probe, the wait is not entered at all — the stop condition is recorded and the
@@ -2344,14 +3856,14 @@ verdict "close: the hands-off close of the rclose leg is unchanged and carries n
 plain_fixture pclose2
 LINES_BEFORE=$(mk lines "$REC")
 COMMITS_BEFORE=$(git -C "$VAULT" rev-list --count HEAD)
-run close --run pclose2 --commit "fixture: a commit a plain run may not make"
+run close --run pclose2 --items "fixture items" --commit "fixture: a commit a plain run may not make"
 need_rc 2
 need_out "never commits and never pushes"
 need_lines
 need_eq "$(mk lines "$REC")" "$LINES_BEFORE" "record lines (nothing written)"
 need_eq "$(mk count "$REC" run-close)" "0" "run-close events"
 need_eq "$(git -C "$VAULT" rev-list --count HEAD)" "$COMMITS_BEFORE" "commit count"
-run close --run pclose2 --push
+run close --run pclose2 --items "fixture items" --push
 need_rc 2
 need_out "never commits and never pushes"
 need_eq "$(mk lines "$REC")" "$LINES_BEFORE" "record lines after --push"
@@ -2396,14 +3908,15 @@ need_eq "$(head -1 "$WORK/grants-check.txt")" "grants-missing 0 writes-missing 0
 verdict "run-open: the grants file holds the given path in both spellings, the defaults (vault, store, state, projects, lane-home, /tmp), the writes; the pointer names the run"
 
 rm -f "$GF"
-run grants --run rgrant --write "$WORK/real-grant/more"
+run grants --run rgrant --add-grant "$WORK/link-grant" --add-write "$WORK/real-grant/more"
 need_rc 0
 need_file "$GF"
 need_out "grants: $GF"
 need_eq "$(mk field "$REC" grants grants_file)" "$GF" "grants event"
 need_eq "$(cat "$STATE/run-sid-rgrant")" "rgrant" "the pointer after grants"
 if ! grep -q "real-grant/more" "$GF"; then why="$why; the new write is not in the rewritten file"; fi
-verdict "grants: a missing grants file is rewritten with the pointer (N7)"
+if ! grep -q "link-grant/out" "$GF"; then why="$why; the recorded write was lost (the record's lists are the baseline)"; fi
+verdict "grants: a missing grants file is rewritten with the pointer (N7), the add forms merging into the record's lists (K64bc6c8c: a missing file restores nothing by itself)"
 
 fixture rgrant2 200
 RUNENV="PATH=$WORK/psnone:$PATH"
@@ -2437,13 +3950,20 @@ need_out "grants $GFK (kept)"
 need_eq "$(mk field "$REC" run-resume grants)" "kept" "grants kept on the event"
 if ! grep -q "real-grant/keepme" "$GFK"; then why="$why; the seeded write was lost"; fi
 if grep -q '"source": "run-resume"' "$GFK"; then why="$why; the file was rewritten"; fi
+RKL=$(mk lines "$REC")
 RUNENV="PATH=$WORK/psnone:$PATH"
 run run-resume --run rkeep --session sid-keep2 --head "h" --detail "explicit write" --write "$WORK/real-grant/other"
+need_rc 2
+need_out "would shrink the run's grants and passes no --replace"
+need_eq "$(mk lines "$REC")" "$RKL" "the refused call wrote no event"
+if ! grep -q "real-grant/keepme" "$GFK"; then why="$why; the refused call changed the file"; fi
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run rkeep --session sid-keep2 --head "h" --detail "explicit write" --write "$WORK/real-grant/other" --replace
 need_rc 0
 need_absent "(kept)"
 if grep -q "real-grant/keepme" "$GFK"; then why="$why; an explicit --write did not replace the file"; fi
 if ! grep -q "real-grant/other" "$GFK"; then why="$why; the explicit write is absent"; fi
-verdict "run-resume: with no --grant or --write an existing grants file is kept (register 2026-09-06); an explicit --write rewrites it (control)"
+verdict "run-resume: with no --grant or --write an existing grants file is kept (register 2026-09-06); an explicit --write that drops a path is refused without --replace, nothing written, and with --replace rewrites the file (control, K64bc6c8c)"
 
 fixture rwarn 200
 mk transcript sid-rwarn 100000 >/dev/null
@@ -2557,8 +4077,8 @@ case $SEC in *"item 9: the record knows better"*) : ;; *) why="$why; the boundar
 case $SEC in *"lane B8 open since"*) : ;; *) why="$why; the lane open since the boundary is missing" ;; esac
 case $SEC in *"ship the guard"*) : ;; *) why="$why; the decision since the boundary is missing" ;; esac
 case $SEC in *"the stale item"*) why="$why; the stale pack survived the re-derivation" ;; *) : ;; esac
-case $SEC in *"lane B7"*) why="$why; a lane opened before the boundary is in the re-derived pack" ;; *) : ;; esac
-verdict "the pack-age guard: a pack older than the last phase-boundary is STALE, and the starter re-derives the in-flight section from the record before the successor starts (observation stale-pack)"
+case $SEC in *"lane B7 open since"*) : ;; *) why="$why; a lane opened before the boundary and never closed is missing from the re-derived pack (K615a63df: open lanes over the whole record)" ;; esac
+verdict "the pack-age guard: a pack older than the last phase-boundary is STALE, and the starter re-derives the in-flight section from the record before the successor starts (observation stale-pack), every lane still open listed, the one opened before the boundary included (K615a63df)"
 
 # No boundary at all: nothing for the pack to be older than.
 fixture rage3 200
@@ -2811,9 +4331,9 @@ S=$(mk count "$REC" head-successor); [ "$S" -ge 2 ] || why="$why; head-successor
 G=$(grep -c 'stale-pack' "$REC"); [ "$G" -ge 1 ] || why="$why; no stale-pack observation from the supervisor's successor start ($G)"
 SEC=$(mk section "$HO" "In flight")
 case $SEC in "- pack re-derived from the record at "*) : ;; *) why="$why; no re-derivation header after the supervisor's start: $SEC" ;; esac
-case $SEC in *"fresh when the first head started"*) why="$why; the stale pack survived into the successor's brief" ;; *) : ;; esac
-case $SEC in *"the record carries no phase-boundary event"*) : ;; *) why="$why; the derivation does not say the record holds no boundary: $SEC" ;; esac
-verdict "the pack-age guard on the supervisor's own successor path: the first start reports the pack fresh, the head-exit the supervisor writes for a limit stop makes it stale, and the second start re-derives the section before briefing the successor"
+case $SEC in *"- Next: fresh when the first head started (from the head's own pack written "*) : ;; *) why="$why; the head's own Next, newer than any boundary, is not carried with its source (K615a63df): $SEC" ;; esac
+case $SEC in *"newer than any phase-boundary (the record carries none)"*) : ;; *) why="$why; the derivation does not say the record holds no boundary: $SEC" ;; esac
+verdict "the pack-age guard on the supervisor's own successor path: the first start reports the pack fresh, the head-exit the supervisor writes for a limit stop makes it stale, and the second start re-derives the section before briefing the successor, the head's own Next carried with its source since no boundary is newer (K615a63df)"
 
 # ------------------------------------------------------------------ orientation (D41) -----
 fixture rorient 200
@@ -2827,6 +4347,45 @@ need_rc 0
 need_absent "orientation"
 need_eq "$(mk field "$REC" gate orientation_tokens)" "<no key orientation_tokens>" "no orientation on a later gate"
 verdict "gate: the first gate of a session records orientation_tokens = context minus the first-call context; later gates do not"
+
+# INV-3 (register 2026-10-30 21:40 b): a helper's reference copy that fell behind its source. The
+# planted cases are a stale rule file and a stale decisions file; the controls are an equal copy
+# and one with no source, which both stay quiet, and a run with no refs folder.
+fixture rrefs 200
+mkdir -p "$STORE/stages/rrefs/refs"
+printf 'the rule as it stands\n' > "$VAULT/INV3-RULES.md"
+printf 'the older rule\n' > "$STORE/stages/rrefs/refs/INV3-RULES.md"
+printf 'the same text\n' > "$VAULT/INV3-SAME.md"
+cp "$VAULT/INV3-SAME.md" "$STORE/stages/rrefs/refs/INV3-SAME.md"
+printf 'no source for this\n' > "$STORE/stages/rrefs/refs/inv3-orphan.md"
+printf 'a newer ruling\n' > "$WORK/inv3-decisions.md"
+printf 'an older ruling\n' > "$STORE/stages/rrefs/refs/inv3-decisions.md"
+run gate --run rrefs --to "item one" --decisions-file "$WORK/inv3-decisions.md" \
+    --ack "the newer ruling read" --ack-digest "$(sha_file "$WORK/inv3-decisions.md")"
+need_out "gate: warn: the staged reference copy .*refs/INV3-RULES.md differs from its source"
+need_out "gate: warn: the staged reference copy .*refs/inv3-decisions.md differs from its source"
+need_absent "INV3-SAME"
+need_absent "inv3-orphan"
+need_eq "$(mk count "$REC" gate)" "1" "a warning, and the gate still written"
+rm -f "$VAULT/INV3-RULES.md" "$VAULT/INV3-SAME.md"
+fixture rrefs2 200
+run gate --run rrefs2 --to "item one"
+need_absent "staged reference copy"
+verdict "INV-3 (fails on old): the gate warns of each staged reference copy that differs from its source, the rule file and the decisions file alike, while an equal copy, one with no source and a run with no refs folder stay quiet"
+
+# INV-3, the review's F2: a run stage keeps its decisions file beside refs/, and a gate that names no
+# file must still compare them. The planted case is a stale copy of that file with no flag given;
+# the control is the same pair made equal, which stays quiet.
+fixture rrefs3 200
+mkdir -p "$STORE/stages/rrefs3/refs"
+printf 'a newer ruling\n' > "$STORE/stages/rrefs3/decisions.md"
+printf 'an older ruling\n' > "$STORE/stages/rrefs3/refs/decisions.md"
+run gate --run rrefs3 --to "item one"
+need_out "gate: warn: the staged reference copy .*rrefs3/refs/decisions.md differs from its source .*rrefs3/decisions.md"
+cp "$STORE/stages/rrefs3/decisions.md" "$STORE/stages/rrefs3/refs/decisions.md"
+run gate --run rrefs3 --to "item two"
+need_absent "staged reference copy"
+verdict "INV-3 F2 (fails on old): with no --decisions-file the gate compares a run's refs/decisions.md with the stage's own decisions.md, and an equal pair stays quiet"
 
 fixture rorient2 200
 mk transcript sid-rorient2 100000 60000 >/dev/null
@@ -2928,22 +4487,66 @@ need_eq "$(mk field "$REC" gate orientation_tokens)" "null" "null once that sess
 need_eq "$(mk field "$REC" gate orientation_note)" "unmeasured after a same-session resume" "the note"
 verdict "gate: the same shape with one gate of that session BEFORE the run-resume nulls the first gate after it (the control for the leg above)"
 
+# G58 (register 2026-10-16 03:30): a fresh head that finishes the item in flight before its first
+# gate. The planted case is a successor's spawn before that gate; the two controls are the same
+# shape with no item action, measured above (rorient8), and a run's opening head, measured here.
+fixture rorient10 200
+shape_record "$REC" sid-rorient10b
+mk transcript sid-rorient10b 72167 59763 >/dev/null
+mk append "$REC" '{"event":"lane-open","lane":"L-work","class":"builder"}' >/dev/null
+run gate --run rorient10 --to "item one"
+need_rc 0
+need_eq "$(mk field "$REC" gate orientation_tokens)" "null" "null after resumed item work"
+need_eq "$(mk field "$REC" gate orientation_note)" "unmeasured: resumed item work (lane-open) before the first gate" "the note"
+need_absent "orientation 12,404"
+fixture rorient11 200
+mk transcript sid-rorient11 100000 60000 >/dev/null
+mk append "$REC" '{"event":"lane-open","lane":"L-open","class":"builder"}' >/dev/null
+run gate --run rorient11 --to "item one"
+need_rc 0
+need_eq "$(mk field "$REC" gate orientation_tokens)" "40000" "the opening head's first gate stays measured"
+verdict "G58 (fails on old): a successor's first gate after a decision, spawn or boundary of its own records orientation unmeasured with the reason, while the opening head's first gate stays measured"
+
+# G58, the review's F4: resuming a helper is the same continuation as spawning one. The planted case
+# is a successor's lane-resumed before its first gate; the control is the opening head's own.
+fixture rorient12 200
+shape_record "$REC" sid-rorient12b
+mk transcript sid-rorient12b 72167 59763 >/dev/null
+mk append "$REC" '{"event":"lane-resumed","lane":"L-work"}' >/dev/null
+run gate --run rorient12 --to "item one"
+need_rc 0
+need_eq "$(mk field "$REC" gate orientation_tokens)" "null" "null after a resumed helper"
+need_eq "$(mk field "$REC" gate orientation_note)" "unmeasured: resumed item work (lane-resumed) before the first gate" "the note"
+fixture rorient13 200
+mk transcript sid-rorient13 100000 60000 >/dev/null
+mk append "$REC" '{"event":"lane-resumed","lane":"L-open"}' >/dev/null
+run gate --run rorient13 --to "item one"
+need_rc 0
+need_eq "$(mk field "$REC" gate orientation_tokens)" "40000" "the opening head's first gate stays measured"
+verdict "G58 F4 (fails on old): a successor's first gate after resuming a helper records orientation unmeasured, while the opening head's first gate stays measured"
+
 # ----------------------------------------------------------- N5: the envelope remainder ----
+# K22da6bf5 (register entry 2026-09-26 02:2x): the remainder is the envelope minus the run's spend
+# as the gate and the close read it, never the sum of the head-exits' session totals, which
+# counted a resumed or repaired head twice and each head's lanes with it. The record's head
+# spends $12.34 (the billed line in hand) while its head-exits carry $50 and $40: 100 − 12.34.
 fixture rspent 100
 mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":50}' >/dev/null
 mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":40}' >/dev/null
 RUNENV="PATH=$WORK/psnone:$PATH"
 run successor --run rspent --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
 need_rc 0
-need_out "budget \$10.00"
-mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":10}' >/dev/null
+need_out "budget \$87.66"
+need_absent "budget \$10.00"
+# A billed line whose head figure is over the envelope leaves it spent.
+METER120=$(printf '%s' "$METER" | sed 's/head \$12\.34 · lanes \$4\.22 · session \$16\.56/head $120.00 · lanes $0.00 · session $120.00/')
 RUNENV="PATH=$WORK/psnone:$PATH"
-run successor --run rspent --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+run successor --run rspent --meter-line "$METER120" --harness-bin "$WORK/bin/harness"
 need_rc 2
 need_out "the envelope is spent"
 need_lines
 need_eq "$(mk field "$REC" successor-aborted reason)" "budget" "successor-aborted budget"
-verdict "successor: the remainder is the envelope minus every head-exit's spent_usd (10 of 100); spent → successor-aborted budget"
+verdict "successor (K22da6bf5): the remainder is the envelope minus the run's spend (100 − \$12.34, the head-exits' \$50 and \$40 not summed); a spend over the envelope → successor-aborted budget"
 
 # ------------------------------------------------- the limit gate (D42): the grants file's key ---
 HO="$WORK/handoffs/onl-handoff.md"; mk handoff "$HO" >/dev/null
@@ -3371,10 +4974,10 @@ starter --run rbud --handoff "$HO" --budget 3.50 --out "$WORK/starter/rbud-head-
         --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
 need_rc 0
 need_eq "$(mk count "$REC" stop-condition)" "0" "no wait after a budget stop"
-need_eq "$(mk field "$REC" head-resumed budget)" "178.44" "the resume's cap is the remainder (200 - 5 - 16.56)"
-case $(sed -n 2p "$WORK/stub-rbud.args") in *"--resume "*"--max-budget-usd 178.44"*) : ;; *) why="$why; the resume's argv lacks the remainder cap" ;; esac
+need_eq "$(mk field "$REC" head-resumed budget)" "187.66" "the resume's cap is the remainder (200 - 12.34, the run's spend: the head's figure in the billed line, the earlier head-exit's 5 not summed; K22da6bf5)"
+case $(sed -n 2p "$WORK/stub-rbud.args") in *"--resume "*"--max-budget-usd 187.66"*) : ;; *) why="$why; the resume's argv lacks the remainder cap" ;; esac
 grep -q "RESUMED after a budget stop" "$WORK/stub-rbud.stdin.2" || why="$why; the budget note is missing"
-fixture rbud2 20
+fixture rbud2 10      # 10 − 12.34 (the run's spend): spent
 mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":5}' >/dev/null
 RUNENV="STUB_MODE=budget STUB_N=1 STUB_TOKENS=50000 AIMYTH_CONTEXT_WINDOW=200000"
 starter --run rbud2 --handoff "$HO" --budget 3.50 --out "$WORK/starter/rbud2-head-1.out" --wait-s 5 \
@@ -3419,7 +5022,7 @@ need_eq "$(mk field "$REC" head-exit band)" "error" "an error exit's band (N6)"
 need_eq "$(mk field "$REC" successor-aborted reason)" "repeat-stop" "repeat-stop"
 need_eq "$(cat "$WORK/stub-rrep.count")" "2" "two starts, no third"
 need_eq "$(hx_shape "$REC")" "1 exited,head-exit" "the first error stop's head-exits (one)"
-verdict "supervisor (N6): an error exit writes band error; two consecutive error stops abort (repeat-stop)"
+verdict "supervisor (N6): an error exit writes band error; two consecutive error stops with no progress (no boundary by either head) abort (repeat-stop)"
 
 # The completed-without-close loop: a head that exits completed with neither a head-exit nor a
 # run-close gets its one successor, and a successor doing the same is a loop rather than
@@ -3434,7 +5037,526 @@ need_rc 1
 need_eq "$(mk field "$REC" successor-aborted reason)" "repeat-stop" "repeat-stop"
 need_eq "$(cat "$WORK/stub-rcomp.count")" "2" "two starts, no third"
 need_eq "$(mk count "$REC" head-successor)" "2" "the starter's start and the one successor (the control: the first completed stop was succeeded)"
-verdict "supervisor: two consecutive completed-without-close exits abort (repeat-stop) after the first has had its successor"
+verdict "supervisor: two consecutive completed-without-close exits with no progress (no boundary by either head: the R7 loop) abort (repeat-stop) after the first has had its successor"
+
+# ------------------------ repeat-stop keyed on progress (the design of 2026-10-11, Revision 2) ---
+# RS-BEGIN. These legs need only the plumbing above the run-open legs, so a run against an older
+# handsoff.py can take them alone (the fail-on-old run). A stop counts toward repeat-stop only
+# when its own head made no progress — no phase-boundary whose caller_pid is that head's process
+# — and a stop pairs when the supervisor follows it with an automatic start (error, budget,
+# completed, unsucceeded without an own packed exit, in any mix). A leg marked (fails on old) fails against the build before
+# the change; every continuation leg counts the stub's real starts, never only an absent abort.
+SUITE_H="$H"; SUITE_METER="$METER"; export SUITE_H SUITE_METER
+# A transcript per head (STUB_TOKENS), so a completed or budget stop's head-exit carries a band
+# edge, not `unmetered`: two unmetered head-exits in a row end the run unmetered-loop at the
+# start guards, before the repeat-stop guard is ever reached.
+RS_ENV="STUB_TOKENS=50000 AIMYTH_CONTEXT_WINDOW=200000"
+rs_obs() { # $1 record: every `head exited` observation as class:progress, in order (- for none)
+  "$PY" -c 'import json, sys
+seen = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(e, dict) and e.get("event") == "observation" and e.get("what") == "head exited":
+        seen.append("%s:%s" % (e.get("exit_class"), e.get("progress", "-")))
+print(" ".join(seen))' "$1"
+}
+rs_get() { # $1 record, $2 kind, $3 key, $4 occurrence (1-based, 0 the last); unparseable lines skipped
+  "$PY" -c 'import json, sys
+found = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(e, dict) and e.get("event") == sys.argv[2]:
+        found.append(e)
+k = int(sys.argv[4])
+if not found or k > len(found):
+    print("<no %s #%d>" % (sys.argv[2], k))
+else:
+    v = found[k - 1 if k else -1].get(sys.argv[3], "<no key %s>" % sys.argv[3])
+    print(v if isinstance(v, str) else json.dumps(v))' "$1" "$2" "$3" "$4"
+}
+rs_count() { # $1 record, $2 kind: that kind's events, unparseable lines skipped
+  "$PY" -c 'import json, sys
+n = 0
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    n += isinstance(e, dict) and e.get("event") == sys.argv[2]
+print(n)' "$1" "$2"
+}
+rs_stubs() { # $1 run: how many times the stub head was really started
+  if [ -f "$WORK/stub-$1.count" ]; then cat "$WORK/stub-$1.count"; else echo 0; fi
+}
+rs_fixture() { # $1 run: a run-open and the head-exit the starter succeeds
+  fixture "$1" 200
+  mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":5}' >/dev/null
+}
+rs_go() { # $1 run, $2 modes, $3 progress words, $4 stub stops (STUB_N), $5 extra env words: one
+          # starter run, its exit code in $WORK/<run>.rc and its output in $WORK/<run>.log
+  RSRC=0
+  env $RS_ENV $5 STUB_MODES="$2" STUB_PROGRESS="$3" STUB_N="$4" \
+      AIMYTH_VIEWER_ARGV="$WORK/viewer-$1.argv" "$PY" -B "$H" _starter --run "$1" \
+      --handoff "$WORK/handoffs/$1-handoff.md" --budget 3.50 --out "$WORK/starter/$1-head-1.out" \
+      --wait-s 2 --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1 \
+      >"$WORK/$1.log" 2>&1 || RSRC=$?
+  printf '%s\n' "$RSRC" > "$WORK/$1.rc"
+}
+rs_attach() { # $1 run, $2 extra env words: a supervisor attached to pid 999999, already gone, whose
+              # stop is classified off a completed .out — a head no start event on the record names
+  printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done without a hand-off"}' > "$WORK/$1.out"
+  RSRC=0
+  env $RS_ENV $2 AIMYTH_VIEWER_ARGV="$WORK/viewer-$1.argv" "$PY" -B "$H" _supervise --run "$1" \
+      --pid 999999 --session "sid-$1" --out "$WORK/$1.out" --harness-bin "$WORK/bin/stubhead" \
+      --handoff "$WORK/handoffs/$1-handoff.md" --meter-line "$METER" --tick-s 1 --wait-s 2 \
+      >"$WORK/$1.log" 2>&1 || RSRC=$?
+  printf '%s\n' "$RSRC" > "$WORK/$1.rc"
+}
+# The matrix's unsucceeded stops have no pack; packed hand-overs are covered separately below.
+rs_mode() { case $1 in completed) echo complete ;; unsucceeded) echo handunpacked ;; *) echo "$1" ;; esac; }
+rs_word() { case $1 in yes) echo self ;; *) echo none ;; esac; }
+rs_cell() { # $1 run, $2 first class, $3 its progress, $4 second class, $5 its progress: the
+            # outcome against the rule, empty when it holds
+  R="$STORE/spawn-records/$1.jsonl"
+  if [ "$3" = no ] && [ "$5" = no ]; then
+    want="rc 1 · repeat-stop · starts 2 · $2:no $4:no"
+  else
+    want="rc 0 · <no successor-aborted #0> · starts 3 · $2:$3 $4:$5 handed-over:no"
+  fi
+  have="rc $(cat "$WORK/$1.rc") · $(rs_get "$R" successor-aborted reason 0) · starts $(rs_stubs "$1") · $(rs_obs "$R")"
+  # behaviour: the exit, the abort and the starts alone, without the recorded verdicts
+  [ "${6:-}" = "behaviour" ] && { have=${have% · *}; want=${want% · *}; }
+  [ "$have" = "$want" ] || printf '%s:%s then %s:%s got [%s] wanted [%s]' "$2" "$3" "$4" "$5" "$have" "$want"
+}
+
+# The matrix: every ordered pair of completed, error, budget and unsucceeded, each side with and
+# without its own boundary — 64 two-stop runs, both stops real, eight at a time (each run has its
+# own record, stub counter and viewer file). The rule: repeat-stop exactly when both read no.
+RS_I=0; RS_PIDS=""; RS_CELLS=""
+for rx in completed error budget unsucceeded; do
+  for rp in yes no; do
+    for ry in completed error budget unsucceeded; do
+      for rq in yes no; do
+        RS_I=$((RS_I + 1))
+        RS_CELLS="$RS_CELLS rsm$RS_I:$rx:$rp:$ry:$rq"
+        rs_fixture "rsm$RS_I"
+        rs_go "rsm$RS_I" "$(rs_mode $rx),$(rs_mode $ry)" "$(rs_word $rp),$(rs_word $rq)" 2 "" &
+        RS_PIDS="$RS_PIDS $!"
+        if [ $((RS_I % 8)) -eq 0 ]; then
+          for rs_pid in $RS_PIDS; do wait "$rs_pid"; done
+          RS_PIDS=""
+        fi
+      done
+    done
+  done
+done
+for rs_pid in $RS_PIDS; do wait "$rs_pid"; done
+rs_named() { # $1 x, $2 p, $3 y, $4 q, $5 optional `behaviour`: that cell's matrix run against the rule
+  id=$(printf '%s\n' $RS_CELLS | grep ":$1:$2:$3:$4\$" | cut -d: -f1)
+  [ -n "$id" ] || { why="$why; no matrix run for $1:$2:$3:$4"; return; }
+  miss=$(rs_cell "$id" "$1" "$2" "$3" "$4" "${5:-}")
+  [ -z "$miss" ] || why="$why; $miss"
+}
+rs_named completed yes completed yes
+verdict "repeat-stop (fails on old): two completed stops, each head with its own boundary, do not abort — a real successor starts (three stub starts)"
+rs_named completed no completed no behaviour
+verdict "repeat-stop: two completed stops, neither head with a boundary, abort at the second stop (the R7 case; the behaviour alone, which passes on old and new)"
+rs_named completed yes completed no
+rs_named completed no completed yes
+verdict "repeat-stop (fails on old): completed with a boundary, then completed without (and the reverse) does not abort; a real successor starts"
+rs_named error yes error yes
+verdict "repeat-stop (fails on old): two error stops, each head with its own boundary, do not abort; a real successor starts"
+rs_named error no error no behaviour
+verdict "repeat-stop: two error stops, neither head with a boundary, abort (the behaviour alone, which passes on old and new)"
+rs_named completed no error no
+verdict "repeat-stop (fails on old; choice 1 B): completed without a boundary, then error without, abort — the classes pair in any mix"
+RS_MISS=0; RS_HELD=0
+for cell in $RS_CELLS; do
+  miss=$(rs_cell $(printf '%s' "$cell" | tr ':' ' '))
+  if [ -n "$miss" ]; then RS_MISS=$((RS_MISS + 1)); why="$why; $miss"; else RS_HELD=$((RS_HELD + 1)); fi
+done
+need_eq "$RS_HELD of $((RS_HELD + RS_MISS))" "64 of 64" "matrix cells holding the rule"
+verdict "repeat-stop (Revision 2 matrix): 4 first-stop classes × 4 second-stop classes × 2 first-head boundary states × 2 second-head boundary states = 64 cells; completed, error, budget and unsucceeded with pack false, with and without each head's own boundary — repeat-stop exactly when both read progress no, otherwise a real successor; packed unsucceeded hand-overs are covered separately"
+
+# The barrier: no, yes, no, no — mixed classes, the third a budget stop resumed in place (a new
+# process with a window of its own) — aborts at the fourth stop and not before.
+rs_fixture rsbar
+rs_go rsbar "error,complete,budget,complete" "none,self,none,none" 4 ""
+R="$STORE/spawn-records/rsbar.jsonl"
+need_eq "$(cat "$WORK/rsbar.rc")" "1" "exit"
+need_eq "$(rs_get "$R" successor-aborted reason 0)" "repeat-stop" "reason"
+need_eq "$(rs_stubs rsbar)" "4" "four real starts, no fifth"
+need_eq "$(rs_obs "$R")" "error:no completed:yes budget:no completed:no" "the recorded verdicts"
+need_eq "$(rs_count "$R" head-resumed)" "1" "the budget stop resumed in place"
+verdict "repeat-stop (fails on old; Revision 2): the barrier no, yes, no, no aborts only at the fourth stop — a head's own boundary breaks the pair"
+
+# A boundary another process wrote never counts: its caller_pid names the supervisor, not the head.
+rs_fixture rsfor
+rs_go rsfor "complete,error" "foreign,foreign" 2 ""
+R="$STORE/spawn-records/rsfor.jsonl"
+need_eq "$(cat "$WORK/rsfor.rc")" "1" "exit"
+need_eq "$(rs_get "$R" successor-aborted reason 0)" "repeat-stop" "reason"
+need_eq "$(rs_obs "$R")" "completed:no error:no" "the recorded verdicts"
+case $(rs_get "$R" observation progress_note 1) in *"(1 by another process)"*) : ;; *) why="$why; the note does not name the foreign boundary" ;; esac
+need_eq "$(rs_get "$R" phase-boundary caller_pid 1)" "$(rs_get "$R" supervise supervisor_pid 1)" "the planted boundary names the supervisor's process"
+verdict "repeat-stop (fails on old; Revision 2): a boundary whose caller_pid is another process never counts as the head's progress"
+
+# A boundary with no caller_pid reads unknown, and unknown never fires.
+rs_fixture rsnul
+rs_go rsnul "error,error" "null,null" 2 ""
+R="$STORE/spawn-records/rsnul.jsonl"
+need_eq "$(cat "$WORK/rsnul.rc")" "0" "exit"
+need_eq "$(rs_count "$R" successor-aborted)" "0" "no abort"
+need_eq "$(rs_stubs rsnul)" "3" "a real third start"
+need_eq "$(rs_obs "$R")" "error:unknown error:unknown handed-over:no" "the recorded verdicts"
+verdict "repeat-stop (fails on old; Revision 2): a boundary with no caller_pid reads unknown and never fires; a real successor starts"
+
+# A run-resume by the same process inside its window is the same invocation: the boundary it
+# recorded before that marker still counts.
+rs_fixture rsrr
+rs_go rsrr "complete,complete" "selfresume,none" 2 ""
+R="$STORE/spawn-records/rsrr.jsonl"
+need_eq "$(rs_get "$R" run-resume pid 0)" "$(rs_get "$R" head-successor pid 1)" "the run-resume names the first head's own process"
+need_eq "$(cat "$WORK/rsrr.rc")" "0" "exit"
+need_eq "$(rs_stubs rsrr)" "3" "a real third start"
+need_eq "$(rs_obs "$R")" "completed:yes completed:no handed-over:no" "the recorded verdicts"
+verdict "repeat-stop (fails on old; Revision 2): a run-resume by the same process inside the window keeps the boundary written before it"
+
+# A head-resumed is a new process: it does not borrow the boundary its predecessor wrote.
+rs_fixture rshr
+rs_go rshr "budget,complete,error" "self,none,none" 3 ""
+R="$STORE/spawn-records/rshr.jsonl"
+need_eq "$(rs_count "$R" head-resumed)" "1" "the budget stop resumed in place"
+need_eq "$(rs_obs "$R")" "budget:yes completed:no error:no" "the recorded verdicts"
+need_eq "$(cat "$WORK/rshr.rc")" "1" "exit"
+need_eq "$(rs_get "$R" successor-aborted reason 0)" "repeat-stop" "reason"
+need_eq "$(rs_stubs rshr)" "3" "three real starts, no fourth"
+verdict "repeat-stop (fails on old; Revision 2): a head-resumed invocation does not borrow its predecessor's boundary"
+
+# Malformed lines: one written inside the stopped head's window reads unknown (it may hold the
+# boundary); one from before the window never disables the guard. The second head writes the
+# torn line, so its stop reads unknown and the third start goes ahead; the third and fourth heads
+# then stop with no progress, the torn line now before their windows, and the fourth stop fires.
+# (Every head here stops by its mode: the stub's own hand-over appends through mk.py, which
+# cannot read a record holding a torn line.)
+rs_fixture rsbad1
+rs_go rsbad1 "error,error,complete,complete" "none,bad,none,none" 4 ""
+R="$STORE/spawn-records/rsbad1.jsonl"
+need_eq "$(cat "$WORK/rsbad1.rc")" "1" "exit (inside)"
+need_eq "$(rs_stubs rsbad1)" "4" "a real third and fourth start (inside)"
+need_eq "$(rs_obs "$R")" "error:no error:unknown completed:no completed:no" "the recorded verdicts (inside)"
+need_eq "$(rs_get "$R" successor-aborted reason 0)" "repeat-stop" "reason at the fourth stop (inside)"
+rs_fixture rsbad2
+printf '%s\n' '{"event":"phase-boundary","from":"torn before the window' >> "$STORE/spawn-records/rsbad2.jsonl"
+rs_go rsbad2 "complete,error" "none,none" 2 ""
+R="$STORE/spawn-records/rsbad2.jsonl"
+need_eq "$(cat "$WORK/rsbad2.rc")" "1" "exit (before)"
+need_eq "$(rs_get "$R" successor-aborted reason 0)" "repeat-stop" "reason (before)"
+need_eq "$(rs_obs "$R")" "completed:no error:no" "the recorded verdicts (before)"
+verdict "repeat-stop (fails on old; Revision 2): an unparseable line inside the head's window reads unknown and never fires; one from before the window leaves the guard in force"
+
+# Choice 2: a head whose pid no start event on the record names (a supervisor attached to it)
+# reads unknown, so the next stop with no progress does not pair with it. The control plants a
+# start event naming that pid: the same stop then reads no, and the pair fires.
+fixture rsatt 200
+rs_attach rsatt "STUB_MODES=complete STUB_PROGRESS=none STUB_N=1"
+R="$STORE/spawn-records/rsatt.jsonl"
+need_eq "$(cat "$WORK/rsatt.rc")" "0" "exit"
+need_eq "$(rs_count "$R" successor-aborted)" "0" "no abort"
+need_eq "$(rs_stubs rsatt)" "2" "two real starts after the attached head"
+need_eq "$(rs_obs "$R")" "completed:unknown completed:no handed-over:no" "the recorded verdicts"
+case $(rs_get "$R" observation progress_note 1) in *"no start event names pid 999999"*) : ;; *) why="$why; the unknown does not name the missing start" ;; esac
+fixture rsatt2 200
+mk append "$STORE/spawn-records/rsatt2.jsonl" '{"event":"run-resume","session":"sid-rsatt2","head":"fixture head","detail":"the attached head","pid":999999,"pid_src":"arg"}' >/dev/null
+rs_attach rsatt2 "STUB_MODES=complete STUB_PROGRESS=none STUB_N=1"
+R="$STORE/spawn-records/rsatt2.jsonl"
+need_eq "$(cat "$WORK/rsatt2.rc")" "1" "exit (control)"
+need_eq "$(rs_get "$R" successor-aborted reason 0)" "repeat-stop" "reason (control)"
+need_eq "$(rs_obs "$R")" "completed:no completed:no" "the recorded verdicts (control)"
+verdict "repeat-stop (fails on old; choice 2): a previous stop with no readable start event reads unknown and does not pair; with the start on the record it reads no and pairs (the control)"
+
+# Choice 3, dropped by Revision 2: an abort and a restart between two stops with no progress reset
+# nothing. Case one plants a completed stop with no progress and its repeat-stop abort, then the
+# owner's restart; case two is the review's shape (a budget stop, resume-failed, an automatic
+# successor); the control's restarted head records a boundary and breaks the pair by itself.
+fixture rsnr 200
+mk append "$REC" '{"event":"observation","phase":"","what":"head exited","exit_class":"completed","pid":4242,"progress":"no","progress_note":"no boundary event by pid 4242","note":"session sid-rsnr-old exit 0 → completed"}' >/dev/null
+mk append "$REC" '{"event":"successor-aborted","reason":"repeat-stop","note":"planted: the earlier abort"}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":5}' >/dev/null
+rs_go rsnr "error" "none" 1 ""
+need_eq "$(cat "$WORK/rsnr.rc")" "1" "exit (restart)"
+need_eq "$(rs_count "$REC" successor-aborted)" "2" "a second abort"
+need_eq "$(rs_get "$REC" successor-aborted reason 0)" "repeat-stop" "reason (restart)"
+need_eq "$(rs_stubs rsnr)" "1" "one start, no successor"
+fixture rsnr2 200
+mk append "$REC" '{"event":"observation","phase":"","what":"head exited","exit_class":"budget","pid":4243,"progress":"no","progress_note":"no boundary event by pid 4243","note":"session sid-rsnr2-old exit 1 → budget"}' >/dev/null
+mk append "$REC" '{"event":"successor-aborted","reason":"resume-failed","note":"planted: the resume could not start"}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":"error","context":"c","spent_usd":5}' >/dev/null
+rs_go rsnr2 "error" "none" 1 ""
+need_eq "$(cat "$WORK/rsnr2.rc")" "1" "exit (resume-failed)"
+need_eq "$(rs_get "$REC" successor-aborted reason 0)" "repeat-stop" "reason (resume-failed)"
+fixture rsnr3 200
+mk append "$REC" '{"event":"observation","phase":"","what":"head exited","exit_class":"completed","pid":4244,"progress":"no","progress_note":"no boundary event by pid 4244","note":"session sid-rsnr3-old exit 0 → completed"}' >/dev/null
+mk append "$REC" '{"event":"successor-aborted","reason":"repeat-stop","note":"planted: the earlier abort"}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":5}' >/dev/null
+rs_go rsnr3 "error" "self" 1 ""
+need_eq "$(cat "$WORK/rsnr3.rc")" "0" "exit (control)"
+need_eq "$(rs_count "$REC" successor-aborted)" "1" "no new abort (control)"
+need_eq "$(rs_stubs rsnr3)" "2" "a real successor (control)"
+verdict "repeat-stop (fails on old; choice 3 dropped): stops pair across a successor-aborted and a restart — completed then error, and budget, resume-failed, then error — while a restarted head with its own boundary breaks the pair (the control)"
+
+# A seed exit is still skipped, in both observation orders, with a real-stop control: a seeded
+# record's `head exited` beside a head-exit whose session left no transcript is no previous stop.
+SEEDX='{"event":"head-exit","band":"unmetered","context":"unmetered (transcript missing for the seed session)","pack":false}'
+SEEDO='{"event":"observation","phase":"","what":"head exited","exit_class":"error","pid":4245,"progress":"no","progress_note":"planted","note":"the seeded head never ran"}'
+REALX='{"event":"head-exit","band":"error","context":"500,000 tokens (50 %)","exit_class":"error","spent_usd":3.0,"pack":false}'
+fixture rsseeda 200; mk append "$REC" "$SEEDO" >/dev/null; mk append "$REC" "$SEEDX" >/dev/null
+rs_go rsseeda "error" "none" 1 ""
+fixture rsseedb 200; mk append "$REC" "$SEEDX" >/dev/null; mk append "$REC" "$SEEDO" >/dev/null
+rs_go rsseedb "error" "none" 1 ""
+fixture rsseedc 200; mk append "$REC" "$SEEDO" >/dev/null; mk append "$REC" "$REALX" >/dev/null
+rs_go rsseedc "error" "none" 1 ""
+need_eq "$(cat "$WORK/rsseeda.rc") $(rs_stubs rsseeda) $(rs_count "$STORE/spawn-records/rsseeda.jsonl" successor-aborted)" "0 2 0" "observation then seed head-exit: no abort, a real successor"
+need_eq "$(cat "$WORK/rsseedb.rc") $(rs_stubs rsseedb) $(rs_count "$STORE/spawn-records/rsseedb.jsonl" successor-aborted)" "0 2 0" "seed head-exit then observation: no abort, a real successor"
+need_eq "$(cat "$WORK/rsseedc.rc") $(rs_stubs rsseedc) $(rs_get "$STORE/spawn-records/rsseedc.jsonl" successor-aborted reason 0)" "1 1 repeat-stop" "the real-stop control"
+verdict "repeat-stop: a seed exit is still skipped as a previous stop in both observation orders, while a metered stop beside the same observation pairs (the control; passes on old and new)"
+
+# The hard bounds stay when the verdict is unknown: the stop marker stands the supervisor down,
+# and the successor cap ends the run.
+fixture rsmk 200
+printf 'stopped by the owner\n' > "$STORE/spawn-records/rsmk-supervisor.stop"
+rs_attach rsmk ""
+R="$STORE/spawn-records/rsmk.jsonl"
+need_eq "$(cat "$WORK/rsmk.rc")" "0" "exit (marker)"
+need_eq "$(rs_obs "$R")" "completed:unknown" "the recorded verdict (marker)"
+need_eq "$(rs_get "$R" supervisor-stood-down reason 0)" "stopped" "stood down (marker)"
+need_eq "$(rs_count "$R" head-successor)" "0" "no successor (marker)"
+need_eq "$(rs_stubs rsmk)" "0" "no start (marker)"
+rs_fixture rscap
+rs_go rscap "error,error,error,error,error,error" "null,null,null,null,null,null" 6 "AIMYTH_MAX_SUCCESSORS=3"
+R="$STORE/spawn-records/rscap.jsonl"
+need_eq "$(cat "$WORK/rscap.rc")" "1" "exit (cap)"
+need_eq "$(rs_get "$R" successor-aborted reason 0)" "successor-cap" "reason (cap)"
+need_eq "$(rs_stubs rscap)" "3" "three starts at a cap of three"
+need_eq "$(rs_obs "$R")" "error:unknown error:unknown error:unknown" "the recorded verdicts (cap)"
+verdict "repeat-stop (fails on old; Revision 2): with the verdict unknown the stop marker still stands the supervisor down and the successor cap still ends the run"
+
+# End to end: the stub runs the real `boundary` command, under the psclaude stub so the parent
+# walk stops at the stub's own process — the head process the supervisor started and waits on.
+rs_fixture rswalk
+rs_go rswalk "complete,complete" "walk,walk" 2 ""
+R="$STORE/spawn-records/rswalk.jsonl"
+need_eq "$(rs_get "$R" phase-boundary caller_pid 1)" "$(rs_get "$R" head-successor pid 1)" "the first boundary names the first head's process"
+need_eq "$(rs_get "$R" phase-boundary caller_pid 2)" "$(rs_get "$R" head-successor pid 2)" "the second boundary names the second head's process"
+need_eq "$(rs_get "$R" phase-boundary caller_pid_src 1)" "head-command" "caller_pid_src"
+need_eq "$(cat "$WORK/rswalk.rc")" "0" "exit"
+need_eq "$(rs_stubs rswalk)" "3" "a real third start"
+need_eq "$(rs_obs "$R")" "completed:yes completed:yes handed-over:no" "the recorded verdicts"
+verdict "repeat-stop (fails on old; Revision 2): end to end, the boundary command records the head's own process as caller_pid by the parent walk, and the supervisor credits it"
+
+# `boundary` itself: the parent walk's harness ancestor as caller_pid (the psclaude stub answers
+# for the suite's own shell, this boundary's parent), and null with source none where the walk
+# reaches no harness (the psnone stub).
+fixture rsbcp 200
+RUNENV="PATH=$WORK/psclaude:$PATH"
+run boundary --run rsbcp --from 1 --to 2 --disposition "walked" --waste "none" --next "n" --meter-line "$METER"
+need_rc 0
+need_eq "$(mk field "$REC" phase-boundary caller_pid)" "$$" "caller_pid by the walk"
+need_eq "$(mk field "$REC" phase-boundary caller_pid_src)" "head-command" "caller_pid_src from the head command"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run boundary --run rsbcp --from 2 --to 3 --disposition "no harness" --waste "none" --next "n" --meter-line "$METER"
+need_rc 0
+need_eq "$(mk field "$REC" phase-boundary caller_pid)" "null" "caller_pid with no harness"
+need_eq "$(mk field "$REC" phase-boundary caller_pid_src)" "none" "caller_pid_src with no harness"
+verdict "boundary (fails on old; Revision 2): records caller_pid and caller_pid_src from the parent walk, null and none when the walk reaches no harness"
+
+# The verdict and the pairing as functions, on planted records: the windows the integration legs
+# above cannot plant — a hand-over whose own observation lands after its successor's start (the
+# order a live record shows), a pid reused across an earlier stop — and the class lists.
+RSU=$("$PY" - "$H" <<'RSUNIT'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("target", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+def ev(kind, **kw):
+    kw["event"] = kind
+    return kw
+def stop(cls="completed"):
+    return ev("observation", what="head exited", exit_class=cls)
+def bnd(pid):
+    return ev("phase-boundary", caller_pid=pid)
+fails = []
+def check(name, got, want):
+    if got != want:
+        fails.append("%s: %r != %r" % (name, got, want))
+P, Q = 4301, 4302
+base = [ev("run-open", session="s0", pid_src="none")]
+own = base + [ev("head-successor", session_id="s1", pid=P), bnd(P)]
+check("own", mod.head_progress(own, P, 1, 0, 0)[0], "yes")
+check("foreign", mod.head_progress(base + [ev("head-successor", session_id="s1", pid=P), bnd(Q)], P, 1, 0, 0)[0], "no")
+check("null", mod.head_progress(base + [ev("head-successor", session_id="s1", pid=P), bnd(None)], P, 1, 0, 0)[0], "unknown")
+check("absent caller", mod.head_progress(base + [ev("head-successor", session_id="s1", pid=P), ev("phase-boundary")], P, 1, 0, 0)[0], "unknown")
+check("no start", mod.head_progress(base + [bnd(P)], P, 0, 0, 0)[0], "unknown")
+check("no pid", mod.head_progress(own, None, 1, 0, 0)[0], "unknown")
+check("bool pid", mod.head_progress(own, True, 1, 0, 0)[0], "unknown")
+same = base + [ev("head-successor", session_id="s1", pid=P), bnd(P), ev("run-resume", session="s1", pid=P)]
+check("same-pid run-resume", mod.head_progress(same, P, 3, 0, 0)[0], "yes")
+resumed = base + [ev("head-successor", session_id="s1", pid=P), bnd(P), stop("budget"),
+                  ev("head-resumed", session_id="s1", pid=Q)]
+check("head-resumed borrows nothing", mod.head_progress(resumed, Q, 4, 0, 0)[0], "no")
+late = base + [ev("head-successor", session_id="s1", pid=P), ev("head-exit"),
+               ev("head-successor", session_id="s2", pid=Q), stop("handed-over"), bnd(Q)]
+check("hand-over observation after the successor's start", mod.head_progress(late, Q, 3, 0, 0)[0], "yes")
+reused = base + [ev("head-successor", session_id="s1", pid=P), bnd(P), stop("error"),
+                 ev("head-successor", session_id="s2", pid=P)]
+check("a reused pid's earlier boundary", mod.head_progress(reused, P, 4, 0, 0)[0], "no")
+plain = base + [ev("head-successor", session_id="s1", pid=P)]
+check("malformed rise", mod.head_progress(plain, P, 1, 1, 2)[0], "unknown")
+check("malformed before", mod.head_progress(plain, P, 1, 1, 1)[0], "no")
+check("own boundary with a rise", mod.head_progress(own, P, 1, 0, 1)[0], "yes")
+for cls in ("error", "budget", "completed", "unsucceeded", "a-future-class"):
+    check("pairs " + cls, mod.stop_pairs(cls), True)
+for cls in ("limit", "closed", "handed-over", "classifier-missing", "waiting", None, ""):
+    check("never pairs %r" % cls, mod.stop_pairs(cls), False)
+check("stood down", mod.stood_down_after([stop(), ev("supervisor-stood-down")], 0), True)
+check("not stood down", mod.stood_down_after([stop(), ev("head-successor")], 0), False)
+check("previous_stop unchanged", mod.previous_stop([stop("error")]), "error")
+print("ok" if not fails else "; ".join(fails))
+RSUNIT
+)
+need_eq "$RSU" "ok" "the planted windows and classes"
+verdict "repeat-stop (fails on old; Revision 2): the verdict's windows on planted records — own, foreign, null and absent caller_pid, no start, no pid, a same-process run-resume, a head-resumed, a hand-over observed after its successor's start, a reused pid, malformed lines — and the pairing classes"
+
+# The module docstring states the rule that now holds, and the retired one is gone.
+RSDOC=$("$PY" -c 'import ast, sys
+d = ast.get_docstring(ast.parse(open(sys.argv[1], encoding="utf-8").read()))
+new = ("caller_pid_src", "progress_note", "unknown never fires", "resets nothing", "both read no")
+print("%d %d" % (sum(1 for s in new if s in d), d.count("two consecutive\nerror or budget stops, in any mix")))' "$H")
+need_eq "$RSDOC" "5 0" "the new rule's phrases in the docstring, and the retired pairing gone"
+verdict "repeat-stop (fails on old): the module docstring's supervisor paragraph states the progress rule, and the retired class-only pairing is gone"
+# RS-END
+
+# Packed hand-overs: evaluate the production repeat-stop condition in memory, never a starter.
+# Reading the condition from each target also lets these same cases show the baseline result.
+RSPACK=$("$PY" - "$H" <<'RSPACKPY'
+import ast
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("h_rspack", sys.argv[1])
+h = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(h)
+tree = ast.parse(open(sys.argv[1], encoding="utf-8").read())
+checks = [n.test for n in ast.walk(tree) if isinstance(n, ast.If)
+          and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                  and c.func.id == "stop_pairs" for c in ast.walk(n.test))]
+if len(checks) != 1:
+    print("PROBE FAILED: cannot locate the repeat-stop condition")
+    raise SystemExit(2)
+condition = compile(ast.Expression(body=checks[0]), sys.argv[1], "eval")
+
+
+def ev(kind, **kw):
+    return dict(kw, event=kind)
+
+
+def stop(cls, pid):
+    return ev("observation", what="head exited", exit_class=cls, pid=pid, progress="no")
+
+
+def pair(first="unsucceeded", second="unsucceeded", first_exits=(), second_exits=()):
+    return [ev("run-open", session="sid-a", pid=101)] + list(first_exits) + [stop(first, 101),
+            ev("head-successor", session_id="sid-b", pid=102)] + list(second_exits) + [stop(second, 102)]
+
+
+def reason(record):
+    current, events = record[-1], record[:-1]
+    before_i, before_ev = h.previous_stop_event(events)
+    scope = dict(vars(h), events=events, before_i=before_i, before_ev=before_ev,
+                 before=(before_ev or {}).get("exit_class"), cls=current.get("exit_class"),
+                 progress=current.get("progress"), pid=current.get("pid"))
+    return "repeat-stop" if eval(condition, scope) else None
+
+
+packed = ev("head-exit", band=80, pack=True)
+unpacked = ev("head-exit", band=80, pack=False)
+foreign = ev("head-exit", band=80, pack=True, pid=103)
+stale = pair(first_exits=(packed, ev("run-resume", session="sid-a", pid=101)))
+unknown = pair("error", "error")
+unknown[-1]["progress"] = "unknown"
+progress = pair("error", "error")
+progress[-3]["progress"] = "yes"
+mismatch = pair("error", "unsucceeded")
+mismatch[-1]["pid"] = 103
+seed = ev("run-open", session="seed", session_kind="seed", pid=555, pid_src="arg")
+assert h.final_pid([seed], None)[0] == 555   # the live writer's premise, not a hand-set pid
+bad_stop_pid = pair("error", "unsucceeded")
+bad_stop_pid[-1]["pid"] = "unreadable"
+bad_owner = pair("error", "unsucceeded")
+bad_owner[-2]["pid"] = None
+no_owner = pair("error", "unsucceeded", second_exits=(packed,))
+no_owner[-3]["pid"] = None
+no_owner[-1]["pid"] = None
+for name, record in (
+        ("S1", pair(first_exits=(packed,), second_exits=(packed,))),
+        ("S2", pair("error", "error")),
+        ("S3", pair("unsucceeded", "error", first_exits=(foreign,))),
+        ("S4", pair("unsucceeded", "error")),
+        ("S5", pair("unsucceeded", "error", first_exits=(packed,))),
+        ("S6", pair("error", "unsucceeded", second_exits=(packed,))),
+        ("S7", pair(first_exits=(unpacked,), second_exits=(unpacked,))),
+        ("S8", pair("budget", "completed", first_exits=(packed,), second_exits=(packed,))),
+        ("S9", stale),
+        ("S10", pair(second_exits=(foreign,))),
+        ("S11", [stop("error", 101), stop("unsucceeded", 102)]),
+        ("S12", unknown),
+        ("S13", pair("error", None)),
+        ("S14", mismatch),
+        ("S15", pair("error", "unsucceeded", second_exits=(dict(packed, pid=102),))),
+        ("S16", pair("error", "unsucceeded", second_exits=(dict(packed, pid=None),))),
+        ("S17", pair(second_exits=(dict(packed, pack="true"),))),
+        ("S18", pair(first_exits=(ev("supervisor-stood-down"),))),
+        ("S19", progress),
+        ("S20", [seed] + pair(first_exits=(dict(packed, pid=555),), second_exits=(dict(packed, pid=555),))),
+        ("S21", [seed] + pair(first_exits=(dict(packed, pid=556),), second_exits=(dict(packed, pid=556),))),
+        ("S22", bad_stop_pid),
+        ("S23", bad_owner),
+        ("S24", pair(second_exits=(ev("head-exit", band=80),))),
+        ("S25", pair(second_exits=(dict(packed, pack=None),))),
+        ("S26", pair(second_exits=(dict(packed, pack=1),))),
+        ("S27", pair(second_exits=(dict(packed, pid="unreadable"),))),
+        ("S28", no_owner)):
+    # S18's stand-down belongs after its first stop, as it does in the supervisor record.
+    if name == "S18":
+        record[1], record[2] = record[2], record[1]
+    print("%s %s" % (name, reason(record)))
+RSPACKPY
+) || die "repeat-stop in-memory premises failed"
+rspack() { printf '%s\n' "$RSPACK" | grep "^$1 " | cut -d' ' -f2; }
+# S1-S19 cover the original pairing cases; S20-S21 exercise the seed writer's pid;
+# S22-S28 distinguish absent fields from unreadable stop, pack and exit identities.
+need_eq "$(printf '%s\n' "$RSPACK" | grep -c .)" "28" "every packed-stop case answered"
+for name in S1 S5 S6 S11 S12 S13 S14 S15 S16 S17 S18 S19 S20 S22 S23 S25 S26 S27 S28; do
+  need_eq "$(rspack "$name")" "None" "$name: no repeat-stop"
+done
+for name in S2 S3 S4 S7 S8 S9 S10 S21 S24; do
+  need_eq "$(rspack "$name")" "repeat-stop" "$name: the pairing control still fires"
+done
+verdict "repeat-stop packed exits: S1 and S20's seed-pid hand-overs clear; S2 errors and S3/S21 foreign exits still pair; both stop positions, boolean or absent pack, latest start, foreign and unreadable identity, progress and stand-down controls; S17's unreadable pack now leaves the stop unpaired"
+
+rs_fixture rspacked
+rs_go rspacked "handonly,handonly" "none,none" 2 ""
+need_eq "$(cat "$WORK/rspacked.rc")" "0" "two packed unsucceeded stops continue"
+need_eq "$(rs_stubs rspacked)" "3" "the successor really started"
+need_eq "$(rs_count "$STORE/spawn-records/rspacked.jsonl" successor-aborted)" "0" "no repeat-stop abort"
+need_eq "$(rs_obs "$STORE/spawn-records/rspacked.jsonl")" "unsucceeded:no unsucceeded:no handed-over:no" "the packed stops and successor"
+verdict "repeat-stop S1 through the supervisor: two packed hand-overs without boundaries start their successor (three stub starts; S2's matrix pair still aborts)"
 
 # The seed guard (register 2026-09-06): a head-exit recording a session that left no transcript
 # is not a stop, so it can never be the first of two. The same record's head count leaves that
@@ -3605,7 +5727,7 @@ LINES_BEFORE=$(mk lines "$REC")
 RUNENV="PATH=$WORK/psnone:$PATH"
 run successor --run rhxunp --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
 need_rc 0
-need_out "budget \$178.44"
+need_out "budget \$187.66"
 need_out "(head-exit)"
 need_absent "PROBE FAILED"
 need_eq "$(mk lines "$REC")" "$LINES_BEFORE" "the dry run wrote nothing"
@@ -3658,7 +5780,7 @@ need_eq "$(mk field "$REC" head-exit pid)" "$(mk field "$REC" head-successor pid
 RUNENV="PATH=$WORK/psnone:$PATH"
 run successor --run rhxmodel --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
 need_rc 0
-need_out "budget \$178.44"
+need_out "budget \$187.66"
 verdict "limit-stop head-exit (must fire, model-scoped): the Fable-limit stop text leaves the same shape, the stop-condition and the head-exit carrying which limit-model before successor-aborted limit-model-fable, and successor --dry-run passes its premise"
 
 # An older record: the supervisor's 'head exited' observation after the head-successor, and no
@@ -3730,6 +5852,8 @@ NOMETER="$WORK/nometer"
 rm -rf "$NOMETER"
 mkdir -p "$NOMETER"
 cp "$H" "$NOMETER/handsoff.py"
+# CR-A3-1 H1 (spec), E1: the copied supervisor still needs its shared record-lock module.
+cp "$LANE_PY" "$NOMETER/lane.py"
 fixture rhxmeter 200
 arm_resume rhxmeter
 mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":5}' >/dev/null
@@ -3821,6 +5945,8 @@ SLOW="$WORK/slowmeter"
 rm -rf "$SLOW"
 mkdir -p "$SLOW"
 cp "$H" "$SLOW/handsoff.py"
+# CR-A3-1 H1 (spec), E1: the copied supervisor still needs its shared record-lock module.
+cp "$LANE_PY" "$SLOW/lane.py"
 printf '%s\n' 'import time' 'time.sleep(6)' "print('$METER')" > "$SLOW/fable-share.py"
 fixture rhxrace 200
 arm_resume rhxrace
@@ -3955,8 +6081,8 @@ verdict "heartbeat: the timer ends quietly (action orphaned) when its parent is 
 # ------------------------------------------------------------------ waste-table (D36) ------
 # Two boundaries (the second without `rewrites`), three gates (the first carrying the
 # orientation figure), one lane closed `limit` and one closed `completed`. The expected row
-# count is arithmetic, not a memory: 5 waste fields × 2 boundaries + 2 billed lines + 1 run
-# total + 3 context rows + 1 orientation row + 1 lost-lane row = 18.
+# count is arithmetic, not a memory: 5 waste fields × 2 boundaries + 2 billed lines + 1 heads'
+# total + 1 run total + 3 context rows + 1 orientation row + 1 lost-lane row = 19.
 fixture rwaste 200
 mk append "$REC" '{"event":"gate","item":"one","context":100000,"percent":10,"band":0,"metered":true,"orientation_tokens":40000}' >/dev/null
 mk append "$REC" '{"event":"lane-closed","lane":"L1","exit_class":"limit","total_cost_usd":2.5}' >/dev/null
@@ -3972,19 +6098,20 @@ mk append "$REC" '{"event":"gate","item":"three","context":300000,"percent":30,"
 WT="$WORK/rwaste-table.md"
 run waste-table --run rwaste --out "$WT"
 need_rc 0
-need_out "waste-table: 18 rows from 2 boundaries, 3 gates, 2 lanes"
+need_out "waste-table: 19 rows from 2 boundaries, 3 gates, 2 lanes"
 need_eq "$(grep -c . "$WORK/out")" "1" "stdout lines"
 need_file "$WT"
-need_eq "$(mk rows "$WT" "Waste table")" "18" "rendered rows"
+need_eq "$(mk rows "$WT" "Waste table")" "19" "rendered rows"
 need_eq "$(grep -c 'rewrites after a lapsed cache · 2 → 3.*| field absent |' "$WT")" "1" "the absent rewrites field"
 need_eq "$(grep -c 'orientation cost · head sid-rwaste | 40,000 tokens · gate.orientation_tokens' "$WT")" "1" "the orientation row"
 need_eq "$(grep -c 'Kinds are mechanical' "$WT")" "1" "the legend"
 need_eq "$(grep -c 'lost lane · L1 · exit class limit | \$2.50 · lane-closed.total_cost_usd' "$WT")" "1" "the lost lane"
 need_eq "$(grep -c 'lost lane · L2' "$WT")" "0" "a completed lane is not a lost lane"
 need_eq "$(grep -c 'no waste found' "$WT")" "0" "no zero-findings row when a figure is positive"
-need_eq "$(grep -c 'run total (shown sum) | \$16.56 = \$16.56' "$WT")" "1" "the run total as a shown sum"
-need_eq "$(grep -c 'context · item two at .* | +40,000 tokens · gate context 100,000 → 140,000' "$WT")" "1" "context per item as a gate delta"
-verdict "waste-table: 18 rows from the record alone — a row per waste field per boundary, the billed lines with the run total, the gate deltas, the orientation figure and the lost lane"
+need_eq "$(grep -c 'heads. total (shown sum) | \$16.56 = \$16.56' "$WT")" "1" "the heads' total as a shown sum"
+need_eq "$(grep -c 'run total (recorded run spend) | unrecorded · no phase-boundary or run-close on the record carries run_spend_usd' "$WT")" "1" "boundaries planted without the run figure: the run total says so and adds nothing to the heads' total"
+need_eq "$(grep -c 'context · item one, to the gate of item two at .* | +40,000 tokens · gate context 100,000 → 140,000' "$WT")" "1" "context per item as a gate delta, on the item that grew"
+verdict "waste-table: 19 rows from the record alone — a row per waste field per boundary, the billed lines with the heads' total and the run total, the gate deltas, the orientation figure and the lost lane"
 
 run waste-table --run rwaste
 need_rc 0
@@ -3993,7 +6120,7 @@ WTD="$WORK/rwaste-dry.md"
 run waste-table --run rwaste --out "$WTD" --dry-run
 need_rc 0
 need_out "dry run"
-need_out "18 rows from 2 boundaries"
+need_out "19 rows from 2 boundaries"
 need_nofile "$WTD"
 verdict "waste-table: the default path is <store>/spawn-records/<run>-waste-table.md; --dry-run prints the counts and writes nothing"
 
@@ -4210,6 +6337,33 @@ need_nofile "$DRD/record-filtered.jsonl"
 need_eq "$(mk count "$REC" reflect-inputs)" "1" "no second event from the dry run (the control: the write above recorded one)"
 verdict "reflect-inputs --dry-run: the same counts, no file written and no event recorded"
 
+# ---- G13 (register 2026-10-15 01:33 f): a second run into one --out replaced the first's files --
+# The two sessions' transcripts differ, so a replaced turns.md changes its bytes; the planted case
+# is the repeated output, the control a first run into the same fresh directory, which writes.
+fixture rrout 200
+mk xscript sid-rrout-a >/dev/null
+mk xscript sid-rrout-b >/dev/null
+ROD="$WORK/reflect-repeat"
+run reflect-inputs --run rrout --session sid-rrout-a --out "$ROD" --no-meter
+need_rc 0
+need_file "$ROD/turns.md"
+ROSHA=$(sha_file "$ROD/turns.md")
+need_eq "$(mk count "$REC" reflect-inputs)" "1" "the first run's event (the control: a fresh --out writes)"
+run reflect-inputs --run rrout --session sid-rrout-b --out "$ROD" --no-meter
+need_rc 2
+need_out "is not empty"
+need_out "nothing written"
+need_lines
+need_eq "$(sha_file "$ROD/turns.md")" "$ROSHA" "the first session's extraction, byte for byte"
+need_eq "$(mk count "$REC" reflect-inputs)" "1" "no event from the refused second run"
+run reflect-inputs --run rrout --session sid-rrout-b --out "$ROD" --no-meter --dry-run
+need_rc 2
+need_out "is not empty"
+run reflect-inputs --run rrout --session sid-rrout-b --out "$WORK/reflect-repeat-b" --no-meter
+need_rc 0
+need_eq "$(mk count "$REC" reflect-inputs)" "2" "a fresh directory for the second session records its event"
+verdict "G13 (fails on old): a second reflect-inputs into a non-empty --out, dry run or not, is a premise failure that leaves the first extraction byte-identical and records nothing; a fresh directory for each session writes"
+
 # ------------------------------------------- the console window ------------
 # The viewer key in the grants file, the opener, who opens it, and the failure modes. Every leg
 # runs through the recording stub set up above (AIMYTH_VIEWER_CMD), so no window is ever opened
@@ -4401,16 +6555,17 @@ CSTART
 need_eq "$(cat "$WORK/cs.txt")" "fresh None None" "console_starting: a fresh stamp is an age under the grace window; an old stamp and a missing file are None"
 verdict "console_starting: keyed on the command file's stamp alone — fresh counts, old and missing make no claim"
 
-fixture rvwsuc2 200
-plant_console rvwsuc2 watch.py
+RSUC2="rvwsuc2$SFX"   # a planted console's run id carries the suite's suffix (register 2026-09-22 20:28)
+fixture "$RSUC2" 200
+plant_console "$RSUC2" watch.py
 viewer_use vsuc2
 RUNENV="PATH=$WORK/psnone:$PATH"
-run successor --run rvwsuc2 --meter-line "$METER" --harness-bin "$WORK/bin/no-such-harness" \
+run successor --run "$RSUC2" --meter-line "$METER" --harness-bin "$WORK/bin/no-such-harness" \
     --wait-s 1 --max-wait-s 5 --tick-s 1
 need_rc 0
 need_out "a console is already alive (pid $PLANTED)"
 need_no_viewer
-need_nofile "$(console_cmd rvwsuc2)"
+need_nofile "$(console_cmd "$RSUC2")"
 sleep 2
 kill_console
 verdict "successor: a console already alive for the run is never doubled — the pid is named, nothing is opened, no command file is written"
@@ -4425,11 +6580,12 @@ need_viewer_arg "$(console_cmd rvwrh)"
 sleep 2   # the detached half aborts: the fixture session has no transcript to size
 verdict "resume-head: with no console alive for the run, one window is opened on it and the primitive still exits 0"
 
-fixture rvwrh2 200
+RRH2="rvwrh2$SFX"
+fixture "$RRH2" 200
 mk append "$REC" '{"event":"head-successor","session_id":"sid-rvwrh2","pid":1,"budget":5.0}' >/dev/null
-plant_console rvwrh2 handsoff.py
+plant_console "$RRH2" handsoff.py
 viewer_use vrh2
-run resume-head --run rvwrh2 --harness-bin "$WORK/bin/no-such-harness" --budget-usd 5 --tick-s 1
+run resume-head --run "$RRH2" --harness-bin "$WORK/bin/no-such-harness" --budget-usd 5 --tick-s 1
 need_rc 0
 need_out "a console is already alive (pid $PLANTED)"
 need_no_viewer
@@ -4438,8 +6594,9 @@ kill_console
 verdict "resume-head: a console already alive for the run is never doubled (the handsoff.py spelling of the marker)"
 
 viewer_use vspell
-plant_console rvwsp watch.py
-"$PY" - "$H" rvwsp <<'CALIVE' > "$WORK/ca-watch.txt"
+RSP="rvwsp$SFX"
+plant_console "$RSP" watch.py
+"$PY" - "$H" "$RSP" <<'CALIVE' > "$WORK/ca-watch.txt"
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("target", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
@@ -4447,8 +6604,8 @@ print(len(mod.console_alive(sys.argv[2])), len(mod.console_alive("rvwsp-nobody")
 CALIVE
 need_eq "$(cat "$WORK/ca-watch.txt")" "1 0" "the watch.py spelling, with the negative control"
 kill_console
-plant_console rvwsp handsoff.py
-"$PY" - "$H" rvwsp <<'CALIVE2' > "$WORK/ca-handsoff.txt"
+plant_console "$RSP" handsoff.py
+"$PY" - "$H" "$RSP" <<'CALIVE2' > "$WORK/ca-handsoff.txt"
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("target", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
@@ -4457,7 +6614,7 @@ CALIVE2
 need_eq "$(cat "$WORK/ca-handsoff.txt")" "1 0" "the handsoff.py spelling, with the negative control"
 kill_console
 sleep 1
-"$PY" - "$H" rvwsp <<'CALIVE3' > "$WORK/ca-none.txt"
+"$PY" - "$H" "$RSP" <<'CALIVE3' > "$WORK/ca-none.txt"
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("target", sys.argv[1])
 mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
@@ -4493,7 +6650,7 @@ run successor --run rvwfail --meter-line "$METER" --harness-bin "$WORK/bin/no-su
 need_rc 0
 need_out "viewer: no Terminal window"
 need_out "exit 1"
-need_out "run by hand: python3 -B"
+need_out "run by hand: $PYABS -B"
 need_out "watch --run rvwfail"
 need_eq "$(viewer_calls)" "2" "positive control: the failing stub was reached, and retried once (register 2026-09-09 11:21)"
 sleep 2
@@ -4541,18 +6698,19 @@ verdict "the opener's route (critic review finding 7): viewer_argv is the owner'
 # AIMYTH_VIEWER_CMD empty: the stub is called once, with -g and then the command file, and the window is
 # claimed only once a `watch` process for the run is in the table (the stub plants one), its pid
 # named on the line.
-fixture rvwopen 200
+ROPEN="rvwopen$SFX"
+fixture "$ROPEN" 200
 viewer_use vopen2
 RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD= STUB_OPEN_CONSOLE=1"
-run successor --run rvwopen --meter-line "$METER" --harness-bin "$WORK/bin/no-such-harness" \
+run successor --run "$ROPEN" --meter-line "$METER" --harness-bin "$WORK/bin/no-such-harness" \
     --wait-s 1 --max-wait-s 5 --tick-s 1
 need_rc 0
-need_out "viewer: Terminal window opened on $(console_cmd rvwopen) via $WORK/openbin/open (first attempt) · console pid "
+need_out "viewer: Terminal window opened on $(console_cmd "$ROPEN") via $WORK/openbin/open (first attempt) · console pid "
 need_eq "$(viewer_calls)" "2" "open was called once, with two arguments: -g and the command file"
 need_eq "$(head -1 "$VIEWER_ARGV")" "-g" "the first argument is -g, open's flag for leaving the application in the background (register 2026-09-22)"
 need_eq "$(wc -l < "$VIEWER_ARGV.calls" | tr -d ' ')" "1" "one call, counted by the stub's own per-call line"
-need_eq "$(cat "$VIEWER_ARGV.calls")" "-g $(console_cmd rvwopen)" "that one call's arguments are exactly -g and the command file"
-need_eq "$(viewer_last)" "$(console_cmd rvwopen)" "the command file is open's last argument"
+need_eq "$(cat "$VIEWER_ARGV.calls")" "-g $(console_cmd "$ROPEN")" "that one call's arguments are exactly -g and the command file"
+need_eq "$(viewer_last)" "$(console_cmd "$ROPEN")" "the command file is open's last argument"
 OPID=$(cat "$VIEWER_ARGV.pid")
 need_out "console pid $OPID confirmed after"
 need_absent "osascript"
@@ -4571,7 +6729,8 @@ RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER
 run successor --run rvwempty --meter-line "$METER" --harness-bin "$WORK/bin/no-such-harness" \
     --wait-s 1 --max-wait-s 5 --tick-s 1
 need_rc 0
-need_out "viewer: no Terminal window (command file $CF; $WORK/openbin/open exited 0 but no console process for the run appeared within 15 s); run by hand: python3 -B"
+need_out "viewer: no Terminal window (command file $CF; $WORK/openbin/open exited 0 but no console process for the run appeared within 15 s; the last probe: "
+need_out "the last probe: pgrep exit 1: no match); run by hand: $PYABS -B"
 need_absent "Terminal window opened"
 need_eq "$(viewer_calls)" "2" "open was called once (-g and the command file)"
 AGE=$("$PY" -c 'import os, sys, time; print(int(time.time() - os.path.getmtime(sys.argv[1])))' "$CF")
@@ -4587,7 +6746,7 @@ run successor --run rvwopenfail --meter-line "$METER" --harness-bin "$WORK/bin/n
     --wait-s 1 --max-wait-s 5 --tick-s 1
 need_rc 0
 need_out "viewer: no Terminal window (command file $(console_cmd rvwopenfail); first attempt: $WORK/openfail/open exit 1: stub open: LSOpenURLsWithRole() failed with error -600; retry: $WORK/openfail/open exit 1: stub open"
-need_out "run by hand: python3 -B"
+need_out "run by hand: $PYABS -B"
 need_eq "$(viewer_calls)" "4" "open was tried twice (first attempt and retry), -g and the command file each time"
 need_eq "$(wc -l < "$VIEWER_ARGV.calls" | tr -d ' ')" "2" "two calls, counted by the stub's own per-call line"
 need_eq "$(sort -u "$VIEWER_ARGV.calls")" "-g $(console_cmd rvwopenfail)" "both calls carry exactly -g and the command file"
@@ -4595,28 +6754,29 @@ sleep 2
 verdict "the opener's open route (a failing open): a non-zero exit is retried once with the same command, both attempts named with open's stderr, and the primitive still exits 0"
 
 # open-console: the opener on demand, and --check as the live check.
-fixture rvwoc 200
+ROC="rvwoc$SFX"
+fixture "$ROC" 200
 viewer_use voc
 RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD= STUB_OPEN_CONSOLE=1"
-run open-console --run rvwoc
+run open-console --run "$ROC"
 need_rc 0
-need_out "viewer: Terminal window opened on $(console_cmd rvwoc) via $WORK/openbin/open (first attempt) · console pid "
+need_out "viewer: Terminal window opened on $(console_cmd "$ROC") via $WORK/openbin/open (first attempt) · console pid "
 OCPID=$(cat "$VIEWER_ARGV.pid")
-run open-console --run rvwoc --check
+run open-console --run "$ROC" --check
 need_rc 0
-need_out "console: pid $OCPID alive on watch --run rvwoc"
-run open-console --run rvwoc
+need_out "console: pid $OCPID alive on watch --run $ROC"
+run open-console --run "$ROC"
 need_rc 0
 need_out "a console is already alive (pid $OCPID) · no second window"
 need_eq "$(viewer_calls)" "2" "no second open while the console lives (the one call's two arguments)"
 kill "$OCPID"; sleep 1
-run open-console --run rvwoc --check
+run open-console --run "$ROC" --check
 need_rc 1
-need_out "NO CONSOLE for rvwoc"
+need_out "NO CONSOLE for $ROC"
 RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD="
-run open-console --run rvwoc --dry-run
+run open-console --run "$ROC" --dry-run
 need_rc 0
-need_out "would run: $WORK/openbin/open -g $(console_cmd rvwoc)"
+need_out "would run: $WORK/openbin/open -g $(console_cmd "$ROC")"
 need_eq "$(viewer_calls)" "2" "a dry run opens nothing (still the one earlier call)"
 verdict "open-console: opens the window on demand through open, --check prints the confirmed pid with exit 0, a second call while it lives opens nothing, --check after the console ends prints NO CONSOLE with exit 1, and --dry-run prints the open line and calls nothing"
 
@@ -4625,13 +6785,14 @@ verdict "open-console: opens the window on demand through open, --check prints t
 # spells it plants a leftover of that retired name to prove nothing reads it. Legs: a leftover
 # claim file blocks no window and is not touched; the lock file is where the claim now lives; and
 # neither opt-out — --viewer none, --check — takes a claim at all.
-fixture rvwclaim 200
-CF=$(console_cmd rvwclaim); rm -f "$CF"
-LOCKF="$REALSTORE/spawn-records/rvwclaim-console.lock"; rm -f "$LOCKF"
+RCLAIM="rvwclaim$SFX"
+fixture "$RCLAIM" 200
+CF=$(console_cmd "$RCLAIM"); rm -f "$CF"
+LOCKF="$REALSTORE/spawn-records/$RCLAIM-console.lock"; rm -f "$LOCKF"
 : > "$CF.opening"
 viewer_use vclaim
 RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD= STUB_OPEN_CONSOLE=1"
-run open-console --run rvwclaim
+run open-console --run "$RCLAIM"
 need_rc 0
 need_out "viewer: Terminal window opened on $CF via $WORK/openbin/open (first attempt) · console pid "
 need_eq "$(viewer_calls)" "2" "the retired claim file blocked nothing and open ran once (-g and the command file)"
@@ -4641,7 +6802,7 @@ need_absent "took over"
 kill "$(cat "$VIEWER_ARGV.pid")"; sleep 1
 rm -f "$CF.opening"
 RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD= STUB_OPEN_CONSOLE=1"
-run open-console --run rvwclaim --viewer none
+run open-console --run "$RCLAIM" --viewer none
 need_rc 0
 need_out "viewer: none (grants) · no window"
 need_eq "$(viewer_calls)" "2" "--viewer none opened nothing more (the earlier call's two arguments)"
@@ -4662,9 +6823,10 @@ verdict "open-console and the one-window claim on a lock (the №163 ruling): a 
 # opener leaves — and the next opener is free AT ONCE, because the kernel released the claim with
 # the process. Must fire on a claim file whose fresh file outlives its holder and blocks the
 # window for the whole 35 s life it is given (the pre-fold claim).
-fixture rvwkill 200
-KCF=$(console_cmd rvwkill); rm -f "$KCF"
-KLOCK="$REALSTORE/spawn-records/rvwkill-console.lock"; rm -f "$KLOCK"
+RKILL="rvwkill$SFX"
+fixture "$RKILL" 200
+KCF=$(console_cmd "$RKILL"); rm -f "$KCF"
+KLOCK="$REALSTORE/spawn-records/$RKILL-console.lock"; rm -f "$KLOCK"
 rm -f "$WORK/holder.flag"
 cat > "$WORK/holder.py" <<'HOLDER_END'
 """Take the run's console claim in a process of its own, say so, and wait to be killed. It takes
@@ -4691,7 +6853,7 @@ with open(flag, "w", encoding="utf-8") as fh:
 sys.stdout.flush()
 time.sleep(120)
 HOLDER_END
-"$PY" -B "$WORK/holder.py" "$H" rvwkill "$WORK/holder.flag" &
+"$PY" -B "$WORK/holder.py" "$H" "$RKILL" "$WORK/holder.flag" &
 HOLDPID=$!
 i=0
 while [ ! -s "$WORK/holder.flag" ] && [ "$i" -lt 60 ]; do sleep 0.25; i=$((i + 1)); done
@@ -4701,7 +6863,7 @@ case $(cat "$WORK/holder.flag" 2>/dev/null) in
 esac
 viewer_use vkill
 RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD="
-run open-console --run rvwkill
+run open-console --run "$RKILL"
 need_rc 0
 need_out "another opener (pid $HOLDPID"
 need_out "no second window"
@@ -4712,7 +6874,7 @@ kill -9 "$HOLDPID"; wait "$HOLDPID" 2>/dev/null || :
 KT0=$(clock_f)
 viewer_use vkill2
 RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD= STUB_OPEN_CONSOLE=1"
-run open-console --run rvwkill
+run open-console --run "$RKILL"
 need_rc 0
 need_out "viewer: Terminal window opened on $KCF"
 need_eq "$(viewer_calls)" "2" "the killed holder's claim was gone, so the window opened once (-g and the command file)"
@@ -5018,19 +7180,20 @@ verdict "the claim body's write failure (critic review pass 2, the second new fi
 # open-console honours the environment opt-out too (critic review finding 4): AIMYTH_VIEWER=none
 # opens nothing, as --viewer none does above; an unknown value is named and the grants default
 # opens (the control).
-fixture rvwenv 200
+RENV="rvwenv$SFX"
+fixture "$RENV" 200
 viewer_use venv
 RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD= STUB_OPEN_CONSOLE=1 AIMYTH_VIEWER=none"
-run open-console --run rvwenv
+run open-console --run "$RENV"
 need_rc 0
 need_out "viewer: none"
 need_out "no window"
 need_no_viewer
 RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD= STUB_OPEN_CONSOLE=1 AIMYTH_VIEWER=window"
-run open-console --run rvwenv
+run open-console --run "$RENV"
 need_rc 0
 need_out "open-console: AIMYTH_VIEWER='window' is neither terminal nor none · the grants file decides"
-need_out "viewer: Terminal window opened on $(console_cmd rvwenv) via $WORK/openbin/open (first attempt) · console pid "
+need_out "viewer: Terminal window opened on $(console_cmd "$RENV") via $WORK/openbin/open (first attempt) · console pid "
 need_eq "$(viewer_calls)" "2" "the control: an unknown value falls back to the grants default and opens once (-g and the command file)"
 kill "$(cat "$VIEWER_ARGV.pid")"; sleep 1
 verdict "open-console and AIMYTH_VIEWER=none (critic review finding 4, must fire): the environment opt-out opens nothing, as --viewer none does, while an unknown value is named and the grants default opens (the control)"
@@ -5140,7 +7303,7 @@ need_out "viewer: no Terminal window"
 need_out "first attempt: $WORK/nopath/open not found (no such file)"
 need_out "retry: $WORK/nopath/open not found (no such file)"
 need_absent "osascript"
-need_out "run by hand: python3 -B"
+need_out "run by hand: $PYABS -B"
 need_no_viewer
 sleep 2
 # the positive control on the same premise: with the stub back, the same command opens one
@@ -5218,7 +7381,7 @@ need_rc 0
 need_out "launch-check: rlcrace STARTED · head-successor at"
 RLCPID=$(mk field "$REC" head-successor pid)
 need_out "pid $RLCPID alive ("
-need_out "model none effort max"
+need_out "model fixture-model effort max"
 verdict "launch-check on a real seed launch: issued the moment successor returns, the check finds the head the detached starter started and names its pid from the record"
 
 # The controls: a head that dies, no successor by the deadline (with a live predecessor the
@@ -5635,7 +7798,7 @@ verdict "handoff --final on a HEAD record is unchanged: the parent walk still de
 REC="$STORE/spawn-records/rsucseed.jsonl"; rm -f "$REC"
 run run-open --run rsucseed --session sid-sucseed --head "the launcher" --regime multi \
     --regime-src head --handoff "$SHO" --detail "a seeded record" --pid 93911 \
-    --session-kind seed --envelope-usd 200
+    --session-kind seed --envelope-usd 200 --model fixture-model
 need_rc 0
 need_eq "$(mk field "$REC" run-open pid)" "93911" "the seed's recorded pid"
 RUNENV="PATH=$WORK/psclaude:$PATH"
@@ -5659,7 +7822,8 @@ verdict "successor on a SEEDED record without --pid takes the seed run-open's pi
 
 REC="$STORE/spawn-records/rsuchead.jsonl"; rm -f "$REC"
 run run-open --run rsuchead --session sid-suchead --head "a head" --regime multi \
-    --regime-src head --handoff "$SHO" --detail "a head record" --pid 55556 --envelope-usd 200
+    --regime-src head --handoff "$SHO" --detail "a head record" --pid 55556 --envelope-usd 200 \
+    --model fixture-model
 need_rc 0
 need_eq "$(mk field "$REC" run-open session_kind)" "head" "not a seed"
 RUNENV="PATH=$WORK/psclaude:$PATH"
@@ -5680,7 +7844,7 @@ verdict "successor on a HEAD record is unchanged: the parent walk decides the fi
 REC="$STORE/spawn-records/rsucarg.jsonl"; rm -f "$REC"
 run run-open --run rsucarg --session sid-sucarg --head "the launcher" --regime multi \
     --regime-src head --handoff "$SHO" --detail "a seeded record" --pid 93911 \
-    --session-kind seed --envelope-usd 200
+    --session-kind seed --envelope-usd 200 --model fixture-model
 need_rc 0
 RUNENV="PATH=$WORK/psclaude:$PATH"
 run successor --run rsucarg --dry-run --pid 41414 --budget-usd 5 --meter-line "$METER" \
@@ -5694,7 +7858,7 @@ REC="$STORE/spawn-records/rsucnopid.jsonl"; rm -f "$REC"
 RUNENV="PATH=$WORK/psclaude:$PATH"
 run run-open --run rsucnopid --session sid-sucnopid --head "the launcher" --regime multi \
     --regime-src head --handoff "$SHO" --detail "a seed with no pid" --session-kind seed \
-    --envelope-usd 200
+    --envelope-usd 200 --model fixture-model
 need_rc 0
 need_eq "$(mk field "$REC" run-open session_kind)" "seed" "a seeded record"
 need_eq "$(mk field "$REC" run-open pid)" "<no key pid>" "no pid of its own, a live claude parent notwithstanding"
@@ -5754,43 +7918,15 @@ verdict "controls: 'tests the wrong' absent from handsoff.py ($NEG); 'unmetered-
 fixture rclose2 200
 printf 'a change to close over %s\n' "$N" > "$VAULT/notes.txt"
 RUNENV="PATH=$WORK/psnone:$PATH"
-run close --run rclose2 --meter-line "$METER" --commit "fixture: the closing commit" --push
+run close --run rclose2 --items "fixture items" --meter-line "$METER" --commit "fixture: the closing commit" --push
 need_rc 0
 need_out "push ok"
 need_eq "$(mk field "$REC" run-close push)" "ok" "push"
 need_eq "$(git -C "$VAULT" rev-parse HEAD)" "$(git -C "$REMOTE" rev-parse HEAD)" "remote head"
 verdict "close --commit --push: the commit is made and pushed to the fixture remote"
 
-# ------------------------------------------------------------------------ write proof ------
-MANIFEST_AFTER="$WORK/manifest-after.txt"
-mk manifest "$SKILL_DIR" "$HOOKS_DIR" > "$MANIFEST_AFTER"
-# A difference here is either a write by the suite (the fault this leg looks for) or a sibling
-# process writing to the same directory while the suite ran; the reason line names the paths,
-# so the two can be told apart rather than guessed at.
-DIFF=$(diff "$MANIFEST_BEFORE" "$MANIFEST_AFTER" | grep '^[<>]' | cut -c1-90)
-need_eq "$DIFF" "" "manifest difference"
-need_eq "$(grep -c . "$MANIFEST_BEFORE")" "$(grep -c . "$MANIFEST_AFTER")" "manifest length"
-NEWCACHE=$(grep '__pycache__' "$MANIFEST_AFTER" | grep -c -v -F -f "$MANIFEST_BEFORE")
-need_eq "$NEWCACHE" "0" "byte-code files created under the shipped directories"
-verdict "write proof: the shipped skill and hooks directories are byte-identical after the run"
-
-COPY="$WORK/manifest-control"
-rm -rf "$COPY"
-mkdir -p "$COPY"
-cp "$H" "$COPY/handsoff.py"
-mk manifest "$COPY" > "$WORK/control-before.txt"
-printf '# a planted change\n' >> "$COPY/handsoff.py"
-mk manifest "$COPY" > "$WORK/control-after.txt"
-if diff "$WORK/control-before.txt" "$WORK/control-after.txt" >/dev/null; then
-  why="$why; the manifest did not notice a planted one-line change"
-fi
-verdict "write proof control: the manifest detects a planted change in a copy"
-
-SCAN=$(mk srcscan "$SRC" | tail -1)
-need_eq "$SCAN" "hits 0" "source scan of the suite"
-PLANTED=$(mk srcscan "$WORK/planted-writer.sh" | tail -1)
-need_eq "$PLANTED" "hits 2" "source scan of the planted control"
-verdict "write proof: no write verb in this suite aims outside /tmp (control: 2 planted hits)"
+# The write proof's three legs stand at the END of the suite (moved there 2026-10-10: legs added
+# after them for a month ran outside the manifest's window, against the header's own claim).
 
 # ------------------------------------------ waste fields (register, 2026-09-05) ------------
 # The three boundary fields whose labels said more than they measured: idle_min is head
@@ -5832,6 +7968,9 @@ if mode == "transcript":
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         for t in (now - 1000, now - 900, now - 870, now - 300, now):
+            # What the head was waiting on lands just as it answers, so each gap ends in a wait.
+            fh.write(json.dumps({"type": "user", "isSidechain": False, "timestamp": zulu(t),
+                                 "message": {"role": "user", "content": "the wait's end"}}) + "\n")
             fh.write(json.dumps({"type": "assistant", "isSidechain": False, "timestamp": zulu(t),
                                  "message": {"role": "assistant", "model": "claude-fixture-1",
                                              "usage": {"input_tokens": 100,
@@ -5850,6 +7989,73 @@ need_eq "$(mk field "$REC" phase-boundary idle_src)" "transcript" "idle_src"
 need_out "idle 11.7 min"
 need_out "idle src transcript"
 verdict "waste fields: idle_min is head idleness from the head's transcript — 700 s of gaps above 60 s outside the lane's running time = 11.7 min, labelled idle_src transcript"
+
+# G53 (register 2026-10-15 01:33 e), its idle third: the same span with every gap ending in the
+# head's own record is its generation, so it reads 0.0, where the old rule read the 700 s; the
+# leg above, with each gap ending in a wait, is the control. A real transcript's request record
+# opens the generation, so it lands a second after the head's last record and the gap is after it.
+fixture rgen 200
+"$PY" "$WORK/idle-fixture.py" "$REC" sid-rgen transcript >/dev/null
+"$PY" - "$PROJECTS" "$VAULT" sid-rgen <<'GENSCRIPT'
+import calendar, json, os, re, sys, time
+path = os.path.join(sys.argv[1], re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(sys.argv[2])), sys.argv[3] + ".jsonl")
+heads = [r for r in (json.loads(line) for line in open(path, encoding="utf-8")) if r["type"] == "assistant"]
+out = []
+for rec in heads:
+    out.append(json.dumps(rec))
+    at = calendar.timegm(time.strptime(rec["timestamp"][:19], "%Y-%m-%dT%H:%M:%S")) + 1
+    out.append(json.dumps({"type": "api-request", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(at)) + ".000Z"}))
+open(path, "w", encoding="utf-8").write("\n".join(out[:-1]) + "\n")
+GENSCRIPT
+run boundary --run rgen --from 1 --to 2 --disposition "head generating" --waste "none" --next "n" \
+    --meter-line "$METER"
+need_rc 0
+need_eq "$(mk field "$REC" phase-boundary idle_min)" "0.0" "the head's own generation is no idle"
+need_eq "$(mk field "$REC" phase-boundary idle_src)" "transcript" "idle_src"
+need_eq "$(mk field "$REC" phase-boundary idle_rule)" "waits" "the rule the figure was measured on"
+verdict "G53 (fails on old): a transcript gap that ends in the head's own record is its generation and no idle minute, and the boundary names the rule it was measured on"
+
+# G53, its other two thirds. An empty preview the head asked for is no cut: the planted case is
+# report_shown 0, the control a real cut of the same report. The context rows name the item that
+# grew and never difference two heads: the planted case is a gate each side of a hand-over.
+fixture rgen2 200
+mk append "$REC" '{"event":"lane-closed","lane":"LE","exit_class":"completed","total_cost_usd":1.0,"report_words":2000,"report_cut":true,"report_shown":0}' >/dev/null
+mk append "$REC" '{"event":"lane-closed","lane":"LC","exit_class":"completed","total_cost_usd":1.0,"report_words":2000,"report_cut":true,"report_shown":800}' >/dev/null
+run boundary --run rgen2 --from 1 --to 2 --disposition "previews" --waste "none" --next "n" --meter-line "$METER"
+need_rc 0
+need_eq "$(mk field "$REC" phase-boundary over_cap_reports)" "1" "the real cut alone"
+mk append "$REC" '{"event":"gate","item":"one","context":100000,"percent":10,"band":0,"metered":true}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"two","context":140000,"percent":14,"band":0,"metered":true}' >/dev/null
+mk append "$REC" '{"event":"head-successor","session_id":"sid-rgen2b","pid":1,"budget":1.0}' >/dev/null
+mk append "$REC" '{"event":"run-resume","session":"sid-rgen2b","head":"fixture head","detail":"the successor records itself","pid_src":"none"}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"three","context":60000,"percent":6,"band":0,"metered":true}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"four","context":90000,"percent":9,"band":0,"metered":true}' >/dev/null
+WTG="$WORK/rgen2-table.md"
+run waste-table --run rgen2 --out "$WTG"
+need_rc 0
+need_eq "$(grep -c 'context · item one, to the gate of item two at .* | +40,000 tokens' "$WTG")" "1" "item one's growth, on item one"
+need_eq "$(grep -c 'context · item three at .* | 60,000 tokens · no comparable preceding gate' "$WTG")" "1" "the hand-over, differenced with nothing"
+need_eq "$(grep -c 'context · item three, to the gate of item four at .* | +30,000 tokens' "$WTG")" "1" "the second head's own growth"
+need_eq "$(grep -c '| -80,000 tokens' "$WTG")" "0" "no delta across the hand-over"
+need_eq "$(grep -c 'context · item two at .* | +40,000' "$WTG")" "0" "the growth is not on the later item"
+verdict "G53 (fails on old): an empty preview the head asked for counts as no cut beside a real one, and the context rows name the item that grew and never difference one head's gate with the next head's"
+
+# G53, the review's F5: an unmetered gate between two metered ones. The interval spans two items, so
+# no single-item delta exists; the planted case is the +200 that used to land on item one, and the
+# control is the ordinary adjacent pair after it.
+fixture rgen3 200
+mk append "$REC" '{"event":"gate","item":"one","context":100,"percent":1,"band":0,"metered":true}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"two","percent":2,"band":0,"metered":false}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"three","context":300,"percent":3,"band":0,"metered":true}' >/dev/null
+mk append "$REC" '{"event":"gate","item":"four","context":450,"percent":4,"band":0,"metered":true}' >/dev/null
+WTG="$WORK/rgen3-table.md"
+run waste-table --run rgen3 --out "$WTG"
+need_rc 0
+need_eq "$(grep -c '| +200 tokens' "$WTG")" "0" "no delta across the unmetered gate"
+need_eq "$(grep -c 'context · item two at .* | unmeasured · the gate is unmetered' "$WTG")" "1" "the unmetered gate named"
+need_eq "$(grep -c 'context · item three at .* | 300 tokens · no comparable preceding gate' "$WTG")" "1" "the gate after it, differenced with nothing"
+need_eq "$(grep -c 'context · item three, to the gate of item four at .* | +150 tokens' "$WTG")" "1" "control: the adjacent pair after it"
+verdict "G53 F5 (fails on old): a gate after an unmetered gate takes no single-item delta, while ordinary adjacent gates still do"
 
 fixture ridle2 200
 "$PY" "$WORK/idle-fixture.py" "$REC" sid-ridle2 none >/dev/null
@@ -5931,7 +8137,7 @@ need_eq "$(grep -c 'Field meanings (2026-09-06)' "$WTR")" "1" "the legend"
 WTI="$WORK/ridle-table.md"
 run waste-table --run ridle --out "$WTI"
 need_rc 0
-need_eq "$(grep -c '| 11.7 min · phase-boundary.idle_min · head idle: no lane running and no head call, gaps above 60 s, the head.s calls from its transcript (idle_src transcript)' "$WTI")" "1" "the transcript-sourced idle row"
+need_eq "$(grep -c '| 11.7 min · phase-boundary.idle_min · head idle: no lane running and the head waiting, gaps above 60 s that end in something other than the head.s own record, read from its transcript (idle_src transcript)' "$WTI")" "1" "the transcript-sourced idle row"
 verdict "waste-table: the rows say the new meanings and their source — the resumed cut lane is not lost, the lost-lane cost names its exclusion, idle names transcript or record, rewrites names its base — and the legend carries them"
 
 # This table is the reader of the soft cap the wrapper logs at every close (critic finding
@@ -6052,12 +8258,12 @@ WWR="$WORK/rwinrow-table.md"
 WINLINE='billed (list 2026-09-03) · head $5.00 · lanes $2.00 · session $7.00 · rewrites 0 ($0.00) · metered 1 of 1'
 run waste-table --run rwinrow --out "$WWR" --meter-line "sid-rwinrow=$WINLINE"
 need_rc 0
-need_eq "$(grep -c 'run total (shown sum) | \$7.00 = \$7.00' "$WWR")" "1" "the window figure wins over the session-wide billed line"
+need_eq "$(grep -c 'heads. total (shown sum) | \$7.00 = \$7.00' "$WWR")" "1" "the window figure wins over the session-wide billed line"
 need_eq "$(grep -c "metered over the run's window: \$7.00 (the record gives the last boundary billed line" "$WWR")" "1" "the row says which figure it took and what the record gave"
 need_eq "$(grep -c 'envelope base \$200.00 (run-open.envelope_usd)' "$WWR")" "1" "the envelope base beside the total"
 WWR2="$WORK/rwinrow-norow.md"
 run waste-table --run rwinrow --out "$WWR2" --no-meter
-need_eq "$(grep -c 'run total (shown sum) | \$16.56 = \$16.56' "$WWR2")" "1" "control: without a window figure the row falls back to the record's own"
+need_eq "$(grep -c 'heads. total (shown sum) | \$16.56 = \$16.56' "$WWR2")" "1" "control: without a window figure the row falls back to the record's own"
 verdict "waste-table (T6): the whole-run row takes the head's window meter figure over the session-wide billed line, names both and prints the envelope base"
 
 # (b) the register entry of 2026-09-06: the under-read, the head count and the limit wait.
@@ -6068,14 +8274,14 @@ mk append "$REC" '{"event":"head-exit","band":0,"context":"362,843 tokens (36 %)
 WLA="$WORK/rlater-table.md"
 run waste-table --run rlater --out "$WLA" --no-meter
 need_rc 0
-need_eq "$(grep -c 'run total (shown sum) | \$56.26 = \$56.26' "$WLA")" "1" "the later head-exit spend, not the earlier billed line"
+need_eq "$(grep -c 'heads. total (shown sum) | \$56.26 = \$56.26' "$WLA")" "1" "the later head-exit spend, not the earlier billed line"
 need_eq "$(grep -c 'head-exit.spent_usd \$56.26, later in the record than the last boundary billed line \$16.56' "$WLA")" "1" "the row names both figures and which is later"
 fixture rearlier 100
 mk append "$REC" '{"event":"head-exit","band":0,"context":"c","spent_usd":5.0,"pack":true}' >/dev/null
 mk append "$REC" "$BL" >/dev/null
 WEA="$WORK/rearlier-table.md"
 run waste-table --run rearlier --out "$WEA" --no-meter
-need_eq "$(grep -c 'run total (shown sum) | \$16.56 = \$16.56' "$WEA")" "1" "control: a boundary later than the head-exit keeps the billed line"
+need_eq "$(grep -c 'heads. total (shown sum) | \$16.56 = \$16.56' "$WEA")" "1" "control: a boundary later than the head-exit keeps the billed line"
 verdict "waste-table (register 2026-09-06): per head the run total takes the LATER of the last boundary billed line and head-exit.spent_usd, so a head that exits without a boundary loses no spend"
 
 fixture rids 100
@@ -6094,10 +8300,12 @@ need_eq "$(grep -c '3 head session(s)' "$WID2")" "1" "positive control: a third 
 verdict "waste-table (register 2026-09-06): head sessions are counted by distinct session id, four spans of two ids reading as two heads"
 
 # The record's own run-open sits two hours back, so the planted wait is stamped inside that
-# span (a stop 60 minutes back, its resume 30 minutes back) rather than on a fixed date.
+# span (a stop 60 minutes back, its resume 30 minutes back) rather than on a fixed date. Both
+# stamps come from ONE clock reading: read by two interpreter calls that straddled a second, the
+# wait was 1801 s, the row read 30.02 min and the 30.0 min check below failed (2026-10-11).
 fixture rlimit 100
-STOP_TS=$("$PY" -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 3600)))')
-RES_TS=$("$PY" -c 'import time; print(time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 1800)))')
+LIM_TS=$("$PY" -c 'import time; t = int(time.time()); print(" ".join(time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t - s)) for s in (3600, 1800)))')
+STOP_TS=${LIM_TS% *}; RES_TS=${LIM_TS#* }
 mk append "$REC" "{\"event\":\"stop-condition\",\"which\":\"limit\",\"lane\":\"head\",\"action\":\"wait until the reset\",\"ts\":\"$STOP_TS\"}" >/dev/null
 mk append "$REC" "{\"event\":\"head-resumed\",\"session_id\":\"sid-rlimit\",\"pid\":1,\"context\":136346,\"waited_s\":1800,\"ts\":\"$RES_TS\"}" >/dev/null
 BLIM=$(printf '{"event":"phase-boundary","from":"2","to":"3","meter":"%s","idle_min":40.0,"idle_src":"transcript","denials":0,"over_cap_reports":0,"respawn_cost_usd":0.0}' "$METER")
@@ -6195,9 +8403,9 @@ mk append "$REC" '{"event":"head-exit","band":0,"context":"500,000 tokens (50 %)
 RUNENV="PATH=$WORK/psnone:$PATH"
 run successor --run rmetsucc --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
 need_rc 0
-need_out "budget \$360.00"
+need_out "budget \$387.66"
 need_absent "envelope (seed)"
-verdict "successor: a seed head-exit sizes the cap at the envelope minus recorded spend (budget_src: envelope (seed)), while a metered head-exit takes the ordinary remainder (register 2026-09-07)"
+verdict "successor: a seed head-exit sizes the cap at the envelope minus recorded spend (budget_src: envelope (seed)), while a metered head-exit takes the ordinary remainder, the envelope minus the run's spend (400 − \$12.34, K22da6bf5; register 2026-09-07)"
 
 # ------------------------------ run-lifecycle register entries (grants, pack, seed, heads) ----
 glist() { # $1 grants file, $2 key, $3 path: 1 when that list holds the path, else 0
@@ -6231,13 +8439,20 @@ need_eq "$(mk field "$REC" grants writes_src)" "carried (file)" "the event names
 need_out "writes (carried (file))"
 verdict "grants --on-limit resume (register 2026-09-12 21:3x, the call as run): the file's literal read grants and writes are carried forward and only on_limit changes (planted: $GC_BEFORE grants, $WC_BEFORE writes)"
 
+GSHA=$(sha_file "$GFC")
 run grants --run rcarry --write "$WORK/carry/worktree"
+need_rc 2
+need_out "would shrink the run's grants and passes no --replace"
+need_out "carry/review"
+need_eq "$(sha_file "$GFC")" "$GSHA" "a narrowing without --replace leaves the file byte-identical"
+run grants --run rcarry --write "$WORK/carry/worktree" --replace
 need_rc 0
 need_out "loses"
-need_eq "$(glist "$GFC" writes "$WORK/carry/review")" "0" "an explicit --write replaces the write list"
+need_out "(--replace: the lists named replace the run's, so it is written)"
+need_eq "$(glist "$GFC" writes "$WORK/carry/review")" "0" "an explicit --write --replace replaces the write list"
 need_eq "$(glist "$GFC" writes "$WORK/carry/worktree")" "1" "the named write is written"
 need_eq "$(glist "$GFC" grants "$WORK/carry/experiments")" "1" "the read list the call does not name is still carried"
-verdict "grants --write (control): a named list replaces the file's, its lost paths printed on stderr, while the unnamed read list is carried"
+verdict "grants --write (register 2026-09-29 20:49): a named list that would lose paths is refused without --replace, the file untouched; with --replace it replaces the file's list, its lost paths printed on stderr, while the unnamed read list is carried"
 
 fixture rcarry2 200
 GFV="$REALSTORE/spawn-records/rcarry2-grants.json"
@@ -6270,7 +8485,8 @@ rm -f "$GFS"
 LINES_BEFORE=$(mk lines "$REC")
 run grants --run rshrink --on-limit resume
 need_rc 2
-need_out "would shrink the run's write list"
+need_out "would shrink the run's grants"
+need_out "the write list loses"
 need_out "carry/keep-w"
 need_lines
 need_nofile "$GFS"
@@ -6413,7 +8629,7 @@ viewer_use rseednone
 RUNENV="PATH=$WORK/psclaude:$PATH"
 run run-open --run rseednone --session sid-seednone --head "the launcher" --regime multi \
     --regime-src owner --handoff "$SHO3" --detail "a seed under a live claude parent" \
-    --session-kind seed --envelope-usd 200
+    --session-kind seed --envelope-usd 200 --model fixture-model
 need_rc 0
 need_out "pid none (none (seed: no pid unless --pid))"
 need_eq "$(mk field "$REC" run-open pid)" "<no key pid>" "a seed records no pid under a live claude parent"
@@ -6559,7 +8775,7 @@ run close --run rdec --meter-line "$METER" --dry-run
 need_rc 0
 need_out '"decisions_on_owner_behalf": 2'
 need_out '"decisions_src": "1 decision event(s) + 1 ledger observation(s)"'
-run close --run rdec --meter-line "$METER"
+run close --run rdec --items "fixture items" --meter-line "$METER"
 need_rc 0
 need_out "decisions 2"
 need_eq "$(mk field "$REC" run-close decisions_on_owner_behalf)" "2" "the close's count"
@@ -6711,7 +8927,7 @@ setmtime "$DFILE" -30
 run gate --run rhold --to item4 --meter-line "$METER" --decisions-file "$DFILE"
 need_rc 6
 need_out "the decisions file"
-run gate --run rhold --to item4 --meter-line "$METER" --decisions-file "$DFILE" --ack "read the decisions file: the checklist stays"
+run gate --run rhold --to item4 --meter-line "$METER" --decisions-file "$DFILE" --ack "read the decisions file: the checklist stays" --ack-digest "$(sha_file "$DFILE")"
 need_rc 0
 setmtime "$DFILE" 3600
 run gate --run rhold --to item5 --meter-line "$METER" --decisions-file "$DFILE"
@@ -6720,17 +8936,18 @@ need_absent "HOLD"
 run gate --run rhold --to item5 --meter-line "$METER" --decisions-file "$WORK/no-such-decisions.md"
 need_rc 2
 need_out "is not a file"
-verdict "the decisions channel: a decisions file changed after the last gate holds (exit 6) until acked; one older than the last gate clears; a named file that does not exist is refused (exit 2)"
+verdict "the decisions channel: unacknowledged file content holds (exit 6) until its digest is acked; the same content clears independently of mtime; a named file that does not exist is refused (exit 2)"
 
 mk append "$REC" '{"event":"observation","phase":"","what":"AUTHOR DECISION NOT YET APPLIED: the checklist justification","note":"relayed before the close"}' >/dev/null
 run run-is-closed --run rhold
 need_rc 1
 need_out "open"
-run close --run rhold --meter-line "$METER"
+run close --run rhold --items "fixture items" --meter-line "$METER"
 need_rc 6
 need_out "AUTHOR DECISION NOT YET APPLIED"
 need_eq "$(mk count "$REC" run-close)" "0" "the held close writes no run-close"
-run close --run rhold --meter-line "$METER" --ack "read the AUTHOR decision: the justification is applied"
+# The earlier gates bound this run's file, so the close finds it there and its ack names the digest.
+run close --run rhold --items "fixture items" --meter-line "$METER" --ack "read the AUTHOR decision: the justification is applied" --ack-digest "$(sha_file "$DFILE")"
 need_rc 0
 need_eq "$(mk count "$REC" run-close)" "1" "the acked close"
 run run-is-closed --run rhold
@@ -6739,6 +8956,32 @@ need_out "closed"
 run run-is-closed --run no-such-run-record
 need_rc 2
 verdict "close and run-is-closed: an AUTHOR observation after the last gate holds the close (exit 6, no run-close) until acked; run-is-closed exits 1 before the close, 0 after it and 2 with no record"
+
+# Event order and unresolved ownership, including the read-only command's write proof.
+"$PY" -B "$(dirname "$SRC")/test_run_is_closed.py" --handsoff "$H" --fixture-root "$WORK" \
+  > "$WORK/run-is-closed.log" 2>&1
+CLOSED_RC=$?
+cat "$WORK/run-is-closed.log"
+need_eq "$CLOSED_RC" "0" "run-is-closed regression suite"
+verdict "run-is-closed: event order, explicit premise failures and read-only proof"
+
+# The scratch root the patch above opened: an absolute one holds the suite's fixtures, which a
+# restricted lane needs, and a relative one is a failed premise before any fixture is made.
+RC=0
+RUNENV="HANDSOFF=$H HOOKS_DIR=$HOOKS_DIR LANE_PY=$LANE_PY AIMYTH_TEST_SCRATCH_ROOT=relative/root"
+runenv sh "$SRC" --leg "no leg is named this" >"$WORK/both" 2>&1 || RC=$?
+RUNENV=""
+need_rc 2
+need_out "AIMYTH_TEST_SCRATCH_ROOT must be absolute"
+mkdir -p "$WORK/granted-root"
+RC=0
+RUNENV="HANDSOFF=$H HOOKS_DIR=$HOOKS_DIR LANE_PY=$LANE_PY AIMYTH_TEST_SCRATCH_ROOT=$WORK/granted-root"
+runenv sh "$SRC" --leg "run-resume: --session auto without a head-successor" >"$WORK/both" 2>&1 || RC=$?
+RUNENV=""
+need_rc 0
+need_out "granted-root/handsoff-suite"
+need_out "^PASS "
+verdict "T2-B1 (fails on old): the suite's fixtures sit under any absolute AIMYTH_TEST_SCRATCH_ROOT, and a relative one is a failed premise"
 
 # ------------------------------------------ folds of the critic round on these entries ----
 # The decisions channel keys on the whole word AUTHOR: a non-letter or the end follows it.
@@ -6835,7 +9078,8 @@ NARROWEDFILE
 LINES_BEFORE=$(mk lines "$REC")
 run grants --run rnarrow --on-limit resume
 need_rc 2
-need_out "would shrink the run's write list"
+need_out "would shrink the run's grants"
+need_out "the write list loses"
 need_out "carry/nar-w1"
 need_out "against the grants event at"
 need_lines
@@ -6848,7 +9092,7 @@ need_out "carry/nar-w2"
 need_eq "$(mk count "$REC" run-resume)" "0" "no run-resume from the refusal"
 verdict "the shrink guard (narrowed file, must fire): a grants file narrowed to an empty write list while the record's grants event holds the wider list refuses grants --on-limit and run-resume --viewer alike (exit 2), the delta printed against the recorded lists and nothing written"
 
-run grants --run rnarrow --on-limit resume --write "$WORK/carry/nar-w1"
+run grants --run rnarrow --on-limit resume --write "$WORK/carry/nar-w1" --replace
 need_rc 0
 need_out "loses"
 need_eq "$(glist "$GFN" writes "$WORK/carry/nar-w1")" "1" "the explicit re-issue is written"
@@ -6857,7 +9101,7 @@ need_rc 0
 need_absent "would shrink"
 need_eq "$(glist "$GFN" writes "$WORK/carry/nar-w1")" "1" "the carried write after the explicit call"
 RUNENV="PATH=$WORK/psnone:$PATH"
-run run-resume --run rnarrow --session sid-narrow2 --head "fixture head" --detail "narrowed on purpose" --write "$WORK/carry/nar-w3"
+run run-resume --run rnarrow --session sid-narrow2 --head "fixture head" --detail "narrowed on purpose" --write "$WORK/carry/nar-w3" --replace
 need_rc 0
 need_eq "$(mk field "$REC" run-resume writes_src)" "--write" "the run-resume event names its list source"
 need_eq "$("$PY" -c 'import json, sys; e = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()]; r = [x for x in e if x.get("event") == "run-resume"][-1]; print(1 if isinstance(r.get("writes"), list) and sys.argv[2] in r["writes"] else 0)' "$REC" "$WORK/carry/nar-w3")" "1" "the rewriting run-resume records its write list"
@@ -6865,7 +9109,7 @@ run grants --run rnarrow --viewer none
 need_rc 0
 need_absent "would shrink"
 need_eq "$(glist "$GFN" writes "$WORK/carry/nar-w3")" "1" "the run-resume's list is carried"
-verdict "the shrink guard (recorded baseline, must not fire): an explicit --write re-issue is written with its delta noted and becomes the recorded baseline, so the next flag-less call proceeds; a rewriting run-resume records its lists, so its explicit narrowing is not later read as a shrink"
+verdict "the shrink guard (recorded baseline, must not fire): an explicit --write --replace re-issue is written with its delta noted and becomes the recorded baseline, so the next flag-less call proceeds; a rewriting run-resume records its lists, so its explicit narrowing (--replace) is not later read as a shrink"
 
 # The network key: run-open and grants write it from --network (none when absent); every other
 # rewrite carries it; a grants file written before the key reads as none.
@@ -7208,14 +9452,14 @@ mk append "$REC" '{"event":"phase-boundary","from":"4","to":"5","meter":"head US
 WTO="$WORK/rtot-table.md"
 run waste-table --run rtot --out "$WTO" --no-meter
 need_rc 0
-need_eq "$(grep -c 'run total (shown sum) | \$45.72 = \$45.72 · per head: sid-rtot the last boundary billed line.s .session ≈. \$45.72 (a figure carried by hand)' "$WTO")" "1" "the hand-carried approximate form is read"
+need_eq "$(grep -c 'heads. total (shown sum) | \$45.72 = \$45.72 · per head: sid-rtot the last boundary billed line.s .session ≈. \$45.72 (a figure carried by hand)' "$WTO")" "1" "the hand-carried approximate form is read"
 need_eq "$(grep -c '1 boundary line(s) carried no session figure' "$WTO")" "1" "only the failed line carries no figure"
 fixture rtot2 200
 mk append "$REC" '{"event":"phase-boundary","from":"4","to":"5","meter":"head USD 52.34 · lanes USD 20.22 · session USD 72.56"}' >/dev/null
 WTO2="$WORK/rtot2-table.md"
 run waste-table --run rtot2 --out "$WTO2" --no-meter
 need_rc 0
-need_eq "$(grep -c 'run total (shown sum) | \$72.56 = \$72.56 · per head: sid-rtot2 the last boundary billed line.s .session USD. \$72.56 (a figure carried by hand)' "$WTO2")" "1" "the USD form is read"
+need_eq "$(grep -c 'heads. total (shown sum) | \$72.56 = \$72.56 · per head: sid-rtot2 the last boundary billed line.s .session USD. \$72.56 (a figure carried by hand)' "$WTO2")" "1" "the USD form is read"
 verdict "run total (register 2026-09-09 15:43, must fire): a billed line carried by hand as 'session ≈ <n>' or 'session USD <n>' is read into the run total and the row names the form, while a failed line still carries no figure"
 
 fixture rtot3 200
@@ -7224,7 +9468,7 @@ mk append "$REC" '{"event":"phase-boundary","from":"2","to":"3","meter":"head US
 WTO3="$WORK/rtot3-table.md"
 run waste-table --run rtot3 --out "$WTO3" --no-meter
 need_rc 0
-need_eq "$(grep -c 'run total (shown sum) | \$5.00 = \$5.00 · per head: sid-rtot3 the last boundary billed line.s .session \$. \$5.00' "$WTO3")" "1" "the earlier literal figure stands"
+need_eq "$(grep -c 'heads. total (shown sum) | \$5.00 = \$5.00 · per head: sid-rtot3 the last boundary billed line.s .session \$. \$5.00' "$WTO3")" "1" "the earlier literal figure stands"
 need_eq "$(grep -c '1 boundary line(s) carried no session figure' "$WTO3")" "1" "the n/a line is quoted, not read"
 need_eq "$(grep -c 'a figure carried by hand' "$WTO3")" "0" "no hand-carried form was read"
 verdict "run total (must not fire): 'session ≈ n/a', 'sessions \$9.99' and a session id are no figure, so the last line carrying one (the meter's \$5.00) stands and the n/a line is quoted"
@@ -7286,7 +9530,7 @@ EVX="$WORK/every"
 run extract-transcript --session sid-every --out "$EVX"
 need_rc 0
 need_out "6 turns (5 human, 1 assistant) of 26 records"
-need_out "interrupt 2, replay 1, synthetic 1, unparseable 2, other 8 · reconciles"
+need_out "interrupt 2, replay 1, synthetic 1, unparseable 2, other 8, compaction 0, cross_session 0 · reconciles"
 "$PY" -c 'import json, sys; c = json.load(open(sys.argv[1])); print(c["records"], c["extracted"] + c["tool_call_turns"] + sum(c["excluded"].values()), c["in_no_bucket"], c["reconciles"], c["excluded"]["other"], len(c["other_types"]))' "$EVX/counts.json" > "$WORK/every.txt"
 need_eq "$(cat "$WORK/every.txt")" "26 26 0 True 8 8" "records = extracted + tool_call_turns + every exclusion, other holding 8 records of 8 named types"
 need_eq "$(mk json "$EVX/counts.json" other_types.queue-operation)" "1" "a queue-operation record is named under other_types"
@@ -7355,14 +9599,14 @@ report_fixture "$RPT" '## Warnings and handling'
 # the second stop and its resume come after the report was written, and the close meters last
 mk append "$REC" "$(printf '{"event":"stop-condition","which":"limit","lane":"head","ts":"%s"}' "$T3")" >/dev/null
 mk append "$REC" "$(printf '{"event":"head-resumed","session_id":"sid-rrep","ts":"%s"}' "$T4")" >/dev/null
-run close --run rrep --report "$RPT" --meter-line "$CLOSE_METER"
+run close --run rrep --items "fixture items" --report "$RPT" --meter-line "$CLOSE_METER"
 need_rc 0
 need_out "patched Closing meter (handsoff.py close), Limit stops on the record (handsoff.py close)"
 need_eq "$(grep -c '^- \*\*Closing meter (handsoff.py close):\*\* billed (list, prices 2026-09-03): head \$74.51 · lanes \$23.20 · session \$97.71$' "$RPT")" "1" "the spend section carries the closing meter"
 need_eq "$(grep -c '^- \*\*Limit stops on the record (handsoff.py close):\*\* 2 limit stop(s): head at .* → head-resumed .*, 5.0 min; head at .* → head-resumed .*, 10.0 min · 1 lane(s) closed limit: B-registry' "$RPT")" "1" "the warnings section names both stops and the lane"
 need_eq "$(grep -c 'The head wrote this at item 5: session \$72.56, resumed once.' "$RPT")" "1" "the head's own prose is untouched"
 need_eq "$(mk field "$REC" run-close report_patched)" '["Closing meter (handsoff.py close)", "Limit stops on the record (handsoff.py close)", "Hard stops on the record (handsoff.py close)"]' "the run-close records what was patched"
-need_eq "$(grep -c '^- \*\*Hard stops on the record (handsoff.py close):\*\* 0 hard stop(s) on the head other than a limit · 0 lane(s) closed other than completed or limit · read from the record at the close' "$RPT")" "1" "the hard-stops bullet states its counts (this fixture has limit stops only)"
+need_eq "$(grep -c '^- \*\*Hard stops on the record (handsoff.py close):\*\* 0 hard stop(s) on the head other than a limit · 0 lane(s) closed other than completed or limit · 0 completed lane(s) met denials, none a stop · read from the record at the close' "$RPT")" "1" "the hard-stops bullet states its counts (this fixture has limit stops only)"
 "$PY" - "$RPT" <<'B2ORDER_END' > "$WORK/order.txt"
 import sys
 lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
@@ -7373,7 +9617,7 @@ need_eq "$(cat "$WORK/order.txt")" "True" "each bullet sits inside its own secti
 verdict "close re-read (register 2026-09-10 17:43, must fire): a report written before the run's second limit stop and its closing meter gets one bullet under Spend (the close's billed line) and one under Warnings (both stops with their minutes, and the lane closed limit), the head's prose untouched"
 
 H1=$(sha_of "$RPT")
-run close --run rrep --report "$RPT" --meter-line "$CLOSE_METER"
+run close --run rrep --items "fixture items" --report "$RPT" --meter-line "$CLOSE_METER"
 need_rc 0
 need_out "already current, not rewritten"
 need_eq "$(sha_of "$RPT")" "$H1" "an already-current report is left byte for byte"
@@ -7381,7 +9625,7 @@ fixture rrep2 200
 RPT2="$WORK/rrep2-report.md"
 report_fixture "$RPT2" '## Warnings and handling'
 H2=$(sha_of "$RPT2")
-run close --run rrep2 --meter-line "$CLOSE_METER"
+run close --run rrep2 --items "fixture items" --meter-line "$CLOSE_METER"
 need_rc 0
 need_absent "report:"
 need_eq "$(sha_of "$RPT2")" "$H2" "a close without --report leaves the page alone"
@@ -7389,7 +9633,7 @@ need_eq "$(mk field "$STORE/spawn-records/rrep2.jsonl" run-close report)" "<no k
 verdict "close re-read (must not fire): an already-current report is not rewritten, and a close without --report neither reads nor writes one"
 
 fixture rrep3 200
-run close --run rrep3 --report "$WORK/no-such-report.md" --meter-line "$CLOSE_METER"
+run close --run rrep3 --items "fixture items" --report "$WORK/no-such-report.md" --meter-line "$CLOSE_METER"
 need_rc 2
 need_out "PROBE FAILED: --report"
 need_lines
@@ -7397,13 +9641,13 @@ need_eq "$(mk count "$REC" run-close)" "0" "a refused close writes nothing"
 fixture rrep4 200
 RPT4="$WORK/rrep4-report.md"
 report_fixture "$RPT4" '## Notes'
-run close --run rrep4 --report "$RPT4" --meter-line "$CLOSE_METER"
+run close --run rrep4 --items "fixture items" --report "$RPT4" --meter-line "$CLOSE_METER"
 need_rc 3
 need_out "NOT patched: no '## Warnings…' section"
 need_eq "$(mk count "$REC" run-close)" "1" "the close itself is written"
 need_eq "$(grep -c 'Closing meter (handsoff.py close)' "$RPT4")" "1" "the section that exists is still patched"
 plain_fixture rrep5
-run close --run rrep5 --report "$RPT"
+run close --run rrep5 --items "fixture items" --report "$RPT"
 need_rc 2
 need_out "patches no run report"
 need_eq "$(mk count "$REC" run-close)" "0" "the plain close writes nothing"
@@ -7507,10 +9751,15 @@ RUNENV="STUB_MODE=complete STUB_N=0"
 starter --run rmodel2 --handoff "$HO" --budget 3.50 --out "$WORK/starter/rmodel2-head-1.out" --wait-s 5 \
         --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
 need_rc 0
-need_eq "$(own_start "$REC" head-successor)" 'null "max" "harness default (no --model)"' "no --model: the field is null and model_src says why"
+need_eq "$(own_start "$REC" head-successor | cut -d' ' -f1-2)" '"fixture-model" "max"' "no --model: the record's own model is inherited, beside effort max"
+case $(own_start "$REC" head-successor) in
+  *'"record: the run-open at '*) : ;;
+  *) why="$why; model_src does not name the run-open it came from: $(own_start "$REC" head-successor)" ;;
+esac
+case $(sed -n 1p "$WORK/stub-rmodel2.args") in *"--model fixture-model"*) : ;; *) why="$why; the stub was not started on the inherited model: $(sed -n 1p "$WORK/stub-rmodel2.args")" ;; esac
 need_absent "the caller ran the opener"
 need_eq "$(viewer_calls)" "1" "without --viewer-opened the start opens its window (the control)"
-verdict "head-start events (must not fire): a start with no --model records model null with model_src naming the harness default beside effort max, and without --viewer-opened the starter opens its own window"
+verdict "head-start events (register 2026-09-23 12:5x, must not fire): a starter given no --model starts its head on the record's structured model, model_src naming the run-open it came from, beside effort max — never on the harness default — and without --viewer-opened the starter opens its own window"
 
 fixture rmodel3 200
 arm_resume rmodel3
@@ -7523,6 +9772,66 @@ need_rc 0
 need_eq "$(mk count "$REC" head-resumed)" "1" "one in-place resume"
 need_eq "$(own_start "$REC" head-resumed)" '"sonnet" "medium" "arg"' "the head-resumed event carries the resumed command line's model and effort"
 verdict "head-start events (must fire): an in-place resume after a limit writes head-resumed with the model and effort its --resume command line carried"
+
+# ---- G26 (register 2026-10-04 22:58, the owner's A4): the launch's effort survives a resume ------
+# The planted case is a head launched at high with no flag on the next call; the controls are the
+# flag, which still overrides, and a record that names none, where max stands.
+fixture reff 200
+mk append "$REC" '{"event":"head-successor","session_id":"sid-reff","pid":999903,"model":"fixture-model","effort":"high"}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":5,"pack":true}' >/dev/null
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run reff --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "effort high (effort_src: record: the head-successor at "
+need_out "--effort high"
+need_absent "--effort max"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run reff --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness" --effort low
+need_rc 0
+need_out "effort low (effort_src: arg)"
+need_out "--effort low"
+need_absent "--effort high"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run resume-head --run reff --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "--effort high --effort-src"
+need_absent "--effort max"
+RUNENV="STUB_MODE=complete STUB_N=0"
+starter --run reff --handoff "$HO" --budget 3.50 --out "$WORK/starter/reff-head-1.out" --wait-s 5 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
+need_rc 0
+case $(sed -n 1p "$WORK/stub-reff.args") in *"--effort high"*) : ;; *) why="$why; the stub did not start at the recorded effort: $(sed -n 1p "$WORK/stub-reff.args")" ;; esac
+need_eq "$(own_start "$REC" head-successor | cut -d' ' -f2)" '"high"' "the new head-successor records the inherited effort"
+need_eq "$(grep -c '"effort_src": "record: the head-successor at ' "$REC")" "1" "the new event's source names the record"
+fixture reff2 200
+mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":5,"pack":true}' >/dev/null
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run reff2 --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "effort max (effort_src: default"
+need_out "--effort max"
+verdict "G26 (fails on old): successor, resume-head and the starter keep the effort recorded at launch, a flag overriding only when given, and max stands only where the record names none"
+
+REFF3="$STORE/spawn-records/reff3.jsonl"; rm -f "$REFF3"
+HOEFF="$WORK/handoffs/reff3-handoff.md"; mk handoff "$HOEFF" >/dev/null
+run run-open --run reff3 --session sid-reff3 --head "fixture head" --regime multi --regime-src owner \
+    --handoff "$HOEFF" --detail "effort on the record" --pid 4243 --envelope-usd 200 --model opus --effort xhigh
+need_rc 0
+need_eq "$(mk field "$REFF3" run-open effort)" "xhigh" "run-open's structured effort"
+mk append "$REFF3" '{"event":"head-exit","band":80,"context":"c","spent_usd":5,"pack":true}' >/dev/null
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run reff3 --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "effort xhigh (effort_src: record: the run-open at "
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run reff3 --session sid-reff3b --head "successor head" --detail "resumed" --pid 5151 --effort medium
+need_rc 0
+need_eq "$(mk field "$REFF3" run-resume effort)" "medium" "run-resume's structured effort"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run reff3 --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "effort medium (effort_src: record: the run-resume at "
+verdict "G26 (fails on old): run-open and run-resume record --effort as a structured field, and the newest head start's effort is the one a successor inherits"
 
 fixture rvwflag 200
 viewer_use vflag
@@ -7974,7 +10283,7 @@ need_rc 0
 need_out "run spend: "
 need_eq "$(mk field "$REC" run-close holds_ended)" "1" "the same close ended the hold"
 case $(mk field "$REC" run-close run_spend_floor) in "<no key"*|"") why="$why; run_spend_floor missing from the run-close" ;; *) : ;; esac
-verdict "the re-base (both behaviours in one function): one `close` writes the afternoon's run-spend fields and line AND ends every open hold, counting them on the run-close"
+verdict "the re-base (both behaviours in one function): one close writes the afternoon's run-spend fields and line AND ends every open hold, counting them on the run-close"
 
 # H7: the two wrappers and the supervisor agree on the close classes a beat re-enters, and the
 # help names the verbs and the supervisor's bound.
@@ -8723,6 +11032,4073 @@ need_eq "$(printf '%s\n' "$MEET" | grep '^MEETCMD')" "MEETCMD True" "the opener'
 need_eq "$(printf '%s\n' "$MEET" | grep '^MEETCLAIM')" "MEETCLAIM True" "the one-window claim's lock sits beside that command file"
 need_eq "$(printf '%s\n' "$MEET" | grep '^MEETHELD')" "MEETHELD True False" "that board draws the open hold held and the released one not (the control)"
 verdict "the re-base (the console opener meeting the held lanes): the window the rebuilt opener starts is the board that draws the hold — the command file runs watch --run R, the lock its one-window claim is taken on sits beside it, and the same record read through watch.py reads the open hold held and the released one closed (the control)"
+
+# ================================================ Batch 4, the handsoff.py half (2026-10-10) =====
+# One block of legs, each built to fail on the code before the batch and pass on it (the batch's
+# fail-on-old runs record both), named by the register entry it closes. Run ids that plant a
+# console carry the suite's suffix ($SFX); every other fixture is this suite's own.
+
+# ---- K4a701287: the successor cap from the run's grants file; resume-unsized names its path ----
+plant_successors() { # $1 record, $2 count: that many head-exit and head-successor pairs, then the last exit
+  "$PY" - "$1" "$2" <<'PLANTSUCC'
+import json, sys, time
+path, n = sys.argv[1], int(sys.argv[2])
+run = json.loads(open(path, encoding="utf-8").readline())["run"]
+stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
+base = time.time() - 3600
+with open(path, "a", encoding="utf-8") as fh:
+    for i in range(n):
+        for ev in ({"event": "head-exit", "band": 60, "context": "c", "spent_usd": 1.0, "pack": True},
+                   {"event": "head-successor", "session_id": "sid-cap-%d" % i, "pid": 1, "budget": 1.0,
+                    "model": "fixture-model"}):
+            ev.update(ts=stamp(base + 10 * i), run=run)
+            fh.write(json.dumps(ev) + "\n")
+    fh.write(json.dumps({"ts": stamp(base + 10 * n), "run": run, "event": "head-exit", "band": 60,
+                         "context": "c", "spent_usd": 1.0, "pack": True}) + "\n")
+PLANTSUCC
+}
+# The default cap is 20 since the owner's amendment of 2026-10-30 (it was 6): each case plants 20.
+fixture rcap 200
+plant_successors "$REC" 20
+run grants --run rcap --max-successors 30
+need_rc 0
+need_eq "$("$PY" -c 'import json, sys; print(json.load(open(sys.argv[1])).get("max_successors"))' "$REALSTORE/spawn-records/rcap-grants.json")" "30" "the grants file carries the run's cap"
+RUNENV="STUB_MODE=complete STUB_N=0"
+starter --run rcap --handoff "$HO" --budget 3.50 --out "$WORK/starter/rcap-head-1.out" --wait-s 1 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1 --model fixture-model
+need_rc 0
+need_eq "$(mk count "$REC" successor-aborted)" "0" "no abort under the grants file's cap of 30"
+need_eq "$("$PY" -c 'import json, sys; e = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]; print(sum(1 for x in e if x.get("event") == "head-successor" and x.get("session_id") not in ("sid-by-the-head",) and not str(x.get("session_id")).startswith("sid-cap-")))' "$REC")" "1" "the twenty-first successor started"
+fixture rcapctl 200
+plant_successors "$REC" 20
+RUNENV="STUB_MODE=complete STUB_N=0"
+starter --run rcapctl --handoff "$HO" --budget 3.50 --out "$WORK/starter/rcapctl-head-1.out" --wait-s 1 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1 --model fixture-model
+need_rc 1
+need_eq "$(mk field "$REC" successor-aborted reason)" "successor-cap" "the control: no grants key, the default cap of 20"
+case $(mk field "$REC" successor-aborted note) in
+  *"at its cap of 20 (the default"*) : ;;
+  *) why="$why; the cap's source is not named: $(mk field "$REC" successor-aborted note)" ;;
+esac
+fixture rcapenv 200
+plant_successors "$REC" 20
+RUNENV="STUB_MODE=complete STUB_N=0 AIMYTH_MAX_SUCCESSORS=22"
+starter --run rcapenv --handoff "$HO" --budget 3.50 --out "$WORK/starter/rcapenv-head-1.out" --wait-s 1 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1 --model fixture-model
+need_rc 0
+need_eq "$(mk count "$REC" successor-aborted)" "0" "with no grants key the environment's cap of 22 is the fallback"
+verdict "K4a701287 (must fire): a grants file carrying max_successors 30 lets the starter start a twenty-first successor, the cap read from the run's own grants file, while the same record with no key aborts successor-cap at the default 20 naming the source (the control) and AIMYTH_MAX_SUCCESSORS stays the fallback"
+
+fixture runsized 200
+mk append "$REC" '{"event":"head-successor","session_id":"sid-unsized","pid":1,"budget":5.0,"model":"fixture-model"}' >/dev/null
+SOUGHT=$("$PY" -c 'import os, re, sys; print(os.path.join(os.path.realpath(os.environ["AIMYTH_PROJECTS_DIR"]), re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.environ["CLAUDE_PROJECT_DIR"])), "sid-unsized.jsonl"))')
+run _resume-head --run runsized --session sid-unsized --out none --harness-bin "$WORK/bin/harness" \
+    --budget-usd 5 --tick-s 1 --model fixture-model
+need_rc 1
+need_eq "$(mk field "$REC" successor-aborted reason)" "resume-unsized" "the abort"
+case $(mk field "$REC" successor-aborted note) in
+  *"sought $SOUGHT"*) : ;;
+  *) why="$why; the abort does not name the transcript path it sought ($SOUGHT): $(mk field "$REC" successor-aborted note)" ;;
+esac
+verdict "K4a701287 (must fire): resume-head's resume-unsized abort names the transcript path it sought and why, beside the missing gate event"
+
+# ---- Kcfcdadd1: a detached lane outlives a successor; the starter's first line names it ----
+fixture rlanes 200
+LANEPID=$("$PY" -c 'import subprocess, sys
+p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(90)"], start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print(p.pid)')
+mk append "$REC" "{\"event\":\"lane-open\",\"lane\":\"LDET\",\"class\":\"verifier\",\"model\":\"opus\",\"session_id\":\"sid-ldet\"}" >/dev/null
+mk append "$REC" "{\"event\":\"lane-spawned\",\"lane\":\"LDET\",\"session_id\":\"sid-ldet\",\"pid\":$LANEPID,\"wrapper_pid\":$LANEPID,\"detached\":true}" >/dev/null
+mk append "$REC" '{"event":"lane-open","lane":"LBAD","class":"critic","model":"opus"}' >/dev/null
+mk append "$REC" '{"event":"lane-spawned","lane":"LBAD","pid":"not-a-pid"}' >/dev/null
+mk append "$REC" '{"event":"lane-open","lane":"LDONE","class":"builder","model":"opus"}' >/dev/null
+mk append "$REC" '{"event":"lane-closed","lane":"LDONE","exit_class":"completed","total_cost_usd":1.0}' >/dev/null
+viewer_use vlanes
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run rlanes --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 1 \
+    --max-wait-s 5 --tick-s 1
+need_rc 0
+LOGL="$REALSTORE/spawn-records/rlanes-head-1.out.starter.log"
+wait_log "$LOGL" "supervisor: head-successor pid" 30
+wait_log "$LOGL" "starter: open lanes at the start (2): " 4
+kill -0 "$LANEPID" 2>/dev/null || why="$why; the planted detached lane died across the successor"
+grep -q -F "LDET open since " "$LOGL" || why="$why; the starter's line does not name LDET"
+grep -q -F "wrapper pid $LANEPID alive, lane pid $LANEPID alive" "$LOGL" || why="$why; LDET's liveness is not read: $(grep 'open lanes' "$LOGL" | cut -c1-200)"
+grep -q -F "LBAD open since" "$LOGL" || why="$why; the lane with an unusable pid is not listed"
+grep -q -F "lane pid 'not-a-pid' unusable: unknown" "$LOGL" || why="$why; an unusable pid is not named unknown"
+if grep -q -F "LDONE" "$LOGL"; then why="$why; a closed lane is listed as open"; fi
+kill "$LANEPID" 2>/dev/null || :
+sleep 1
+verdict "Kcfcdadd1 (must fire): a planted detached lane in a session of its own is alive after successor started the next head (the successor path signals nothing), and the starter's first line lists the open lanes across the whole record with their liveness — alive, an unusable pid named unknown — and leaves a closed lane out"
+
+# ---- Kd9717c6c: the run figure never falls at a lane's close; a floor while a lane runs ----
+fixture rfall 400
+mk pricedscript sid-lfall 2 lane-fall >/dev/null
+mk append "$REC" '{"event":"lane-open","lane":"LFALL","class":"builder","model":"opus","session_id":"sid-lfall"}' >/dev/null
+mk append "$REC" '{"event":"lane-spawned","lane":"LFALL","session_id":"sid-lfall","pid":1}' >/dev/null
+FALL_X=$("$PY" -c 'import sys; print("%.2f" % (2 * float(sys.argv[1])))' "$OPUS_IN")
+FALL_RUN=$("$PY" -c 'import sys; print("%.2f" % (12.34 + 2 * float(sys.argv[1])))' "$OPUS_IN")
+run run-spend --run rfall --meter-line "$METER" --no-cache
+need_rc 1
+need_out "lane LFALL: \$$FALL_X"
+need_out "still running: LFALL"
+need_out "AT LEAST"
+mk append "$REC" '{"event":"lane-closed","lane":"LFALL","session_id":"sid-lfall","exit_class":"completed","total_cost_usd":1.0}' >/dev/null
+run run-spend --run rfall --meter-line "$METER" --no-cache
+need_rc 0
+need_out "lane LFALL: \$$FALL_X · the larger of the transcript's \$$FALL_X"
+need_out "run-spend: rfall · \$$FALL_RUN of \$400.00"
+need_out "complete"
+verdict "Kd9717c6c (must fire): a lane still running makes the run figure a floor (AT LEAST, the lane named), and at its close the lane keeps the larger of its transcript's figure (\$$FALL_X) and its lower recorded cost (\$1.00), so the run figure does not fall"
+
+# ---- K22da6bf5: the successor's remainder is the close's ----
+fixture rsame 200
+mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":50.0,"pack":true}' >/dev/null
+mk append "$REC" '{"event":"head-resumed","session_id":"sid-rsame","pid":1,"model":"fixture-model"}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":"limit","context":"c","spent_usd":60.0,"pack":false,"pid":1}' >/dev/null
+mk append "$REC" '{"event":"lane-open","lane":"LS","class":"builder","model":"opus"}' >/dev/null
+mk append "$REC" '{"event":"lane-closed","lane":"LS","exit_class":"completed","total_cost_usd":10.0}' >/dev/null
+run close --run rsame --items "fixture items" --meter-line "$METER" --dry-run
+need_rc 0
+need_out '"run_spend_usd": 22.34'
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run rsame --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "budget \$177.66"
+need_out "minus the run's spend \$22.34"
+need_absent "spent over every head-exit"
+verdict "K22da6bf5 (must fire): on a record with a resumed and a repaired head-exit (session totals 50 and 60) and a 10-dollar lane, the successor sizes the next head at the envelope minus the run's spend (22.34: the head's own 12.34 and the lane), the remainder the close meters (177.66), never the head-exits' summed session totals"
+
+# ---- K615a63df: the stale-pack derivation lists every open lane and prefers the newer pack ----
+fixture rstale 200
+mk append "$REC" "$(printf '{"event":"phase-boundary","ts":"%s","from":"item6","to":"item7","next":"OLD NEXT: the seventh kit pass","disposition":"d","meter":"m","waste":"w"}' "$(tsago 86400)")" >/dev/null
+mk append "$REC" "$(printf '{"event":"lane-open","ts":"%s","lane":"LP9","class":"builder","model":"opus","reason":"open before the anchor"}' "$(tsago 3000)")" >/dev/null
+mk append "$REC" "$(printf '{"event":"lane-spawned","ts":"%s","lane":"LP9","pid":999999,"wrapper_pid":999998}' "$(tsago 3000)")" >/dev/null
+plant_pack "$HO" "$(tsago 1800)" "HEAD PACK NEXT: item 9, the analysis gates"
+mk append "$REC" "$(printf '{"event":"gate","ts":"%s","item":"item9","context":null,"percent":null,"band":"unmetered","armed":false,"decision":"allow","metered":false}' "$(tsago 600)")" >/dev/null
+mk append "$REC" '{"event":"head-exit","band":"limit","context":"c","pack":false,"pid":1}' >/dev/null
+run handoff --run rstale --inflight-from-record
+need_rc 0
+SEC=$(mk section "$HO" "In flight")
+case $SEC in *"Needs: lane LP9 open since"*) : ;; *) why="$why; the lane opened before the anchor is not listed: $SEC" ;; esac
+case $SEC in *"Next: HEAD PACK NEXT: item 9, the analysis gates (from the head's own pack written"*) : ;; *) why="$why; the newer head pack's Next is not taken: $SEC" ;; esac
+case $SEC in *"OLD NEXT"*) why="$why; the day-old boundary's next stands in for the newer pack" ;; esac
+case $SEC in *"Kept from the pack this rewrite replaced"*"Needs: wiki/h.md:1"*) : ;; *) why="$why; the head pack's other lines are not kept: $SEC" ;; esac
+need_eq "$(grep -c '^## In flight (re-derived from the record at ' "$HO")" "1" "the derived section's own heading"
+verdict "K615a63df (must fire): the re-derivation lists a lane opened before the anchor with no close (the whole record, not the span since the boundary), takes Next from the head's own pack where that is newer than the last phase-boundary, keeps the pack's other lines, and writes under its own heading"
+
+# ---- K3a0b95c3: successor --seed-pid from an attended head ----
+fixture rseedpid 200
+sleep 60 &
+ATTPID=$!
+viewer_use vseedpid
+T0=$(date +%s)
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run rseedpid --pid "$ATTPID" --seed-pid --meter-line "$METER" \
+    --harness-bin "$WORK/bin/stubhead" --wait-s 30 --max-wait-s 5 --tick-s 1
+need_rc 0
+need_out "--seed-pid: a seed process that exits 2 s after this call"
+need_eq "$(mk field "$REC" head-exit pid)" "$ATTPID" "the head-exit names the attended head's own pid"
+LOGS="$REALSTORE/spawn-records/rseedpid-head-1.out.starter.log"
+wait_log "$LOGS" "supervisor: head-successor pid" 30
+T1=$(date +%s)
+[ $((T1 - T0)) -le 12 ] || why="$why; the successor started $((T1 - T0)) s after the call, not at once"
+kill -0 "$ATTPID" 2>/dev/null || why="$why; the attended head's process is gone (it must stay alive throughout)"
+grep -q -F "waits for pid" "$LOGS" || why="$why; the starter did not wait on the seed"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run rseedpid --seed-pid --predecessor-pid "$ATTPID" --dry-run --meter-line "$METER" \
+    --harness-bin "$WORK/bin/harness"
+need_rc 2
+need_out "--seed-pid and --predecessor-pid each name the process the starter waits for"
+fixture rseedctl 200
+viewer_use vseedctl
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run rseedctl --pid "$ATTPID" --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --wait-s 3 --max-wait-s 5 --tick-s 1
+need_rc 0
+wait_field "$REC" successor-aborted reason "timeout" 20
+kill "$ATTPID" 2>/dev/null || :
+verdict "K3a0b95c3 (must fire): with the attended head's pid alive, successor --seed-pid starts the successor within seconds on a seed process that exits on its own, the head-exit still naming the attended pid; --seed-pid beside --predecessor-pid is refused; without it the starter waits on the attended process and aborts on timeout (the control)"
+
+# ---- Kae7bc546: boundary re-derives In flight, keeping the owner's relays and hand-written lines ----
+fixture rbinf 200
+printf -- '- Next: item3, the old pack\n- note: the owner relayed at 15:28 that the checklist stays (hand-written)\n- Needs: wiki/a.md:1\n- Decided: D1 because x\n' > "$WORK/pack-binf.md"
+run handoff --run rbinf --inflight-file "$WORK/pack-binf.md"
+need_rc 0
+mk append "$REC" '{"event":"observation","phase":"","what":"AUTHOR ruling: the second writer pass runs next","note":"relayed by the watch"}' >/dev/null
+run boundary --run rbinf --from item3 --to item4 --disposition "item3 done" --waste "none" \
+    --next "item4: the new item" --meter-line "$METER"
+need_rc 0
+need_out "in flight: re-derived from the record"
+SEC=$(mk section "$HO" "In flight")
+case $SEC in *"Next: item4: the new item (the \`next\` of this boundary, item3 → item4)"*) : ;; *) why="$why; Next does not name the new item: $SEC" ;; esac
+case $SEC in *"Next: item3, the old pack"*) why="$why; the old pack's Next survived beside the new one" ;; esac
+case $SEC in *"Owner (an AUTHOR observation on the record at "*"AUTHOR ruling: the second writer pass runs next"*) : ;; *) why="$why; the relayed owner line is dropped: $SEC" ;; esac
+case $SEC in *"note: the owner relayed at 15:28 that the checklist stays (hand-written)"*) : ;; *) why="$why; the hand-written line is dropped: $SEC" ;; esac
+need_eq "$(grep -c '^## In flight (re-derived from the record at ' "$HO")" "1" "the derived section's own heading"
+run handoff --run rbinf --inflight-file "$WORK/pack-binf.md"
+need_rc 0
+need_eq "$(grep -c '^## In flight$' "$HO")" "1" "a head's own pack restores the plain heading"
+fixture rbinf2 200 inflight
+run boundary --run rbinf2 --from item1 --to item2 --disposition "d" --waste "w" --next "item2" --meter-line "$METER"
+need_rc 0
+need_out "nothing re-derived"
+verdict "Kae7bc546 (must fire): a boundary re-derives In flight after its trace row — Next names the boundary's new item, a relayed AUTHOR observation and a hand-written line of the replaced pack survive, the old Next does not, the section carries its own heading and a head's next pack restores the plain one; a hand-off with no In flight section is said and is no failure (the control)"
+
+# ---- K782d71bb: the extraction reads queued owner messages and drops the harness's own records ----
+TQ=$("$PY" - <<'QSCRIPT'
+import json, os, re
+sid = "sid-queued"
+root = os.environ["AIMYTH_PROJECTS_DIR"]
+path = os.path.join(root, re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.environ["CLAUDE_PROJECT_DIR"])), sid + ".jsonl")
+os.makedirs(os.path.dirname(path), exist_ok=True)
+recs = [
+    {"type": "user", "timestamp": "2026-10-01T10:00:00Z", "message": {"role": "user", "content": [{"type": "text", "text": "the first owner turn"}]}},
+    {"type": "assistant", "timestamp": "2026-10-01T10:00:05Z", "message": {"role": "assistant", "model": "claude-fixture-1", "content": [{"type": "text", "text": "the head works"}]}},
+    {"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-10-01T10:00:06Z", "content": "MIDTURN-OWNER-SENTINEL approve both"},
+    {"type": "attachment", "timestamp": "2026-10-01T10:00:06Z", "attachment": {"type": "queued_command", "prompt": "MIDTURN-OWNER-SENTINEL approve both"}},
+    {"type": "attachment", "timestamp": "2026-10-01T10:00:07Z", "attachment": {"type": "queued_command", "prompt": "<cross-session-message from=\"peer\">RELAY-SENTINEL the owner said go</cross-session-message>"}},
+    {"type": "attachment", "timestamp": "2026-10-01T10:00:08Z", "attachment": {"type": "queued_command", "prompt": [{"type": "text", "text": "<task-notification>job 7 completed</task-notification>"}]}},
+    {"type": "user", "timestamp": "2026-10-01T10:00:09Z", "message": {"role": "user", "content": [{"type": "text", "text": "[Request interrupted by user]"}]}},
+    {"type": "user", "isCompactSummary": True, "timestamp": "2026-10-01T10:00:10Z", "message": {"role": "user", "content": [{"type": "text", "text": "This session is being continued from a previous conversation that ran out of context. COMPACT-SENTINEL the summary"}]}},
+    {"type": "attachment", "timestamp": "2026-10-01T10:00:11Z", "attachment": {"type": "file", "filename": "x"}},
+]
+open(path, "w", encoding="utf-8").write("".join(json.dumps(r) + "\n" for r in recs))
+print(path)
+QSCRIPT
+)
+EXQ="$WORK/extract-queued"
+run extract-transcript --session sid-queued --out "$EXQ"
+need_rc 0
+need_eq "$(grep -c 'MIDTURN-OWNER-SENTINEL approve both' "$EXQ/turns.md")" "1" "the queued owner message is a turn, once (not doubled by its queue-operation)"
+need_eq "$(grep -B2 'MIDTURN-OWNER-SENTINEL' "$EXQ/turns.md" | grep -c '· human ·')" "1" "and it is a human turn"
+need_eq "$(grep -c 'RELAY-SENTINEL' "$EXQ/turns.md")" "0" "a relay from another session is never a human turn"
+need_eq "$(grep -c 'COMPACT-SENTINEL' "$EXQ/turns.md")" "0" "the compaction summary is never a human turn"
+need_eq "$(grep -c 'Request interrupted' "$EXQ/turns.md")" "0" "the interrupt marker is never a human turn"
+need_eq "$(mk json "$EXQ/counts.json" human_turns)" "2" "two human turns: the first and the queued one"
+need_eq "$(mk json "$EXQ/counts.json" excluded.cross_session)" "1" "the relay"
+need_eq "$(mk json "$EXQ/counts.json" excluded.compaction)" "1" "the compaction summary"
+need_eq "$(mk json "$EXQ/counts.json" excluded.notification)" "1" "the queued notification"
+need_eq "$(mk json "$EXQ/counts.json" excluded.interrupt)" "1" "the interrupt marker"
+need_eq "$(mk json "$EXQ/counts.json" notes.queued_commands)" "1" "the note"
+need_eq "$(mk json "$EXQ/counts.json" reconciles)" "true" "every record in one bucket"
+verdict "K782d71bb (must fire): a message the owner sent mid-turn, carried by a queued_command attachment, is extracted as a human turn once, while a relay from another session, a queued task notification, an interrupt marker and a compaction summary are each excluded under their own count, and the records reconcile"
+
+# ---- BC5-15b (register 2026-10-25 17:23): the session tool's relay, with its reply note ----
+# The shape is a real record's: the wrapper, a CDATA body, the close, then the tool's one line. A
+# relay beside the owner's words loses the relay and keeps the words; the words naming the wrapper
+# mid-sentence stay the owner's, the control.
+RELAY=$("$PY" - <<'RELAYSCRIPT'
+import json, os, re
+folder = os.path.join(os.environ["AIMYTH_PROJECTS_DIR"], re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.environ["CLAUDE_PROJECT_DIR"])))
+os.makedirs(folder, exist_ok=True)
+path = os.path.join(folder, "sid-relay.jsonl")
+note = "\nReplying is optional. If a response is needed, call claudian_send_message with this session_id."
+wrapped = '<session_message from="peer session" session_id="conv-1">\n<![CDATA[RELAY-BODY-SENTINEL the owner said go]]>\n</session_message>' + note
+def user(text, stamp):
+    return {"type": "user", "timestamp": "2026-10-01T10:00:%02dZ" % stamp, "message": {"role": "user", "content": text}}
+recs = [user("the first owner turn", 0), user(wrapped, 1),
+        user(wrapped + "\nOWNER-BESIDE-SENTINEL and my own words", 2),
+        user("OWNER-NAMES-SENTINEL what does <session_message> mean here", 3),
+        user('<session_messages from="x">NOT-A-RELAY-SENTINEL</session_messages>', 4)]
+open(path, "w", encoding="utf-8").write("".join(json.dumps(r) + "\n" for r in recs))
+print(path)
+RELAYSCRIPT
+)
+need_file "$RELAY"
+EXR="$WORK/extract-relay"
+run extract-transcript --session sid-relay --out "$EXR"
+need_rc 0
+need_eq "$(mk json "$EXR/counts.json" excluded.cross_session)" "1" "the wrapped relay and its reply note, one record"
+need_eq "$(grep -c 'RELAY-BODY-SENTINEL' "$EXR/turns.md")" "0" "a relay is never a human turn"
+need_eq "$(grep -c 'Replying is optional' "$EXR/turns.md")" "0" "the tool's reply note is never a human turn"
+need_eq "$(grep -c 'OWNER-BESIDE-SENTINEL and my own words' "$EXR/turns.md")" "1" "the owner's words beside a relay survive"
+need_eq "$(grep -c 'OWNER-NAMES-SENTINEL' "$EXR/turns.md")" "1" "an owner naming the wrapper mid-sentence stays a turn"
+need_eq "$(grep -c 'NOT-A-RELAY-SENTINEL' "$EXR/turns.md")" "1" "a longer tag name is no relay"
+need_eq "$(mk json "$EXR/counts.json" human_turns)" "4" "the first, the words beside a relay, the naming turn and the longer tag"
+need_eq "$(mk json "$EXR/counts.json" reconciles)" "true" "every record in one bucket"
+verdict "BC5-15b (fails on old): a <session_message> record with the tool's reply note is a relay from another session, never an owner turn, while the owner's words beside one and an owner naming the wrapper stay human turns"
+
+# ---- K9dd0b7fb: close and disarm remove the arming markers the run still owns ----
+DSTATE="$WORK/state-disarm"
+rm -rf "$DSTATE"; mkdir -p "$DSTATE"
+fixture rdis 200
+mk append "$REC" '{"event":"head-successor","session_id":"sid-dis2","pid":1,"budget":1.0}' >/dev/null
+mk append "$REC" '{"event":"head-successor","session_id":"sid-dis3","pid":1,"budget":1.0}' >/dev/null
+: > "$DSTATE/armed-sid-rdis"; printf 'rdis\n' > "$DSTATE/run-sid-rdis"
+: > "$DSTATE/armed-sid-dis2"; printf 'rother\n' > "$DSTATE/run-sid-dis2"
+: > "$DSTATE/armed-sid-dis3"
+: > "$DSTATE/armed-sid-unrelated"; printf 'rdis\n' > "$DSTATE/run-sid-unrelated"
+DLINES=$(mk lines "$REC")
+RUNENV="AIMYTH_STATE_DIR=$DSTATE"
+run close --run rdis --items "fixture items" --meter-line "$METER" --dry-run
+need_rc 0
+need_out "would remove"
+need_file "$DSTATE/armed-sid-rdis"
+printf 'decisions\n' > "$WORK/dis-decisions.md"
+RUNENV="AIMYTH_STATE_DIR=$DSTATE"
+run close --run rdis --items "fixture items" --meter-line "$METER" --decisions-file "$WORK/dis-decisions.md"
+need_rc 6
+need_file "$DSTATE/armed-sid-rdis"
+need_eq "$(mk lines "$REC")" "$DLINES" "a held close writes nothing"
+RUNENV="AIMYTH_STATE_DIR=$DSTATE"
+run disarm --run rdis
+need_rc 2
+need_out "carries no run-close"
+RUNENV="AIMYTH_STATE_DIR=$DSTATE"
+run close --run rdis --items "fixture items" --meter-line "$METER"
+need_rc 0
+need_out "disarm: rdis · "
+need_nofile "$DSTATE/armed-sid-rdis"
+need_file "$DSTATE/armed-sid-dis2"
+need_file "$DSTATE/armed-sid-dis3"
+need_file "$DSTATE/armed-sid-unrelated"
+need_out "sid-dis2 kept (its pointer names run rother"
+need_out "sid-dis3 unresolved (no pointer"
+: > "$DSTATE/armed-sid-rdis"
+chmod 555 "$DSTATE"
+RUNENV="AIMYTH_STATE_DIR=$DSTATE"
+run disarm --run rdis
+need_rc 1
+need_out "sid-rdis failed ("
+chmod 755 "$DSTATE"
+need_file "$DSTATE/armed-sid-rdis"
+RUNENV="AIMYTH_STATE_DIR=$DSTATE"
+run disarm --run rdis
+need_rc 1
+need_out "sid-rdis removed"
+need_nofile "$DSTATE/armed-sid-rdis"
+verdict "K9dd0b7fb (must fire): once run-close is on the record, close removes the arming marker of a head session whose pointer still names the run, keeps one whose pointer names another run, leaves one with no pointer unresolved and touches no unrelated marker; a dry run and a held close remove nothing; disarm refuses an open run, reports an unlink the system refuses (exit 1) and removes the marker on the retry"
+
+# ---- K64bc6c8c: grant additions merge; any shrink needs --replace ----
+fixture rgadd 200
+GFA="$REALSTORE/spawn-records/rgadd-grants.json"
+run grants --run rgadd --grant "$WORK/carry/r1" --write "$WORK/carry/w1" --write "$WORK/carry/w2" \
+    --write "$WORK/carry/w3" --write "$WORK/carry/w4" --write "$WORK/carry/w5" --write "$WORK/carry/w6" \
+    --write "$WORK/carry/w7" --write "$WORK/carry/w8" --write "$WORK/carry/w9" --write "$WORK/carry/w10" \
+    --write "$WORK/carry/w11" --write "$WORK/carry/w12" --network api.example.org --viewer none \
+    --on-limit resume --max-successors 12
+need_rc 0
+"$PY" - "$GFA" <<'FUTUREKEY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+d["future_setting"] = {"kept": True}
+json.dump(d, open(sys.argv[1], "w", encoding="utf-8"), indent=1)
+FUTUREKEY
+WBEFORE=$(gcount "$GFA" writes)
+GASHA=$(sha_file "$GFA")
+run grants --run rgadd --write "$WORK/carry/clone" --grant "$WORK/carry/clone"
+need_rc 2
+need_out "would shrink the run's grants and passes no --replace"
+need_eq "$(sha_file "$GFA")" "$GASHA" "the 14-write regression refuses, the file untouched"
+run grants --run rgadd --add-write "$WORK/carry/clone" --add-grant "$WORK/carry/clone"
+need_rc 0
+NSPELL=$("$PY" -c 'import os, sys; p = os.path.abspath(sys.argv[1]); print(1 if os.path.realpath(p) == p else 2)' "$WORK/carry/clone")
+need_eq "$(gcount "$GFA" writes)" "$((WBEFORE + NSPELL))" "every write kept and the clone added (in each of its $NSPELL spelling(s))"
+need_eq "$(glist "$GFA" writes "$WORK/carry/w12")" "1" "an earlier write survives"
+need_eq "$(glist "$GFA" grants "$WORK/carry/r1")" "1" "an earlier read grant survives"
+need_eq "$(glist "$GFA" grants "$WORK/carry/clone")" "1" "the read grant added"
+need_eq "$(gval "$GFA") $(vval "$GFA") $(nval "$GFA")" 'resume none ["api.example.org"]' "on_limit, viewer and network kept"
+need_eq "$("$PY" -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d.get("max_successors"), json.dumps(d.get("future_setting")))' "$GFA")" '12 {"kept": true}' "the successor cap and a newer setting kept"
+run grants --run rgadd --write "$WORK/carry/clone" --grant "$WORK/carry/clone" --replace
+need_rc 0
+need_out "(--replace: the lists named replace the run's, so it is written)"
+need_eq "$(glist "$GFA" writes "$WORK/carry/w12")" "0" "--replace narrows on purpose"
+run grants --run rgadd --add-write "$WORK/carry/after"
+need_rc 0
+need_absent "would shrink"
+need_eq "$(glist "$GFA" writes "$WORK/carry/after")" "1" "the replacement is the next call's baseline"
+run grants --run rgadd --grant "$WORK/carry/a" --add-grant "$WORK/carry/b"
+need_rc 2
+need_out "pass one form for the read list"
+run grants --run rgadd --replace
+need_rc 2
+need_out "--replace names no list"
+run grants --run rgadd --replace --add-write "$WORK/carry/x"
+need_rc 2
+need_out "pass one form"
+REC_RO="$STORE/spawn-records/rgaddopen.jsonl"; rm -f "$REC_RO"
+run run-open --run rgaddopen --session sid-rgaddopen --head "fixture head" --regime multi --regime-src owner \
+    --handoff "$HO" --detail "add on open" --pid 1 --add-write "$WORK/carry/x"
+need_rc 2
+need_out "writes the run's first grants file"
+need_nofile "$REC_RO"
+fixture rgnobase 200
+run grants --run rgnobase --add-write "$WORK/carry/x"
+need_rc 2
+need_out "no trustworthy baseline"
+need_nofile "$REALSTORE/spawn-records/rgnobase-grants.json"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run rgadd --session sid-rgadd2 --head "fixture head" --detail "an addition" --add-write "$WORK/carry/viaresume"
+need_rc 0
+need_out "(paths added)"
+need_eq "$(glist "$GFA" writes "$WORK/carry/after")" "1" "run-resume's addition keeps the list"
+need_eq "$(glist "$GFA" writes "$WORK/carry/viaresume")" "1" "and adds its path"
+( env "$PY" -B "$H" grants --run rgadd --add-write "$WORK/carry/conc-a" >"$WORK/conc-a.out" 2>&1 ) &
+CA=$!
+( env "$PY" -B "$H" grants --run rgadd --add-write "$WORK/carry/conc-b" >"$WORK/conc-b.out" 2>&1 ) &
+CB=$!
+wait "$CA"; RCA=$?
+wait "$CB"; RCB=$?
+need_eq "$RCA $RCB" "0 0" "both concurrent additions succeed"
+need_eq "$(glist "$GFA" writes "$WORK/carry/conc-a") $(glist "$GFA" writes "$WORK/carry/conc-b")" "1 1" "neither concurrent addition is lost"
+verdict "K64bc6c8c (must fire): on a 14-write run, grants --write X --grant X refuses and leaves the file byte-identical; --add-write/--add-grant keep both lists, on_limit, viewer, network, the successor cap and a newer setting; --replace rewrites and becomes the baseline; conflicting forms and an add with no trustworthy baseline are refused; run-resume adds the same way; two additions at once both land"
+
+# ---- G8 (register 2026-10-23 03:48): a reading-list check is no control of the reflector's ----
+# The planted cases are the entry's: a verifier's CONTROL+ "NOT READY" and a path on it, both of
+# which withheld every line naming them. The controls are a reflector's own phrase and whole path,
+# its resumed lane, and a class-less legacy plant, each of which must stay withheld.
+LONGROOT="/fixture/a/root/of/more/than/forty/characters/shared/by/every/path"
+fixture rneedle 200
+mk append "$REC" "{\"event\":\"lane-open\",\"lane\":\"V1\",\"class\":\"verifier\",\"controls_checked\":[{\"phrase\":\"NOT READY\",\"file\":\"$LONGROOT/verifier-brief.md\",\"matches\":1}]}" >/dev/null
+mk append "$REC" '{"event":"lane-resumed","lane":"V1","controls_checked":[{"phrase":"RESUMED-VERIFIER-PHRASE","file":"","matches":1}]}' >/dev/null
+mk append "$REC" "{\"event\":\"lane-open\",\"lane\":\"R1\",\"class\":\"reflector\",\"controls_checked\":[{\"phrase\":\"REFLECTOR-ONLY-PHRASE\",\"file\":\"$LONGROOT/reflector-control.md\",\"matches\":1}]}" >/dev/null
+mk append "$REC" '{"event":"lane-resumed","lane":"R1","controls_checked":[{"phrase":"RESUMED-REFLECTOR-PHRASE","file":"","matches":1}]}' >/dev/null
+mk append "$REC" '{"event":"plant-recorded","plant":"LEGACY-PLANT-PHRASE"}' >/dev/null
+TNEED=$("$PY" - "$LONGROOT" <<'NEEDSCRIPT'
+import json, os, re, sys
+root = sys.argv[1]
+folder = os.path.join(os.environ["AIMYTH_PROJECTS_DIR"], re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.environ["CLAUDE_PROJECT_DIR"])))
+os.makedirs(folder, exist_ok=True)
+path = os.path.join(folder, "sid-needle.jsonl")
+lines = ["the verdict read NOT READY at item 2", "RESUMED-VERIFIER-PHRASE stands", "reading %s/some-other-page.md now" % root,
+         "reading %s/verifier-brief.md now" % root, "REFLECTOR-ONLY-PHRASE stands", "RESUMED-REFLECTOR-PHRASE stands",
+         "LEGACY-PLANT-PHRASE stands", "reading %s/reflector-control.md now" % root, "an ordinary line"]
+recs = [{"type": "user", "timestamp": "2026-10-02T10:00:00Z", "message": {"role": "user", "content": [{"type": "text", "text": "the owner asks"}]}},
+        {"type": "assistant", "timestamp": "2026-10-02T10:00:05Z", "message": {"role": "assistant", "model": "claude-fixture-1", "content": [{"type": "text", "text": "\n".join(lines)}]}}]
+open(path, "w", encoding="utf-8").write("".join(json.dumps(r) + "\n" for r in recs))
+print(path)
+NEEDSCRIPT
+)
+OUTN="$WORK/refl-needle"
+run reflect-inputs --run rneedle --session sid-needle --out "$OUTN" --no-meter
+need_rc 0
+need_eq "$(grep -c 'the verdict read NOT READY at item 2' "$OUTN/turns.md")" "1" "a verifier's check phrase stays"
+need_eq "$(grep -c 'RESUMED-VERIFIER-PHRASE stands' "$OUTN/turns.md")" "1" "a resumed verifier lane's phrase stays"
+need_eq "$(grep -c 'some-other-page.md now' "$OUTN/turns.md")" "1" "a path under the same root stays"
+need_eq "$(grep -c 'verifier-brief.md now' "$OUTN/turns.md")" "1" "a verifier's own file stays"
+need_eq "$(grep -c 'REFLECTOR-ONLY-PHRASE' "$OUTN/turns.md")" "0" "a reflector's control is withheld"
+need_eq "$(grep -c 'RESUMED-REFLECTOR-PHRASE' "$OUTN/turns.md")" "0" "a resumed reflector lane's control is withheld"
+need_eq "$(grep -c 'LEGACY-PLANT-PHRASE' "$OUTN/turns.md")" "0" "a class-less plant is withheld"
+need_eq "$(grep -c 'reflector-control.md' "$OUTN/turns.md")" "0" "a reflector's whole path is withheld"
+need_eq "$(grep -c 'an ordinary line' "$OUTN/turns.md")" "1" "the ordinary line stays"
+need_eq "$(mk json "$OUTN/counts.json" notes.controls_redacted)" "4" "four lines withheld, counted"
+verdict "G8 (fails on old): reflect-inputs keeps a lane's reading-list check phrase and a path that shares only its root, while a reflector's control, its resumed lane's, its whole path and a class-less plant stay withheld"
+
+# ---- K0fe7df69: reflect-inputs on an attended record; the controls withheld from the extraction ----
+plain_fixture rratt
+mk append "$REC" '{"event":"observation","phase":"controls-XRATT","what":"ATT-CONTROL-SENTINEL the reflector must find the missed gate","note":"planted"}' >/dev/null
+mk xscript sid-att >/dev/null
+OUTATT="$WORK/refl-attended"
+run reflect-inputs --run rratt --session sid-att --out "$OUTATT" --no-meter
+need_rc 0
+need_out "attended record (no run-open)"
+for f in turns.md counts.json waste-table.md record-filtered.jsonl; do need_file "$OUTATT/$f"; done
+need_eq "$(grep -c 'Head figures: unavailable' "$OUTATT/waste-table.md")" "1" "the head figures are said to be unavailable"
+need_eq "$(grep -c '^| heads. total\|^| run total' "$OUTATT/waste-table.md")" "0" "no total row: the record holds no billed line and no recorded run spend"
+need_eq "$(grep -c 'ATT-CONTROL-SENTINEL' "$OUTATT/record-filtered.jsonl")" "0" "the controls observation is dropped from the copy"
+need_eq "$(mk field "$REC" reflect-inputs shape)" "attended" "the event names the shape"
+fixture rrhands 200
+mk xscript sid-hands >/dev/null
+run reflect-inputs --run rrhands --session sid-hands --out "$WORK/refl-hands" --no-meter
+need_rc 0
+need_absent "attended record"
+need_eq "$(grep -c 'Head figures: unavailable' "$WORK/refl-hands/waste-table.md")" "0" "a hands-off record keeps its head rows (the control)"
+need_eq "$(mk field "$REC" reflect-inputs shape)" "hands-off" "the event names the shape"
+plain_fixture rratt2
+printf '{"event": "run-open", "run": "rratt2", torn\n' >> "$REC"
+run reflect-inputs --run rratt2 --session sid-att --out "$WORK/refl-torn" --no-meter
+need_rc 2
+need_out "an attended record must read whole"
+need_nofile "$WORK/refl-torn/turns.md"
+verdict "K0fe7df69 (must fire): reflect-inputs takes a record with no run-open as an attended record — the extraction, a waste table rendered from the lane events with the head figures said to be unavailable, and the blinded copy — while a hands-off record renders as before and a record with a torn line is refused rather than read as attended"
+
+fixture rrsent 200
+mk append "$REC" '{"event":"observation","phase":"controls-XRS","what":"CTRL-SENTINEL-B4H the reflector must name the ledger gap at item 3","note":"pre-registered"}' >/dev/null
+mk append "$REC" '{"event":"lane-open","lane":"XRS","class":"reflector","model":"opus","plant":"PLANT-SENTINEL-B4H a planted stale pack in the fixture"}' >/dev/null
+TSENT=$("$PY" - <<'SENTSCRIPT'
+import json, os, re
+sid = "sid-sent"
+root = os.environ["AIMYTH_PROJECTS_DIR"]
+path = os.path.join(root, re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.environ["CLAUDE_PROJECT_DIR"])), sid + ".jsonl")
+os.makedirs(os.path.dirname(path), exist_ok=True)
+ctl = "CTRL-SENTINEL-B4H the reflector must name the ledger gap at item 3"
+recs = [
+    {"type": "user", "timestamp": "2026-10-02T10:00:00Z", "message": {"role": "user", "content": [{"type": "text", "text": "the owner asks for the reflection"}]}},
+    {"type": "assistant", "timestamp": "2026-10-02T10:00:05Z", "message": {"role": "assistant", "model": "claude-fixture-1", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "git status --porcelain"}}]}},
+    {"type": "assistant", "timestamp": "2026-10-02T10:00:10Z", "message": {"role": "assistant", "model": "claude-fixture-1", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "python3 handsoff.py ledger --run rrsent --phase controls-XRS --observation \"%s\"" % ctl}}]}},
+    {"type": "assistant", "timestamp": "2026-10-02T10:00:15Z", "message": {"role": "assistant", "model": "claude-fixture-1", "content": [{"type": "text", "text": "Registered the control.\nI expect: %s.\nNow the spawn." % ctl}]}},
+    {"type": "assistant", "timestamp": "2026-10-02T10:00:20Z", "message": {"role": "assistant", "model": "claude-fixture-1", "content": [{"type": "tool_use", "name": "Bash", "input": {"command": "echo \"PLANT-SENTINEL-B4H a planted stale pack in the fixture\" > /tmp/plant.txt"}}]}},
+]
+open(path, "w", encoding="utf-8").write("".join(json.dumps(r) + "\n" for r in recs))
+print(path)
+SENTSCRIPT
+)
+OUTS="$WORK/refl-sentinel"
+run reflect-inputs --run rrsent --session sid-sent --out "$OUTS" --no-meter
+need_rc 0
+need_eq "$(grep -r -c 'SENTINEL-B4H' "$OUTS" | awk -F: '{s += $2} END {print s + 0}')" "0" "no control or plant text in any of the four outputs"
+need_eq "$(grep -c '^- Bash: git status --porcelain' "$OUTS/turns.md")" "1" "an ordinary tool call stays"
+need_eq "$(grep -c 'Registered the control.' "$OUTS/turns.md")" "1" "an ordinary line of the same turn stays"
+need_eq "$(mk json "$OUTS/counts.json" notes.controls_redacted)" "3" "three lines withheld, counted"
+need_eq "$(grep -c 'SENTINEL-B4H' "$TSENT")" "3" "the control: the source transcript carries the texts"
+need_eq "$(grep -c 'SENTINEL-B4H' "$REC")" "2" "the control: the source record carries them"
+verdict "K0fe7df69 (critic finding 2, must fire): a control text present in both the record and the head's transcript — in the Bash command that registered it, in the head's own prose and in a planted case's echo — appears in none of the four blinded outputs, the three lines withheld and counted, while an ordinary tool call and the turn's other lines stay"
+
+cp "$TSENT" "$WORK/frozen-sent.jsonl"
+"$PY" - "$TSENT" <<'GROWSENT'
+import json, sys
+with open(sys.argv[1], "a", encoding="utf-8") as fh:
+    fh.write(json.dumps({"type": "user", "timestamp": "2026-10-02T10:01:00Z", "message": {"role": "user", "content": [{"type": "text", "text": "AFTER-FREEZE a later owner turn"}]}}) + "\n")
+GROWSENT
+run reflect-inputs --run rrsent --session sid-sent --out "$WORK/refl-frozen" --transcript "$WORK/frozen-sent.jsonl" --no-meter
+need_rc 0
+need_eq "$(mk json "$WORK/refl-frozen/counts.json" records)" "5" "the frozen copy's records, not the live transcript's six"
+need_eq "$(grep -c 'AFTER-FREEZE' "$WORK/refl-frozen/turns.md")" "0" "nothing after the freeze"
+run reflect-inputs --run rrsent --session sid-sent --out "$WORK/refl-frozen2" --transcript "$WORK/no-such-copy.jsonl" --no-meter
+need_rc 2
+need_out "is not a file"
+verdict "K0fe7df69 (the frozen-transcript remedy): --transcript reads a frozen copy of the session instead of the live transcript, which has grown since, and a copy that is not there is refused"
+
+# ---- K235cae8f: the stage root's reflect/ directory, carved out of the store check ----
+fixture rcarve 200
+mk xscript sid-carve >/dev/null
+SROOT="$REALSTORE/stages/rcarve"
+mkdir -p "$SROOT/reflect" "$REALSTORE/stages/rcarve2/reflect"
+run reflect-inputs --run rcarve --session sid-carve --out "$SROOT/reflect/xr" --no-meter
+need_rc 0
+need_file "$SROOT/reflect/xr/turns.md"
+for bad in "$SROOT/other" "$REALSTORE/stages/rcarve2/reflect" "$SROOT/reflect2" "$REALSTORE/spawn-records/rcarve-xr"; do
+  run reflect-inputs --run rcarve --session sid-carve --out "$bad" --no-meter
+  need_rc 2
+  need_out "inside the run store"
+done
+ln -s "$REALSTORE/spawn-records" "$SROOT/reflect/esc"
+run reflect-inputs --run rcarve --session sid-carve --out "$SROOT/reflect/esc/xr" --no-meter
+need_rc 2
+need_out "inside the run store"
+need_nofile "$REALSTORE/spawn-records/xr/turns.md"
+run reflect-inputs --run rcarve --session sid-carve --out "$PROJECTS/xr" --no-meter
+need_rc 2
+need_out "inside the projects root"
+verdict "K235cae8f (must fire): reflect-inputs writes into the run's own <store>/stages/<run>/reflect/, while a sibling of it, another run's reflect directory, a prefix lookalike, the spawn records, a symlink leading out of reflect/ into the store and the projects root are each refused"
+
+# ---- K6149a3b5: a hands-off head's heartbeat is refused ----
+fixture rhbref 200
+HBPID_FILE="$REALSTORE/spawn-records/rhbref-heartbeat.pid"
+sleep 60 &
+HBLIVE=$!
+printf '%s %s\n' "$HBLIVE" "$(( $(date +%s) + 3000 ))" > "$HBPID_FILE"
+HBSHA=$(sha_file "$HBPID_FILE")
+HBLINES=$(mk lines "$REC")
+RUNENV="AIMYTH_HANDSOFF=1"
+run heartbeat --run rhbref --minutes 1
+need_rc 2
+need_lines
+need_out "heartbeat refused: this caller runs under AIMYTH_HANDSOFF=1"
+need_eq "$(sha_file "$HBPID_FILE")" "$HBSHA" "the attended heartbeat's pid file is untouched"
+need_eq "$(mk lines "$REC")" "$HBLINES" "no heartbeat event"
+RUNENV="AIMYTH_HANDSOFF=1"
+run heartbeat --run rhbref --stop
+need_rc 2
+need_nofile "$REALSTORE/spawn-records/rhbref-heartbeat.stop"
+kill "$HBLIVE" 2>/dev/null || :
+rm -f "$HBPID_FILE"
+run heartbeat --run rhbref --minutes 1 --dry-run
+need_rc 0
+need_out "heartbeat: dry run · would arm"
+verdict "K6149a3b5 (must fire): heartbeat under AIMYTH_HANDSOFF=1 exits 2 with one line before the record, the pid file or the stop marker is touched — an attended heartbeat's pid file stays byte-identical and --stop writes no marker — while without the variable the attended path arms (the control)"
+
+# ---- K94e80827: a limit wait ends at the first head start after the stop ----
+fixture rlwait 200
+LW0=$(tsago 3700)
+mk append "$REC" "$(printf '{"event":"stop-condition","ts":"%s","which":"limit","lane":"head","action":"wait","note":"limit"}' "$LW0")" >/dev/null
+LWS=$("$PY" -c 'import sys, time
+from datetime import datetime
+t = datetime.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%S%z").timestamp() + 45
+print(time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t)))' "$LW0")
+mk append "$REC" "$(printf '{"event":"head-successor","ts":"%s","session_id":"sid-lw2","pid":1,"budget":1.0}' "$LWS")" >/dev/null
+mk append "$REC" "$(printf '{"event":"head-resumed","ts":"%s","session_id":"sid-lw2","pid":1}' "$(tsago 100)")" >/dev/null
+mk append "$REC" "$(printf '{"event":"stop-condition","ts":"%s","which":"band","lane":"head","action":"refused","note":"band"}' "$(tsago 90)")" >/dev/null
+mk append "$REC" "$(printf '{"event":"head-successor","ts":"%s","session_id":"sid-lw3","pid":1,"budget":1.0}' "$(tsago 80)")" >/dev/null
+WLW="$WORK/wt-lwait.md"
+run waste-table --run rlwait --no-meter --out "$WLW"
+need_rc 0
+need_eq "$(grep -c "^| limit wait · limit → head-successor at $LWS | 0.75 min" "$WLW")" "1" "the wait ends at the successor 0.75 min after the stop"
+need_eq "$(grep -c '^| limit wait' "$WLW")" "1" "one row: a band stop is no limit wait (the control)"
+verdict "K94e80827 (must fire): a limit stop followed by a successor 45 s later and a head-resumed an hour on reads a 0.75-minute wait ending at the head-successor, and a band stop-condition takes no limit-wait row"
+
+# ---- K3dbf76d5: the next head's model is the record's, or the call is refused ----
+HONM="$WORK/handoffs/rnomodel-handoff.md"; mk handoff "$HONM" >/dev/null
+REC="$STORE/spawn-records/rnomodel.jsonl"; rm -f "$REC"
+mk record "$REC" rnomodel sid-rnomodel "$HONM" 200 nomodel >/dev/null
+mk append "$REC" '{"event":"head-exit","band":60,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+NMLINES=$(mk lines "$REC")
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run rnomodel --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 2
+need_out "successor needs a model for the next head"
+need_lines
+RUNENV="PATH=$WORK/psnone:$PATH"
+run resume-head --run rnomodel --dry-run --harness-bin "$WORK/bin/harness"
+need_rc 2
+need_out "resume-head needs a model"
+need_eq "$(mk lines "$REC")" "$NMLINES" "neither refusal wrote a line"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run rnomodel --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness" --model opus-x
+need_rc 0
+need_out "model opus-x (model_src: arg)"
+rm -f "$WORK/stub-rnomodel.count"
+RUNENV="STUB_MODE=complete STUB_N=0"
+starter --run rnomodel --handoff "$HONM" --budget 3.50 --out "$WORK/starter/rnomodel-head-1.out" --wait-s 1 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
+need_rc 1
+need_eq "$(mk field "$REC" successor-aborted reason)" "model-unknown" "the supervisor's own start with no model aborts"
+need_nofile "$WORK/stub-rnomodel.count"
+fixture rinherit 200
+mk append "$REC" '{"event":"head-successor","session_id":"sid-inh1","pid":1,"budget":1.0,"model":"opus-x","model_src":"arg"}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":60,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run rinherit --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "model opus-x (model_src: record: the head-successor at "
+need_out "--model opus-x"
+mk append "$REC" '{"event":"head-resumed","session_id":"sid-inh1","pid":1,"model":"sonnet-y"}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":60,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run rinherit --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "model sonnet-y (model_src: record: the head-resumed at "
+RUNENV="PATH=$WORK/psnone:$PATH"
+run resume-head --run rinherit --dry-run --harness-bin "$WORK/bin/harness" --model fable-z
+need_rc 0
+need_out "model fable-z (arg)"
+fixture rauto 200
+mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":5,"pack":true}' >/dev/null
+RUNENV="STUB_MODE=error STUB_N=1"
+starter --run rauto --handoff "$HO" --budget 3.50 --out "$WORK/starter/rauto-head-1.out" --wait-s 1 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
+need_rc 0
+need_eq "$("$PY" -c 'import json, sys; e = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]; print(" ".join(str(x.get("model")) for x in e if x.get("event") == "head-successor" and x.get("session_id") != "sid-by-the-head"))' "$REC")" "fixture-model fixture-model" "both starts — the starter's and the supervisor's own successor after the error — carry the record's model"
+verdict "K3dbf76d5 (must fire): with no model anywhere successor and resume-head refuse before writing and the supervisor's own start aborts model-unknown with no harness started; a by-hand successor inherits the newest head start's structured model (a later head-resumed's wins), an explicit --model wins, and the supervisor's automatic successor after an error inherits the record's model (this run's 13:36 recurrence)"
+
+LCM=$("$PY" -c 'import subprocess, sys
+p = subprocess.Popen(["sleep", "30"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print(p.pid)')
+fixture rlcmodel 200
+mk append "$REC" "{\"event\":\"head-successor\",\"session_id\":\"sid-lcm\",\"pid\":$LCM,\"model\":null,\"model_src\":\"harness default (no --model)\",\"effort\":\"max\"}" >/dev/null
+run launch-check --run rlcmodel --wait 0 --detach-safe
+need_rc 1
+need_out "launch-check: rlcmodel NOT CERTIFIED · the head started"
+need_out "carries no readable model (model_src harness default (no --model))"
+need_absent "rlcmodel STARTED"
+fixture rlcmodel2 200
+mk append "$REC" "{\"event\":\"head-successor\",\"session_id\":\"sid-lcm2\",\"pid\":$LCM,\"model\":\"fixture-model\",\"effort\":\"max\"}" >/dev/null
+run launch-check --run rlcmodel2 --wait 0 --detach-safe
+need_rc 0
+need_absent "carries no readable model"
+verdict "G14x (fails on old): launch-check refuses to certify a start whose head-successor carries no model, exit 1, since it may run on the harness default; a start with a model certifies (the control)"
+
+# G14x, the run-resume half (register 2026-10-15 01:33 c, status of 28 October): a head's first act
+# is a run-resume whose model sits in free text. The controls are the head-successor naming its
+# session, read as the model, and `run-resume --model`; the planted case is a session no start names
+# a model for, which certified before.
+fixture rlcmodel3 200
+mk append "$REC" "{\"event\":\"head-successor\",\"session_id\":\"sid-lcm3\",\"pid\":$LCM,\"model\":\"fixture-model\",\"effort\":\"high\"}" >/dev/null
+mk append "$REC" "{\"event\":\"run-resume\",\"session\":\"sid-lcm3\",\"head\":\"opus at max in free text\",\"detail\":\"its first act\",\"pid\":$LCM}" >/dev/null
+run launch-check --run rlcmodel3 --wait 0 --detach-safe
+need_rc 0
+need_out "model fixture-model effort high"
+fixture rlcmodel4 200
+mk append "$REC" "{\"event\":\"run-resume\",\"session\":\"sid-other-head\",\"head\":\"opus at max in free text\",\"detail\":\"an attended head\",\"pid\":$LCM}" >/dev/null
+run launch-check --run rlcmodel4 --wait 0 --detach-safe
+need_rc 1
+need_out "launch-check: rlcmodel4 NOT CERTIFIED"
+need_out "the run-resume at .* carries no readable model"
+need_out "model none effort none"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run rlcmodel4 --session sid-named-head --head "named head" --detail "names its model" --pid "$LCM" --model fixture-model --effort high
+need_rc 0
+run launch-check --run rlcmodel4 --wait 0 --detach-safe
+need_rc 0
+need_out "model fixture-model effort high"
+kill "$LCM" 2>/dev/null || :
+verdict "G14x (fails on old): a run-resume reads the model of the head start naming its session, a session none names one for is refused, and run-resume --model names it"
+
+# ---- K0bef4fc6: the replay — an unparsed limit stop writes its head-exit when the head ran run-resume ----
+fixture rreplay 200
+arm_resume rreplay
+mk append "$REC" '{"event":"head-exit","band":80,"context":"c","spent_usd":5}' >/dev/null
+RUNENV="STUB_MODE=nolimit STUB_N=1 STUB_TOKENS=50000 STUB_RESUME=1 AIMYTH_CONTEXT_WINDOW=200000"
+starter --run rreplay --handoff "$HO" --budget 3.50 --out "$WORK/starter/rreplay-head-1.out" --wait-s 5 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --probe-interval-s 1 --tick-s 1 --model fixture-model
+need_rc 1
+need_eq "$(mk count "$REC" run-resume)" "1" "the head ran its own run-resume (the premise of the replay)"
+need_eq "$(mk field "$REC" stop-condition which)" "limit-unparsed" "the unparsed stop"
+need_eq "$(mk count "$REC" head-exit)" "2" "the planted exit and the stop's own"
+need_eq "$(mk field "$REC" head-exit which)" "limit-unparsed" "the last head-exit is the stop's"
+need_out "head-exit recorded (band limit"
+need_absent "already follows this head's start: none written"
+verdict "K0bef4fc6 (the replay of the 2026-09-22 batch run's record, must fire): a head that ran its own run-resume, then stopped on a limit with no parseable reset, gets its head-exit from the supervisor before successor-aborted — the head's own run-resume no longer reads as a later head that supersedes the stop"
+
+# ---- Keefdb609: a console counts whatever order its arguments take ----
+probe_alive() { # $1 run to probe, $2 control run: prints "<count> <control count>"
+  "$PY" - "$H" "$1" "$2" <<'CALIVE_ORDER'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("target", sys.argv[1])
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+mod.note = lambda msg: None
+print(len(mod.console_alive(sys.argv[2])), len(mod.console_alive(sys.argv[3])))
+CALIVE_ORDER
+}
+ROR="rvwor$SFX"
+"$PY" -c 'import time; time.sleep(60)' watch.py --vault /fixture/vault --run "$ROR" &
+ORP=$!; sleep 1
+need_eq "$(probe_alive "$ROR" "$ROR-nobody")" "1 0" "another argument before --run (a console started with --vault first), with the negative control"
+kill "$ORP"; wait "$ORP" 2>/dev/null || :
+"$PY" -c 'import time; time.sleep(60)' watch.py "--run=$ROR" &
+ORP=$!; sleep 1
+need_eq "$(probe_alive "$ROR" "$ROR-nobody")" "1 0" "the --run=R form"
+kill "$ORP"; wait "$ORP" 2>/dev/null || :
+"$PY" -c 'import time; time.sleep(60)' handsoff.py watch --vault /fixture/vault --run "$ROR" &
+ORP=$!; sleep 1
+need_eq "$(probe_alive "$ROR" "$ROR-nobody")" "1 0" "handsoff.py watch with --vault first"
+kill "$ORP"; wait "$ORP" 2>/dev/null || :
+"$PY" -c 'import time; time.sleep(60)' watch.py --run "$ROR-longer" &
+ORP=$!; sleep 1
+need_eq "$(probe_alive "$ROR" "$ROR-longer")" "0 1" "a console for a longer run id never counts for its prefix (the control finds it)"
+kill "$ORP"; wait "$ORP" 2>/dev/null || :
+"$PY" -c 'import time; time.sleep(60)' lanewatch.py --run "$ROR" &
+ORP=$!; sleep 1
+need_eq "$(probe_alive "$ROR" "$ROR-nobody")" "0 0" "lanewatch.py is not watch.py (the left boundary)"
+kill "$ORP"; wait "$ORP" 2>/dev/null || :
+"$PY" -c 'import time; time.sleep(60)' lane.py watch --run "$ROR" --lane X &
+ORP=$!; sleep 1
+need_eq "$(probe_alive "$ROR" "$ROR-nobody")" "0 0" "a lane.py watch process (a helper's own wait) is not a console"
+kill "$ORP"; wait "$ORP" 2>/dev/null || :
+verdict "Keefdb609 (must fire): a console counts with --vault before --run, with --run=R and as handsoff.py watch with other arguments first, while a longer run id, lanewatch.py --run R and a lane.py watch never count"
+
+# ---- Kd5d7ad73: close needs --items, before anything is written ----
+fixture ritems 200
+ILINES=$(mk lines "$REC")
+run close --run ritems --meter-line "$METER" --ack "read nothing new"
+need_rc 2
+need_out "close needs --items"
+need_lines
+need_eq "$(mk lines "$REC")" "$ILINES" "refused before the ack or any other write"
+run close --run ritems --meter-line "$METER" --dry-run
+need_rc 0
+need_out "close: --items absent: a real close refuses that"
+need_eq "$(mk lines "$REC")" "$ILINES" "a dry run writes nothing"
+run close --run ritems --items "item1 done; item2 held: the owner's call" --meter-line "$METER"
+need_rc 0
+need_eq "$(mk field "$REC" run-close items)" "item1 done; item2 held: the owner's call" "the stated items"
+need_out "close: --register absent: written as unstated"
+need_out "close: --log absent: written as unstated"
+need_out "close: --lint absent: written as unstated"
+plain_fixture pitems
+run close --run pitems
+need_rc 2
+need_out "close needs --items"
+run close --run pitems --items "the lanes' work, verified"
+need_rc 0
+need_eq "$(mk field "$REC" run-close shape)" "plain-lane-run" "the plain shape closes with stated items"
+verdict "Kd5d7ad73 (must fire): close with --items absent is refused (exit 2) before its ack or any other write, a dry run reads it as unstated and writes nothing, stated items close both record shapes, and an absent --register, --log or --lint is noted on stderr"
+
+# ---- K06dde25c: the waste table's run total is the run's spend, heads and lanes ----
+# The boundary below records the run figure its line prints: the head's $12.34 from the billed
+# line in hand plus the lanes mk waste plants ($5.00 + $1.25 + $0.00 = $6.25), the Codex lane
+# counted and never priced and the lane closed with no cost unmeasured, so a floor: at least
+# 12.34 + 6.25 = $18.59. The heads' total keeps the session figure under its own label.
+fixture rtotl 200
+mk waste "$REC" rtotl "$WORK/no-such-report.md" >/dev/null
+mk append "$REC" '{"event":"lane-open","lane":"LC","harness":"codex","class":"critic","model":"gpt-fixture-1"}' >/dev/null
+mk append "$REC" '{"event":"lane-closed","lane":"LC","harness":"codex","exit_class":"completed","total_cost_usd":null,"cost_src":"codex-plan"}' >/dev/null
+mk append "$REC" '{"event":"lane-closed","lane":"LN","exit_class":"killed","total_cost_usd":null}' >/dev/null
+run boundary --run rtotl --from item1 --to item2 --disposition "d" --waste "w" --next "item2" --meter-line "$METER"
+need_rc 0
+need_out "run spend: at least \$18.59 of \$200.00"
+WTL="$WORK/wt-totl.md"
+run waste-table --run rtotl --no-meter --out "$WTL"
+need_rc 0
+need_eq "$(grep -c 'heads. total (shown sum) | \$16.56 = \$16.56' "$WTL")" "1" "the heads' total, relabelled"
+need_eq "$(grep -c 'run total (recorded run spend) | at least \$18.59 · run_spend_usd of the phase-boundary at .*heads \$12.34 (1 metered) · lanes \$6.25' "$WTL")" "1" "the run total is the boundary's run spend, heads plus lanes"
+need_eq "$(grep -c 'run total (recorded run spend).*predates' "$WTL")" "0" "nothing recorded after the boundary"
+mk append "$REC" '{"event":"lane-closed","lane":"LZ","exit_class":"completed","total_cost_usd":2.0}' >/dev/null
+run waste-table --run rtotl --no-meter --out "$WTL"
+need_rc 0
+need_eq "$(grep -c 'run total (recorded run spend) | at least \$18.59 .* it predates the lane close(s) or beat(s) recorded after it: LZ' "$WTL")" "1" "a lane closed after the boundary is named as outside the figure"
+verdict "K06dde25c (must fire): the waste table's run total is the run spend the boundary recorded — the head's \$12.34 plus the lanes' \$6.25, a floor at \$18.59 — never the heads' session total, which keeps its \$16.56 under its own label; a lane closed after that boundary is named as outside the figure"
+
+# ---- Kde41f01c: ledger --observation creates a missing record ----
+RLED="$STORE/spawn-records/rledgernew.jsonl"; rm -f "$RLED"
+run ledger --run rledgernew --observation "peer: fixture-peer" --dry-run
+need_rc 0
+need_nofile "$RLED"
+run ledger --run rledgernew --observation "peer: fixture-peer"
+need_rc 0
+need_out "new record (created by this observation"
+need_eq "$(mk lines "$RLED")" "1" "the record holds the one observation"
+need_eq "$(mk field "$RLED" observation what)" "peer: fixture-peer" "the observation"
+verdict "Kde41f01c (must fire): ledger --observation on a run with no record creates it with that one observation and says so, and a dry run writes nothing"
+
+# ---- Kdcac6b59: a lock that cannot be worked opens anyway; contention still refuses ----
+viewer_use vlockerr
+LOCKERR=$(env AIMYTH_VIEWER_CMD="$WORK/bin/viewer-stub.sh" AIMYTH_VIEWER_ARGV="$VIEWER_ARGV" "$PY" - "$H" "rvwlockerr$SFX" <<'LOCKERR_END' 2>"$WORK/lockerr.err"
+import errno, importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+run = sys.argv[2]
+ho.console_alive = lambda name, timeout=None: []
+ho.console_starting = lambda name: None
+ho.say = lambda line: sys.stderr.write(str(line) + "\n")
+real = ho.fcntl.flock
+out = {}
+for name, code in (("enolck", errno.ENOLCK), ("ewouldblock", errno.EWOULDBLOCK)):
+    def failing(fd, op, code=code):
+        if op & ho.fcntl.LOCK_EX:
+            raise OSError(code, "planted")
+        return real(fd, op)
+    ho.fcntl.flock = failing
+    out[name] = ho.open_console_if_dark(run, viewer="terminal")
+    ho.fcntl.flock = real
+print(json.dumps(out, sort_keys=True))
+LOCKERR_END
+)
+need_eq "$LOCKERR" '{"enolck": true, "ewouldblock": false}' "ENOLCK opens, EWOULDBLOCK refuses"
+[ "$(grep -c 'cannot be locked (ENOLCK' "$WORK/lockerr.err")" -ge 1 ] || why="$why; the unworkable lock is not named on stderr"
+need_eq "$(grep -c 'holds this run.s console claim' "$WORK/lockerr.err")" "1" "contention is named as contention"
+need_eq "$(viewer_calls)" "1" "one window opened, by the ENOLCK call (the custom viewer stub is handed the command file alone)"
+verdict "Kdcac6b59 (must fire): a planted ENOLCK from the console claim's lock is read as a lock that cannot be worked — said on stderr and the window opened anyway — while EWOULDBLOCK is still another opener's claim and opens nothing"
+
+# ---- K6cf0c658: raise-envelope checks the top-up against the run's spend ----
+fixture rraise 20
+mk append "$REC" '{"event":"lane-open","lane":"LR","class":"builder","model":"opus"}' >/dev/null
+mk append "$REC" '{"event":"lane-closed","lane":"LR","exit_class":"completed","total_cost_usd":30.0}' >/dev/null
+RLINES=$(mk lines "$REC")
+run raise-envelope --run rraise --to 30 --reason "the owner's top-up" --meter-line "$METER"
+need_rc 2
+need_out "is at or below the run's spend \$42.34"
+need_eq "$(mk lines "$REC")" "$RLINES" "nothing written"
+run raise-envelope --run rraise --to 50 --reason "the owner's top-up" --meter-line "$METER"
+need_rc 0
+need_eq "$(mk field "$REC" envelope envelope_usd)" "50.0" "the top-up above the run figure"
+verdict "K6cf0c658 (must fire): a top-up between the head's own figure (12.34) and the run's spend with its lanes (42.34) is refused, and one above the run figure is written"
+
+# ---- K5c5ab931: the tool lines carry the skill, subagent, url and query, and show line breaks ----
+TTOOL=$("$PY" - <<'TOOLSCRIPT'
+import json, os, re
+sid = "sid-tools2"
+path = os.path.join(os.environ["AIMYTH_PROJECTS_DIR"], re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.environ["CLAUDE_PROJECT_DIR"])), sid + ".jsonl")
+os.makedirs(os.path.dirname(path), exist_ok=True)
+calls = [{"type": "tool_use", "name": "Skill", "input": {"skill": "reflect", "args": "--cross"}},
+         {"type": "tool_use", "name": "Agent", "input": {"subagent_type": "critic", "description": "review the guard", "prompt": "a long prompt"}},
+         {"type": "tool_use", "name": "WebFetch", "input": {"url": "https://example.org/a", "prompt": "summarise"}},
+         {"type": "tool_use", "name": "WebSearch", "input": {"query": "hands-off supervisor"}},
+         {"type": "tool_use", "name": "Bash", "input": {"command": "cd /tmp\necho two statements"}}]
+recs = [{"type": "user", "timestamp": "2026-10-02T10:00:00Z", "message": {"role": "user", "content": [{"type": "text", "text": "go"}]}},
+        {"type": "assistant", "timestamp": "2026-10-02T10:00:05Z", "message": {"role": "assistant", "model": "claude-fixture-1", "content": calls}}]
+open(path, "w", encoding="utf-8").write("".join(json.dumps(r) + "\n" for r in recs))
+print(path)
+TOOLSCRIPT
+)
+EXT="$WORK/extract-tools2"
+run extract-transcript --session sid-tools2 --out "$EXT"
+need_rc 0
+need_eq "$(grep -c '^- Skill: reflect$' "$EXT/turns.md")" "1" "the skill's name"
+need_eq "$(grep -c '^- Agent: critic · review the guard$' "$EXT/turns.md")" "1" "the subagent type and its description"
+need_eq "$(grep -c '^- WebFetch: https://example.org/a$' "$EXT/turns.md")" "1" "the url"
+need_eq "$(grep -c '^- WebSearch: hands-off supervisor$' "$EXT/turns.md")" "1" "the query"
+need_eq "$(grep -c '^- Bash: cd /tmp ⏎ echo two statements$' "$EXT/turns.md")" "1" "a line break shown as a separator"
+verdict "K5c5ab931 (must fire): the extraction's tool lines carry a Skill call's skill, an Agent call's subagent type and description, WebFetch's url and WebSearch's query, and a two-line command shows its line break as a visible separator"
+
+# ---- Kb65afcbe: the lanes' sandbox and fence denials reach the boundary ----
+fixture rsandbox 200
+mk append "$REC" '{"event":"lane-open","lane":"CXS","harness":"codex","class":"critic","model":"gpt-fixture-1"}' >/dev/null
+mk append "$REC" '{"event":"lane-closed","lane":"CXS","harness":"codex","exit_class":"completed","total_cost_usd":null,"cost_src":"codex-plan","denials":{"tool":0,"fence":1,"sandbox":2}}' >/dev/null
+run boundary --run rsandbox --from item1 --to item2 --disposition "d" --waste "w" --next "item2" --meter-line "$METER"
+need_rc 0
+need_out "denials 0 · "
+need_out "lane fence denials 1 · lane sandbox denials 2"
+need_eq "$(mk field "$REC" phase-boundary sandbox_denials)" "2" "the field on the event"
+need_eq "$(mk field "$REC" phase-boundary fence_denials)" "1" "the fence field on the event"
+WSB="$WORK/wt-sandbox.md"
+run waste-table --run rsandbox --no-meter --out "$WSB"
+need_rc 0
+need_eq "$(grep -c '^| lane sandbox denials · item1 → item2 .* | 2 · ' "$WSB")" "1" "the waste table's labelled row"
+verdict "Kb65afcbe (must fire): a Codex lane's close carrying sandbox 2 and fence 1 makes the boundary report lane sandbox denials 2 and lane fence denials 1, each in its own labelled field and waste-table row beside the tool denials (0)"
+
+# ---- Kbc9896e6: rendering a closed run's table leaves its stored copy alone ----
+fixture rclosedwt 200
+mk append "$REC" '{"event":"run-close","items":"done"}' >/dev/null
+STOREDWT="$REALSTORE/spawn-records/rclosedwt-waste-table.md"
+printf 'the stored table as the run wrote it\n' > "$STOREDWT"
+WTSHA=$(sha_file "$STOREDWT")
+run waste-table --run rclosedwt --no-meter
+need_rc 0
+need_eq "$(sha_file "$STOREDWT")" "$WTSHA" "the closed run's stored table is byte-identical"
+need_out "# Waste table · run rclosedwt"
+need_out "printed to standard output; the stored table"
+fixture ropenwt 200
+run waste-table --run ropenwt --no-meter
+need_rc 0
+need_file "$REALSTORE/spawn-records/ropenwt-waste-table.md"
+verdict "Kbc9896e6 (must fire): waste-table without --out on a closed run prints the table and leaves the run's stored table byte-identical, while an open run's table is still written to the store (the control)"
+
+# ---- K4b390bb7: no double-quoted verdict title carries a backtick ----
+TITLES=$(grep -c '^verdict "[^"]*`' "$SRC")
+need_eq "$TITLES" "0" "double-quoted verdict titles with a backtick in this suite"
+printf 'verdict "a planted title with a `close` inside"\n' > "$WORK/planted-title.sh"
+need_eq "$(grep -c '^verdict "[^"]*`' "$WORK/planted-title.sh")" "1" "the control: the planted title is found"
+verdict "K4b390bb7 (must fire): no verdict title in this suite is double-quoted around a backtick, which the shell would run as a command (control: a planted one is found)"
+
+# ---- K50271794: the console legs' run ids are this copy's own ----
+need_eq "$(printf '%s' "$RSP" | grep -c "^rvwsp$SFX\$")" "1" "a console leg's run id carries the suffix"
+"$PY" -c 'import time; time.sleep(30)' watch.py --run rvwsp &
+SIBP=$!; sleep 1
+need_eq "$(probe_alive "$RSP" rvwsp)" "0 1" "a sibling copy's console under the bare id is invisible to this copy's id (the control finds it)"
+kill "$SIBP"; wait "$SIBP" 2>/dev/null || :
+SFX2=$(printf '%s' "/tmp/handsoff-suite.AbC123" | sed 's|.*/||; s/^handsoff-suite\.//; s/[^A-Za-z0-9]//g')
+need_eq "$SFX2" "AbC123" "the suffix is the temp directory's own random part"
+verdict "K50271794 (must fire): the run ids of the legs that plant a console carry the suite's own suffix, so a console a sibling copy plants under the bare id is invisible to this copy's probe (the control sees it)"
+
+# ---- K4443c15f: the by-hand line names the absolute interpreter ----
+BYHAND=$("$PY" - "$H" <<'BYHAND_END'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+print(ho.by_hand_line("rbyhand"))
+BYHAND_END
+)
+case $BYHAND in "$PYABS -B "*" watch --run rbyhand") : ;; *) why="$why; the by-hand line is not on the absolute interpreter: $BYHAND" ;; esac
+case $BYHAND in python3\ *) why="$why; the by-hand line starts with a bare python3" ;; esac
+verdict "K4443c15f (must fire): the by-hand console line starts with the absolute path of the interpreter running handsoff.py, never a bare python3"
+
+# ---- D21 (c) and K86a774ca: the launch check waits for the whole first batch, open and progressing ----
+LCH=$("$PY" -c 'import subprocess, sys
+p = subprocess.Popen(["sleep", "120"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+print(p.pid)')
+LCL=$("$PY" -c 'import subprocess, sys
+p = subprocess.Popen(["sleep", "120"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+print(p.pid)')
+batch_fixture() { # $1 run: a head start with a live pid, then helpers planted by the leg
+  fixture "$1" 200
+  mk append "$REC" "{\"event\":\"head-successor\",\"session_id\":\"sid-$1\",\"pid\":$LCH,\"model\":\"fixture-model\",\"effort\":\"max\"}" >/dev/null
+}
+lane_open() { # $1 lane, $2 seconds ago (the open), $3 harness word (claude|codex), $4 pid
+  mk append "$REC" "$(printf '{"event":"lane-open","ts":"%s","lane":"%s","class":"builder","model":"opus","session_id":"sid-%s"%s}' "$(tsago "$2")" "$1" "$1" "$([ "$3" = codex ] && printf ',"harness":"codex"')")" >/dev/null
+  mk append "$REC" "$(printf '{"event":"lane-spawned","ts":"%s","lane":"%s","session_id":"sid-%s","pid":%s,"wrapper_pid":%s}' "$(tsago "$2")" "$1" "$1" "$4" "$4")" >/dev/null
+}
+lane_transcript() { # $1 lane, $2 seconds ago of its last record, $3 'Z' to stamp in UTC
+  "$PY" - "$1" "$2" "${3:-local}" <<'LANETX'
+import json, os, sys, time
+lane, ago, form = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+t = time.time() - ago
+stamp = (time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t)) if form == "Z"
+         else time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t)))
+path = os.path.join(os.environ["AIMYTH_PROJECTS_DIR"], "lane-%s" % lane, "sid-%s.jsonl" % lane)
+os.makedirs(os.path.dirname(path), exist_ok=True)
+open(path, "w", encoding="utf-8").write(json.dumps({"type": "assistant", "timestamp": stamp, "message": {"role": "assistant", "content": [{"type": "text", "text": "working"}]}}) + "\n")
+LANETX
+}
+batch_fixture rlb
+lane_open T1 60 claude "$LCL"; lane_transcript T1 30
+lane_open T2 60 codex "$LCL"
+mk append "$REC" "$(printf '{"event":"lane-session","ts":"%s","lane":"T2","harness":"codex","session_id":"thread-t2","pid":%s}' "$(tsago 50)" "$LCL")" >/dev/null
+lane_open T3 120 claude "$LCL"
+mk append "$REC" '{"event":"lane-closed","lane":"T3","exit_class":"completed","total_cost_usd":1.0}' >/dev/null
+lane_open X1 60 claude "$LCL"; lane_transcript X1 20
+run launch-check --run rlb --lanes T1,T2,T3 --wait 0 --detach-safe
+need_rc 0
+need_out "launch-check: rlb STARTED CLEAN"
+need_out "T1 progressing (transcript (timestamp) at "
+need_out "T2 progressing (record lane-session at "
+need_out "T3 done (closed completed at "
+need_absent "X1"
+batch_fixture rlbres
+mk append "$REC" "{\"event\":\"run-resume\",\"session\":\"sid-rlbres\",\"pid\":$LCH,\"model\":\"fixture-model\"}" >/dev/null
+lane_open T1 60 claude "$LCL"; lane_transcript T1 30
+run launch-check --run rlbres --lanes T1 --wait 1 --poll-s 0.5 --detach-safe
+need_rc 0
+need_out "launch-check: rlbres STARTED CLEAN · run-resume at "
+batch_fixture rlbsilent
+lane_open T1 60 claude "$LCL"; lane_transcript T1 30
+lane_open T2 60 claude "$LCL"
+run launch-check --run rlbsilent --lanes T1,T2 --wait 2 --poll-s 0.5 --detach-safe
+need_rc 1
+need_out "launch-check: rlbsilent NOT CLEAN"
+need_out "T2 silent (opened at "
+need_out "not every planned helper is open and making progress within the 2 s deadline"
+batch_fixture rlbmiss
+lane_open T1 60 claude "$LCL"; lane_transcript T1 30
+lane_open X1 60 claude "$LCL"; lane_transcript X1 30
+run launch-check --run rlbmiss --lanes T1,T4 --wait 1 --poll-s 0.5 --detach-safe
+need_rc 1
+need_out "T4 missing (no attempt since the head started)"
+fixture rlbstale 200
+lane_open T1 600 claude "$LCL"; lane_transcript T1 30
+mk append "$REC" "{\"event\":\"head-successor\",\"session_id\":\"sid-rlbstale\",\"pid\":$LCH,\"model\":\"fixture-model\"}" >/dev/null
+run launch-check --run rlbstale --lanes T1 --wait 1 --poll-s 0.5 --detach-safe
+need_rc 1
+need_out "T1 missing (no attempt since the head started; an attempt before that head is not this launch's)"
+batch_fixture rlbbad
+lane_open T1 60 claude "$LCL"; lane_transcript T1 30
+printf '{"event": "lane-open", "lane": "T9", torn\n' >> "$REC"
+run launch-check --run rlbbad --lanes T1 --wait 1 --poll-s 0.5 --detach-safe
+need_rc 1
+need_out "the record has 1 unparseable line(s), and a malformed record never certifies a clean start"
+batch_fixture rlbnull
+lane_open T1 60 claude "$LCL"; lane_transcript T1 30
+printf 'null\n' >> "$REC"
+run launch-check --run rlbnull --lanes T1 --wait 1 --poll-s 0.5 --detach-safe
+need_rc 1
+need_absent "Traceback"
+need_out "NOT CLEAN"
+batch_fixture rlbfail
+lane_open T1 60 claude "$LCL"; lane_transcript T1 30
+lane_open T2 60 claude "$LCL"
+mk append "$REC" '{"event":"lane-closed","lane":"T2","exit_class":"error","total_cost_usd":0.5}' >/dev/null
+LT0=$(clock_f)
+run launch-check --run rlbfail --lanes T1,T2 --wait 30 --poll-s 0.5 --detach-safe
+need_rc 1
+need_out "T2 failed (closed error at "
+need_eq "$(span_ok "$LT0" "$(clock_f)" 10)" "ok" "a failed helper ends the check at once, never at the deadline"
+run launch-check --run rlbfail --lanes "," --wait 0 --detach-safe
+need_rc 2
+need_out "--lanes names no helper"
+run launch-check --run rlbfail --lanes T1,T1 --wait 0 --detach-safe
+need_rc 2
+need_out "--lanes names T1 twice"
+batch_fixture rlbpid
+lane_open T1 60 claude '"not-a-pid"'; lane_transcript T1 30
+lane_open T2 60 claude '"not-a-pid"'
+run launch-check --run rlbpid --lanes T1,T2 --wait 1 --poll-s 0.5 --detach-safe
+need_rc 1
+need_out "T1 progressing (transcript (timestamp) at "
+need_out "liveness unverifiable"
+need_out "T2 unverified (no activity since its open"
+batch_fixture rlbtz
+lane_open T1 60 claude "$LCL"; lane_transcript T1 30 Z
+lane_open T2 60 claude "$LCL"; lane_transcript T2 90 Z
+run launch-check --run rlbtz --lanes T1,T2 --wait 1 --poll-s 0.5 --detach-safe
+need_rc 1
+need_out "T1 progressing"
+need_out "T2 silent"
+verdict "D21 (c) and K86a774ca (must fire): launch-check --lanes certifies STARTED CLEAN only when every planned helper's latest attempt since the head started is progressing (a transcript record or a record event after its open) or done, unrelated helpers ignored; a silent or missing helper is NOT CLEAN at the deadline, a stale attempt is missing, a malformed or null record line never certifies, a failed helper ends the check at once, an empty or repeated list is refused (exit 2), an unusable pid relies on activity alone, timestamps in another offset are compared as instants, and the head's own run-resume (its first act) moves the anchor rather than failing the batch"
+
+# G14x on the certificate itself (register 2026-10-15 01:33 c, the 28 October gap): the same first
+# batch, ready and progressing, is NOT CLEAN on a start with no readable model; the controls are
+# the certificate above, and the run-resume that reads its model from the head-successor.
+fixture rlbmodel 200
+mk append "$REC" "{\"event\":\"run-resume\",\"session\":\"sid-unnamed-head\",\"head\":\"opus at max in free text\",\"detail\":\"its first act\",\"pid\":$LCH}" >/dev/null
+lane_open T4 60 claude "$LCL"; lane_transcript T4 30
+run launch-check --run rlbmodel --lanes T4 --wait 0 --detach-safe
+need_rc 1
+need_out "launch-check: rlbmodel NOT CLEAN"
+need_out "carries no readable model"
+need_absent "STARTED CLEAN"
+batch_fixture rlbmodel2
+mk append "$REC" "{\"event\":\"run-resume\",\"session\":\"sid-rlbmodel2\",\"head\":\"opus at max in free text\",\"detail\":\"its first act\",\"pid\":$LCH}" >/dev/null
+lane_open T5 60 claude "$LCL"; lane_transcript T5 30
+run launch-check --run rlbmodel2 --lanes T5 --wait 0 --detach-safe
+need_rc 0
+need_out "launch-check: rlbmodel2 STARTED CLEAN"
+need_out "model fixture-model effort max"
+verdict "G14x (fails on old): launch-check --lanes never certifies STARTED CLEAN on a start with no readable model, and a head's first run-resume reads the model of the head-successor that started it"
+
+# ---- K8f4055c6 with Kbf3c2f75 (G1): the ack digest, and the close's final recheck ----
+fixture rdig 200
+DIGF="$WORK/digest-decisions.md"
+printf '# decisions\n- line one\n' > "$DIGF"
+run decisions-read --run rdig --decisions-file "$DIGF"
+need_rc 0
+need_out "decisions-read: "
+need_out "the whole file: the record carries no accepted ack with a digest"
+need_out "digest: $(sha_file "$DIGF")"
+D1=$(sha_file "$DIGF")
+DLINES0=$(mk lines "$REC")
+run gate --run rdig --to item1 --meter-line "$METER" --decisions-file "$DIGF" --ack "read line one"
+need_rc 6
+need_out "the ack carries no --ack-digest"
+need_eq "$(mk lines "$REC")" "$DLINES0" "a digest-less ack records nothing"
+printf -- '- line two, appended after the read\n' >> "$DIGF"
+run gate --run rdig --to item1 --meter-line "$METER" --decisions-file "$DIGF" --ack "read line one" --ack-digest "$D1"
+need_rc 6
+need_out "the lines appended since that read"
+need_out "| - line two, appended after the read"
+need_eq "$(mk lines "$REC")" "$DLINES0" "a stale ack records nothing"
+D2=$(sha_file "$DIGF")
+run gate --run rdig --to item1 --meter-line "$METER" --decisions-file "$DIGF" --ack "read lines one and two" --ack-digest "$D2"
+need_rc 0
+need_eq "$("$PY" -c 'import json, sys; e = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]; a = [x for x in e if x.get("event") == "observation" and str(x.get("what", "")).startswith("ack: ")]; print(a[-1].get("digest") if a else "<no ack>")' "$REC")" "$D2" "the accepted ack records the digest"
+run gate --run rdig --to item2 --meter-line "$METER" --decisions-file "$DIGF" --ack-digest "$D2"
+need_rc 2
+need_out "--ack-digest was given without --ack"
+run gate --run rdig --to item2 --meter-line "$METER" --decisions-file "$DIGF" --ack "x" --ack-digest "$(printf '%s' "$D2" | cut -c1-12)"
+need_rc 2
+need_out "is not a whole sha256"
+# rdig's gates bound its file, so "no decisions file" takes a run that names none.
+fixture rdigu 200
+run gate --run rdigu --to item2 --meter-line "$METER" --ack "x" --ack-digest "$D2"
+need_rc 2
+need_out "--ack-digest was given without --decisions-file"
+verdict "K8f4055c6 and Kbf3c2f75 (G1, must fire): decisions-read prints the unacknowledged lines and the file's digest; an ack with no digest, or with a digest the file has grown past since its read (the appended line printed), holds the gate (exit 6) and records nothing; the fresh digest passes and is recorded; a digest with no ack, with no decisions file, or cut to a prefix is refused (exit 2)"
+
+GCOPY="$WORK/g1copy"
+rm -rf "$GCOPY"; mkdir -p "$GCOPY"
+cp "$H" "$GCOPY/handsoff.py"
+# CR-A3-1 H1 (spec), E1: the copied supervisor still needs its shared record-lock module.
+cp "$LANE_PY" "$GCOPY/lane.py"
+cat > "$GCOPY/fable-share.py" <<'APPENDMETER'
+"""A stand-in meter for the close's final recheck: on its first run it appends one line to the
+decisions file G1_APPEND names (an owner writing while the close meters), then prints a billed
+line, as the real meter does."""
+import os, sys
+marker = os.environ.get("G1_APPEND")
+if marker and not os.path.exists(marker + ".done"):
+    with open(marker, "a", encoding="utf-8") as handle:
+        handle.write("- an owner line written while the close was metering\n")
+    open(marker + ".done", "w").close()
+print("billed (list 2001-01-01) · head $1.00 · lanes $0.00 · session $1.00 · rewrites 0 ($0.00) · tool uses/call head 1.00 lanes 0.00 · delegation multi (owner) · lanes 0 (reasons: (a)×0 (b)×0 (c)×0 (d)×0, none×0) · metered 1 of 1")
+APPENDMETER
+fixture rfinal 200
+FINF="$WORK/final-decisions.md"
+printf '# decisions\n- the checklist stays\n' > "$FINF"
+F1=$(sha_file "$FINF")
+FLINES=$(mk lines "$REC")
+RC=0
+env G1_APPEND="$FINF" "$PY" -B "$GCOPY/handsoff.py" close --run rfinal --items "fixture items" --decisions-file "$FINF" \
+    --ack "read the checklist line" --ack-digest "$F1" >"$WORK/out" 2>"$WORK/err" || RC=$?
+cat "$WORK/out" "$WORK/err" > "$WORK/both"
+need_rc 6
+need_out "arrived while the close was preparing"
+need_out "| - an owner line written while the close was metering"
+need_eq "$(mk count "$REC" run-close)" "0" "no run-close: the same call held"
+need_eq "$(mk lines "$REC")" "$((FLINES + 1))" "only the call's own ack is on the record"
+F2=$(sha_file "$FINF")
+RC=0
+env G1_APPEND="$FINF" "$PY" -B "$GCOPY/handsoff.py" close --run rfinal --items "fixture items" --decisions-file "$FINF" \
+    --ack "read both lines" --ack-digest "$F2" >"$WORK/out" 2>"$WORK/err" || RC=$?
+cat "$WORK/out" "$WORK/err" > "$WORK/both"
+need_rc 0
+need_eq "$(mk field "$REC" run-close decisions_digest)" "$F2" "the run-close records the content it acknowledged"
+case $(mk field "$REC" run-close decisions_cutoff) in 20*) : ;; *) why="$why; no cutoff on the run-close" ;; esac
+need_out "unchanged at the cutoff"
+rm -rf "$GCOPY"
+verdict "K8f4055c6 (G1 final recheck, the owner's provisional choice of 2026-10-10, must fire): an owner line appended to the decisions file while the close meters holds that same close (exit 6, no run-close, the line printed); with the content unchanged the close goes through and its run-close records the digest it acknowledged and the cutoff after which nothing is covered"
+
+# ---- Ked83406c (G3): the console confirm hold, on a probe whose exit status is read ----
+RHOLD="rvwhold$SFX"
+fixture "$RHOLD" 200
+viewer_use vhold
+RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD= STUB_OPEN_CONSOLE=1 STUB_CONSOLE_LIFE_S=1"
+run open-console --run "$RHOLD"
+need_rc 0
+need_out "viewer: console started (pid "
+need_out "but exited within"
+need_out "run by hand: $PYABS -B"
+need_absent "Terminal window opened"
+need_eq "$(viewer_calls)" "2" "not retried: one open call (-g and the command file)"
+RHOLD2="rvwhold2$SFX"
+fixture "$RHOLD2" 200
+viewer_use vhold2
+RUNENV="PATH=$WORK/psnone:$PATH AIMYTH_OPEN_BIN=$WORK/openbin/open AIMYTH_VIEWER_CMD= STUB_OPEN_CONSOLE=1"
+run open-console --run "$RHOLD2"
+need_rc 0
+need_out "(first seen at "
+need_out "still alive after the 3 s hold)"
+kill "$(cat "$VIEWER_ARGV.pid")" 2>/dev/null || :
+G3P=$("$PY" - "$H" "$WORK" <<'G3PROBE'
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+work = sys.argv[2]
+os.environ["PATH"] = os.path.join(work, "pgrepexit") + os.pathsep + os.environ.get("PATH", "")
+out = {}
+def scripted(name, *calls):
+    state = os.path.join(work, "pgrep-g3-%s" % name)
+    if os.path.exists(state):
+        os.remove(state)
+    for key in list(os.environ):
+        if key.startswith(("PGREP_OUT_", "PGREP_RC_")):
+            del os.environ[key]
+    os.environ["PGREP_STATE"] = state
+    for i, (text, rc) in enumerate(calls, 1):
+        os.environ["PGREP_OUT_%d" % i] = text
+        os.environ["PGREP_RC_%d" % i] = str(rc)
+scripted("exit3", ("4242", 3))
+out["probe_exit3"] = ho.console_probe("rg3")[0]
+scripted("hold3", ("4242", 3))
+out["hold_exit3"] = ho.hold_console("rg3", [4242], hold=0)[0]
+scripted("gone", ("", 1))
+out["hold_gone"] = ho.hold_console("rg3", [4242], hold=0)[0]
+scripted("swap", ("5151", 0))
+out["hold_swap"] = ho.hold_console("rg3", [4242], hold=0)[0]
+scripted("same", ("4242", 0))
+out["hold_same"] = ho.hold_console("rg3", [4242], hold=0)[0]
+scripted("wait3", ("4242", 3))
+pids = ho.wait_console("rg3", 1.0, 0.25)[0]
+out["wait_exit3"] = list(pids)
+print(json.dumps(out, sort_keys=True))
+G3PROBE
+)
+need_eq "$G3P" '{"hold_exit3": "unverified", "hold_gone": "exited", "hold_same": "confirmed", "hold_swap": "exited", "probe_exit3": "unverified", "wait_exit3": []}' "the probe's status read at every step"
+verdict "Ked83406c (G3 with critic finding 8, must fire): a console that exits within the 3 s hold after its first sighting is reported started-then-exited with the by-hand line and not retried, a live one is confirmed with both times; a pgrep that exits 3 with a pid on its output never confirms or sights, a console gone or replaced after the hold is no confirmation, and the same pid seen by a successful probe is"
+
+# ---- Kd748b2f0: a disposition's head decisions must be on the record ----
+fixture rdref 200
+run decision --run rdref --phase 1 --what "item1 runs three builders" --grant "G2"
+need_rc 0
+need_out "decision: recorded HD-1"
+run decision --run rdref --phase 1 --what "an unrelated decision" --grant "G3"
+need_rc 0
+need_out "recorded HD-2"
+run boundary --run rdref --from item1 --to item2 --disposition "item1 done under HD-1 and HD-7; the owner's D19" \
+    --waste "w" --next "item2" --meter-line "$METER"
+need_rc 0
+need_out "warn: the disposition names head decision(s) with no decision event on the record: HD-7"
+need_eq "$(mk field "$REC" phase-boundary decision_refs)" '{"named": ["HD-1", "HD-7"], "missing": ["HD-7"], "ambiguous": [], "unverifiable": null}' "the references on the event"
+run boundary --run rdref --from item2 --to item3 --disposition "item2 done under HD-1" --waste "w" --next "item3" --meter-line "$METER"
+need_rc 0
+need_absent "warn: the disposition"
+run boundary --run rdref --from item3 --to item4 --disposition "item3 done on the owner's D19 and D21 (c)" --waste "w" --next "item4" --meter-line "$METER"
+need_rc 0
+need_absent "warn: the disposition"
+need_eq "$(mk field "$REC" phase-boundary decision_refs)" "<no key decision_refs>" "a disposition naming no head decision carries no references"
+verdict "Kd748b2f0 (must fire, the owner's provisional choice of explicit references): decision assigns HD-<n>; a boundary whose disposition names HD-7 with no decision event warns despite an unrelated decision on the record, its exit unchanged and the references on its event; a named decision that is recorded and an owner-only disposition warn of nothing"
+
+# ---- K594ef68f: the vault root's untracked entries are listed before a checkpoint commit ----
+fixture rroot 200
+mkdir -p "$VAULT/docs-b4h"
+printf 'tracked\n' > "$VAULT/docs-b4h/a.md"
+git -C "$VAULT" add docs-b4h/a.md
+git -C "$VAULT" commit -q -m "fixture: a tracked folder"
+printf 'a stray download\n' > "$VAULT/stray-b4h.txt"
+mkdir -p "$VAULT/junkdir-b4h"
+printf 'x\n' > "$VAULT/junkdir-b4h/x.txt"
+printf 'nested\n' > "$VAULT/docs-b4h/new.md"
+printf 'a tracked change\n' >> "$VAULT/README.md"
+RUNENV="PATH=$WORK/gitfail:$PATH"
+run boundary --run rroot --from item1 --to item2 --disposition "d" --waste "w" --next "item2" --meter-line "$METER" \
+    --commit "fixture: the root listing, unverified"
+need_rc 0
+need_out "untracked at the vault root: unverified (git ls-files exit 128"
+run boundary --run rroot --from item2 --to item3 --disposition "d" --waste "w" --next "item3" --meter-line "$METER" \
+    --commit "fixture: the root listing"
+need_rc 0
+need_eq "$(mk field "$REC" phase-boundary root_untracked)" "[]" "everything was committed by the first boundary (the listing came first)"
+printf 'another stray\n' > "$VAULT/stray2-b4h.txt"
+mkdir -p "$VAULT/junk2-b4h"; printf 'y\n' > "$VAULT/junk2-b4h/y.txt"
+printf 'nested two\n' > "$VAULT/docs-b4h/new2.md"
+run boundary --run rroot --from item3 --to item4 --disposition "d" --waste "w" --next "item4" --meter-line "$METER" \
+    --commit "fixture: the root listing again"
+need_rc 0
+need_out "untracked at the vault root (advisory: the commit takes them with the rest): junk2-b4h/, stray2-b4h.txt"
+need_eq "$(mk field "$REC" phase-boundary root_untracked)" '["junk2-b4h/", "stray2-b4h.txt"]' "the listing on the event"
+need_absent "docs-b4h/new2.md"
+verdict "K594ef68f (must fire): before a checkpoint commit the boundary lists the untracked entries at the vault root — a stray file and an untracked folder — and not a new file inside a tracked folder or a tracked file's change, records the list on its event, and says unverified when git cannot list them, the commit going ahead either way"
+
+# ---- Kcdbad8e4: one hand-off directory default in handsoff.py and the hooks ----
+mkdir -p "$WORK/home-nosym"
+STATEDEF=$(env -u AIMYTH_STATE_DIR HOME="$WORK/home-nosym" "$PY" - "$H" "$HOOKS_DIR" <<'STATEDEF_END'
+import importlib.util, os, sys
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+ho = load("ho", sys.argv[1])
+found = {"handsoff.py": ho.state_dir()}
+for hook in ("precompact-checkpoint.py", "handsoff-gate.py", "head-fence.py"):
+    found[hook] = load(hook.replace("-", "_").replace(".py", ""), os.path.join(sys.argv[2], hook)).state_dir()
+first = found["handsoff.py"]
+print("same" if all(v == first for v in found.values()) else "split: " + "; ".join("%s %s" % kv for kv in sorted(found.items())))
+os.environ["AIMYTH_STATE_DIR"] = "/tmp/fixture-state-override"
+found = [ho.state_dir()] + [load(h + "2", os.path.join(sys.argv[2], h)).state_dir() for h in ("precompact-checkpoint.py", "handsoff-gate.py", "head-fence.py")]
+print("override same" if len(set(found)) == 1 and found[0] == "/tmp/fixture-state-override" else "override split: %s" % found)
+STATEDEF_END
+)
+need_eq "$(printf '%s\n' "$STATEDEF" | sed -n 1p)" "same" "with no alias symlink and no override every component resolves one hand-off directory"
+need_eq "$(printf '%s\n' "$STATEDEF" | sed -n 2p)" "override same" "an explicit AIMYTH_STATE_DIR is read alike (the paired control)"
+verdict "Kcdbad8e4 (must fire against the hooks before their diff): handsoff.py and the checkpoint, gate and fence hooks resolve one default hand-off directory in a home with no alias symlink and no override, and an explicit AIMYTH_STATE_DIR alike"
+kill "$LCH" "$LCL" 2>/dev/null || :
+# ---- help and docstring (2026-10-10): the new verbs and flags are parsed and documented ----
+run disarm --help
+need_rc 0
+need_out "--dry-run"
+run decisions-read --help
+need_rc 0
+need_out "--decisions-file"
+run launch-check --help
+need_rc 0
+need_out "--lanes"
+run grants --help
+need_rc 0
+need_out "--add-grant"
+need_out "--add-write"
+need_out "--replace"
+need_out "--max-successors"
+run successor --help
+need_rc 0
+need_out "--seed-pid"
+run reflect-inputs --help
+need_rc 0
+need_out "--transcript"
+run gate --help
+need_rc 0
+need_out "--ack-digest"
+DOCB4=$("$PY" -c 'import ast, sys
+d = ast.get_docstring(ast.parse(open(sys.argv[1], encoding="utf-8").read()))
+new = ("decisions-read", "--ack-digest", "--seed-pid", "--add-grant", "--add-write", "--replace", "max_successors", "disarm", "--lanes", "HD-<n>", "--transcript", "stages/<run>/reflect", "STARTED CLEAN", "CONSOLE_CONFIRM_HOLD_S")
+old = ("has an mtime later than that reference", "A call naming\nneither --grant nor --write")
+print("%d %d" % (sum(1 for s in new if s in d), sum(d.count(s) for s in old)))' "$H")
+need_eq "$DOCB4" "14 0" "the fourteen new phrases in the module docstring and the two retired ones gone"
+verdict "help and docstring (2026-10-10, must fire): disarm, decisions-read, launch-check --lanes, the grant forms with --max-successors, successor --seed-pid, reflect-inputs --transcript and gate --ack-digest are parsed, and the module docstring names them, the retired mtime rule and the old shrink-guard wording gone"
+
+# -------------------------- the fold of the review of the held build (2026-10-11) ---------
+# HF-BEGIN. These legs need only the plumbing above the run-open legs, so a run against an older
+# handsoff.py can take them alone (the fail-on-old run). One leg per finding of the review of the
+# held build that this fold owns (finding 8, the install README, is not a code finding); every leg
+# fails against the build before the fold, while the controls inside each — an unchanged close,
+# the head's own run-resume, a verified replacement, a line before the start, a positive
+# remainder, a real call — hold on both.
+hf_tsago() { "$PY" -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - float(sys.argv[1]))))' "$1"; }
+hf_wait_log() { # $1 file, $2 fixed string, $3 tries of 0.5 s: a detached starter writes late
+  i=0
+  while [ "$i" -lt "$3" ]; do
+    if [ -f "$1" ] && grep -q -F -- "$2" "$1"; then return 0; fi
+    sleep 0.5; i=$((i + 1))
+  done
+  why="$why; no '$2' in $1 within $3 half-seconds"; return 1
+}
+hf_raw() { # $1 record, $2 run, $3 JSON event: appended as given with ts and run, whatever the record holds (mk append cannot read past a torn line)
+  "$PY" -c 'import json, sys, time
+ev = json.loads(sys.argv[3])
+ev.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S%z"))
+ev.setdefault("run", sys.argv[2])
+with open(sys.argv[1], "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(ev) + "\n")' "$1" "$2" "$3"
+}
+hf_get() { # $1 record, $2 kind, $3 key, $4 occurrence (1-based, 0 the last); unparseable lines skipped
+  "$PY" -c 'import json, sys
+found = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(e, dict) and e.get("event") == sys.argv[2]:
+        found.append(e)
+k = int(sys.argv[4])
+if not found or k > len(found):
+    print("<no %s #%d>" % (sys.argv[2], k))
+else:
+    v = found[k - 1 if k else -1].get(sys.argv[3], "<no key %s>" % sys.argv[3])
+    print(v if isinstance(v, str) else json.dumps(v))' "$1" "$2" "$3" "$4"
+}
+hf_obs() { # $1 record: every head-exited observation as class:progress, in order; unparseable lines skipped
+  "$PY" -c 'import json, sys
+seen = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(e, dict) and e.get("event") == "observation" and e.get("what") == "head exited":
+        seen.append("%s:%s" % (e.get("exit_class"), e.get("progress", "-")))
+print(" ".join(seen))' "$1"
+}
+hf_stubs() { if [ -f "$WORK/stub-$1.count" ]; then cat "$WORK/stub-$1.count"; else echo 0; fi; }
+hf_sum() { # $1 directory, $2 fixed string: its hits summed over every file under the directory
+  grep -r -c -F -- "$2" "$1" | awk -F: '{s += $NF} END {print s + 0}'
+}
+
+# Finding 1 (HIGH; G1, K8f4055c6): the close's recheck cursor is the snapshot its decisions
+# channel checked. The owner's relay lands after the call's read, before its ack or after it, and
+# must hold that same close; with nothing appended the close goes through, its own ack left out
+# of the recheck (the control).
+hf_close() { # $1 run, $2 where the relay lands (none, before-ack, after-ack): one close in process, `rc N` last
+  "$PY" - "$H" "$1" "$2" "$METER" <<'HFCLOSE'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+run, race, meter = sys.argv[2], sys.argv[3], sys.argv[4]
+path = ho.record_path(run)
+
+
+def relay():
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"ts": ho.now(), "run": run, "event": "observation", "phase": "",
+                                 "what": "AUTHOR ruling: HF-RELAY the checklist changes before the close"}) + "\n")
+
+
+real_pending, real_hold = ho.decisions_pending, ho.decisions_hold
+
+
+def pending(*args, **kwargs):
+    if race == "before-ack":
+        relay()
+    return real_pending(*args, **kwargs)
+
+
+def hold(*args, **kwargs):
+    result = real_hold(*args, **kwargs)
+    if race == "after-ack":
+        relay()
+    return result
+
+
+ho.decisions_pending, ho.decisions_hold = pending, hold
+sys.argv = ["handsoff.py", "close", "--run", run, "--items", "fixture items", "--meter-line", meter,
+            "--ack", "read the relays on the record"]
+try:
+    ho.main()
+    code = 0
+except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else 1
+sys.stdout.flush()
+print("rc %d" % code)
+HFCLOSE
+}
+for hf_case in none before-ack after-ack; do
+  fixture "hfclose-$hf_case" 200
+  hf_close "hfclose-$hf_case" "$hf_case" >"$WORK/hfclose-$hf_case.out" 2>&1
+done
+R="$STORE/spawn-records/hfclose-none.jsonl"
+need_eq "$(grep '^rc ' "$WORK/hfclose-none.out")" "rc 0" "the unchanged close"
+need_eq "$(mk count "$R" run-close)" "1" "the unchanged close writes its run-close"
+for hf_case in before-ack after-ack; do
+  R="$STORE/spawn-records/hfclose-$hf_case.jsonl"
+  need_eq "$(grep '^rc ' "$WORK/hfclose-$hf_case.out")" "rc 6" "exit with the relay $hf_case"
+  need_eq "$(mk count "$R" run-close)" "0" "no run-close with the relay $hf_case"
+  grep -q -F "arrived while the close was preparing" "$WORK/hfclose-$hf_case.out" || why="$why; no hold line with the relay $hf_case"
+  grep -q -F "HF-RELAY the checklist changes" "$WORK/hfclose-$hf_case.out" || why="$why; the held close does not print the relay ($hf_case)"
+done
+verdict "close (fails on old; the review of 2026-10-11, finding 1, G1): an AUTHOR relay appended after the call's read, before its ack or after it, holds that same close (exit 6, no run-close, the relay printed), the recheck's cursor being the snapshot the decisions channel checked; an unchanged record closes (the control)"
+
+# Finding 2 (MEDIUM; D21 (c), K86a774ca): the first batch's wait keeps the head start's terminal
+# states and holds to one head process. Each case confirms a live head with one silent helper; at
+# the check's first re-read the record gains the case's events and the helper's activity: a
+# run-close; a replacement start whose identity cannot be verified (an unreadable timestamp, no
+# pid, a reused pid, an age the probe cannot read); and the two controls, the head's own
+# run-resume (the same process) and a replacement whose identity is verified.
+hf_launch() { # $1 run, $2 case, $3 the --wait: one launch-check --lanes T1 in process, `planted …` and `rc N` last
+  "$PY" - "$H" "$1" "$2" "$3" <<'HFLAUNCH'
+import importlib.util, json, os, subprocess, sys, time
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+run, case, wait = sys.argv[2], sys.argv[3], sys.argv[4]
+path = ho.record_path(run)
+
+
+def sleeper():
+    return subprocess.Popen(["sleep", "60"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def stamp(ago=0.0):
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - ago))
+
+
+def add(ev):
+    ev.setdefault("ts", stamp())
+    ev["run"] = run
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(ev) + "\n")
+
+
+def helper(ago):
+    sid = "sid-%s-T1" % run
+    add({"event": "lane-open", "ts": stamp(ago), "lane": "T1", "class": "builder", "model": "opus",
+         "session_id": sid})
+    add({"event": "lane-spawned", "ts": stamp(ago), "lane": "T1", "session_id": sid,
+         "pid": lane.pid, "wrapper_pid": lane.pid})
+
+
+def activity():
+    folder = os.path.join(os.environ["AIMYTH_PROJECTS_DIR"], "lane-%s" % run)
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "sid-%s-T1.jsonl" % run), "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "assistant", "timestamp": stamp(),
+                                 "message": {"role": "assistant",
+                                             "content": [{"type": "text", "text": "working"}]}}) + "\n")
+
+
+def plant():
+    sid = "sid-%s" % run
+    if case == "close":
+        add({"event": "run-close", "items": "closed while the check waited"})
+    elif case == "badts":
+        add({"event": "head-resumed", "ts": "not a time", "session_id": sid, "pid": other.pid,
+             "model": "fixture-model"})
+    elif case == "nopid":
+        add({"event": "head-resumed", "session_id": sid, "pid": None, "model": "fixture-model"})
+    elif case == "reused":
+        add({"event": "head-successor", "ts": stamp(3600), "session_id": sid + "-b",
+             "pid": other.pid, "model": "fixture-model"})
+    elif case in ("noage", "verified"):
+        add({"event": "head-resumed", "session_id": sid, "pid": other.pid, "model": "fixture-model"})
+    elif case == "sameproc":
+        add({"event": "run-resume", "session": sid, "head": "fixture head", "detail": "its first act",
+             "pid": head.pid, "pid_src": "parent-walk"})
+    if case != "close":
+        helper(3)   # the helper's attempt after the newer start, which is that start's batch
+    activity()
+
+
+head, other, lane = sleeper(), sleeper(), sleeper()
+state = {"lanes": False, "planted": False}
+code = None
+try:
+    add({"event": "head-successor", "session_id": "sid-%s" % run, "pid": head.pid,
+         "model": "fixture-model", "effort": "max"})
+    helper(5)
+    real_read, real_lanes, real_age = ho.read_record, ho.launch_lanes, ho.process_age_s
+
+    def lanes_entered(*args, **kwargs):
+        state["lanes"] = True
+        return real_lanes(*args, **kwargs)
+
+    def read(p, *args, **kwargs):
+        if state["lanes"] and not state["planted"] and p == path:
+            state["planted"] = True
+            plant()
+        return real_read(p, *args, **kwargs)
+
+    def age(pid, *args, **kwargs):
+        if case == "noage" and pid == other.pid:
+            return None
+        return real_age(pid, *args, **kwargs)
+
+    ho.read_record, ho.launch_lanes, ho.process_age_s = read, lanes_entered, age
+    sys.argv = ["handsoff.py", "launch-check", "--run", run, "--lanes", "T1", "--wait", wait,
+                "--poll-s", "0.3", "--detach-safe"]
+    try:
+        ho.main()
+        code = 0
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+finally:
+    for proc in (head, other, lane):
+        proc.kill()
+        proc.wait()
+sys.stdout.flush()
+print("planted %s" % state["planted"])
+print("rc %s" % code)
+HFLAUNCH
+}
+for hf_case in close badts nopid reused sameproc verified; do
+  fixture "hflaunch-$hf_case" 200
+  hf_launch "hflaunch-$hf_case" "$hf_case" 8 >"$WORK/hflaunch-$hf_case.out" 2>&1
+done
+fixture hflaunch-noage 200
+hf_launch hflaunch-noage noage 3 >"$WORK/hflaunch-noage.out" 2>&1
+for hf_case in close badts nopid reused noage sameproc verified; do
+  grep -q -F "planted True" "$WORK/hflaunch-$hf_case.out" || why="$why; the $hf_case events never arrived during the wait (the leg's premise)"
+done
+for hf_case in close badts nopid reused noage; do
+  need_eq "$(grep '^rc ' "$WORK/hflaunch-$hf_case.out")" "rc 1" "exit ($hf_case)"
+  grep -q -F "NOT CLEAN" "$WORK/hflaunch-$hf_case.out" || why="$why; no NOT CLEAN line ($hf_case)"
+  if grep -q -F "STARTED CLEAN" "$WORK/hflaunch-$hf_case.out"; then why="$why; certified ($hf_case)"; fi
+done
+grep -q -F "but the run closed (run-close at " "$WORK/hflaunch-close.out" || why="$why; the close during the wait is not named"
+grep -q -F "could not be confirmed: pid identity unverifiable: " "$WORK/hflaunch-badts.out" || why="$why; the unreadable timestamp is not named"
+grep -q -F "names no usable pid" "$WORK/hflaunch-nopid.out" || why="$why; the pid-less replacement is not named"
+grep -q -F "a reused pid, not that head" "$WORK/hflaunch-reused.out" || why="$why; the reused pid is not named"
+grep -q -F "its identity was not verified within the 3 s deadline" "$WORK/hflaunch-noage.out" || why="$why; the unverified replacement is not named at the deadline"
+for hf_case in sameproc verified; do
+  need_eq "$(grep '^rc ' "$WORK/hflaunch-$hf_case.out")" "rc 0" "exit ($hf_case, a control)"
+  grep -q -F "STARTED CLEAN" "$WORK/hflaunch-$hf_case.out" || why="$why; the control $hf_case is not certified"
+  grep -q -F "T1 progressing" "$WORK/hflaunch-$hf_case.out" || why="$why; the control $hf_case does not read the helper's activity"
+done
+verdict "launch-check --lanes (fails on old; the review of 2026-10-11, finding 2, D21 (c)): a run-close arriving during the first batch's wait is NOT CLEAN; a replacement head start with an unreadable timestamp, no pid, a reused pid or an age that cannot be read never certifies; the head's own run-resume by the same process and a replacement whose identity is verified still certify (the controls)"
+
+# Finding 3 (MEDIUM; the repeat-stop guard's malformed-line evidence, D32 (4)): a line that cannot
+# be read, written after the head's start and before a supervisor attached, lies inside that
+# head's window, so its stop reads unknown and cannot fire, while the later heads' windows open
+# after it and their pair still fires. The control puts the line before the start: the guard
+# stays in force and the first pair fires. A unit part places lines on planted records.
+hf_attach() { # $1 run, $2 extra env words: a supervisor attached to pid 999999, already gone, its stop classified off a completed .out
+  printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done without a hand-off"}' > "$WORK/$1.out"
+  HFRC=0
+  env STUB_TOKENS=50000 AIMYTH_CONTEXT_WINDOW=200000 $2 AIMYTH_VIEWER_ARGV="$WORK/viewer-$1.argv" "$PY" -B "$H" _supervise --run "$1" \
+      --pid 999999 --session "sid-$1" --out "$WORK/$1.out" --harness-bin "$WORK/bin/stubhead" \
+      --handoff "$WORK/handoffs/$1-handoff.md" --meter-line "$METER" --tick-s 1 --wait-s 2 \
+      >"$WORK/$1.log" 2>&1 || HFRC=$?
+  printf '%s\n' "$HFRC" > "$WORK/$1.rc"
+}
+HF_ATTACHED='{"event":"run-resume","session":"sid-%s","head":"fixture head","detail":"the attached head","pid":999999,"pid_src":"arg"}'
+fixture hfmal 200
+hf_raw "$REC" hfmal "$(printf "$HF_ATTACHED" hfmal)"
+printf '%s\n' '{"event":"phase-boundary","from":"torn after the start' >> "$REC"
+hf_attach hfmal "STUB_MODES=complete,error STUB_PROGRESS=none,none STUB_N=2"
+R="$STORE/spawn-records/hfmal.jsonl"
+need_eq "$(hf_obs "$R")" "completed:unknown completed:no error:no" "the recorded verdicts (after the start)"
+case $(hf_get "$R" observation progress_note 1) in *"unparseable record line(s) lie inside this head's window"*) : ;; *) why="$why; the unknown does not name the line inside the window: $(hf_get "$R" observation progress_note 1)" ;; esac
+need_eq "$(hf_stubs hfmal)" "2" "two real starts after the attached head"
+need_eq "$(cat "$WORK/hfmal.rc") $(hf_get "$R" successor-aborted reason 0)" "1 repeat-stop" "the later pair still fires"
+fixture hfmal2 200
+printf '%s\n' '{"event":"phase-boundary","from":"torn before the start' >> "$REC"
+hf_raw "$REC" hfmal2 "$(printf "$HF_ATTACHED" hfmal2)"
+hf_attach hfmal2 "STUB_MODES=complete STUB_PROGRESS=none STUB_N=1"
+R="$STORE/spawn-records/hfmal2.jsonl"
+need_eq "$(hf_obs "$R")" "completed:no completed:no" "the recorded verdicts (before the start, the control)"
+need_eq "$(hf_stubs hfmal2)" "1" "one real start (the control)"
+need_eq "$(cat "$WORK/hfmal2.rc") $(hf_get "$R" successor-aborted reason 0)" "1 repeat-stop" "the first pair fires (the control)"
+HFU=$("$PY" - "$H" "$WORK/hf-marks.jsonl" <<'HFUNIT'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+fails = []
+
+
+def check(name, got, want):
+    if got != want:
+        fails.append("%s: %r != %r" % (name, got, want))
+
+
+def ev(kind, **kw):
+    kw["event"] = kind
+    return kw
+
+
+try:
+    path = sys.argv[2]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"event": "run-open"}) + "\n")
+        handle.write('{"event": "torn\n')
+        handle.write(json.dumps({"event": "head-successor", "pid": 4301}) + "\n")
+        handle.write("null\n")
+        handle.write(json.dumps({"event": "phase-boundary", "caller_pid": 4302}) + "\n")
+    marks = []
+    got = ho.read_record(path, marks)
+    check("placeholders", marks, [1, 2])
+    check("the default reader unchanged", ho.read_record(path), got)
+    check("the default reader's shape", (len(got), len(got[0]), got[1]), (2, 3, 2))
+    P = 4301
+    base = [ev("run-open", session="s0", pid_src="none"), ev("head-successor", session_id="s1", pid=P)]
+    check("inside the window", ho.head_progress(base, P, 1, 1, 1, [2])[0], "unknown")
+    check("just before the start", ho.head_progress(base, P, 1, 1, 1, [1])[0], "no")
+    check("before the run-open", ho.head_progress(base, P, 1, 1, 1, [0])[0], "no")
+    check("its own boundary beside one inside",
+          ho.head_progress(base + [ev("phase-boundary", caller_pid=P)], P, 1, 1, 1, [3])[0], "yes")
+    check("no placeholders: the counts alone", ho.head_progress(base, P, 1, 1, 1)[0], "no")
+    later = base + [ev("observation", what="head exited"), ev("head-successor", session_id="s2", pid=4303)]
+    check("a later head's window", ho.head_progress(later, 4303, 3, 1, 1, [2])[0], "no")
+except Exception as exc:
+    fails.append("raised %s: %s" % (type(exc).__name__, exc))
+print("ok" if not fails else "; ".join(fails))
+HFUNIT
+)
+need_eq "$HFU" "ok" "the reader's placeholders and the window on planted records"
+verdict "repeat-stop (fails on old; the review of 2026-10-11, finding 3, D32 (4)): an unparseable line written after the attached head's start and before the attach reads unknown and does not pair, the later heads' pair still firing; one written before that start leaves the guard in force (the control); the reader places each skipped line among the events for the guard alone, every other call unchanged"
+
+# Finding 4 (MEDIUM; K615a63df): successive re-derivations keep the newer head-written Next with
+# its own pack stamp, and a genuinely newer boundary supersedes it.
+hf_plant_pack() { # $1 hand-off, $2 stamp, $3 Next text: a head's own pack, written at the stamp
+  "$PY" - "$1" "$2" "$3" <<'HFPACK'
+import sys
+path, stamp, nxt = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path, encoding="utf-8").read()
+new = ("## In flight\n- pack written: %s\n- Next: %s\n- Needs: wiki/h.md:1\n"
+       "- Decided: D8 because the author said so\n" % (stamp, nxt))
+if "## In flight\n- nothing in flight.\n" not in text:
+    sys.exit("hf_plant_pack: the fixture's in-flight section is not where it was expected")
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(text.replace("## In flight\n- nothing in flight.\n", new, 1))
+HFPACK
+}
+fixture hfnext 200
+mk append "$REC" "$(printf '{"event":"phase-boundary","ts":"%s","from":"item6","to":"item7","next":"HF OLD NEXT: the seventh pass","disposition":"d","meter":"m","waste":"w"}' "$(hf_tsago 86400)")" >/dev/null
+HF_PSTAMP=$(hf_tsago 1800)
+hf_plant_pack "$HO" "$HF_PSTAMP" "HF HEAD NEXT: item 9, the analysis gates"
+mk append "$REC" '{"event":"head-exit","band":"limit","context":"c","pack":false,"pid":1}' >/dev/null
+HF_WANT="Next: HF HEAD NEXT: item 9, the analysis gates (from the head's own pack written $HF_PSTAMP, newer than "
+for hf_pass in 1 2 3; do
+  run handoff --run hfnext --inflight-from-record
+  need_rc 0
+  SEC=$(mk section "$HO" "In flight")
+  case $SEC in *"$HF_WANT"*) : ;; *) why="$why; derivation $hf_pass lost the head's Next or its stamp: $SEC" ;; esac
+  case $SEC in *"HF OLD NEXT"*) why="$why; derivation $hf_pass restored the older boundary's next" ;; esac
+done
+need_eq "$(grep -c '^- Next: ' "$HO")" "1" "one Next line after three derivations"
+mk append "$REC" '{"event":"phase-boundary","from":"item9","to":"item10","next":"HF NEWER NEXT: item 10, the report","disposition":"d","meter":"m","waste":"w"}' >/dev/null
+run handoff --run hfnext --inflight-from-record
+need_rc 0
+SEC=$(mk section "$HO" "In flight")
+case $SEC in *"Next: HF NEWER NEXT: item 10, the report (a copy of the "*) : ;; *) why="$why; the newer boundary's next does not supersede: $SEC" ;; esac
+case $SEC in *"HF HEAD NEXT"*) why="$why; the superseded head Next survives a newer boundary" ;; esac
+case $SEC in *"Needs: wiki/h.md:1"*) : ;; *) why="$why; the pack's hand-written lines are not kept" ;; esac
+verdict "handoff --inflight-from-record (fails on old; the review of 2026-10-11, finding 4, K615a63df): three successive re-derivations with no newer boundary keep the head's newer Next with its own pack stamp and never restore the day-old boundary's next, while a genuinely newer phase-boundary supersedes it; the pack's hand-written lines stay"
+
+# Finding 5 (MEDIUM; K0fe7df69): a registered control is withheld before the extraction splits a
+# turn into lines or cuts a tool line, so its wrapped and unwrapped copies are all gone while the
+# unrelated prose around them stays. The copies: one on a line of its own, one wrapped after its
+# first word, one wrapped after its head, one in the owner's words, one wrapped inside a command,
+# and one a tool line's cut would leave fourteen characters of.
+fixture hfred 200
+mk append "$REC" '{"event":"observation","phase":"controls-XHF","what":"HF-CTRL-SENTINEL the reflector must find the gap at item four","note":"pre-registered"}' >/dev/null
+THF=$("$PY" - <<'HFSCRIPT'
+import json, os, re
+sid = "sid-hfred"
+root = os.environ["AIMYTH_PROJECTS_DIR"]
+path = os.path.join(root, re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.environ["CLAUDE_PROJECT_DIR"])),
+                    sid + ".jsonl")
+os.makedirs(os.path.dirname(path), exist_ok=True)
+ctl = "HF-CTRL-SENTINEL the reflector must find the gap at item four"
+
+
+def prose(text, at):
+    return {"type": "assistant", "timestamp": "2026-10-11T10:00:%02dZ" % at,
+            "message": {"role": "assistant", "model": "claude-fixture-1",
+                        "content": [{"type": "text", "text": text}]}}
+
+
+def call(command, at):
+    return {"type": "assistant", "timestamp": "2026-10-11T10:00:%02dZ" % at,
+            "message": {"role": "assistant", "model": "claude-fixture-1",
+                        "content": [{"type": "tool_use", "name": "Bash", "input": {"command": command}}]}}
+
+
+recs = [
+    {"type": "user", "timestamp": "2026-10-11T10:00:00Z",
+     "message": {"role": "user", "content": [{"type": "text", "text": "the owner asks for the reflection"}]}},
+    prose("Unrelated prose line one stays.\nI expect: %s.\nUnrelated prose line three stays." % ctl, 5),
+    prose("Unrelated opening stays.\nI expect: HF-CTRL-SENTINEL\nthe reflector must find the gap at item four.\n"
+          "Unrelated closing stays.", 10),
+    prose("Wrapped late: HF-CTRL-SENTINEL the reflector must find\nthe gap at item four, said twice.\n"
+          "Unrelated tail stays.", 15),
+    {"type": "user", "timestamp": "2026-10-11T10:00:20Z",
+     "message": {"role": "user", "content": [{"type": "text",
+                                              "text": "please check HF-CTRL-SENTINEL the\nreflector must find the gap at item four"}]}},
+    call("echo 'HF-CTRL-SENTINEL the reflector\nmust find the gap at item four'", 25),
+    call("x" * 270 + " " + ctl, 30),
+    call("git status --porcelain", 35),
+]
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("".join(json.dumps(r) + "\n" for r in recs))
+print(path)
+HFSCRIPT
+)
+OUTHF="$WORK/refl-hfred"
+run reflect-inputs --run hfred --session sid-hfred --out "$OUTHF" --no-meter
+need_rc 0
+need_eq "$(hf_sum "$OUTHF" "HF-CTRL-SENTIN")" "0" "no copy of the control, nor the head a cut leaves, in the four outputs"
+need_eq "$(hf_sum "$OUTHF" "gap at item four")" "0" "no wrapped tail of the control in the four outputs"
+for hf_line in "Unrelated prose line one stays." "Unrelated prose line three stays." "Unrelated opening stays." \
+    "Unrelated closing stays." "Unrelated tail stays." "- Bash: git status --porcelain" "the owner asks for the reflection"; do
+  need_eq "$(grep -c -F -- "$hf_line" "$OUTHF/turns.md")" "1" "unrelated text stays: $hf_line"
+done
+need_eq "$(mk json "$OUTHF/counts.json" notes.controls_redacted)" "9" "nine lines withheld, counted"
+need_eq "$(grep -c -F "HF-CTRL-SENTINEL" "$THF")" "6" "the control: the source transcript carries six copies"
+verdict "reflect-inputs (fails on old; the review of 2026-10-11, finding 5, K0fe7df69): a registered control wrapped across lines — in prose after its first word or after its head, in the owner's words, inside a command — and one a tool line's cut would shorten appear in none of the four blinded outputs, every line they touch withheld and counted, while the unrelated prose around them and an ordinary tool call stay"
+
+# Finding 6 (MEDIUM; K22da6bf5): one refusal for every budget the successor computes. A seeded
+# record whose run spend is at or above its envelope refuses before any head-exit, detach or
+# start, its dry run too; a positive remainder launches the head with that remainder.
+HF_SEEDX='{"event":"head-exit","band":"unmetered","context":"unmetered (transcript missing for the seed session)","pack":false}'
+hf_seeded() { # $1 run, $2 envelope, $3 the one lane's recorded cost: a seeded record whose last head-exit is the seed's
+  seed_fixture "$1" "$2"
+  mk append "$REC" "$HF_SEEDX" >/dev/null
+  mk append "$REC" '{"event":"lane-open","lane":"LSEED","class":"builder","model":"opus"}' >/dev/null
+  mk append "$REC" "{\"event\":\"lane-closed\",\"lane\":\"LSEED\",\"exit_class\":\"completed\",\"total_cost_usd\":$3}" >/dev/null
+}
+for hf_case in at:100 above:120; do
+  hf_tag=${hf_case%%:*}; hf_cost=${hf_case#*:}
+  hf_seeded "hfseed-$hf_tag" 100 "$hf_cost"
+  HFL=$(mk lines "$REC")
+  RUNENV="PATH=$WORK/psnone:$PATH"
+  run successor --run "hfseed-$hf_tag" --dry-run --harness-bin "$WORK/bin/stubhead"
+  need_rc 2
+  need_out "the envelope is spent (envelope (seed)"
+  need_eq "$(mk lines "$REC")" "$HFL" "a refused dry run writes nothing ($hf_tag)"
+  viewer_use "hfseed-$hf_tag"
+  RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+  run successor --run "hfseed-$hf_tag" --harness-bin "$WORK/bin/stubhead" --wait-s 1 --max-wait-s 5 --tick-s 1
+  need_rc 2
+  need_out "the envelope is spent"
+  need_eq "$(mk count "$REC" successor-aborted) $(hf_get "$REC" successor-aborted reason 0)" "1 budget" "the refusal is on the record ($hf_tag)"
+  need_eq "$(mk count "$REC" head-exit)" "1" "no head-exit written ($hf_tag)"
+  need_nofile "$REALSTORE/spawn-records/hfseed-$hf_tag-head-1.out.starter.log"
+  need_no_viewer
+done
+sleep 2   # a starter detached by the old code would have started its head by now
+need_eq "$(hf_stubs hfseed-at) $(hf_stubs hfseed-above)" "0 0" "no head started"
+hf_seeded hfseed-below 100 40
+viewer_use hfseed-below
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run hfseed-below --harness-bin "$WORK/bin/stubhead" --wait-s 1 --max-wait-s 5 --tick-s 1
+need_rc 0
+need_out "budget \$60.00 (budget_src: envelope (seed)"
+hf_wait_log "$WORK/stub-hfseed-below.args" "--max-budget-usd 60.00" 30
+hf_wait_log "$REALSTORE/spawn-records/hfseed-below-head-1.out.starter.log" "supervisor: handed-over" 30
+verdict "successor (fails on old; the review of 2026-10-11, finding 6, K22da6bf5): a seeded record whose run spend reaches its envelope (\$100 of \$100) or passes it (\$120) refuses, its dry run writing nothing and its real call recording successor-aborted budget before any head-exit, starter, window or head; a positive remainder (\$60) launches the head with that remainder (the control)"
+
+# Finding 7 (MEDIUM; K4a701287): run-resume --max-successors rewrites the cap, the run's lists
+# carried, and a cap below 1 is refused with nothing written; a resume naming nothing keeps the
+# file and the cap it now holds (the control).
+fixture hfcap 200
+GFC="$REALSTORE/spawn-records/hfcap-grants.json"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run grants --run hfcap --write "$WORK/real-grant/hfcap" --max-successors 4
+need_rc 0
+need_eq "$(mk json "$GFC" max_successors)" "4" "the cap before the resume"
+HFW=$(grep -c -F "real-grant/hfcap" "$GFC")
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run hfcap --session sid-hfcap --head "h" --detail "the cap alone" --max-successors 9
+need_rc 0
+need_out "max_successors 9 (arg)"
+need_eq "$(mk json "$GFC" max_successors)" "9" "the cap written to the grants file"
+need_eq "$(mk field "$REC" run-resume max_successors)" "9" "the cap on the run-resume"
+need_eq "$(grep -c -F "real-grant/hfcap" "$GFC")" "$HFW" "the write list carried"
+[ "$HFW" -ge 1 ] || why="$why; the planted write grant was never in the file (the control)"
+HFL=$(mk lines "$REC")
+HFS=$(sha_file "$GFC")
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run hfcap --session sid-hfcap --head "h" --detail "a zero cap" --max-successors 0
+need_rc 2
+need_out "--max-successors must be a whole number of at least 1, got 0"
+need_eq "$(mk lines "$REC")" "$HFL" "a refused cap writes no event"
+need_eq "$(sha_file "$GFC")" "$HFS" "a refused cap leaves the file as it was"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run hfcap --session sid-hfcap --head "h" --detail "no flags"
+need_rc 0
+need_out "(kept)"
+need_eq "$(mk json "$GFC" max_successors)" "9" "a kept file keeps its cap"
+verdict "run-resume --max-successors (fails on old; the review of 2026-10-11, finding 7, K4a701287): a cap-only resume rewrites the grants file's cap (4 to 9) with the lists carried and records it on its event; a zero cap is refused (exit 2) with nothing written; a resume naming nothing keeps the file and its cap (the control)"
+
+# Finding 9 (LOW; K22da6bf5, K6cf0c658): the dry runs of successor, in both budget branches, and
+# of raise-envelope leave the run's meter cache as they find it — an absent one absent, an
+# existing one byte-identical — although each meters a lane; a real call still fills it (the
+# controls).
+hf_cached() { # $1 run, $2 seed or plain: a record whose one lane the meter prices from its transcript; HFC names its cache
+  if [ "$2" = seed ]; then seed_fixture "$1" 400; mk append "$REC" "$HF_SEEDX" >/dev/null; else fixture "$1" 400; fi
+  mk pricedscript "sid-$1-l" 2 "lane-$1" >/dev/null
+  mk append "$REC" "{\"event\":\"lane-open\",\"lane\":\"LC\",\"class\":\"builder\",\"model\":\"opus\",\"session_id\":\"sid-$1-l\"}" >/dev/null
+  mk append "$REC" "{\"event\":\"lane-closed\",\"lane\":\"LC\",\"session_id\":\"sid-$1-l\",\"exit_class\":\"completed\",\"total_cost_usd\":1.0}" >/dev/null
+  HFC="$REALSTORE/spawn-records/$1-spend-cache.json"
+}
+hf_stale() { printf '%s\n' '{"sid-elsewhere": {"path": "none", "size": 0, "mtime": 0, "usd": 9.99}}' > "$1"; }
+hf_cache_has() { # $1 cache, $2 session id: yes when the cache holds a metered entry for the session
+  "$PY" -c 'import json, sys
+try:
+    entry = json.load(open(sys.argv[1], encoding="utf-8")).get(sys.argv[2])
+except (OSError, ValueError) as exc:
+    entry = None
+print("yes" if isinstance(entry, dict) and isinstance(entry.get("usd"), (int, float)) else "no")' "$1" "$2"
+}
+# The premise of every dry run below: the meter really priced the lane's transcript (two calls of a
+# million opus input tokens each, so twice the family's input rate, above the $1.00 recorded), the
+# figure a cache entry would hold.
+HF_LANE=$("$PY" -c 'import json, sys; print("%.2f" % max(1.0, 2 * float(json.load(open(sys.argv[1]))["families"]["opus"]["input"])))' "$SKILL_DIR/prices.json")
+hf_cached hfcache-succ plain
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hfcache-succ --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "lanes \$$HF_LANE (1 of 1 with a figure"
+need_nofile "$HFC"
+hf_stale "$HFC"; HFS=$(sha_file "$HFC")
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hfcache-succ --dry-run --meter-line "$METER" --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_eq "$(sha_file "$HFC")" "$HFS" "successor --dry-run leaves an existing cache as it was"
+hf_cached hfcache-seed seed
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hfcache-seed --dry-run --harness-bin "$WORK/bin/harness"
+need_rc 0
+need_out "budget_src: envelope (seed)"
+need_out "lanes \$$HF_LANE (1 of 1 with a figure"
+need_nofile "$HFC"
+hf_cached hfcache-env plain
+run raise-envelope --run hfcache-env --to 500 --reason "a top-up" --meter-line "$METER" --dry-run
+need_rc 0
+need_out "lanes \$$HF_LANE (1 of 1 with a figure"
+need_nofile "$HFC"
+hf_stale "$HFC"; HFS=$(sha_file "$HFC")
+run raise-envelope --run hfcache-env --to 500 --reason "a top-up" --meter-line "$METER" --dry-run
+need_rc 0
+need_eq "$(sha_file "$HFC")" "$HFS" "raise-envelope --dry-run leaves an existing cache as it was"
+rm -f "$HFC"
+run raise-envelope --run hfcache-env --to 500 --reason "a top-up" --meter-line "$METER"
+need_rc 0
+need_eq "$(hf_cache_has "$HFC" sid-hfcache-env-l)" "yes" "a real raise-envelope fills the cache (a control)"
+hf_cached hfcache-real plain
+viewer_use hfcache-real
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run hfcache-real --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 1 --max-wait-s 5 --tick-s 1
+need_rc 0
+need_eq "$(hf_cache_has "$HFC" sid-hfcache-real-l)" "yes" "a real successor fills the cache (a control)"
+hf_wait_log "$REALSTORE/spawn-records/hfcache-real-head-1.out.starter.log" "supervisor: handed-over" 30
+verdict "meter cache (fails on old; the review of 2026-10-11, finding 9, K22da6bf5 and K6cf0c658): successor --dry-run, on a record that meters a lane and on a seeded one, and raise-envelope --dry-run leave an absent cache absent and an existing one byte-identical, while a real raise-envelope and a real successor fill it (the controls)"
+# HF-END
+
+# ---------------- the fold of the second review of the held build (2026-10-11) ---------------
+# HF2-BEGIN. Like the block above, these legs need only the plumbing above the run-open legs, so a
+# run against an older handsoff.py can take them alone (the fail-on-old run); they define their
+# own helpers. One leg per finding of the second review, and a second leg for the gate under F1;
+# every leg fails against the build before this fold, while the controls inside each — a relay
+# after the ack, a gate no relay raced, a replacement verified in time, a single read under
+# --wait 0, a resume no call raced — hold on both.
+
+# Finding F1 (HIGH; G1, the decisions channel): an ack covers the record its call read, and no
+# more. A close whose final recheck holds it has already recorded its ack, behind the owner's
+# relay that raced its read (the before-ack case of the first fold's leg); the next close without
+# an ack still holds on that relay, writing nothing, and a fresh ack then lets the close through.
+# The control: a relay landing after the ack is held the same way by both builds.
+hf2_close() { # $1 run, $2 where the relay lands (before-ack, after-ack): one close with --ack in process, `rc N` last
+  "$PY" - "$H" "$1" "$2" "$METER" <<'HF2CLOSE'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+run, race, meter = sys.argv[2], sys.argv[3], sys.argv[4]
+path = ho.record_path(run)
+
+
+def relay():
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"ts": ho.now(), "run": run, "event": "observation", "phase": "",
+                                 "what": "AUTHOR ruling: HF2-RELAY the close waits for the checklist"}) + "\n")
+
+
+real_pending, real_hold = ho.decisions_pending, ho.decisions_hold
+
+
+def pending(*args, **kwargs):
+    if race == "before-ack":
+        relay()
+    return real_pending(*args, **kwargs)
+
+
+def hold(*args, **kwargs):
+    result = real_hold(*args, **kwargs)
+    if race == "after-ack":
+        relay()
+    return result
+
+
+ho.decisions_pending, ho.decisions_hold = pending, hold
+sys.argv = ["handsoff.py", "close", "--run", run, "--items", "fixture items", "--meter-line", meter,
+            "--ack", "read the relays on the record"]
+try:
+    ho.main()
+    code = 0
+except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else 1
+sys.stdout.flush()
+print("rc %d" % code)
+HF2CLOSE
+}
+for hf2_case in before-ack after-ack; do
+  fixture "hf2close-$hf2_case" 200
+  hf2_close "hf2close-$hf2_case" "$hf2_case" >"$WORK/hf2close-$hf2_case.out" 2>&1
+  R="$STORE/spawn-records/hf2close-$hf2_case.jsonl"
+  need_eq "$(grep '^rc ' "$WORK/hf2close-$hf2_case.out") $(mk count "$R" run-close)" "rc 6 0" "the raced close holds and writes no run-close ($hf2_case, the premise)"
+  need_eq "$(grep -c -F '"what": "ack: read the relays on the record"' "$R")" "1" "the held close's ack is on the record ($hf2_case, the premise)"
+  run close --run "hf2close-$hf2_case" --items "fixture items" --meter-line "$METER"
+  need_rc 6
+  need_out "HOLD (decisions channel, exit 6)"
+  need_out "HF2-RELAY the close waits for the checklist"
+  need_eq "$(mk count "$R" run-close)" "0" "no run-close from the next close without an ack ($hf2_case)"
+  if [ "$hf2_case" = before-ack ]; then need_out "as the ack observation at "; fi
+  run close --run "hf2close-$hf2_case" --items "fixture items" --meter-line "$METER" --ack "read the relay: the close waits for the checklist"
+  need_rc 0
+  need_eq "$(mk count "$R" run-close)" "1" "a fresh ack lets the close through ($hf2_case)"
+done
+verdict "close (fails on old; the second review of 2026-10-11, finding F1, G1): after a close held by its final recheck, the owner's relay having raced its read and landed before its ack, the next close without an ack still holds on that relay (exit 6, the relay printed, no run-close), the ack covering only the record its call read, and a fresh ack then lets the close through; a relay after the ack holds the same way on both builds (the control)"
+
+# Finding F1, the gate's half: a gate has no final recheck, so an owner's relay landing while it
+# runs is the next call's to hold, yet the reference was the gate's own event, or its ack, both
+# written after that relay. The relay lands before the gate's ack, or after its decisions check and
+# before its event: the next gate without an ack holds on it (exit 6, the relay printed, nothing
+# written) and a fresh ack lets it through. The control: a gate with an ack that no relay raced
+# leaves the next gate clear.
+hf2_gate() { # $1 run, $2 where the relay lands (none, before-ack, after-check), $3 yes for --ack: one gate in process, `rc N` last
+  "$PY" - "$H" "$1" "$2" "$3" "$METER" <<'HF2GATE'
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+run, race, ack, meter = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+path = ho.record_path(run)
+
+
+def relay():
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"ts": ho.now(), "run": run, "event": "observation", "phase": "",
+                                 "what": "AUTHOR ruling: HF2-GATE-RELAY item two waits for the owner"}) + "\n")
+
+
+real_pending, real_hold = ho.decisions_pending, ho.decisions_hold
+
+
+def pending(*args, **kwargs):
+    if race == "before-ack":
+        relay()
+    return real_pending(*args, **kwargs)
+
+
+def hold(*args, **kwargs):
+    result = real_hold(*args, **kwargs)
+    if race == "after-check":
+        relay()
+    return result
+
+
+ho.decisions_pending, ho.decisions_hold = pending, hold
+sys.argv = ["handsoff.py", "gate", "--run", run, "--to", "item1", "--meter-line", meter]
+if ack == "yes":
+    sys.argv += ["--ack", "read the record before item one"]
+try:
+    ho.main()
+    code = 0
+except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else 1
+sys.stdout.flush()
+print("rc %d" % code)
+HF2GATE
+}
+for hf2_case in none:yes before-ack:yes after-check:no; do
+  hf2_race=${hf2_case%%:*}; hf2_ack=${hf2_case#*:}
+  fixture "hf2gate-$hf2_race" 200
+  mk transcript "sid-hf2gate-$hf2_race" 100000 >/dev/null
+  hf2_gate "hf2gate-$hf2_race" "$hf2_race" "$hf2_ack" >"$WORK/hf2gate-$hf2_race.out" 2>&1
+  R="$STORE/spawn-records/hf2gate-$hf2_race.jsonl"
+  need_eq "$(grep '^rc ' "$WORK/hf2gate-$hf2_race.out") $(mk count "$R" gate)" "rc 0 1" "the raced gate proceeds and records its gate ($hf2_race, the premise)"
+  HF2L=$(mk lines "$R")
+  run gate --run "hf2gate-$hf2_race" --to item2 --meter-line "$METER"
+  if [ "$hf2_race" = none ]; then
+    need_rc 0
+    need_absent "HOLD"
+    need_eq "$(mk count "$R" gate)" "2" "the next gate is recorded (the control)"
+  else
+    need_rc 6
+    need_out "HOLD (decisions channel, exit 6)"
+    need_out "HF2-GATE-RELAY item two waits for the owner"
+    need_out "as the gate at "
+    need_eq "$(mk lines "$R")" "$HF2L" "the held gate writes nothing ($hf2_race)"
+    run gate --run "hf2gate-$hf2_race" --to item2 --meter-line "$METER" --ack "read the relay: item two waits for the owner"
+    need_rc 0
+    need_eq "$(mk count "$R" gate)" "2" "a fresh ack lets the gate through ($hf2_race)"
+  fi
+done
+verdict "gate (fails on old; the second review of 2026-10-11, finding F1, the gate's half): an owner's relay landing while a gate runs, before its ack or after its decisions check and before its event, holds the next gate without an ack (exit 6, the relay printed, nothing written), the gate's event and its ack covering only the record its check read, and a fresh ack lets it through; a gate with an ack that no relay raced leaves the next gate clear (the control)"
+
+# Finding F2 (MEDIUM; D21 (c), made by the first fold): a replacement head start whose
+# verification ends past the deadline never certifies. Each case confirms a live head with one
+# silent helper; at the check's first re-read the record gains a replacement start naming another
+# live process, then the helper's attempt and its activity after that start, so the helper is
+# ready. In the late case the replacement's command probe times out at its bound, the deadline,
+# and returns 0.2 s past it (the margin set by judgement, so the leg rests on no sub-millisecond
+# timing). The controls: the timely case's probe is 0.5 s slow inside an 8 s deadline, and under
+# --wait 0 (a single read, no deadline) the head's own probe is 1 s slow.
+hf2_launch() { # $1 run, $2 case (late, timely, wait0), $3 the --wait: one launch-check --lanes T1 in process, `planted …` and `rc N` last
+  "$PY" - "$H" "$1" "$2" "$3" <<'HF2LAUNCH'
+import importlib.util, json, os, subprocess, sys, time
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+run, case, wait = sys.argv[2], sys.argv[3], sys.argv[4]
+path = ho.record_path(run)
+
+
+def sleeper():
+    return subprocess.Popen(["sleep", "60"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def stamp(ago=0.0):
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - ago))
+
+
+def add(ev):
+    ev.setdefault("ts", stamp())
+    ev["run"] = run
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(ev) + "\n")
+
+
+def helper(ago):
+    sid = "sid-%s-T1" % run
+    add({"event": "lane-open", "ts": stamp(ago), "lane": "T1", "class": "builder", "model": "opus",
+         "session_id": sid})
+    add({"event": "lane-spawned", "ts": stamp(ago), "lane": "T1", "session_id": sid,
+         "pid": lane.pid, "wrapper_pid": lane.pid})
+
+
+def activity():
+    folder = os.path.join(os.environ["AIMYTH_PROJECTS_DIR"], "lane-%s" % run)
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "sid-%s-T1.jsonl" % run), "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "assistant", "timestamp": stamp(),
+                                 "message": {"role": "assistant",
+                                             "content": [{"type": "text", "text": "working"}]}}) + "\n")
+
+
+head, other, lane = sleeper(), sleeper(), sleeper()
+state = {"lanes": False, "planted": False, "slow": 0}
+code = None
+try:
+    add({"event": "head-successor", "session_id": "sid-%s" % run, "pid": head.pid,
+         "model": "fixture-model", "effort": "max"})
+    helper(5)
+    if case == "wait0":
+        activity()   # a single read: the helper is ready before the check begins
+    real_read, real_lanes, real_row = ho.read_record, ho.launch_lanes, ho.ps_row
+
+    def lanes_entered(*args, **kwargs):
+        state["lanes"] = True
+        return real_lanes(*args, **kwargs)
+
+    def read(p, *args, **kwargs):
+        if case != "wait0" and state["lanes"] and not state["planted"] and p == path:
+            state["planted"] = True
+            add({"event": "head-resumed", "session_id": "sid-%s" % run, "pid": other.pid,
+                 "model": "fixture-model"})
+            helper(3)   # the helper's attempt after the replacement start: that start's batch
+            activity()
+        return real_read(p, *args, **kwargs)
+
+    def row(pid, *args, **kwargs):
+        bound = kwargs.get("timeout", args[0] if args else None)
+        if case == "late" and pid == other.pid:
+            state["slow"] += 1
+            time.sleep((bound or 0.0) + 0.2)   # timed out at its bound, the deadline, then torn down
+            return None
+        if (case == "timely" and pid == other.pid) or (case == "wait0" and pid == head.pid):
+            state["slow"] += 1
+            time.sleep(0.5 if case == "timely" else 1.0)
+        return real_row(pid, *args, **kwargs)
+
+    ho.read_record, ho.launch_lanes, ho.ps_row = read, lanes_entered, row
+    sys.argv = ["handsoff.py", "launch-check", "--run", run, "--lanes", "T1", "--wait", wait,
+                "--poll-s", "0.3", "--detach-safe"]
+    try:
+        ho.main()
+        code = 0
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+finally:
+    for proc in (head, other, lane):
+        proc.kill()
+        proc.wait()
+sys.stdout.flush()
+print("planted %s · slow probes %d" % (state["planted"], state["slow"]))
+print("rc %s" % code)
+HF2LAUNCH
+}
+for hf2_case in late:3 timely:8 wait0:0; do
+  hf2_tag=${hf2_case%%:*}; hf2_wait=${hf2_case#*:}
+  fixture "hf2launch-$hf2_tag" 200
+  hf2_launch "hf2launch-$hf2_tag" "$hf2_tag" "$hf2_wait" >"$WORK/hf2launch-$hf2_tag.out" 2>&1
+done
+O="$WORK/hf2launch-late.out"
+grep -q -F "planted True · slow probes 1" "$O" || why="$why; the replacement or its slow probe never came during the wait (late, the premise)"
+need_eq "$(grep '^rc ' "$O")" "rc 1" "exit (late)"
+grep -q -F "NOT CLEAN" "$O" || why="$why; no NOT CLEAN line (late)"
+grep -q -F "past the 3 s deadline" "$O" || why="$why; the replacement confirmed past the deadline is not named"
+if grep -q -F "STARTED CLEAN" "$O"; then why="$why; certified (late)"; fi
+O="$WORK/hf2launch-timely.out"
+grep -q -F "planted True · slow probes 1" "$O" || why="$why; the replacement or its slow probe never came during the wait (timely, the premise)"
+need_eq "$(grep '^rc ' "$O")" "rc 0" "exit (timely, a control)"
+grep -q -F "STARTED CLEAN" "$O" || why="$why; the timely replacement is not certified"
+grep -q -F "(a replacement start, its identity verified)" "$O" || why="$why; the timely certification does not name the replacement"
+grep -q -F "T1 progressing" "$O" || why="$why; the timely control does not read the helper's activity"
+O="$WORK/hf2launch-wait0.out"
+grep -q -F "planted False · slow probes 1" "$O" || why="$why; the head's slow probe never ran (wait0, the premise)"
+need_eq "$(grep '^rc ' "$O")" "rc 0" "exit (--wait 0, a control)"
+grep -q -F "STARTED CLEAN" "$O" || why="$why; the single read is not certified"
+grep -q -F "T1 progressing" "$O" || why="$why; the single read does not read the helper's activity"
+verdict "launch-check --lanes (fails on old; the second review of 2026-10-11, finding F2, D21 (c)): a replacement head start whose verification ends past the deadline is NOT CLEAN (exit 1, the late confirmation named) though its helper is ready; a replacement verified inside the deadline and a single read under --wait 0 with a slow probe still certify (the controls)"
+
+# Finding F3 (LOW; made by the first fold): a rewriting run-resume records the grants keys it
+# writes. Each case plants the run's lists (one read path, one write path) and the cap 4 through
+# the real grants verb, then runs one run-resume naming --viewer alone, so the cap and the limit
+# gate are carried from the file. In the raced case a real `grants --max-successors 9 --on-limit
+# resume` completes after the resume began and before it takes the record's lock: the file, the
+# run-resume event and stdout then agree on 9 and resume, with both lists kept. The control: the
+# same resume with no call between keeps 4 and stop everywhere.
+hf2_resume() { # $1 run, $2 race (none, cap): one rewriting run-resume (--viewer none) in process under the stub ps, `raced …` and `rc N` last
+  env PATH="$WORK/psnone:$PATH" "$PY" - "$H" "$1" "$2" <<'HF2RESUME'
+import importlib.util, subprocess, sys
+target, run, race = sys.argv[1], sys.argv[2], sys.argv[3]
+spec = importlib.util.spec_from_file_location("ho", target)
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+real_lock = ho.record_lock
+state = {"raced": "no"}
+
+
+def lock(path):
+    if race == "cap" and state["raced"] == "no":
+        # The other call takes and releases the record's lock itself, before this resume takes it.
+        done = subprocess.run([sys.executable, "-B", target, "grants", "--run", run,
+                               "--max-successors", "9", "--on-limit", "resume"],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        state["raced"] = "rc %d" % done.returncode
+    return real_lock(path)
+
+
+ho.record_lock = lock
+sys.argv = ["handsoff.py", "run-resume", "--run", run, "--session", "sid-%s" % run, "--head", "h",
+            "--detail", "the viewer alone", "--viewer", "none"]
+try:
+    ho.main()
+    code = 0
+except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else 1
+sys.stdout.flush()
+print("raced %s" % state["raced"])
+print("rc %d" % code)
+HF2RESUME
+}
+hf2_lists() { # $1 grants file, $2 record, $3 read-path tail, $4 write-path tail: the entries ending so in the file's lists and in the last run-resume's (-1: no such list)
+  "$PY" -c 'import json, sys
+grants = json.load(open(sys.argv[1], encoding="utf-8"))
+resume = {}
+for line in open(sys.argv[2], encoding="utf-8"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(e, dict) and e.get("event") == "run-resume":
+        resume = e
+
+
+def n(value, tail):
+    return sum(1 for p in value if isinstance(p, str) and p.endswith(tail)) if isinstance(value, list) else -1
+
+
+print("file %d %d event %d %d" % (n(grants.get("grants"), sys.argv[3]), n(grants.get("writes"), sys.argv[4]),
+                                  n(resume.get("grants"), sys.argv[3]), n(resume.get("writes"), sys.argv[4])))' "$1" "$2" "$3" "$4"
+}
+hf2_order() { # $1 record: where the last grants event stands against the last run-resume, and its cap
+  "$PY" -c 'import json, sys
+events = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        events.append(json.loads(line))
+    except ValueError:
+        continue
+last = {}
+for i, e in enumerate(events):
+    if isinstance(e, dict):
+        last[e.get("event")] = (i, e)
+g, r = last.get("grants"), last.get("run-resume")
+if g is None or r is None:
+    print("<no grants or no run-resume>")
+else:
+    print("grants %s %s run-resume" % (g[1].get("max_successors"), "before" if g[0] < r[0] else "after"))' "$1"
+}
+for hf2_case in none cap; do
+  fixture "hf2res-$hf2_case" 200
+  R="$STORE/spawn-records/hf2res-$hf2_case.jsonl"
+  GF2="$REALSTORE/spawn-records/hf2res-$hf2_case-grants.json"
+  RUNENV="PATH=$WORK/psnone:$PATH"
+  run grants --run "hf2res-$hf2_case" --grant "$WORK/real-grant/hf2res-$hf2_case-read" --write "$WORK/real-grant/hf2res-$hf2_case-write" --max-successors 4
+  need_rc 0
+  need_eq "$(mk json "$GF2" max_successors) $(mk json "$GF2" on_limit)" "4 stop" "the file before the resume ($hf2_case, the premise)"
+  HF2B=$(hf2_lists "$GF2" "$R" "/real-grant/hf2res-$hf2_case-read" "/real-grant/hf2res-$hf2_case-write")
+  HF2F=${HF2B% event *}; HF2C=${HF2F#file }
+  case " $HF2C " in *" 0 "*|*" -1 "*) why="$why; the planted lists are not in the file before the resume ($hf2_case, the premise): $HF2B" ;; esac
+  hf2_resume "hf2res-$hf2_case" "$hf2_case" >"$WORK/hf2res-$hf2_case.out" 2>&1
+  O="$WORK/hf2res-$hf2_case.out"
+  if [ "$hf2_case" = cap ]; then HF2CAP=9; HF2LIM=resume; HF2RACED="raced rc 0"; else HF2CAP=4; HF2LIM=stop; HF2RACED="raced no"; fi
+  need_eq "$(grep '^raced ' "$O") $(grep '^rc ' "$O")" "$HF2RACED rc 0" "the resume, and the call before its lock ($hf2_case)"
+  need_eq "$(mk json "$GF2" max_successors) $(mk json "$GF2" on_limit) $(mk json "$GF2" viewer)" "$HF2CAP $HF2LIM none" "the file ($hf2_case)"
+  need_eq "$(mk field "$R" run-resume max_successors) $(mk field "$R" run-resume on_limit) $(mk field "$R" run-resume viewer)" "$HF2CAP $HF2LIM none" "the run-resume event ($hf2_case)"
+  need_eq "$(mk field "$R" run-resume max_successors_src) $(mk field "$R" run-resume on_limit_src)" "grants grants" "the event's sources ($hf2_case)"
+  need_eq "$(grep -c -F "on_limit $HF2LIM · viewer none" "$O") $(grep -c -F "max_successors $HF2CAP (grants)" "$O")" "1 1" "stdout ($hf2_case)"
+  need_eq "$(hf2_lists "$GF2" "$R" "/real-grant/hf2res-$hf2_case-read" "/real-grant/hf2res-$hf2_case-write")" "$HF2F event $HF2C" "both lists kept, in the file and on the event ($hf2_case)"
+done
+need_eq "$(hf2_order "$STORE/spawn-records/hf2res-cap.jsonl")" "grants 9 before run-resume" "the raced cap was recorded before the resume (the premise)"
+need_eq "$(hf2_order "$STORE/spawn-records/hf2res-none.jsonl")" "grants 4 before run-resume" "the control's one grants call"
+verdict "run-resume (fails on old; the second review of 2026-10-11, finding F3): a rewriting resume takes every grants key it records from the one plan it writes under the record's lock, so a grants call raising the cap to 9 and setting on_limit resume between the resume's start and its lock leaves the file, the run-resume event and stdout agreeing on 9 and resume, both lists kept; a resume no call raced keeps 4 and stop everywhere (the control)"
+# HF2-END
+
+# ---------------- the fold of the third review of the held build (2026-10-11) ----------------
+# HF3-BEGIN. Like the blocks above, these legs need only the plumbing above the run-open legs, so a
+# run against an older handsoff.py can take them alone (the fail-on-old run); they define their
+# own helpers. One leg for the coverage rule that replaced the stopped design (N1) and one for the
+# launch check's deadline (N2); each fails against the build before this fold, while the controls
+# inside each (a valid coverage, a coverage short of the relay, records written before the field,
+# two overlapping calls, a timely re-read, a timely probe and a single read under --wait 0) hold
+# on both.
+
+# Finding N1 (HIGH; the decisions channel, its coverage rule replaced): a gate event's or an ack's
+# decisions_seen covers the record only when it is a whole number from 0 to the count of the
+# events before it; any other present value covers nothing, so the relay it would have hidden
+# holds the gate and the close and stays on the pending list alike, until a fresh, valid ack.
+# Each case plants an AUTHOR relay behind the run-open, then one or two gate events or acks
+# carrying the case's value (the critic's example: an ack carrying the string "1"). The controls
+# keep their present reading on both builds: a valid value that covers the relay (nothing
+# pending) or falls short of it (pending), events written before the field (read by their place),
+# and two overlapping calls, the furthest valid coverage winning over a slower call's shorter one.
+hf3_plant() { # $1 record, $2 run, $3 case: the relay and the case's gate events or acks, appended
+  "$PY" - "$1" "$2" "$3" <<'HF3PLANT'
+import json, sys, time
+path, run, case = sys.argv[1], sys.argv[2], sys.argv[3]
+# Per case, after the relay (index 1, behind the run-open): each event's kind and its
+# decisions_seen as JSON text, None for no field. The first planted event sits at index 2.
+CASES = {
+    "str1": [("ack", '"1"')], "str2": [("ack", '"2"')], "true": [("ack", "true")],
+    "null": [("ack", "null")], "neg": [("ack", "-1")], "big": [("ack", "99")],
+    "past": [("ack", "3")], "float": [("ack", "2.0")], "gatestr": [("gate", '"2"')],
+    "overmal": [("ack", '"2"'), ("ack", "1")],
+    "valid": [("ack", "2")], "short": [("ack", "1")], "legacy": [("ack", None)],
+    "gatevalid": [("gate", "2")], "gatelegacy": [("gate", None)],
+    "overlap": [("ack", "2"), ("ack", "1")],
+}
+
+
+def add(ev):
+    ev.update(ts=time.strftime("%Y-%m-%dT%H:%M:%S%z"), run=run)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(ev) + "\n")
+
+
+add({"event": "observation", "phase": "",
+     "what": "AUTHOR ruling: HF3-RELAY the next item waits for the owner's list"})
+for kind, value in CASES[case]:
+    if kind == "ack":
+        ev = {"event": "observation", "phase": "", "what": "ack: read the record"}
+    else:
+        ev = {"event": "gate", "item": "item1", "context": 100000, "percent": 10, "band": 0,
+              "armed": False, "decision": "allow", "metered": True}
+    if value is not None:
+        ev["decisions_seen"] = json.loads(value)
+    add(ev)
+HF3PLANT
+}
+hf3_pending() { # $1 records directory, $2 the cases (one string): `<case>:<pending count>` per case's gate record, from decisions_pending in process (it reads, never writes)
+  "$PY" - "$H" "$1" "$2" <<'HF3PENDING'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+found = []
+for case in sys.argv[3].split():
+    events, _ = ho.read_record(os.path.join(sys.argv[2], "hf3g-%s.jsonl" % case))
+    found.append("%s:%d" % (case, len(ho.decisions_pending(events, None)[0])))
+print(" ".join(found))
+HF3PENDING
+}
+HF3_CASES="str1 str2 true null neg big past float gatestr overmal valid short legacy gatevalid gatelegacy overlap"
+HF3_HELD="str1 str2 true null neg big past float gatestr overmal short"
+for hf3_c in $HF3_CASES; do
+  fixture "hf3g-$hf3_c" 200
+  hf3_plant "$REC" "hf3g-$hf3_c" "$hf3_c"
+  fixture "hf3c-$hf3_c" 200
+  hf3_plant "$REC" "hf3c-$hf3_c" "$hf3_c"
+done
+need_eq "$(hf3_pending "$STORE/spawn-records" "$HF3_CASES")" "str1:1 str2:1 true:1 null:1 neg:1 big:1 past:1 float:1 gatestr:1 overmal:1 valid:0 short:1 legacy:0 gatevalid:0 gatelegacy:0 overlap:0" "the pending list (decisions_pending), case by case"
+for hf3_c in $HF3_CASES; do
+  case " $HF3_HELD " in *" $hf3_c "*) hf3_rc=6 ;; *) hf3_rc=0 ;; esac
+  R="$STORE/spawn-records/hf3g-$hf3_c.jsonl"
+  HF3L=$(mk lines "$R")
+  run gate --run "hf3g-$hf3_c" --to item2 --meter-line "$METER"
+  [ "$RC" = "$hf3_rc" ] || why="$why; gate exit $RC, wanted $hf3_rc ($hf3_c)"
+  if [ "$hf3_rc" = 6 ]; then
+    grep -q -F "HF3-RELAY the next item waits" "$WORK/both" || why="$why; the held gate does not print the relay ($hf3_c)"
+    need_eq "$(mk lines "$R")" "$HF3L" "the held gate writes nothing ($hf3_c)"
+  else
+    need_eq "$(mk field "$R" gate item)" "item2" "the gate is recorded ($hf3_c)"
+  fi
+  if [ "$hf3_c" = str1 ]; then
+    grep -q -F 'carries decisions_seen "1", not a whole number from 0 to 2 (the events before it) and so covers nothing' "$WORK/both" || why="$why; the held gate does not name the refused value (str1)"
+  fi
+  R="$STORE/spawn-records/hf3c-$hf3_c.jsonl"
+  run close --run "hf3c-$hf3_c" --items "fixture items" --meter-line "$METER"
+  [ "$RC" = "$hf3_rc" ] || why="$why; close exit $RC, wanted $hf3_rc ($hf3_c)"
+  if [ "$hf3_rc" = 6 ]; then hf3_n=0; else hf3_n=1; fi
+  need_eq "$(mk count "$R" run-close)" "$hf3_n" "the close's run-close ($hf3_c)"
+done
+# A fresh, valid ack covers what the malformed one could not: that gate, the next gate with no
+# ack, and the close.
+run gate --run hf3g-str1 --to item2 --meter-line "$METER" --ack "read the relay: the next item waits for the owner's list"
+need_rc 0
+run gate --run hf3g-str1 --to item3 --meter-line "$METER"
+need_rc 0
+need_eq "$(mk field "$STORE/spawn-records/hf3g-str1.jsonl" gate item)" "item3" "the fresh ack lets the next gate through with no ack (str1)"
+run close --run hf3c-str1 --items "fixture items" --meter-line "$METER" --ack "read the relay: the next item waits for the owner's list"
+need_rc 0
+need_eq "$(mk count "$STORE/spawn-records/hf3c-str1.jsonl" run-close)" "1" "a fresh ack lets the close through (str1)"
+verdict "decisions coverage (fails on old; the third review of 2026-10-11, finding N1, the stopped part replaced by fail-closed coverage): a gate event or ack whose decisions_seen is a string, a boolean, null, a negative number, a number above the count of the events before it or a float covers nothing, so the AUTHOR relay it stood behind holds the gate and the close (exit 6, nothing written) and stays on the pending list until a fresh, valid ack lets both through; a valid value, records written before the field and two overlapping calls, the furthest valid coverage winning, keep their present reading (the controls)"
+
+# Finding N2 (MEDIUM; D21 (c), older than the build): every path that certifies a start reads the
+# clock after its last read or probe, so a first batch first seen ready past the deadline is NOT
+# CLEAN. Each case confirms a live head with one helper whose process is alive. In the late
+# re-read the helper is silent until the check's first re-read inside the first batch's wait,
+# which returns past the 2 s deadline carrying the helper's first activity; in the late probe the
+# activity is there from the start, but the helper's activity probe returns past that deadline.
+# Both land 0.5 s past it (set by judgement, unmeasured: the leg rests on no sub-second timing).
+# The controls: the same re-read and probe 0.5 s slow inside an 8 s deadline, and under --wait 0
+# (a single read, no deadline) a probe 1 s slow, each still STARTED CLEAN.
+hf3_launch() { # $1 run, $2 case (reread-late, probe-late, reread-timely, probe-timely, wait0), $3 the --wait: one launch-check --lanes T1 in process, `slowed N` and `rc N` last
+  "$PY" - "$H" "$1" "$2" "$3" <<'HF3LAUNCH'
+import importlib.util, json, os, subprocess, sys, time
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+run, case, wait_text = sys.argv[2], sys.argv[3], sys.argv[4]
+wait = float(wait_text)
+path = ho.record_path(run)
+LATE_S, TIMELY_S, WAIT0_S = 0.5, 0.5, 1.0   # set by judgement, unmeasured (see the leg's comment)
+
+
+def sleeper():
+    return subprocess.Popen(["sleep", "60"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def stamp(ago=0.0):
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - ago))
+
+
+def add(ev):
+    ev.setdefault("ts", stamp())
+    ev["run"] = run
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(ev) + "\n")
+
+
+def activity():
+    folder = os.path.join(os.environ["AIMYTH_PROJECTS_DIR"], "lane-%s" % run)
+    os.makedirs(folder, exist_ok=True)
+    with open(os.path.join(folder, "sid-%s-T1.jsonl" % run), "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "assistant", "timestamp": stamp(),
+                                 "message": {"role": "assistant",
+                                             "content": [{"type": "text", "text": "working"}]}}) + "\n")
+
+
+head, lane = sleeper(), sleeper()
+state = {"t_lanes": None, "slowed": 0}
+code = None
+try:
+    add({"event": "head-successor", "session_id": "sid-%s" % run, "pid": head.pid,
+         "model": "fixture-model", "effort": "max"})
+    sid = "sid-%s-T1" % run
+    add({"event": "lane-open", "ts": stamp(5), "lane": "T1", "class": "builder", "model": "opus",
+         "session_id": sid})
+    add({"event": "lane-spawned", "ts": stamp(5), "lane": "T1", "session_id": sid,
+         "pid": lane.pid, "wrapper_pid": lane.pid})
+    if not case.startswith("reread"):
+        activity()   # ready before the check begins: only the probe's own time decides
+    real_read, real_lanes, real_probe = ho.read_record, ho.launch_lanes, ho.lane_activity_stamp
+
+    def until(offset):   # sleep until `offset` seconds after the first batch's wait began
+        time.sleep(max(0.0, state["t_lanes"] + offset - time.monotonic()))
+
+    def lanes_entered(*args, **kwargs):
+        state["t_lanes"] = time.monotonic()
+        return real_lanes(*args, **kwargs)
+
+    def read(p, *args, **kwargs):
+        if case.startswith("reread") and state["t_lanes"] is not None and not state["slowed"] \
+                and p == path:
+            state["slowed"] += 1
+            until(wait + LATE_S if case == "reread-late" else TIMELY_S)
+            activity()   # the helper's first activity, first seen by this re-read
+        return real_read(p, *args, **kwargs)
+
+    def probe(*args, **kwargs):
+        if not case.startswith("reread") and state["t_lanes"] is not None and not state["slowed"]:
+            state["slowed"] += 1
+            until(wait + LATE_S if case == "probe-late" else WAIT0_S if case == "wait0"
+                  else TIMELY_S)
+        return real_probe(*args, **kwargs)
+
+    ho.read_record, ho.launch_lanes, ho.lane_activity_stamp = read, lanes_entered, probe
+    sys.argv = ["handsoff.py", "launch-check", "--run", run, "--lanes", "T1", "--wait", wait_text,
+                "--poll-s", "0.3", "--detach-safe"]
+    try:
+        ho.main()
+        code = 0
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+finally:
+    for proc in (head, lane):
+        proc.kill()
+        proc.wait()
+sys.stdout.flush()
+print("slowed %d" % state["slowed"])
+print("rc %s" % code)
+HF3LAUNCH
+}
+for hf3_case in reread-late:2 probe-late:2 reread-timely:8 probe-timely:8 wait0:0; do
+  hf3_tag=${hf3_case%%:*}; hf3_wait=${hf3_case#*:}
+  fixture "hf3launch-$hf3_tag" 200
+  hf3_launch "hf3launch-$hf3_tag" "$hf3_tag" "$hf3_wait" >"$WORK/hf3launch-$hf3_tag.out" 2>&1
+done
+for hf3_tag in reread-late probe-late; do
+  O="$WORK/hf3launch-$hf3_tag.out"
+  grep -q -F "slowed 1" "$O" || why="$why; the late re-read or probe never came during the wait ($hf3_tag, the premise)"
+  grep -q -F "T1 progressing" "$O" || why="$why; the helper's late readiness was never read ($hf3_tag, the premise)"
+  need_eq "$(grep '^rc ' "$O")" "rc 1" "exit ($hf3_tag)"
+  grep -q -F "NOT CLEAN" "$O" || why="$why; no NOT CLEAN line ($hf3_tag)"
+  grep -q -F "past the 2 s deadline" "$O" || why="$why; the late first batch is not named ($hf3_tag)"
+  if grep -q -F "STARTED CLEAN" "$O"; then why="$why; certified ($hf3_tag)"; fi
+done
+for hf3_tag in reread-timely probe-timely wait0; do
+  O="$WORK/hf3launch-$hf3_tag.out"
+  grep -q -F "slowed 1" "$O" || why="$why; the slow re-read or probe never came ($hf3_tag, the premise)"
+  need_eq "$(grep '^rc ' "$O")" "rc 0" "exit ($hf3_tag, a control)"
+  grep -q -F "STARTED CLEAN" "$O" || why="$why; the control $hf3_tag is not certified"
+  grep -q -F "T1 progressing" "$O" || why="$why; the control $hf3_tag does not read the helper's activity"
+done
+verdict "launch-check --lanes (fails on old; the third review of 2026-10-11, finding N2, D21 (c)): a first batch first seen ready past the deadline, through a re-read or a helper probe that returns late, is NOT CLEAN (exit 1, the late batch named), every certification reading the clock after its last read or probe; the same re-read or probe inside the deadline and a single read under --wait 0 with a slow probe still certify (the controls)"
+# HF3-END
+
+
+# HF4-BEGIN
+# Finding R1: every new acknowledgement-shaped observation carries the size of the snapshot
+# its writer read, including the two ledger forms. The relay is appended after that first
+# read returns its snapshot and before the ledger sees the return, so the interleaving is
+# deterministic. The absent-record case instead relays immediately before the ledger append:
+# the ledger checked an empty snapshot and cannot cover the new relay. One leg includes the
+# ordinary, already-read, legacy, plain-record and dry-run controls.
+hf4_ledger() { # $1 run, $2 observation|row, $3 after|before|none|creation, $4 ack|ordinary
+  "$PY" - "$H" "$1" "$2" "$3" "$4" <<'HF4LEDGER'
+import importlib.util, json, os, sys
+
+
+def failed(reason):
+    print("PROBE FAILED: " + reason, file=sys.stderr)
+    raise SystemExit(2)
+
+
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+run, form, timing, kind = sys.argv[2:]
+if form not in ("observation", "row") or timing not in ("after", "before", "none", "creation") \
+        or kind not in ("ack", "ordinary"):
+    failed("the ledger fixture has an unknown form, timing or kind")
+path = ho.record_path(run)
+relay_text = "AUTHOR ruling: HF4-RELAY the next item waits for review"
+text = "ack: read the current record" if kind == "ack" else "ordinary finding mentioning ack: later"
+
+
+def rows():
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as handle:
+            result = [json.loads(line) for line in handle if line.strip()]
+    except (OSError, ValueError) as exc:
+        failed("cannot read the ledger fixture: %s" % exc)
+    if any(not isinstance(row, dict) for row in result):
+        failed("the ledger fixture contains a non-object record")
+    return result
+
+
+initial = rows()
+if timing in ("none", "creation"):
+    if os.path.exists(path) or form != "observation":
+        failed("the new-record control needs an absent observation record")
+elif not initial:
+    failed("the existing-record control has no record events")
+if any(row.get("what") == relay_text or row.get("what") == text for row in initial):
+    failed("the ledger fixture already contains this leg's relay or entry")
+state = {"reads": 0, "relays": 0, "appends": 0, "snapshot": None}
+
+
+def relay():
+    if state["relays"]:
+        failed("the relay would be planted more than once")
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"ts": ho.now(), "run": run, "event": "observation",
+                                 "phase": "", "what": relay_text}) + "\n")
+    state["relays"] += 1
+
+
+if timing == "before":
+    relay()
+checked = rows()
+real_read, real_append = ho.read_record, ho.append_record
+
+
+def read(target, *args, **kwargs):
+    result = real_read(target, *args, **kwargs)
+    if os.path.realpath(target) == os.path.realpath(path):
+        state["reads"] += 1
+        if state["snapshot"] is None:
+            if result[1] or result[0] != checked:
+                failed("the first read did not return the planted snapshot")
+            state["snapshot"] = len(result[0])
+            if timing == "after":
+                relay()
+    return result
+
+
+def append(target, payload):
+    if os.path.realpath(target) == os.path.realpath(path) and payload.get("what") == text:
+        state["appends"] += 1
+        if timing == "creation":
+            if state["reads"] or os.path.exists(path):
+                failed("the creation race did not reach the first append on an absent record")
+            relay()
+    return real_append(target, payload)
+
+
+ho.read_record, ho.append_record = read, append
+sys.argv = ["handsoff.py", "ledger", "--run", run]
+if form == "observation":
+    sys.argv += ["--observation", text]
+else:
+    sys.argv += ["--phase", "review", "--what", text, "--evidence", "fixture", "--routing", "review"]
+try:
+    ho.main()
+    code = 0
+except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else 1
+ho.read_record, ho.append_record = real_read, real_append
+if timing in ("before", "after") and state["snapshot"] is None:
+    failed("the existing ledger call never reached the record read")
+if timing in ("before", "after", "creation") and state["relays"] != 1:
+    failed("the planted relay did not land exactly once")
+if state["appends"] != 1:
+    failed("the ledger call did not reach its single observation append")
+events = rows()
+entries = [row for row in events if row.get("event") == "observation" and row.get("what") == text]
+if len(entries) != 1:
+    failed("the record does not contain the single ledger entry")
+if timing == "after" and events[len(checked)].get("what") != relay_text:
+    failed("the relay did not occupy the first place after the snapshot")
+if timing in ("after", "creation") and events[-1].get("what") != text:
+    failed("the raced ledger entry did not land after the relay")
+entry = entries[0]
+covered = json.dumps(entry["decisions_seen"]) if "decisions_seen" in entry else "absent"
+print("rc %d" % code)
+print("snapshot %d" % (state["snapshot"] if state["snapshot"] is not None else 0))
+print("coverage " + covered)
+print("pending %d" % len(ho.decisions_pending(events, None)[0]))
+print("relays %d" % state["relays"])
+print("reads %d" % state["reads"])
+HF4LEDGER
+}
+hf4_pending() { # $1 run: pending AUTHOR count; read-only, malformed input is a failed premise
+  "$PY" - "$H" "$1" <<'HF4PENDING'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+events, bad = ho.read_record(ho.record_path(sys.argv[2]))
+if bad:
+    print("PROBE FAILED: the pending probe read a malformed fixture", file=sys.stderr)
+    raise SystemExit(2)
+print(len(ho.decisions_pending(events, None)[0]))
+HF4PENDING
+}
+
+for hf4_form in observation row; do
+  hf4_run="hf4-ledger-$hf4_form"
+  fixture "$hf4_run" 200
+  mk transcript "sid-$hf4_run" 100000 >/dev/null || die "cannot make the ledger race's head transcript"
+  HF4_SEEN=$(mk lines "$REC")
+  HF4_ROWS=$(mk rows "$HO" "Findings ledger")
+  HF4_BEFORE=$(sha_file "$REC")
+  hf4_ledger "$hf4_run" "$hf4_form" after ack >"$WORK/hf4-ledger.out" 2>&1 \
+      || die "the ledger race failed: $(cat "$WORK/hf4-ledger.out")"
+  need_eq "$(grep '^rc ' "$WORK/hf4-ledger.out")" "rc 0" "the raced ledger succeeds ($hf4_form)"
+  need_eq "$(grep '^snapshot ' "$WORK/hf4-ledger.out")" "snapshot $HF4_SEEN" "the first read's snapshot ($hf4_form)"
+  need_eq "$(grep '^coverage ' "$WORK/hf4-ledger.out")" "coverage $HF4_SEEN" "explicit coverage stops before the relay ($hf4_form)"
+  need_eq "$(grep '^pending ' "$WORK/hf4-ledger.out")" "pending 1" "the pending list keeps the raced relay ($hf4_form)"
+  need_eq "$(grep '^relays ' "$WORK/hf4-ledger.out")" "relays 1" "the race's positive control ($hf4_form)"
+  need_eq "$(mk lines "$REC")" "$((HF4_SEEN + 2))" "one relay and one ledger observation were appended ($hf4_form)"
+  [ "$(sha_file "$REC")" != "$HF4_BEFORE" ] || why="$why; the checksum missed the planted record writes ($hf4_form)"
+  if [ "$hf4_form" = row ]; then HF4_ROWS=$((HF4_ROWS + 1)); fi
+  need_eq "$(mk rows "$HO" "Findings ledger")" "$HF4_ROWS" "the row form alone adds a ledger row ($hf4_form)"
+  HF4_HELD_SUM="$(sha_file "$REC") $(sha_file "$HO")"
+  # The second pass proves the first held call cannot itself clear or consume the relay.
+  for hf4_again in first second; do
+    run gate --run "$hf4_run" --to item2 --meter-line "$METER"
+    need_rc 6
+    need_out "HF4-RELAY the next item waits for review"
+    need_eq "$(sha_file "$REC") $(sha_file "$HO")" "$HF4_HELD_SUM" "held gate changes no record or hand-off bytes ($hf4_form, $hf4_again)"
+    run close --run "$hf4_run" --items "fixture items" --meter-line "$METER"
+    need_rc 6
+    need_out "HF4-RELAY the next item waits for review"
+    need_eq "$(sha_file "$REC") $(sha_file "$HO")" "$HF4_HELD_SUM" "held close changes no record or hand-off bytes ($hf4_form, $hf4_again)"
+  done
+  HF4_ACK_SEEN=$(mk lines "$REC")
+  run gate --run "$hf4_run" --to item2 --meter-line "$METER" --ack "read the relay: the next item waits for review"
+  need_rc 0
+  need_eq "$(mk field "$REC" observation decisions_seen)" "$HF4_ACK_SEEN" "the valid ack covers its own checked snapshot ($hf4_form)"
+  HF4_PENDING=$(hf4_pending "$hf4_run") || die "cannot read the pending count after the fresh ack"
+  need_eq "$HF4_PENDING" "0" "the fresh ack clears the planted relay ($hf4_form)"
+  run gate --run "$hf4_run" --to item3 --meter-line "$METER"
+  need_rc 0
+  run close --run "$hf4_run" --items "fixture items" --meter-line "$METER"
+  need_rc 0
+  need_eq "$(mk count "$REC" run-close)" "1" "a valid acknowledgement lets the close through ($hf4_form)"
+done
+
+# Controls for both forms: a relay already inside the read snapshot remains covered, while an
+# ordinary entry mentioning ack: away from its start leaves that same relay pending.
+for hf4_form in observation row; do
+  for hf4_kind in ack ordinary; do
+    hf4_run="hf4-ledger-before-$hf4_form-$hf4_kind"
+    fixture "$hf4_run" 200
+    mk transcript "sid-$hf4_run" 100000 >/dev/null || die "cannot make the ledger control's head transcript"
+    HF4_SEEN=$(mk lines "$REC"); HF4_SEEN=$((HF4_SEEN + 1))
+    hf4_ledger "$hf4_run" "$hf4_form" before "$hf4_kind" >"$WORK/hf4-ledger-before.out" 2>&1 \
+        || die "the ledger control failed: $(cat "$WORK/hf4-ledger-before.out")"
+    need_eq "$(grep '^rc ' "$WORK/hf4-ledger-before.out")" "rc 0" "the ledger control succeeds ($hf4_form, $hf4_kind)"
+    need_eq "$(grep '^snapshot ' "$WORK/hf4-ledger-before.out")" "snapshot $HF4_SEEN" "the relay precedes the snapshot ($hf4_form, $hf4_kind)"
+    need_eq "$(grep '^relays ' "$WORK/hf4-ledger-before.out")" "relays 1" "the control's AUTHOR relay exists ($hf4_form, $hf4_kind)"
+    if [ "$hf4_kind" = ack ]; then
+      need_eq "$(grep '^coverage ' "$WORK/hf4-ledger-before.out")" "coverage $HF4_SEEN" "an already-read ledger ack still carries explicit coverage ($hf4_form)"
+      need_eq "$(grep '^pending ' "$WORK/hf4-ledger-before.out")" "pending 0" "the already-read relay is covered ($hf4_form)"
+      run gate --run "$hf4_run" --to item2 --meter-line "$METER"
+      need_rc 0
+      run close --run "$hf4_run" --items "fixture items" --meter-line "$METER"
+      need_rc 0
+    else
+      need_eq "$(grep '^coverage ' "$WORK/hf4-ledger-before.out")" "coverage absent" "an ordinary ledger entry keeps its fields ($hf4_form)"
+      need_eq "$(grep '^pending ' "$WORK/hf4-ledger-before.out")" "pending 1" "ordinary prose does not acknowledge the relay ($hf4_form)"
+      HF4_HELD_SUM="$(sha_file "$REC") $(sha_file "$HO")"
+      run gate --run "$hf4_run" --to item2 --meter-line "$METER"
+      need_rc 6
+      run close --run "$hf4_run" --items "fixture items" --meter-line "$METER"
+      need_rc 6
+      need_eq "$(sha_file "$REC") $(sha_file "$HO")" "$HF4_HELD_SUM" "the ordinary entry leaves both holds write-free ($hf4_form)"
+    fi
+  done
+done
+
+# No record was read on either creation path, so both new acks have coverage 0; a relay that
+# created the file immediately before the ledger's append remains pending on the raced path.
+for hf4_timing in none creation; do
+  hf4_run="hf4-ledger-new-$hf4_timing"
+  REC="$STORE/spawn-records/$hf4_run.jsonl"
+  [ ! -e "$REC" ] || die "the new ledger fixture already exists"
+  hf4_ledger "$hf4_run" observation "$hf4_timing" ack >"$WORK/hf4-ledger-new.out" 2>&1 \
+      || die "the new-record ledger control failed: $(cat "$WORK/hf4-ledger-new.out")"
+  need_eq "$(grep '^rc ' "$WORK/hf4-ledger-new.out")" "rc 0" "the new ledger record is created ($hf4_timing)"
+  need_eq "$(grep '^snapshot ' "$WORK/hf4-ledger-new.out")" "snapshot 0" "the creation snapshot is empty ($hf4_timing)"
+  need_eq "$(grep '^reads ' "$WORK/hf4-ledger-new.out")" "reads 0" "no record read preceded creation ($hf4_timing)"
+  need_eq "$(grep '^coverage ' "$WORK/hf4-ledger-new.out")" "coverage 0" "new-record acknowledgements never receive legacy coverage ($hf4_timing)"
+  if [ "$hf4_timing" = creation ]; then
+    need_eq "$(grep '^pending ' "$WORK/hf4-ledger-new.out")" "pending 1" "the creation race keeps its relay pending"
+    HF4_HELD_SUM=$(sha_file "$REC")
+    run close --run "$hf4_run" --items "fixture items"
+    need_rc 6
+    need_out "HF4-RELAY the next item waits for review"
+    need_eq "$(sha_file "$REC")" "$HF4_HELD_SUM" "the creation race holds a plain close without writing"
+    run close --run "$hf4_run" --items "fixture items" --ack "read the relay: the next item waits for review"
+    need_rc 0
+  else
+    need_eq "$(grep '^pending ' "$WORK/hf4-ledger-new.out")" "pending 0" "the empty creation control has no relay"
+    run close --run "$hf4_run" --items "fixture items"
+    need_rc 0
+  fi
+done
+
+plain_fixture hf4-ledger-plain
+HF4_SEEN=$(mk lines "$REC")
+hf4_ledger hf4-ledger-plain observation after ack >"$WORK/hf4-ledger-plain.out" 2>&1 \
+    || die "the plain-record ledger race failed: $(cat "$WORK/hf4-ledger-plain.out")"
+need_eq "$(grep '^snapshot ' "$WORK/hf4-ledger-plain.out")" "snapshot $HF4_SEEN" "the plain record has its own checked snapshot"
+need_eq "$(grep '^coverage ' "$WORK/hf4-ledger-plain.out")" "coverage $HF4_SEEN" "the plain-record ack carries explicit coverage"
+need_eq "$(grep '^pending ' "$WORK/hf4-ledger-plain.out")" "pending 1" "the plain-record relay stays pending"
+HF4_HELD_SUM=$(sha_file "$REC")
+run close --run hf4-ledger-plain --items "fixture items"
+need_rc 6
+need_eq "$(sha_file "$REC")" "$HF4_HELD_SUM" "the plain record's held close writes nothing"
+run close --run hf4-ledger-plain --items "fixture items" --ack "read the relay: the next item waits for review"
+need_rc 0
+
+# Historical records with absent coverage remain historical: the fixture supplies its old ack
+# directly, rather than asking a current writer to fabricate one without the new field.
+fixture hf4-ledger-legacy 200
+mk transcript sid-hf4-ledger-legacy 100000 >/dev/null || die "cannot make the legacy control's head transcript"
+mk append "$REC" '{"event":"observation","what":"AUTHOR ruling: HF4-LEGACY relay"}' >/dev/null \
+    || die "cannot plant the legacy relay"
+mk append "$REC" '{"event":"observation","what":"ack: historical acknowledgement"}' >/dev/null \
+    || die "cannot plant the historical acknowledgement"
+need_eq "$(mk field "$REC" observation decisions_seen)" "<no key decisions_seen>" "the historical ack has genuinely absent coverage"
+HF4_PENDING=$(hf4_pending hf4-ledger-legacy) || die "cannot read the legacy pending count"
+need_eq "$HF4_PENDING" "0" "the legacy reader still covers the historical relay"
+run gate --run hf4-ledger-legacy --to item2 --meter-line "$METER"
+need_rc 0
+run close --run hf4-ledger-legacy --items "fixture items" --meter-line "$METER"
+need_rc 0
+
+# Dry runs preserve both record and hand-off checksums. The observation form also prints its
+# coverage, including the absent-record snapshot; the row form prints only its proposed row.
+fixture hf4-ledger-dry 200
+mk append "$REC" '{"event":"observation","what":"AUTHOR ruling: HF4-DRY relay"}' >/dev/null \
+    || die "cannot plant the dry-run relay"
+HF4_SEEN=$(mk lines "$REC")
+HF4_DRY_SUM="$(sha_file "$REC") $(sha_file "$HO")"
+run ledger --run hf4-ledger-dry --observation "ack: dry read of the record" --dry-run
+need_rc 0
+need_out "\"decisions_seen\": $HF4_SEEN"
+need_eq "$(sha_file "$REC") $(sha_file "$HO")" "$HF4_DRY_SUM" "the dry observation changes no bytes"
+run ledger --run hf4-ledger-dry --phase review --what "ack: dry read of the record" --evidence fixture --routing review --dry-run
+need_rc 0
+need_eq "$(sha_file "$REC") $(sha_file "$HO")" "$HF4_DRY_SUM" "the dry row changes no bytes"
+HF4_PENDING=$(hf4_pending hf4-ledger-dry) || die "cannot read the dry-run pending count"
+need_eq "$HF4_PENDING" "1" "dry-run acknowledgements never clear the positive-control relay"
+need_nofile "$STORE/spawn-records/hf4-ledger-dry-new.jsonl"
+run ledger --run hf4-ledger-dry-new --observation "ack: dry read of an absent record" --dry-run
+need_rc 0
+need_out '"decisions_seen": 0'
+need_nofile "$STORE/spawn-records/hf4-ledger-dry-new.jsonl"
+verdict "ledger acknowledgement coverage (fails on old; fourth review, R1): both ledger forms bound every new ack to the snapshot they read, so a relay racing either read stays pending and repeatedly holds gate and close with exit 6 and unchanged checksums until a valid ack; empty and plain records also carry bounded coverage, creation races stay pending, and already-read acknowledgements, ordinary entries, genuine legacy records and dry runs keep their behaviour (the controls)"
+
+# R2: the shared launch deadline starts before the first record read and its preceding probes.
+# Each case starts a live head; the batch cases complete T1 during the first read. The late
+# read, or the file-existence probe before it, sleeps --wait plus 0.5 s. The 0.5 s margin,
+# timely delay of 0.5 s, wait-zero delay of 1 s, and 8 s timely budget are set by judgement,
+# unmeasured. Each late case must fail; the timely and wait-zero controls still certify on one
+# read. The same checks fail against the pre-fold copy, which starts its budget after the delay.
+hf4_launch_initial() { # $1 run, $2 head|batch, $3 read-late|probe-late|timely|wait0, $4 wait
+  "$PY" - "$H" "$1" "$2" "$3" "$4" <<'HF4LAUNCHINITIAL'
+import importlib.util, json, os, subprocess, sys, time
+spec = importlib.util.spec_from_file_location("ho", sys.argv[1])
+ho = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ho)
+run, mode, case, wait_text = sys.argv[2:]
+path = ho.record_path(run)
+wait = float(wait_text)
+delay = wait + 0.5 if case.endswith("late") else 1.0 if case == "wait0" else 0.5
+# The sleeper's 60 s bound is set by judgement, unmeasured; finally always reaps it.
+head = subprocess.Popen(["sleep", "60"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, start_new_session=True)
+state = {"slowed": 0, "reads": 0, "batch_ready": 0}
+real_read, real_isfile = ho.read_record, os.path.isfile
+code = None
+
+
+def add(ev):
+    ev.setdefault("ts", time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()))
+    ev["run"] = run
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(ev) + "\n")
+
+
+def slow():
+    state["slowed"] += 1
+    time.sleep(delay)
+
+
+def read(p, *args, **kwargs):
+    if p == path:
+        state["reads"] += 1
+        if state["reads"] == 1:
+            if case != "probe-late":
+                slow()
+            if mode == "batch":
+                add({"event": "lane-closed", "lane": "T1", "exit_class": "completed"})
+                state["batch_ready"] += 1
+    return real_read(p, *args, **kwargs)
+
+
+def isfile(p):
+    if p == path and case == "probe-late" and not state["slowed"]:
+        slow()
+    return real_isfile(p)
+
+
+try:
+    add({"event": "head-successor", "session_id": "sid-%s" % run, "pid": head.pid,
+         "model": "fixture-model", "effort": "max"})
+    if mode == "batch":
+        add({"event": "lane-open", "lane": "T1", "class": "builder", "model": "fixture-model",
+             "session_id": "sid-%s-T1" % run})
+    ho.read_record, os.path.isfile = read, isfile
+    sys.argv = ["handsoff.py", "launch-check", "--run", run, "--wait", wait_text,
+                "--poll-s", "0.3", "--detach-safe"]
+    if mode == "batch":
+        sys.argv.extend(["--lanes", "T1"])
+    try:
+        ho.main()
+        code = 0
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+finally:
+    ho.read_record, os.path.isfile = real_read, real_isfile
+    head.kill()
+    head.wait()
+if state["slowed"] != 1 or state["reads"] != 1 or state["batch_ready"] != (mode == "batch"):
+    print("PROBE FAILED: initial-read delay or ready-batch premise: %r" % state)
+    sys.exit(2)
+print("slowed %d reads %d batch_ready %d" % (state["slowed"], state["reads"], state["batch_ready"]))
+print("rc %s" % code)
+HF4LAUNCHINITIAL
+}
+for hf4_mode in head batch; do
+  for hf4_case in read-late:2 probe-late:2 timely:8 wait0:0; do
+    hf4_tag=${hf4_case%%:*}; hf4_wait=${hf4_case#*:}
+    fixture "hf4initial-$hf4_mode-$hf4_tag" 200
+    hf4_launch_initial "hf4initial-$hf4_mode-$hf4_tag" "$hf4_mode" "$hf4_tag" "$hf4_wait" \
+      >"$WORK/hf4initial-$hf4_mode-$hf4_tag.out" 2>&1 || die "initial launch-read regression premise failed ($hf4_mode, $hf4_tag): $(cat "$WORK/hf4initial-$hf4_mode-$hf4_tag.out")"
+  done
+  for hf4_tag in read-late probe-late; do
+    O="$WORK/hf4initial-$hf4_mode-$hf4_tag.out"
+    need_eq "$(grep '^rc ' "$O")" "rc 1" "exit ($hf4_mode, $hf4_tag)"
+    grep -q -F "NOT STARTED" "$O" || why="$why; the late initial read certified ($hf4_mode, $hf4_tag)"
+    if grep -q -E '^launch-check: [^ ]+ STARTED( |$)' "$O"; then why="$why; a success line survived ($hf4_mode, $hf4_tag)"; fi
+  done
+  for hf4_tag in timely wait0; do
+    O="$WORK/hf4initial-$hf4_mode-$hf4_tag.out"
+    need_eq "$(grep '^rc ' "$O")" "rc 0" "exit ($hf4_mode, $hf4_tag, a control)"
+    grep -q -E '^launch-check: [^ ]+ STARTED( |$)' "$O" || why="$why; the single-read control failed ($hf4_mode, $hf4_tag)"
+    if [ "$hf4_mode" = batch ]; then
+      grep -q -F "STARTED CLEAN" "$O" || why="$why; the ready batch control failed ($hf4_tag)"
+      grep -q -F "T1 done" "$O" || why="$why; the control's newly ready helper was not read ($hf4_tag)"
+    fi
+  done
+done
+verdict "launch-check (fails on old; fourth review finding R2): the first record read and preceding file probe share the deadline, so late head-only and first-batch checks never certify; timely reads and delayed --wait 0 checks certify with one read (the controls)"
+# HF4-END
+
+# ================== the hand-over checks (2026-10-30; register entries 2026-10-30 16:11 and
+# 2026-10-25 16:28) ===========================================================================
+# One block, before the write proof, so every leg numbered above keeps its number. Each leg is
+# built to fail on the code before the change and pass on it (the build's fail-on-old run records
+# both). The successor count is successors_left's: the record's head-successor events against the
+# run's cap (the grants file, then AIMYTH_MAX_SUCCESSORS, then the default of 20).
+hc_plant() { # $1 record, $2 count: that many hand-overs (head-exit, head-successor, the started
+             # head's own run-resume), the last head live
+  "$PY" - "$1" "$2" <<'HCPLANT'
+import json, sys, time
+path, n = sys.argv[1], int(sys.argv[2])
+run = json.loads(open(path, encoding="utf-8").readline())["run"]
+stamp = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
+base = time.time() - 3600
+with open(path, "a", encoding="utf-8") as fh:
+    for i in range(n):
+        sid = "sid-%s-%d" % (run, i)
+        for ev in ({"event": "head-exit", "band": 60, "context": "c", "spent_usd": 1.0, "pack": True},
+                   {"event": "head-successor", "session_id": sid, "budget": 1.0,
+                    "model": "fixture-model"},
+                   {"event": "run-resume", "session": sid, "head": "fixture head",
+                    "detail": "the head's own first act", "pid_src": "none"}):
+            ev.update(ts=stamp(base + 10 * i), run=run)
+            fh.write(json.dumps(ev) + "\n")
+HCPLANT
+}
+hc_obs() { # $1 record, $2 an observation's `what`: how many the record holds
+  "$PY" -c 'import json, sys
+n = 0
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    n += isinstance(e, dict) and e.get("event") == "observation" and e.get("what") == sys.argv[2]
+print(n)' "$1" "$2"
+}
+hc_after_start() { # $1 record, $2 kind: that kind's events after the record's last head start
+  "$PY" -c 'import json, sys
+ev = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(e, dict):
+        ev.append(e)
+s = max([i for i, e in enumerate(ev) if e.get("event") in ("run-open", "run-resume", "head-successor", "head-resumed")] or [-1])
+print(sum(1 for e in ev[s + 1:] if e.get("event") == sys.argv[2]))' "$1" "$2"
+}
+hc_pack() { printf -- '- Next: item3, the fixture item\n- Needs: nothing\n- Decided: nothing\n' > "$1"; }
+# The stub head runs from the starter's working directory (the fixture vault), so the script it
+# calls is named by its absolute path: $H is relative when the suite is started from its own folder.
+SUITE_HABS="$SKILL_DIR/$(basename "$H")"; export SUITE_HABS
+HCPACK="$WORK/hc-pack.md"
+hc_pack "$HCPACK"
+hc_load='import importlib.util, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("hs_hc", sys.argv[1])
+hs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hs)
+'
+
+# ---- DA-1 (must fire): `successor` at the cap refuses (exit 10) before anything is written ----
+fixture hcda1 200
+hc_plant "$REC" 6
+run grants --run hcda1 --max-successors 6
+viewer_use hcda1
+HCX=$(mk count "$REC" head-exit)
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hcda1 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 1 \
+    --max-wait-s 1 --tick-s 1
+need_rc 10
+need_out "successor: REFUSED (exit 10): no successor left for run hcda1 — 6 of 6 head starts on its cap (the grants file $REALSTORE/spawn-records/hcda1-grants.json)"
+need_out "Nothing was written but this refusal's observation"
+need_eq "$(mk count "$REC" head-exit)" "$HCX" "head-exits (unchanged)"
+need_eq "$(hc_obs "$REC" pack-fresh)" "0" "pack-fresh"
+need_eq "$(hc_obs "$REC" "successor refused: no successor left")" "1" "the refusal's observation"
+need_nofile "$REALSTORE/spawn-records/hcda1-head-1.out.starter.log"
+need_no_viewer
+sh -c 'exit 0' &
+HCDEAD=$!
+wait "$HCDEAD" || :
+run grants --run hcda1 --max-successors 7
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run hcda1 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --predecessor-pid "$HCDEAD" --wait-s 5 --max-wait-s 5 --tick-s 1
+need_rc 0
+need_file "$REALSTORE/spawn-records/hcda1-head-1.out.starter.log"
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+verdict "DA-1 (must fire; register 2026-10-30 16:11): successor at 6 of 6 exits 10 naming the count and the grants file, with no head-exit, pack-fresh, starter or console and one refusal observation; the control on the same run, the cap raised to 7, exits 0 and its starter starts the head"
+
+# ---- DA-2 (must fire): `handoff --final` at the cap writes the pack and no head-exit ----
+fixture hcda2 200
+hc_plant "$REC" 6
+run grants --run hcda2 --max-successors 6
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hcda2 --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER"
+need_rc 10
+need_out "handoff: REFUSED (exit 10): no successor left for run hcda2"
+need_out "The pack is written to '## In flight'"
+grep -q -- "- Next: item3, the fixture item" "$HO" || why="$why; In flight lacks the pack's Next line"
+grep -q -- "- pack written: " "$HO" || why="$why; In flight lacks the pack's age stamp"
+need_eq "$(hc_after_start "$REC" head-exit)" "0" "head-exits after the head's start"
+need_eq "$(hc_obs "$REC" "handoff --final refused: no successor left")" "1" "the refusal's observation"
+run grants --run hcda2 --max-successors 7
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hcda2 --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER"
+need_rc 0
+need_out "head-exit recorded (band 80"
+need_eq "$(hc_after_start "$REC" head-exit)" "1" "the control's head-exit"
+verdict "DA-2 (must fire): handoff --final at 6 of 6 exits 10, its pack written to In flight with its age stamp, no head-exit after the head's start and one refusal observation; the control at 6 of 7 exits 0 and writes its head-exit"
+
+# ---- DA-3: the dry runs at the cap refuse and write nothing; below it each proceeds ----
+fixture hcda3 200
+hc_plant "$REC" 6
+run grants --run hcda3 --max-successors 6
+HCR=$(sha_file "$REC"); HCH=$(sha_file "$HO")
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hcda3 --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER" --dry-run
+need_rc 10
+need_out "handoff: dry run · would rewrite"
+need_out "REFUSED (exit 10): successors: 6 of 6 started, none left"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hcda3 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --dry-run
+need_rc 10
+need_out "Nothing was written (dry run)"
+need_eq "$(sha_file "$REC") $(sha_file "$HO")" "$HCR $HCH" "the record and the hand-off (sha256)"
+run grants --run hcda3 --max-successors 7
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hcda3 --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER" --dry-run
+need_rc 0
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hcda3 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --dry-run
+need_rc 0
+verdict "DA-3: handoff --final --dry-run and successor --dry-run at the cap each exit 10 with the record's and the hand-off's sha256 unchanged; below the cap each exits 0 (the control)"
+
+# ---- DA-4 (must fire, wiring; review CR-CAP2 finding 5 a): start_guards reads successors_left ----
+fixture hcda4 200
+run grants --run hcda4 --max-successors 4
+HCW=$("$PY" - "$H" <<HCWIRE
+$hc_load
+ev = [{"event": "run-open", "run": "hcda4", "session": "s0"}]
+for i in range(3):
+    ev += [{"event": "head-exit", "band": 60, "run": "hcda4"},
+           {"event": "head-successor", "session_id": "s%d" % (i + 1), "run": "hcda4"}]
+ev.append({"event": "head-exit", "band": 60, "run": "hcda4"})
+hi = len(ev) - 1
+below = hs.successors_left(ev, "hcda4")["left"], hs.start_guards(ev, hi, run="hcda4")[0]
+at = ev[:hi] + [{"event": "head-successor", "session_id": "s4", "run": "hcda4"}, ev[hi]]
+atcap = hs.successors_left(at, "hcda4")["left"], hs.start_guards(at, len(at) - 1, run="hcda4")[0]
+hs.successors_left = lambda events, run: {"used": 0, "cap": 0, "src": "planted", "left": 0,
+                                          "fault": None, "own": False, "run": run}
+wired = hs.start_guards(ev, hi, run="hcda4")[0]
+print("below %s %s · at %s %s · wired %s" % (below + atcap + (wired,)))
+HCWIRE
+)
+need_eq "$HCW" "below 1 None · at 0 successor-cap · wired successor-cap" "the count and the guard (wired: a planted count of 0 left refuses)"
+verdict "DA-4 (must fire, the wiring case of finding 5 a): at 3 of 4 one is left and start_guards admits; one more head-successor leaves 0 and it refuses successor-cap; a successors_left replaced in the imported copy by one reading 0 left at 0 used makes start_guards refuse, so the starter's guard reads the shared count"
+
+# ---- DA-5: the stated source names the grants file's real state; a faulty file is no decided cap ----
+fixture hcda5 200
+hc_plant "$REC" 20
+printf 'not json at all\n' > "$REALSTORE/spawn-records/hcda5-grants.json"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hcda5 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --dry-run
+need_rc 10
+need_out "the default (the grants file: unreadable ("
+need_out "own successor cap cannot be read"
+need_absent "this is the run's last lead"
+fixture hcda5b 200
+hc_plant "$REC" 20
+printf '{}\n' > "$REALSTORE/spawn-records/hcda5b-grants.json"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hcda5b --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --dry-run
+need_rc 10
+need_out "the default (the grants file: readable, no max_successors key; no AIMYTH_MAX_SUCCESSORS)"
+need_out "no successor left for run hcda5b"
+fixture hcda5c 200
+hc_plant "$REC" 5
+run grants --run hcda5c --max-successors 6
+run run-resume --run hcda5c --session sid-hcda5c-4 --head "fixture head" --detail "the count"
+need_rc 0
+need_out "· successors: 5 of 6 started, 1 left"
+need_absent "1 left ("
+verdict "DA-5 (finding 10 f; CR-CAP2 finding 6): a garbage grants file at 20 used names 'the default (the grants file: unreadable (' and the file fault, never the run's last lead; a readable {} names 'readable, no max_successors key'; the control, a valid key, prints the short form with no source"
+
+# ---- DA-6 (must fire; finding 3 a): band 90 at none left, through what follows ----
+fixture hcda6 200
+hc_plant "$REC" 6
+mk append "$REC" '{"event":"gate","item":"item2","decision":"allow","context":100000,"percent":10,"band":0,"armed":true,"metered":true}' >/dev/null
+run grants --run hcda6 --max-successors 6
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hcda6 --final --band 90 --inflight-file "$HCPACK" --meter-line "$METER"
+HC6="$RC"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hcda6 --band 90 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 1
+HC6="$HC6 $RC"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hcda6 --final --band 90 --inflight-file "$HCPACK" --meter-line "$METER"
+HC6="$HC6 $RC"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run close --run hcda6 --meter-line "$METER" --items "1" --register "none" --log "one line" \
+    --lint "clean" --parity "not yet"
+HC6="$HC6 $RC"
+need_eq "$HC6" "10 10 10 0" "the exits of handoff --final, successor, handoff --final and close"
+need_eq "$(hc_after_start "$REC" head-exit)" "0" "head-exits after the head's start"
+need_eq "$(( $(hc_obs "$REC" "handoff --final refused: no successor left") + $(hc_obs "$REC" "successor refused: no successor left") ))" "3" "refusal observations"
+need_eq "$(mk count "$REC" run-close)" "1" "run-close"
+# (ii) the head ends instead of closing: the starter's stub head runs the refused calls and completes;
+# the supervisor writes the head-exit it owes and aborts successor-cap; the cap raised, an attended
+# restart starts a head and no repeat-exit abort follows.
+fixture hcda6b 200
+hc_plant "$REC" 5
+mk append "$REC" '{"event":"head-exit","band":60,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+run grants --run hcda6b --max-successors 6
+RSRC=0
+env $RS_ENV STUB_MODES=complete STUB_PROGRESS=refusedhandover STUB_N=1 STUB_RESUME=1 \
+    AIMYTH_VIEWER_ARGV="$WORK/viewer-hcda6b.argv" "$PY" -B "$H" _starter --run hcda6b \
+    --handoff "$HO" --budget 3.50 --out "$WORK/starter/hcda6b-head-1.out" --wait-s 2 \
+    --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1 >"$WORK/hcda6b.log" 2>&1 || RSRC=$?
+need_eq "$RSRC" "1" "the starter's exit (successor-cap)"
+need_eq "$(grep -c '^rc final 10$' "$WORK/stub-hcda6b.refused") $(grep -c '^rc successor 10$' "$WORK/stub-hcda6b.refused")" "2 1" "the stub head's refused calls"
+need_eq "$(mk field "$REC" successor-aborted reason)" "successor-cap" "the supervisor's abort"
+need_eq "$(hc_after_start "$REC" head-exit)" "1" "head-exits after the head's start (the supervisor's owed one alone)"
+run grants --run hcda6b --max-successors 7
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=1"
+run successor --run hcda6b --seed-pid --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --wait-s 5 --max-wait-s 5 --tick-s 1
+need_rc 0
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+need_eq "$(rs_count "$REC" successor-aborted)" "1" "no abort after the restart (no repeat-exit)"
+# The control on the same shape before this patch: two band-90 head-exits by one head after the
+# gate allowing item2, and the restart's starter aborts repeat-exit.
+fixture hcda6c 200
+hc_plant "$REC" 6
+mk append "$REC" '{"event":"gate","item":"item2","decision":"allow","context":100000,"percent":10,"band":0,"armed":true,"metered":true}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":90,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":90,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+run grants --run hcda6c --max-successors 7
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run hcda6c --seed-pid --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --wait-s 5 --max-wait-s 5 --tick-s 1
+need_rc 0
+wait_field "$REC" successor-aborted reason repeat-exit 40
+verdict "DA-6 (must fire; finding 3 a): at 6 of 6 after a gate allowing item2, handoff --final --band 90, successor and a second handoff --final --band 90 each exit 10 and close exits 0, with no head-exit after the head's start, three refusal observations and one run-close; a stub head that runs the same refusals and completes leaves only the supervisor's owed head-exit, and the restart after the cap is raised starts a head with no repeat-exit; the control, two band-90 exits planted, aborts repeat-exit"
+
+# ---- DA-7 (must fire; finding 3 c): a refused hand-over, then a limit under on_limit resume ----
+fixture hcda7 200
+hc_plant "$REC" 2
+mk append "$REC" '{"event":"head-exit","band":60,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+run grants --run hcda7 --max-successors 3
+arm_resume hcda7
+RUNENV="STUB_MODE=limit STUB_N=1 STUB_PROGRESS=refusedhandover STUB_RESUME=1 STUB_TOKENS=50000 AIMYTH_CONTEXT_WINDOW=200000"
+starter --run hcda7 --handoff "$HO" --budget 3.50 --out "$WORK/starter/hcda7-head-1.out" --wait-s 5 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --reset-at +1s --tick-s 1
+need_eq "$(grep -c '^rc final 10$' "$WORK/stub-hcda7.refused") $(grep -c '^rc successor 10$' "$WORK/stub-hcda7.refused")" "2 1" "the stub head's refused calls (3 of 3)"
+need_eq "$(mk count "$REC" head-resumed)" "1" "resumed in place"
+need_eq "$(rs_count "$REC" successor-aborted)" "0" "no abort"
+fixture hcda7c 200
+hc_plant "$REC" 2
+mk append "$REC" '{"event":"head-exit","band":60,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+run grants --run hcda7c --max-successors 3
+arm_resume hcda7c
+RUNENV="STUB_MODE=limit STUB_N=1 STUB_PROGRESS=oldhandover STUB_RESUME=1 STUB_TOKENS=50000 AIMYTH_CONTEXT_WINDOW=200000"
+starter --run hcda7c --handoff "$HO" --budget 3.50 --out "$WORK/starter/hcda7c-head-1.out" --wait-s 5 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --reset-at +1s --tick-s 1
+case $(rs_obs "$REC") in
+  unsucceeded:*) : ;;
+  *) why="$why; the control's stop class: $(rs_obs "$REC")" ;;
+esac
+need_eq "$(mk count "$REC" head-resumed)" "0" "the control: no resume"
+verdict "DA-7 (must fire; finding 3 c): a head refused at 3 of 3 that then stops on a limit under on_limit resume is resumed in place with no abort; the control, the shape before this patch (a head-exit then the refusal observation), stops unsucceeded and is not resumed"
+
+# ---- DA-8: the seeded first launch is never refused, and the count is printed from the start ----
+seed_fixture hcda8 200
+run grants --run hcda8 --max-successors 1
+RUNENV="PATH=$WORK/psnone:$PATH"
+run gate --run hcda8 --to item1 --meter-line "$METER" --dry-run
+need_rc 0
+need_out "successors: 0 of 1 started, 1 left"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hcda8 --final --band 60 --inflight-file "$HCPACK" --meter-line "$METER"
+need_rc 0
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run hcda8 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 5 \
+    --max-wait-s 5 --tick-s 1
+need_rc 0
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+verdict "DA-8: on a seeded record at 0 of 1 the gate prints 'successors: 0 of 1 started, 1 left', and handoff --final and successor both proceed (a refusal at the cap is never the seed's)"
+
+# ---- DA-9 (the count, warn): gate, the band refusal, the envelope stop and run-resume ----
+fixture hcda9 200
+hc_plant "$REC" 3
+run grants --run hcda9 --max-successors 14
+mk transcript sid-hcda9-2 100000 >/dev/null
+run gate --run hcda9 --to "item one" --meter-line "$METER"
+need_rc 0
+need_out "· successors: 3 of 14 started, 11 left"
+need_eq "$(mk field "$REC" gate successors_used) $(mk field "$REC" gate successors_cap) $(mk field "$REC" gate successors_left)" "3 14 11" "the gate event's count"
+need_eq "$(mk field "$REC" gate successors_src)" "the grants file $REALSTORE/spawn-records/hcda9-grants.json" "the gate event's source"
+run run-resume --run hcda9 --session sid-hcda9-2 --head "fixture head" --detail "the count"
+need_rc 0
+need_out "· successors: 3 of 14 started, 11 left"
+fixture hcda9b 200
+hc_plant "$REC" 14
+run grants --run hcda9b --max-successors 14
+mk transcript sid-hcda9b-13 850000 >/dev/null
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hcda9b --to "item two" --meter-line "$METER"
+need_rc 4
+need_out "→ no successor is left (successors: 14 of 14 started): watch in-flight lanes to their close while the room lasts, then close the run with its morning report"
+need_absent "then successor"
+case $(mk field "$REC" stop-condition note) in
+  *"then close the run with its morning report"*) : ;;
+  *) why="$why; the stop-condition note does not say close: $(mk field "$REC" stop-condition note)" ;;
+esac
+fixture hcda9c 200
+hc_plant "$REC" 13
+run grants --run hcda9c --max-successors 14
+mk transcript sid-hcda9c-12 850000 >/dev/null
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hcda9c --to "item two" --meter-line "$METER"
+need_rc 4
+need_out "→ handoff --final --band 80, watch in-flight lanes, then successor"
+need_out "successors: 13 of 14 started, 1 left"
+fixture hcda9d 10
+hc_plant "$REC" 14
+run grants --run hcda9d --max-successors 14
+run gate --run hcda9d --to "item two" --meter-line "$METER"
+need_rc 5
+need_out "the owner tops the envelope up before any successor"
+need_out "· successors: 14 of 14 started, none left"
+verdict "DA-9 (warn): the gate line and event carry 'successors: 3 of 14 started, 11 left' and run-resume's line the same; at 14 of 14 the armed band refusal (exit 4) and its stop-condition note say close the run and never 'then successor', while at 13 of 14 the hand-over text stands (the control); the envelope stop (exit 5) keeps the owner's top-up text and carries the count"
+
+# ---- DB-1 (the classifier, on planted tables) ----
+HCB=$("$PY" - "$H" <<HCTABLE
+$hc_load
+H, S, X = 300, 200, 100
+BASE = {H: (1, "Ss", "01:00:00", "/fixture/bin/claude --print"),
+        S: (H, "Ss", "00:01", "/bin/zsh -c the call; more"),
+        X: (S, "S", "00:01", "python3 handsoff.py successor")}
+TASK = {400: (H, "Ss", "12:34", "/bin/zsh -c sleep 600; true"), 401: (400, "S", "12:34", "sleep 600")}
+HARN = {H: (H, 1, "/fixture/bin/claude")}
+def go(table, chain=([X, S, H], True), rows=HARN, pred=H, seed=False):
+    hs.process_chain_read = lambda: (list(chain[0]), chain[1])
+    hs.ps_row = lambda pid, timeout=None: rows.get(pid)
+    hs.process_table = ((lambda timeout=None: (dict(table), "")) if table is not None
+                        else (lambda timeout=None: (None, "a planted unreadable table")))
+    kind, lines = hs.background_tasks(seed, pred, 600)
+    return kind, "\n".join(lines)
+out = []
+k, t = go({**BASE, **TASK})
+out.append("found:%s:%d" % (k, ("pid 400 (running 12:34): sleep 600" in t) + ("TaskStop" in t)))
+k, t = go(dict(BASE))
+out.append("none:%s:%d" % (k, "control: this call's own shell, pid 200" in t))
+k, _ = go({**BASE, 500: (H, "Ss", "00:10", "node mcp-server")})
+out.append("nonshell:%s" % k)
+k, _ = go({**BASE, 600: (H, "Zs", "00:10", "/bin/zsh")})
+out.append("zombie:%s" % k)
+k, _ = go({**BASE, S: (H, "S", "00:01", "/bin/zsh -c x")})
+out.append("notleader:%s" % k)
+k, _ = go({**BASE, S: (H, "Ss", "00:01", "python3 x")})
+out.append("notshell:%s" % k)
+k, t = go(None)
+out.append("unreadable:%s:%d" % (k, "a planted unreadable table" in t))
+k, _ = go(dict(BASE), chain=([X, S], True), pred=H)
+out.append("outside:%s" % k)
+k, _ = go(dict(BASE), chain=([X, S], False), pred=H)
+out.append("notwhole:%s" % k)
+k, t = go(dict(BASE), chain=([X, S, H], False), pred=H)
+out.append("notwholein:%s:%d" % (k, "pid 300 is in the part read" in t))
+k, _ = go(dict(BASE), rows={H: (H, 1, "/sbin/launchd")})
+out.append("notharness:%s" % k)
+k, _ = go(dict(BASE), seed=True)
+out.append("seed:%s" % k)
+print(" ".join(out))
+HCTABLE
+)
+need_eq "$HCB" "found:found:2 none:none:1 nonshell:none zombie:none notleader:undecided notshell:undecided unreadable:undecided:1 outside:not-checked notwhole:undecided notwholein:undecided:1 notharness:not-checked seed:not-checked" "the planted cases"
+verdict "DB-1 (the background-task classifier, planted tables): a session-leading zsh child of the harness beside the call's own shell is found and its sleep named; without it none, with the control named; a non-shell child and a zombie shell are not counted; the call's own shell not a session leader or not a shell, and an unreadable table, are undecided, never none; a chain walk that is not whole is undecided in both shapes, the predecessor missing from the part read or found in it (build review RV-CAP finding F7); a pid outside the chain, a pid that is not the harness and a seed are not checked"
+
+# ---- DB-2 (must warn, end to end) and DB-3 (not checked): through the process-table stub ----
+fixture hcdb2 200
+viewer_use hcdb2
+RUNENV="PATH=$WORK/pstable:$PATH PSTABLE_TASK=1 PSTABLE_LOG=$WORK/pstable-hcdb2.log STUB_MODE=complete STUB_N=0"
+run successor --run hcdb2 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 5 \
+    --max-wait-s 5 --tick-s 1
+need_rc 0
+need_out "successor: warn: head pid 4194301 still runs 1 background task(s) beside this call:"
+need_out "pid 4194302 (running 12:34): sleep 600"
+HCL=$(grep -n 'starter pid .* detached' "$WORK/out" | head -1 | cut -d: -f1)
+HCW2=$(grep -n 'still runs 1 background task' "$WORK/out" | head -1 | cut -d: -f1)
+[ -n "$HCL" ] && [ -n "$HCW2" ] && [ "$HCW2" -gt "$HCL" ] || why="$why; the warning is not after the starter line ($HCL, $HCW2)"
+need_file "$REALSTORE/spawn-records/hcdb2-head-1.out.starter.log"
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+fixture hcdb2c 200
+viewer_use hcdb2c
+RUNENV="PATH=$WORK/pstable:$PATH PSTABLE_TASK=0 PSTABLE_LOG=$WORK/pstable-hcdb2c.log STUB_MODE=complete STUB_N=0"
+run successor --run hcdb2c --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 5 \
+    --max-wait-s 5 --tick-s 1
+need_rc 0
+need_out "successor: background tasks: none seen beside this call under head pid 4194301 (control: this call's own shell, pid "
+need_absent "warn: head pid"
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+verdict "DB-2 (must warn, end to end): under the process-table stub a session-leading shell child of the head's own process is named, pid, age and command, after the starter line, and the starter still detaches and starts the head; the control on the same stub without the task prints the none line with its control"
+
+fixture hcdb3 200
+viewer_use hcdb3
+rm -f "$WORK/pstable-hcdb3.log"
+RUNENV="PATH=$WORK/pstable:$PATH PSTABLE_TASK=1 PSTABLE_LOG=$WORK/pstable-hcdb3.log STUB_MODE=complete STUB_N=0"
+run successor --run hcdb3 --seed-pid --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --wait-s 5 --max-wait-s 5 --tick-s 1
+need_rc 0
+need_out "successor: background tasks: not checked — the starter waits on the seed process"
+need_eq "$(grep -c -- '^-A' "$WORK/pstable-hcdb3.log")" "0" "table reads with --seed-pid"
+[ "$(grep -c -- '^-A' "$WORK/pstable-hcdb2.log")" -ge 1 ] || why="$why; the control: the DB-2 call read no table"
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+verdict "DB-3 (not checked): with --seed-pid the call prints 'not checked — the starter waits on the seed process' and reads no table (the stub's call log), while the DB-2 call read it once (the control)"
+
+# ---- DB-4 (could not run): the psclaude stub's table has no parseable row ----
+fixture hcdb4 200
+viewer_use hcdb4
+RUNENV="PATH=$WORK/psclaude:$PATH STUB_MODE=complete STUB_N=0"
+run successor --run hcdb4 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 1 \
+    --max-wait-s 1 --tick-s 1
+need_rc 0
+need_out "successor: warn: the background-task check could not run (the process table read gave no parseable row): no task is counted"
+need_absent "background tasks: none seen"
+need_file "$REALSTORE/spawn-records/hcdb4-head-1.out.starter.log"
+wait_field "$REC" successor-aborted reason timeout 40
+verdict "DB-4 (could not run): under the psclaude stub the table read gives no row, so the call warns that the check could not run, never none, exits 0 and its starter still detaches"
+
+# ---- DB-5 (live, the one leg on the real process table) is not a leg of this suite ----
+# It needs a process the real `ps` reads as the harness, and a lane's fence refuses any command that
+# names the harness, so it is its own script, run at install against the installed copy and the
+# base copy, never skipped by a switch here (build review RV-CAP finding F2).
+
+# ---- DB-6 (S-7; finding 6): the supervisor's wait once the head's own starter has gone ----
+HCG=$("$PY" - "$H" <<HCGONE
+$hc_load
+def e(kind, **f):
+    d = {"event": kind, "run": "r"}
+    d.update(f)
+    return d
+ab = e("successor-aborted", reason="timeout", ts="2026-10-30T03:56:19+0000")
+pid = [e("run-open", session="s0"), e("head-successor", session_id="s1", pid=4321),
+       e("head-exit", band=60, pack=True), ab]
+nopid = [e("run-open", session="s0"), e("head-successor", session_id="s1"),
+         e("head-exit", band=60, pack=True), ab]
+seed = [e("run-open", session="s0", session_kind="seed"), e("head-exit", band="unmetered", pack=False), ab]
+after = pid + [e("head-successor", session_id="s2", pid=4322)]
+noab = pid[:3]
+b1, line = hs.starter_gone(pid, 1, 60, 600)
+b2, _ = hs.starter_gone(nopid, 1, 60, 600)
+b3, _ = hs.starter_gone(nopid, 1, 60, 100)
+b4, _ = hs.starter_gone(seed, 0, 60, 600)
+b5, _ = hs.starter_gone(after, 1, 60, 600)
+b6, _ = hs.starter_gone(noab, 1, 60, 600)
+print("pid %s silence %s capped %s seed %s after %s noabort %s · %s · %s %s" % (
+    b1, b2, b3, b4, b5, b6, hs.SILENCE_PROXY_S + hs.SILENCE_POLL_S + 60,
+    "timeout at 03:56:19" in line, "waiting 180 s for a re-called starter, not 600 s" in line))
+HCGONE
+)
+need_eq "$HCG" "pid 180 silence 185 capped 100 seed 180 after None noabort None · 185 · True True" "the bounds"
+rs_fixture hcgone
+env $RS_ENV STUB_MODES=complete STUB_PROGRESS=abortedstarter STUB_N=1 \
+    AIMYTH_VIEWER_ARGV="$WORK/viewer-hcgone.argv" "$PY" -B "$H" _starter --run hcgone \
+    --handoff "$HO" --budget 3.50 --out "$WORK/starter/hcgone-head-1.out" --wait-s 6 \
+    --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1 >"$WORK/hcgone.log" 2>&1
+HCRC=$?
+need_eq "$HCRC" "0" "the starter's exit"
+grep -q "supervisor: the head's own starter already aborted (timeout at " "$WORK/hcgone.log" || why="$why; the shortened wait is not named"
+grep -q "waiting 3 s for a re-called starter, not 6 s" "$WORK/hcgone.log" || why="$why; the bound is not 3 ticks"
+grep -q "the head-exit has no successor after 3 s" "$WORK/hcgone.log" || why="$why; the start line misstates the wait (finding 9)"
+HCGAP=$("$PY" -c 'import json, sys, datetime
+ev = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+t = lambda s: datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%S%z")
+xi = min(i for i, e in enumerate(ev) if e.get("event") == "head-exit" and e.get("context") == "stub")
+si = [i for i, e in enumerate(ev) if e.get("event") == "head-successor" and i > xi and e.get("session_id") != "sid-by-the-head"]
+print(int((t(ev[si[0]]["ts"]) - t(ev[xi]["ts"])).total_seconds()) if si else "none")' "$STORE/spawn-records/hcgone.jsonl")
+need_eq "$(under "$HCGAP" 6)" "ok" "seconds from the head's exit to its successor's start (3 ticks plus 3 s of slack)"
+rs_fixture hcgonectl
+HCT2=$(clock_f)
+env $RS_ENV STUB_MODES=handonly STUB_N=1 \
+    AIMYTH_VIEWER_ARGV="$WORK/viewer-hcgonectl.argv" "$PY" -B "$H" _starter --run hcgonectl \
+    --handoff "$HO" --budget 3.50 --out "$WORK/starter/hcgonectl-head-1.out" --wait-s 6 \
+    --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1 >"$WORK/hcgonectl.log" 2>&1
+HCT3=$(clock_f)
+need_eq "$("$PY" -c 'import sys; d = float(sys.argv[2]) - float(sys.argv[1]); print("ok" if d >= 6 else "%.2f s" % d)' "$HCT2" "$HCT3")" "ok" "the control waits at least the full 6 s"
+if grep -q "already aborted" "$WORK/hcgonectl.log"; then why="$why; the control shortened its wait"; fi
+verdict "DB-6 (S-7; finding 6): starter_gone gives three ticks when a re-called starter would wait on a pid or on a seed, SILENCE_PROXY_S + SILENCE_POLL_S + a tick for silence, capped at --wait-s, and none once a head-successor follows or with no abort; timed, a head whose own starter aborted is succeeded within 3 ticks plus 3 s of slack and the start line names the 3 s waited, while the control with no abort waits the full 6 s"
+
+# ---- DB-7 (S-8; finding 8 b, CR-CAP2 finding 9): the starter's timeout note on the head's own pid ----
+sleep 30 &
+HCS8=$!
+fixture hcs8 200
+mk append "$REC" "{\"event\":\"head-successor\",\"session_id\":\"sid-hcs8\",\"pid\":$HCS8,\"budget\":1.0,\"model\":\"fixture-model\"}" >/dev/null
+mk append "$REC" '{"event":"head-exit","band":60,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+RUNENV="PATH=$WORK/psclaude:$PATH"
+starter --run hcs8 --handoff "$HO" --budget 3.50 --out "$WORK/starter/hcs8-head-1.out" \
+        --predecessor-pid "$HCS8" --wait-s 1 --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
+need_rc 1
+need_eq "$(mk field "$REC" successor-aborted reason)" "timeout" "the reason stays timeout"
+case $(mk field "$REC" successor-aborted note) in
+  *"the head's own process, still alive after its hand-over — a print-mode head stays alive while a background task it started runs"*"its shell children could not be read ("*"its supervisor starts the successor once it exits"*) : ;;
+  *) why="$why; the note does not name the cause: $(mk field "$REC" successor-aborted note)" ;;
+esac
+fixture hcs8c 200
+mk append "$REC" '{"event":"head-successor","session_id":"sid-hcs8c","pid":4194305,"budget":1.0,"model":"fixture-model"}' >/dev/null
+mk append "$REC" '{"event":"head-exit","band":60,"context":"c","spent_usd":1.0,"pack":true}' >/dev/null
+RUNENV="PATH=$WORK/psclaude:$PATH"
+starter --run hcs8c --handoff "$HO" --budget 3.50 --out "$WORK/starter/hcs8c-head-1.out" \
+        --predecessor-pid "$HCS8" --wait-s 1 --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1
+need_rc 1
+case $(mk field "$REC" successor-aborted note) in
+  *"a long-lived process — a launcher's own, or an attended conversation's"*) : ;;
+  *) why="$why; the control's note changed: $(mk field "$REC" successor-aborted note)" ;;
+esac
+kill "$HCS8" 2>/dev/null; wait "$HCS8" 2>/dev/null || :
+verdict "DB-7 (S-8): a starter that times out on the record's last head start's own pid names the head's own process kept alive by a background task, says its shell children could not be read when the table gives no row (never none), and that its supervisor starts the successor once it exits, the reason still timeout; the control, an attended pid that is not the last start's, keeps the existing text"
+
+# ---- AM-1 (the owner's amendment of 2026-10-30): the default is 20, and the grants file still wins ----
+HCAM=$("$PY" - "$H" <<HCAMEND
+$hc_load
+print(hs.MAX_SUCCESSORS_DEFAULT)
+HCAMEND
+)
+need_eq "$HCAM" "20" "MAX_SUCCESSORS_DEFAULT"
+fixture hcam 200
+plant_successors "$REC" 6
+run grants --run hcam --max-successors 6
+RUNENV="STUB_MODE=complete STUB_N=0"
+starter --run hcam --handoff "$HO" --budget 3.50 --out "$WORK/starter/hcam-head-1.out" --wait-s 1 \
+        --harness-bin "$WORK/bin/stubhead" --meter-line "$METER" --tick-s 1 --model fixture-model
+need_rc 1
+case $(mk field "$REC" successor-aborted note) in
+  *"at its cap of 6 (the grants file "*) : ;;
+  *) why="$why; the grants file's cap did not win: $(mk field "$REC" successor-aborted note)" ;;
+esac
+verdict "AM-1 (the amendment of 2026-10-30): the default successor cap is 20, and a grants file carrying max_successors 6 still aborts the starter at 6 of 6 naming the grants file, below the default"
+
+# ================== the build review's folds (review RV-CAP, findings F3 to F7) ==================
+# The interleaving driver (F3): it runs one handsoff.py command with a planted change landing
+# between the command's first read of the record and its locked recheck. The change is made on the
+# command's first entry to record_lock, the lock both hand-over commands take for that recheck,
+# before the lock is held: the first read saw one successor left, and the locked re-read sees none.
+# stderr names what landed and whether the lock was reached at all (each leg's premise).
+cat > "$WORK/hc-race.py" <<'HCRACE'
+import contextlib
+import importlib.util
+import json
+import sys
+
+sys.dont_write_bytecode = True
+target, what, rest = sys.argv[1], sys.argv[2], sys.argv[3:]
+spec = importlib.util.spec_from_file_location("hs_race", target)
+hs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hs)
+run = rest[rest.index("--run") + 1]
+real_lock = hs.record_lock
+reached = []
+
+
+@contextlib.contextmanager
+def racing_lock(path):
+    if not reached:
+        reached.append(what)
+        if what == "successor":
+            hs.append_record(path, hs.event(run, "head-successor", session_id="sid-raced-head",
+                                            budget=1.0, model="fixture-model"))
+        elif what.startswith("cap="):
+            grants = hs.grants_path(run)
+            with open(grants, encoding="utf-8") as handle:
+                payload = json.load(handle)
+            payload["max_successors"] = int(what[4:])
+            with open(grants, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+        if what != "none":
+            sys.stderr.write("race: %s landed before the lock\n" % what)
+    with real_lock(path):
+        yield
+
+
+hs.record_lock = racing_lock
+sys.argv = [target] + rest
+code = 0
+try:
+    hs.main()
+except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+sys.stderr.write("race: the lock was %s\n" % ("reached" if reached else "never reached"))
+sys.exit(code)
+HCRACE
+race() { # $1 what lands before the lock (successor, cap=N or none), then the handsoff.py arguments:
+         # run() with the driver in handsoff.py's place, so RUNENV reaches it the way run() passes it
+  hc_what=$1; shift
+  hc_h=$H; H="$WORK/hc-race.py"
+  run "$hc_h" "$hc_what" "$@"
+  H=$hc_h
+}
+hc_starters() { # $1 run: the starter logs its successor calls left in the store
+  "$PY" -c 'import glob, os, sys; print(len(glob.glob(os.path.join(sys.argv[1], sys.argv[2] + "-head-*.out.starter.log"))))' "$REALSTORE/spawn-records" "$1"
+}
+hc_cap() { # $1 run: the max_successors its grants file carries, or `absent`
+  "$PY" -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("max_successors", "absent"))' "$REALSTORE/spawn-records/$1-grants.json"
+}
+
+# ---- RC-1 (must fire; F3): handoff --final, a head-successor landing before the lock ----
+fixture hcrc1 200
+hc_plant "$REC" 5
+run grants --run hcrc1 --max-successors 6
+HCX=$(mk count "$REC" head-exit)
+RUNENV="PATH=$WORK/psnone:$PATH"
+race successor handoff --run hcrc1 --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER"
+need_rc 10
+need_out "race: successor landed before the lock"
+need_out "race: the lock was reached"
+need_out "handoff: REFUSED (exit 10): a head-successor (session sid-raced-head, at "
+need_out "another head has started, the duplicate the starter's own guard refuses, so this head is no longer the run's lead"
+need_absent "so this head stays the run's lead"
+need_eq "$(mk count "$REC" head-exit)" "$HCX" "head-exits (none appended)"
+need_eq "$(hc_obs "$REC" "handoff --final refused: no successor left")" "1" "the refusal's observation"
+need_eq "$(hc_obs "$REC" pack-fresh)" "0" "pack-fresh"
+grep -q -- "- Next: item3, the fixture item" "$HO" || why="$why; In flight lacks the pack's Next line"
+fixture hcrc1c 200
+hc_plant "$REC" 5
+run grants --run hcrc1c --max-successors 6
+HCX=$(mk count "$REC" head-exit)
+RUNENV="PATH=$WORK/psnone:$PATH"
+race none handoff --run hcrc1c --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER"
+need_rc 0
+need_out "race: the lock was reached"
+need_out "head-exit recorded (band 80"
+need_eq "$(mk count "$REC" head-exit)" "$((HCX + 1))" "the control's head-exit"
+verdict "RC-1 (must fire; build review RV-CAP finding F3): a head-successor landing between handoff --final's first read and its locked recheck leaves none on the cap of 6, so the call exits 10 with no head-exit appended, one refusal observation, the pack written to In flight and no pack-fresh, and says another head has started and this head is no longer the run's lead; the control, the same driver with nothing landing at one left, records its head-exit"
+
+# ---- RC-2 (must fire; F3): handoff --final, the cap lowered before the lock ----
+fixture hcrc2 200
+hc_plant "$REC" 5
+run grants --run hcrc2 --max-successors 6
+HCX=$(mk count "$REC" head-exit)
+RUNENV="PATH=$WORK/psnone:$PATH"
+race cap=5 handoff --run hcrc2 --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER"
+need_rc 10
+need_out "race: cap=5 landed before the lock"
+need_out "race: the lock was reached"
+need_out "handoff: REFUSED (exit 10): no successor left for run hcrc2 — 5 of 5 head starts on its cap (the grants file $REALSTORE/spawn-records/hcrc2-grants.json)"
+need_out "and no head-exit was recorded, so this head stays the run's lead"
+need_absent "no longer the run's lead"
+need_eq "$(hc_cap hcrc2)" "5" "the cap the change wrote"
+need_eq "$(mk count "$REC" head-exit)" "$HCX" "head-exits (none appended)"
+need_eq "$(hc_obs "$REC" "handoff --final refused: no successor left")" "1" "the refusal's observation"
+need_eq "$(hc_obs "$REC" pack-fresh)" "0" "pack-fresh"
+grep -q -- "- Next: item3, the fixture item" "$HO" || why="$why; In flight lacks the pack's Next line"
+verdict "RC-2 (must fire; F3): the cap lowered from 6 to 5 between handoff --final's first read and its locked recheck leaves none at 5 used, so the call exits 10 with no head-exit appended, one refusal observation, the pack written and no pack-fresh, and keeps this head the run's lead, since no other head started (RC-1's control is this driver's)"
+
+# ---- RC-3 (must fire; F3): successor, a head-successor landing before the lock ----
+fixture hcrc3 200
+hc_plant "$REC" 5
+run grants --run hcrc3 --max-successors 6
+viewer_use hcrc3
+HCX=$(mk count "$REC" head-exit)
+RUNENV="PATH=$WORK/psnone:$PATH"
+race successor successor --run hcrc3 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --wait-s 1 --max-wait-s 1 --tick-s 1 --pack-fresh
+need_rc 10
+need_out "race: successor landed before the lock"
+need_out "race: the lock was reached"
+need_out "successor: REFUSED (exit 10): a head-successor (session sid-raced-head, at "
+need_out "another head has started, the duplicate the starter's own guard refuses, so this head is no longer the run's lead"
+need_absent "so this head stays the run's lead"
+need_eq "$(mk count "$REC" head-exit)" "$HCX" "head-exits (none appended)"
+need_eq "$(hc_obs "$REC" "successor refused: no successor left")" "1" "the refusal's observation"
+need_eq "$(hc_obs "$REC" pack-fresh)" "0" "pack-fresh (--pack-fresh given)"
+need_eq "$(hc_starters hcrc3)" "0" "starter logs"
+need_no_viewer
+# The control on the same driver: nothing landing at one left, the call launches, and each launch
+# probe above sees its effect (the starter log, the console stub's call).
+fixture hcrc3c 200
+hc_plant "$REC" 5
+run grants --run hcrc3c --max-successors 6
+viewer_use hcrc3c
+sh -c 'exit 0' &
+HCDEAD=$!
+wait "$HCDEAD" || :
+RUNENV="PATH=$WORK/psnone:$PATH STUB_MODE=complete STUB_N=0"
+race none successor --run hcrc3c --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --predecessor-pid "$HCDEAD" --wait-s 5 --max-wait-s 5 --tick-s 1 --pack-fresh
+need_rc 0
+need_out "race: the lock was reached"
+need_eq "$(hc_obs "$REC" pack-fresh)" "1" "the control's pack-fresh"
+need_eq "$(hc_starters hcrc3c)" "1" "the control's starter log"
+need_viewer_arg "$(console_cmd hcrc3c)"
+wait_field "$REC" head-successor session_id sid-by-the-head 40
+verdict "RC-3 (must fire; F3): a head-successor landing between successor's first read and its locked recheck leaves none on the cap of 6, so the call exits 10 with no head-exit appended, one refusal observation, no pack-fresh, no starter and no console, and says another head has started and this head is no longer the run's lead; the control, nothing landing at one left, records pack-fresh, detaches its starter and opens the console"
+
+# ---- RC-4 (must fire; F3): successor, the cap lowered before the lock ----
+fixture hcrc4 200
+hc_plant "$REC" 5
+run grants --run hcrc4 --max-successors 6
+viewer_use hcrc4
+HCX=$(mk count "$REC" head-exit)
+RUNENV="PATH=$WORK/psnone:$PATH"
+race cap=5 successor --run hcrc4 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" \
+    --wait-s 1 --max-wait-s 1 --tick-s 1 --pack-fresh
+need_rc 10
+need_out "race: cap=5 landed before the lock"
+need_out "race: the lock was reached"
+need_out "successor: REFUSED (exit 10): no successor left for run hcrc4 — 5 of 5 head starts on its cap (the grants file $REALSTORE/spawn-records/hcrc4-grants.json)"
+need_out "Nothing was written but this refusal's observation, so this head stays the run's lead"
+need_absent "no longer the run's lead"
+need_eq "$(hc_cap hcrc4)" "5" "the cap the change wrote"
+need_eq "$(mk count "$REC" head-exit)" "$HCX" "head-exits (none appended)"
+need_eq "$(hc_obs "$REC" "successor refused: no successor left")" "1" "the refusal's observation"
+need_eq "$(hc_obs "$REC" pack-fresh)" "0" "pack-fresh (--pack-fresh given)"
+need_eq "$(hc_starters hcrc4)" "0" "starter logs"
+need_no_viewer
+verdict "RC-4 (must fire; F3): the cap lowered from 6 to 5 between successor's first read and its locked recheck leaves none at 5 used, so the call exits 10 with no head-exit appended, one refusal observation, no pack-fresh, no starter and no console, and keeps this head the run's lead (RC-3's control is this driver's)"
+
+# ---- UM-1 (F3): the second consecutive unmetered gate at none left says close the run ----
+# The context-unmetered refusal (no transcript for the head, armed): its arrow, its clause and its
+# event's count, each changed by this package; the control at one left keeps the hand-over text.
+fixture hcum1 200
+hc_plant "$REC" 14
+run grants --run hcum1 --max-successors 14
+run gate --run hcum1 --to "item one" --meter-line "$METER"
+need_rc 0
+need_out "first miss"
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hcum1 --to "item two" --meter-line "$METER"
+need_rc 7
+need_out "second consecutive · armed (env) · REFUSED item item two → no successor is left (successors: 14 of 14 started): watch in-flight lanes to their close while the room lasts, then close the run with its morning report (handoff --set bullets, then close)"
+need_out "· successors: 14 of 14 started, none left — this is the run's last lead"
+need_absent "then successor"
+need_eq "$(mk field "$REC" gate band) $(mk field "$REC" gate decision) $(mk field "$REC" gate successors_used) $(mk field "$REC" gate successors_cap) $(mk field "$REC" gate successors_left)" "unmetered refuse 14 14 0" "the refused gate's event"
+need_eq "$(mk field "$REC" stop-condition which)" "unmetered" "the stop-condition"
+fixture hcum1c 200
+hc_plant "$REC" 13
+run grants --run hcum1c --max-successors 14
+run gate --run hcum1c --to "item one" --meter-line "$METER"
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hcum1c --to "item two" --meter-line "$METER"
+need_rc 7
+need_out "REFUSED item item two → handoff --final --band unmetered, then successor"
+need_out "· successors: 13 of 14 started, 1 left"
+verdict "UM-1 (F3): the second consecutive unmetered gate, armed, at 14 of 14 exits 7 saying close the run with its morning report and never 'then successor', carries the count, and its event records 14 used of 14 and 0 left; the control at 13 of 14 keeps 'handoff --final --band unmetered, then successor'"
+
+# ---- UM-2 (F3): the unmetered-spend refusal at none left says close the run ----
+# A measured context and a failing spend meter (the fixture model matches no price family, no
+# billed line in hand): the second consecutive miss, armed, is the spend refusal.
+fixture hcum2 200
+hc_plant "$REC" 14
+run grants --run hcum2 --max-successors 14
+mk transcript sid-hcum2-13 100000 >/dev/null
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hcum2 --to "item one"
+need_rc 0
+need_out "unmetered spend (first miss)"
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hcum2 --to "item two"
+need_rc 7
+need_out "unmetered spend (second consecutive) · armed (env) · REFUSED item item two → no successor is left (successors: 14 of 14 started): watch in-flight lanes to their close while the room lasts, then close the run with its morning report (handoff --set bullets, then close)"
+need_out "· successors: 14 of 14 started, none left — this is the run's last lead"
+need_absent "then successor"
+need_eq "$(mk field "$REC" gate metered) $(mk field "$REC" gate decision) $(mk field "$REC" gate successors_left)" "true refuse 0" "the refused gate's event"
+fixture hcum2c 200
+hc_plant "$REC" 13
+run grants --run hcum2c --max-successors 14
+mk transcript sid-hcum2c-12 100000 >/dev/null
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hcum2c --to "item one"
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hcum2c --to "item two"
+need_rc 7
+need_out "REFUSED item item two → handoff --final --band unmetered, then successor"
+need_out "· successors: 13 of 14 started, 1 left"
+verdict "UM-2 (F3): the unmetered-spend refusal (a measured context, a failing spend meter), armed, at 14 of 14 exits 7 saying close the run with its morning report and never 'then successor', with the count on its line and 0 left on its event; the control at 13 of 14 keeps the hand-over text"
+
+# ---- FC-1 (F4): a faulty cap at none left is undecided — how to recover it, never close ----
+# A grants file whose cap cannot be read (an unusable value, or bytes that are not JSON) falls back
+# to the default of 20, at which 20 used leave none: both hand-over commands and the gate's band
+# refusal name the fault, say the last-lead question is undecided and give the recovery, and none
+# says close the run. The control, a keyless file (a run that set no cap) at 20, does say close.
+fixture hcfc1 200
+hc_plant "$REC" 20
+printf '{"run": "hcfc1", "grants": [], "writes": [], "max_successors": "six"}\n' > "$REALSTORE/spawn-records/hcfc1-grants.json"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hcfc1 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 1 \
+    --max-wait-s 1 --tick-s 1
+need_rc 10
+need_out "successor: REFUSED (exit 10): run hcfc1's own successor cap cannot be read — its grants file is readable, unusable max_successors value 'six'"
+need_out "so whether this head is the run's last lead is undecided"
+need_out "Recover the cap: "
+need_out "handsoff.py grants --run hcfc1 --max-successors N"
+need_absent "close the run"
+need_eq "$(hc_obs "$REC" "successor refused: no successor left")" "1" "the refusal's observation"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hcfc1 --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER"
+need_rc 10
+need_out "handoff: REFUSED (exit 10): run hcfc1's own successor cap cannot be read"
+need_out "so whether this head is the run's last lead is undecided"
+need_absent "close the run"
+mk transcript sid-hcfc1-19 850000 >/dev/null
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hcfc1 --to "item two" --meter-line "$METER"
+need_rc 4
+need_out "→ no successor is left on a fallback cap, and the run's own cap cannot be read (the grants file is readable, unusable max_successors value 'six'), so whether this head is the run's last lead is undecided"
+need_absent "close the run"
+fixture hcfc2 200
+hc_plant "$REC" 20
+printf 'not json at all\n' > "$REALSTORE/spawn-records/hcfc2-grants.json"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hcfc2 --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER"
+need_rc 10
+need_out "own successor cap cannot be read — its grants file is unreadable ("
+need_out "so whether this head is the run's last lead is undecided"
+need_absent "close the run"
+fixture hcfc1c 200
+hc_plant "$REC" 20
+printf '{"run": "hcfc1c", "grants": [], "writes": []}\n' > "$REALSTORE/spawn-records/hcfc1c-grants.json"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hcfc1c --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 1 \
+    --max-wait-s 1 --tick-s 1
+need_rc 10
+need_out "close the run with its morning report"
+need_absent "undecided"
+verdict "FC-1 (must not say close; build review RV-CAP finding F4): at a faulty cap with none left — an unusable max_successors value, or a grants file that is not JSON — successor and handoff --final exit 10 and, with the gate's band refusal, name the fault, say whether this is the run's last lead is undecided, give the recovery (grants --max-successors N) and never say close the run; the control, a keyless grants file at 20 of 20, does say close the run"
+
+# ---- KL-1 (F5): a keyless grants file is a decided cap, the default of 20 applies ----
+# grants_payload writes max_successors only when a cap is set, so `grants` with no cap writes a
+# file without the key: a run that set no cap, whose fallback is its decided cap. At 20 of 20 both
+# hand-over commands refuse as the run's last lead and the gate says close the run; the control,
+# an unusable value at 20 of 20, is a fault and undecided.
+fixture hckl1 200
+hc_plant "$REC" 20
+run grants --run hckl1 --viewer none
+need_rc 0
+need_eq "$(hc_cap hckl1)" "absent" "the grants file's max_successors (grants with no cap writes no key)"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hckl1 --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 1 \
+    --max-wait-s 1 --tick-s 1
+need_rc 10
+need_out "successor: REFUSED (exit 10): no successor left for run hckl1 — 20 of 20 head starts on its cap (the default (the grants file: readable, no max_successors key; no AIMYTH_MAX_SUCCESSORS))"
+need_out "so this head stays the run's lead"
+need_out "close the run with its morning report"
+need_absent "cannot be read"
+need_absent "undecided"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run handoff --run hckl1 --final --band 80 --inflight-file "$HCPACK" --meter-line "$METER"
+need_rc 10
+need_out "handoff: REFUSED (exit 10): no successor left for run hckl1 — 20 of 20 head starts on its cap (the default (the grants file: readable, no max_successors key"
+need_absent "undecided"
+mk transcript sid-hckl1-19 850000 >/dev/null
+RUNENV="AIMYTH_HANDSOFF=1"
+run gate --run hckl1 --to "item two" --meter-line "$METER"
+need_rc 4
+need_out "→ no successor is left (successors: 20 of 20 started): watch in-flight lanes to their close while the room lasts, then close the run with its morning report"
+need_absent "undecided"
+fixture hckl1c 200
+hc_plant "$REC" 20
+printf '{"run": "hckl1c", "grants": [], "writes": [], "max_successors": 0}\n' > "$REALSTORE/spawn-records/hckl1c-grants.json"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run successor --run hckl1c --meter-line "$METER" --harness-bin "$WORK/bin/stubhead" --wait-s 1 \
+    --max-wait-s 1 --tick-s 1
+need_rc 10
+need_out "its grants file is readable, unusable max_successors value 0"
+need_out "undecided"
+verdict "KL-1 (build review RV-CAP finding F5): a grants file written with no cap carries no max_successors key, and at 20 of 20 it is a decided cap at the default of 20: successor and handoff --final refuse as the run's last lead (stays the lead, close the run) and the gate's band refusal says close the run, none of them naming a fault or undecided; the control, an unusable value (0) at 20 of 20, is a fault and undecided"
+
+# ---- RR-1 (F6): both run-resume dry runs print the count ----
+fixture hcrr1 200
+hc_plant "$REC" 3
+run grants --run hcrr1 --max-successors 14
+HCR=$(sha_file "$REC"); HCG=$(sha_file "$REALSTORE/spawn-records/hcrr1-grants.json")
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run hcrr1 --session sid-hcrr1-2 --head "fixture head" --detail "the count" --dry-run
+need_rc 0
+need_out "run-resume: dry run · {"
+need_out "\"grants\": \"kept\""
+need_out "· successors: 3 of 14 started, 11 left"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run hcrr1 --session sid-hcrr1-2 --head "fixture head" --detail "the count" \
+    --max-successors 20 --dry-run
+need_rc 0
+need_out "run-resume: dry run · {"
+need_out "· successors: 3 of 20 started, 17 left"
+need_eq "$(sha_file "$REC") $(sha_file "$REALSTORE/spawn-records/hcrr1-grants.json")" "$HCR $HCG" "the record and the grants file (sha256): the dry runs wrote nothing"
+RUNENV="PATH=$WORK/psnone:$PATH"
+run run-resume --run hcrr1 --session sid-hcrr1-2 --head "fixture head" --detail "the count"
+need_rc 0
+need_out "· successors: 3 of 14 started, 11 left"
+verdict "RR-1 (build review RV-CAP finding F6): run-resume's dry run with the grants file kept prints 'successors: 3 of 14 started, 11 left', and its dry run planning a cap of 20 prints the count that cap would give, '3 of 20 started, 17 left', neither writing the record or the grants file; the control, the real call, prints the same count as the kept dry run"
+
+# ---- G22f (register 2026-10-13 14:13, the filter third): --leg runs chosen sections alone ----
+# A nested run of this suite on a short section. The planted cases are a name no leg carries, which
+# must fail its premise rather than read clean, and a stray argument; the control is the name that
+# selects, whose section runs while a leg of another section stays out.
+LEGENV="HANDSOFF=$H HOOKS_DIR=$HOOKS_DIR LANE_PY=$LANE_PY"
+RC=0
+RUNENV="$LEGENV"; runenv sh "$SRC" --leg "run-resume: --session auto without a head-successor" >"$WORK/both" 2>&1 || RC=$?
+RUNENV=""
+need_rc 0
+need_out "leg filter: 1 of "
+need_out "run-resume: an explicit session and --pid are recorded"
+need_out "write proof: the shipped skill and hooks directories are byte-identical"
+need_out "^PASS 7/7$"
+need_absent "run-open: --dry-run prints the event"
+RC=0
+RUNENV="$LEGENV"; runenv sh "$SRC" --leg "no leg is named this" >"$WORK/both" 2>&1 || RC=$?
+RUNENV=""
+need_rc 2
+need_out "PROBE FAILED: no leg's name holds"
+need_absent "^PASS"
+need_absent "^ok "
+RC=0
+RUNENV="$LEGENV"; runenv sh "$SRC" --unknown >"$WORK/both" 2>&1 || RC=$?
+RUNENV=""
+need_rc 2
+need_out "PROBE FAILED: the only argument is --leg TEXT"
+need_absent "^ok "
+verdict "G22f (fails on old): --leg TEXT runs the sections naming it and the write proof, a name no leg carries or a stray argument is a premise failure, and no run is mistaken for the whole suite"
+
+# ------------------------------------------------------------------------ write proof ------
+# The last legs, so they cover every leg above (moved here 2026-10-10).
+MANIFEST_AFTER="$WORK/manifest-after.txt"
+mk manifest "$SKILL_DIR" "$HOOKS_DIR" > "$MANIFEST_AFTER"
+# A difference here is either a write by the suite (the fault this leg looks for) or a sibling
+# process writing to the same directory while the suite ran; the reason line names the paths,
+# so the two can be told apart rather than guessed at.
+DIFF=$(diff "$MANIFEST_BEFORE" "$MANIFEST_AFTER" | grep '^[<>]' | cut -c1-90)
+need_eq "$DIFF" "" "manifest difference"
+need_eq "$(grep -c . "$MANIFEST_BEFORE")" "$(grep -c . "$MANIFEST_AFTER")" "manifest length"
+NEWCACHE=$(grep '__pycache__' "$MANIFEST_AFTER" | grep -c -v -F -f "$MANIFEST_BEFORE")
+need_eq "$NEWCACHE" "0" "byte-code files created under the shipped directories"
+verdict "write proof: the shipped skill and hooks directories are byte-identical after the run"
+
+COPY="$WORK/manifest-control"
+rm -rf "$COPY"
+mkdir -p "$COPY"
+cp "$H" "$COPY/handsoff.py"
+mk manifest "$COPY" > "$WORK/control-before.txt"
+printf '# a planted change\n' >> "$COPY/handsoff.py"
+mk manifest "$COPY" > "$WORK/control-after.txt"
+if diff "$WORK/control-before.txt" "$WORK/control-after.txt" >/dev/null; then
+  why="$why; the manifest did not notice a planted one-line change"
+fi
+verdict "write proof control: the manifest detects a planted change in a copy"
+
+SCAN=$(mk srcscan "$SRC" | tail -1)
+need_eq "$SCAN" "hits 0" "source scan of the suite"
+PLANTED=$(mk srcscan "$WORK/planted-writer.sh" | tail -1)
+need_eq "$PLANTED" "hits 2" "source scan of the planted control"
+verdict "write proof: no write verb in this suite aims outside /tmp (control: 2 planted hits)"
+
+# The read proof (register entry 2026-10-04 10:45, the test_handsoff.sh part): every python
+# process of the run loaded the read guard, and no read reached a real home-directory store. The
+# control: a planted read of a path under the real Codex home must be blocked and logged — a
+# path that does not exist, so a broken guard still reads nothing real.
+RG_BEFORE=0; [ -f "$READ_GUARD_LOG" ] && RG_BEFORE=$(grep -c . "$READ_GUARD_LOG")
+if [ "$RG_BEFORE" != "0" ]; then
+  why="$why; $RG_BEFORE read(s) of a real store were blocked during the run: $(cut -c1-200 "$READ_GUARD_LOG" | head -5 | tr '\n' '|')"
+fi
+RGCTL=$("$PY" -c 'import os, sys
+try:
+    open(os.path.join(sys.argv[1], ".codex", "sessions", "suite-read-guard-probe.jsonl"))
+    print("read")
+except PermissionError:
+    print("blocked")
+except OSError as exc:
+    print("unguarded: %s" % type(exc).__name__)' "$REALHOME")
+need_eq "$RGCTL" "blocked" "the planted real-store read (the control)"
+RG_AFTER=0; [ -f "$READ_GUARD_LOG" ] && RG_AFTER=$(grep -c . "$READ_GUARD_LOG")
+need_eq "$RG_AFTER" "$((RG_BEFORE + 1))" "the guard logged the planted read"
+need_eq "$(printf '%s' "$HOME" | grep -c "^$WORK")" "1" "HOME is the fixture's"
+verdict "read proof (register 2026-10-04 10:45): no read of a real home-directory store in the whole run (the Codex home, the harness's projects and configuration, the run store and the hand-off directory are fixtures), while a planted read under the real Codex home is blocked and logged (the control)"
+
+# --------------------------------------------- the receipts, fix (c) and the resume shape ------
+# A3 receipt interfaces: native helper outcomes, public drain, durable head receipt and acknowledgement.
+"$PY" -B "$SKILL_DIR/test_a3.py" --wrappers "$SKILL_DIR" --fixture-root "$WORK" \
+  --part handsoff --only A23 --no-mutations > "$WORK/a3-receipts.log" 2>&1
+A3_RECEIPT_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) printf '%s\n' "$line" ;;
+    'BAD '*) printf '%s\n' "$line" ;;
+  esac
+done < "$WORK/a3-receipts.log"
+if [ "$A3_RECEIPT_RC" != 0 ]; then why="$why receipt matrix failed (exit $A3_RECEIPT_RC)"; fi
+verdict "A3 public notice delivery, exact-version receipts and consumer crash matrix"
+
+# The spawn hold's reader, the decisions file's binding, the ack verb and the in-flight ack line. Its
+# lane legs run in test_lane.sh and test_codex_lane.sh; this file beside them ships with the launcher.
+if [ -f "$SKILL_DIR/test_decisions_spawn.py" ]; then
+  "$PY" -B "$SKILL_DIR/test_decisions_spawn.py" --wrappers "$SKILL_DIR" --fixture-root "$WORK" \
+    --part handsoff > "$WORK/decisions-spawn.log" 2>&1
+  DSPAWN_RC=$?
+  while IFS= read -r line; do
+    case "$line" in
+      'OK '*) why=""; verdict "${line#OK }" ;;
+      'BAD '*) why="spawn hold assertion failed"; verdict "${line#BAD }" ;;
+      'PROBE FAILED:'*) why="$line"; verdict "spawn hold premise" ;;
+    esac
+  done < "$WORK/decisions-spawn.log"
+  if [ "$DSPAWN_RC" != 0 ] && ! grep -q '^BAD ' "$WORK/decisions-spawn.log"; then
+    why="$(tail -3 "$WORK/decisions-spawn.log")"; verdict "spawn hold harness failed"
+  fi
+else
+  printf 'UNRUN the spawn hold: no test_decisions_spawn.py beside this suite\n'
+fi
+
+# Fix (c): the real resume constructor with fake process, connectivity and clock boundaries.
+"$PY" -B "$SKILL_DIR/test_fix_c.py" --wrappers "$SKILL_DIR" --fixture-root "$WORK" \
+  --part handsoff > "$WORK/fix-c.log" 2>&1
+FIXC_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) why=""; verdict "${line#OK }" ;;
+    'BAD '*) why="fix (c) assertion failed"; verdict "${line#BAD }" ;;
+    'PROBE FAILED:'*) why="$line"; verdict "fix (c) premise" ;;
+  esac
+done < "$WORK/fix-c.log"
+if [ "$FIXC_RC" != 0 ] && ! grep -q '^BAD ' "$WORK/fix-c.log"; then
+  why="$(tail -3 "$WORK/fix-c.log")"; verdict "fix (c) harness failed"
+fi
+
+# The item bars (register 2026-11-05 12:41): item-done and the close's list. Its lane legs run in
+# test_lane.sh and test_codex_lane.sh; this file beside them ships with the launcher.
+if [ -f "$SKILL_DIR/test_item_bars.py" ]; then
+  "$PY" -B "$SKILL_DIR/test_item_bars.py" --wrappers "$SKILL_DIR" --fixture-root "$WORK" \
+    --part handsoff > "$WORK/item-bars.log" 2>&1
+  IBARS_RC=$?
+  while IFS= read -r line; do
+    case "$line" in
+      'OK '*) why=""; verdict "${line#OK }" ;;
+      'BAD '*) why="item bars assertion failed"; verdict "${line#BAD }" ;;
+      'PROBE FAILED:'*) why="$line"; verdict "item bars premise" ;;
+    esac
+  done < "$WORK/item-bars.log"
+  if [ "$IBARS_RC" != 0 ] && ! grep -q '^BAD ' "$WORK/item-bars.log"; then
+    why="$(tail -3 "$WORK/item-bars.log")"; verdict "item bars harness failed"
+  fi
+else
+  printf 'UNRUN the item bars: no test_item_bars.py beside this suite\n'
+fi
+
+# Path A: caps, successor decisions, positive work, D29 and public cold-cache advice.
+"$PY" -B "$SKILL_DIR/test_resume_shape.py" --wrappers "$SKILL_DIR" --fixture-root "$WORK" \
+  > "$WORK/resume-shape.log" 2>&1
+SHAPE_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) why=""; verdict "${line#OK }" ;;
+    'BAD '*) why="resume shape assertion failed"; verdict "${line#BAD }" ;;
+    'PROBE FAILED:'*) why="$line"; verdict "resume shape premise" ;;
+  esac
+done < "$WORK/resume-shape.log"
+if [ "$SHAPE_RC" != 0 ] && ! grep -q '^BAD ' "$WORK/resume-shape.log"; then
+  why="$(tail -3 "$WORK/resume-shape.log")"; verdict "resume shape harness failed"
+fi
+
+# ---- INV-2 (register 2026-10-30 21:40 f): a receipt for version n settles the versions below ----
+# The planted case is the entry's: v1 and v2 of a notice still printing after v3's receipt. The
+# controls are a newer version, which stays owed, and a notice with no receipt at all. A stand-in
+# for the journal store keeps the versions exact; A23 above runs the same reading on real journals.
+RNOTE=$("$PY" - "$H" <<'NOTICESCRIPT'
+import argparse, contextlib, importlib.util, io, json, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("hs", sys.argv[1])
+hs = importlib.util.module_from_spec(spec); spec.loader.exec_module(hs)
+def notice(identifier, version):
+    return {"notice_id": identifier, "version": version, "payload_sha256": "%s%d" % (identifier, version), "payload": {}}
+class Store:
+    class A3Premise(Exception):
+        pass
+    journals = [{"notices": [notice("settled", n) for n in (1, 2, 3)],
+                 "acknowledgements": [{"notice_id": "settled", "version": 3, "payload_sha256": "settled3"}]},
+                {"notices": [notice("newer", n) for n in (1, 2)],
+                 "acknowledgements": [{"notice_id": "newer", "version": 1, "payload_sha256": "newer1"}]},
+                {"notices": [notice("bare", 1)], "acknowledgements": []}]
+    @staticmethod
+    def a3_journals(record, run=None):
+        return Store.journals
+    @staticmethod
+    def a3_pending(record, run=None):
+        return [n for j in Store.journals for n in j["notices"]
+                if (n["notice_id"], n["version"]) not in {(a["notice_id"], a["version"]) for a in j["acknowledgements"]}]
+    @staticmethod
+    def a3_json(value):
+        return json.dumps(value, sort_keys=True)
+    @staticmethod
+    def a3_notice_text(item):
+        return "printed %s v%d" % (item["notice_id"], item["version"])
+hs.a3_shared = lambda: Store
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    hs.cmd_notices(argparse.Namespace(run="fixture", record="/no/such/record", ack=False, format="json"))
+pending = sorted("%s%d" % (n["notice_id"], n["version"]) for n in json.loads(out.getvalue())["pending"])
+out = io.StringIO()
+with contextlib.redirect_stdout(out):
+    hs.a3_expose_notices(lambda a: 0)(argparse.Namespace(run="fixture", record="/no/such/record"))
+print(" ".join(pending), "|", " ".join(sorted(line.split()[1] + line.split()[2] for line in out.getvalue().splitlines() if "printed" in line)))
+NOTICESCRIPT
+)
+need_eq "$RNOTE" "bare1 newer2 | barev1 newerv2" "what stays owed, drained and at a gate"
+verdict "INV-2 (fails on old): a receipt for version n settles every lower version of that notice, drained or printed at a gate, while a newer version and a notice with no receipt stay owed"
+
+# ------------------------------------- a3_shared and AIMYTH_LANE_PY (older than the hand-over fix) ---
+# The record transaction (a3_shared) loads the lane wrapper AIMYTH_LANE_PY names, as the classifier
+# (lane_module) does, so a copy under test with no lane.py beside it uses the one the suite names.
+# The wrapper named here is a copy of the suite's lane.py that marks its own import; the control is
+# the same copy of handsoff.py with the variable unset, which has no lane.py beside it to load.
+A3L="$WORK/a3-lane-py"
+rm -rf "$A3L"; mkdir -p "$A3L/code" "$A3L/wrapper"
+cp "$H" "$A3L/code/handsoff.py"
+{ cat "$LANE_PY"; printf '\nimport os as _a3_mark_os\nwith open(_a3_mark_os.environ["A3_LANE_MARK"], "a", encoding="utf-8") as _a3_mark:\n    _a3_mark.write(__file__ + "\\n")\n'; } > "$A3L/wrapper/lane.py"
+plain_fixture a3lanepy
+A3N=$(mk lines "$REC")
+RC=0
+env AIMYTH_LANE_PY="$A3L/wrapper/lane.py" A3_LANE_MARK="$A3L/mark" "$PY" -B "$A3L/code/handsoff.py" \
+    ledger --run a3lanepy --observation "through the wrapper AIMYTH_LANE_PY names" >"$WORK/out" 2>"$WORK/err" || RC=$?
+cat "$WORK/out" "$WORK/err" >"$WORK/both"
+need_rc 0
+need_out "observation recorded"
+need_eq "$(mk lines "$REC")" "$((A3N + 1))" "record lines (the observation appended)"
+if [ -f "$A3L/mark" ]; then
+  need_eq "$(sort -u "$A3L/mark")" "$(real "$A3L/wrapper/lane.py")" "the wrapper the copy loaded"
+else
+  why="$why; the wrapper AIMYTH_LANE_PY names was never loaded"
+fi
+RC=0
+env -u AIMYTH_LANE_PY "$PY" -B "$A3L/code/handsoff.py" ledger --run a3lanepy --observation "with no wrapper named" \
+    >"$WORK/out" 2>"$WORK/err" || RC=$?
+cat "$WORK/out" "$WORK/err" >"$WORK/both"
+[ "$RC" != 0 ] || why="$why; the control (AIMYTH_LANE_PY unset, no lane.py beside the copy) exited 0, so the leg would prove nothing"
+need_eq "$(mk lines "$REC")" "$((A3N + 1))" "record lines after the control (nothing more appended)"
+verdict "a3_shared reads AIMYTH_LANE_PY (older than the hand-over fix): a copy of handsoff.py with no lane.py beside it appends its observation through the wrapper the variable names, which marks its own import; the control, the same copy with the variable unset, fails and appends nothing"
 
 # ----------------------------------------------------------------------------- summary -----
 printf '\n'

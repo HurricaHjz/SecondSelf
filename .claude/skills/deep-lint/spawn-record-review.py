@@ -13,7 +13,8 @@ Carries two guards from one read of the spawn records, and never calls the meter
   `auto pick without --choice-reason`. A line without `model_src` (every record before 2026-09-08)
   keeps the phrase check whatever its throttle; a hand-set preset keeps it too.
 
-Inputs: the records directory (`~/.llm-wiki/spawn-records/*.jsonl`), `routing.json`, and the
+Inputs: the records directory (`~/.llm-wiki/spawn-records/*.jsonl`), `routing.json` with any
+user's overlay merged in (`routing_layers.py`), and the
 log (for the window: records whose run-open is on or after the last `deep-lint |` entry's date;
 no such entry → every record, said once). A record with no `run-open` is an ATTENDED run (the
 plain-lane shape of an attended session: `lane.py spawn` writes `lane-open` and no hands-off
@@ -79,6 +80,19 @@ def resolve(routing, cls, throttle, headless):
     elif throttle == "cheap-fast": m, e = weakest("model"), weakest("effort")
     return {"model": m, "effort": e}
 
+def load_table(path):
+    """The routing record, with a user's overlay merged where one sits three levels above the table,
+    so a class of their own is reviewed like any other. `routing_layers` is imported only then, so
+    this script runs alone with no overlay; a fault raises, and the caller stops with PROBE FAILED."""
+    home = os.path.abspath(path)
+    for _level in range(3): home = os.path.dirname(home)
+    if not os.path.lexists(os.path.join(home, "routing.local.json")):
+        return json.load(io.open(path, encoding="utf-8"))
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "delegate"))
+    sys.dont_write_bytecode = True   # the import must never leave a __pycache__ in the skill directory
+    import routing_layers
+    return routing_layers.load(path)
+
 def main():
     ap = argparse.ArgumentParser(description="deep-lint Step 2: spawn-record review (report-only)")
     ap.add_argument("--records", default=os.path.expanduser("~/.llm-wiki/spawn-records"))
@@ -89,7 +103,7 @@ def main():
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args()
     if not os.path.isdir(a.records): die("records directory %s is missing" % a.records)
-    try: routing = json.load(io.open(a.routing, encoding="utf-8")); order = routing["order"]; classes = routing["classes"]
+    try: routing = load_table(a.routing); order = routing["order"]; classes = routing["classes"]
     except Exception as e: die("routing record unreadable: %s" % e)
     rule_from = parse_ts(a.rule_from); letter_from = parse_ts(a.letter_from)
     if rule_from is None or letter_from is None: die("RULE_FROM or LETTER_FROM does not parse")

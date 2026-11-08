@@ -4,8 +4,10 @@
 The throttle is the owner's constraint knob for delegated work. It is vault-global,
 never per session, because the definitions it rewrites are shared by every session and
 outlive any one of them. Its record is the `throttle:` line in CUSTOMISATION `## Settings`;
-its ranges live in `routing.json` beside this file; its effect is the `model:` and
-`effort:` lines of the per-role definitions in `.claude/agents/`.
+its ranges live in `routing.json` beside this file, with a user's overlay,
+`<root>/.claude/routing.local.json`, merged over them by routing_layers.py (an overlay that
+fails stops with PROBE FAILED, never a fall back to the table alone); its effect is the
+`model:` and `effort:` lines of the per-role definitions in `.claude/agents/`.
 
   show   the active throttle, what it resolves to per role, the drift status, and the
          head's own recommended tier (a recommendation only — the head's model and
@@ -39,7 +41,7 @@ Resolution rule (the routing contract selection rule; the `auto` row is task-dep
   auto          role default · row default    ceiling · row default    (the anchors)
   top           ceiling · strongest option    ceiling · strongest option
   default       role default · row default    ceiling · row default
-  cheap         floor · weakest option        ceiling · strongest option
+  cheap         floor · weakest option        ceiling · row default
   fast          role default · row default    floor · weakest option
   cheap-fast    floor · weakest option        floor · weakest option
 
@@ -48,7 +50,9 @@ Resolution rule (the routing contract selection rule; the `auto` row is task-dep
   rule. From the owner's ruling of 2026-09-29 `top` and `cheap` both resolve to opus there,
   until a stronger Claude model (fable 5.5 or later) arrives and the owner says so. Every class
   must list the named model among its options, a broken premise otherwise; a record without
-  the block resolves as the table says.
+  the block resolves as the table says. The one exception is a class a user's overlay gave
+  options that leave the model out, which `routing_layers.py` lists under `preset_free`: it
+  resolves as the table says, and every other class keeps the preset's model.
 
   `auto` is the default preset: the Settings default from 2026-09-08 once the owner runs
   `set auto`, and what a missing Settings line reads as. Under it the head picks model and
@@ -76,12 +80,14 @@ Resolution rule (the routing contract selection rule; the `auto` row is task-dep
   effort default is the anchor `xhigh`, a reference and not a pin, so a per-call pick either
   way, `max` for design- or reasoning-heavy work or `high` for a closed one-leg task, is
   recorded on the lane-open event with its reason and never gated; critic and reflector keep
-  `max`, the effort being the product, and the gate-judge stays fixed); `cheap` keeps the
-  ceiling effort because the constraint the owner named there is spend, which the model
-  axis carries. From the owner's ruling of 2026-09-29 the model axis no longer carries it:
-  `cheap` resolves to opus like `top` (`preset_model`), so the two presets resolve alike on
-  every class, and whether `cheap` should lower the effort instead is open (the register's
-  entry of 2026-09-06 on `cheap` and `default`).
+  `max`, the effort being the product, and the gate-judge stays fixed). `cheap` takes the
+  row's default effort and never exceeds it (the register's entry of 2026-09-06: at the
+  ceiling it resolved stronger and dearer than `default`, and once `preset_model` put both
+  `top` and `cheap` on opus it was dearer on every class whose default sits below its
+  ceiling). The same rule on a schema-1 record is its frozen ceiling, which IS that record's
+  default effort, so `cheap` never exceeds the default there either. lane.py's resolver
+  applies the same rule, so the two paths agree on every preset; an explicit per-call
+  `--effort` is a departure lane.py records, outside this table.
 
 Where the ranges come from (a deciding number carries its derivation)
 
@@ -92,13 +98,13 @@ Where the ranges come from (a deciding number carries its derivation)
   value on both axes: a parity gate measures the routed step's executor at its default
   tier, so a gate run at any other tier measures nothing the gate exists to measure.
   Every model ceiling except `gate-judge`'s and `memory-hunter`'s was fable, per the owner's
-  ruling of 2026-09-02, until the owner's rulings of 2026-09-22 (19:0x) and 2026-09-29: no
-  class row lists fable since, except the writer's, where it stays an option for an important
-  check on the owner's standing word; opus 5.5 is the default for every Claude seat, and fable runs
-  only on the owner's word, as a by-name spawn lane.py records as
+  ruling of 2026-09-02, until the owner's rulings of 2026-09-22 (19:0x) and 2026-09-29
+  took fable off every other row; the writer's Claude half lost its last fable option on
+  2026-11-02 (owner ruling: fable only when he asks by name). Opus 5.5 is the default for every
+  Claude seat, and fable runs only as a by-name spawn lane.py records as
   outside the options. Opus (Opus 5.5) is the strongest helper for closed work, and `top` and
   `cheap` resolve every class's model to opus through `preset_model`; Astra through
-  codex-lane.py serves open work, outside this throttle. `fable` stays in `order.model` for a
+  codex-lane.py sits outside this throttle, and the routing table says which work it serves. `fable` stays in `order.model` for a
   by-name spawn and the meter's picks tally.
 
 Guards, each keyed on a premise that can fail
@@ -170,8 +176,8 @@ SELECT = {"auto": (1, 1), "top": (2, 1), "default": (1, 1), "cheap": (0, 1),
 # the ANCHOR the head picks around per call (owner ruling 2026-09-07 17:0x).
 SELECT_V2 = {"auto": ("default", "default"),
              "top": ("strongest", "strongest"), "default": ("default", "default"),
-             "cheap": ("weakest", "strongest"), "fast": ("default", "weakest"),
-             "cheap-fast": ("weakest", "weakest")}
+             "cheap": ("weakest", "default"), "fast": ("default", "weakest"),
+             "cheap-fast": ("weakest", "weakest")}   # `cheap` takes the row's default effort, never above it (register 2026-09-06)
 # The fields every schema-2 row must carry. Absence is a broken premise, not a default:
 # a row silently missing `tools` would spawn a lane with whatever the harness offers.
 V2_FIELDS = ("model", "effort", "grants", "writes", "tools", "skills", "mcp", "cache",
@@ -179,10 +185,9 @@ V2_FIELDS = ("model", "effort", "grants", "writes", "tools", "skills", "mcp", "c
 # The head's own tier under each throttle. A recommendation the head carries in its
 # hand-off line; the head's real model and effort are the owner's client settings. Opus
 # under every throttle since the owner's ruling of 2026-09-29 (opus 5.5 is the default Claude
-# model, the heads of hands-off and multi-agent runs included; fable only on his word). The line
-# serves the next session a hand-off names, a build or a run; an attended session that is mostly
-# discussion takes a fable head (his amendment of 20:0x the same day), which the head recommends
-# in words, suggesting a swap when a session's work shifts.
+# model, the heads of hands-off and multi-agent runs included; fable only when he asks for it by
+# name, owner ruling of 2026-11-02). The line serves the next session a hand-off names, whatever
+# its kind.
 HEAD_LINE = {"auto": "head: opus · max",
              "top": "head: opus · max",
              "default": "head: opus · max",
@@ -208,6 +213,7 @@ SETTINGS_LINE = ('- **throttle**: %s — subagent routing throttle: auto (the de
 CUSTOM_REL = "CUSTOMISATION.md"
 AGENTS_REL = os.path.join(".claude", "agents")
 ROUTING_REL = os.path.join(".claude", "skills", "delegate", "routing.json")
+OVERLAY_REL = os.path.join(".claude", "routing.local.json")
 ROLE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 # A description that names a CURRENT tier goes stale the moment a throttle moves it, and a
 # lane brief quoting it would carry the wrong routing. `set` never edits prose, so this is a
@@ -244,8 +250,27 @@ def load_routing(root):
         rec = json.loads(raw)
     except ValueError as exc:
         _fail("%s is not valid JSON (%s)" % (ROUTING_REL, exc))
+    if os.path.lexists(os.path.join(root, OVERLAY_REL)):
+        rec = merged_record(path)
     validate_routing(rec, ROUTING_REL)
     return rec
+
+
+def merged_record(path):
+    """The record with the user's overlay merged in. `routing_layers` is imported here and nowhere
+    else, so this script copied on its own, with no overlay, runs as it did without that file."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    sys.dont_write_bytecode = True   # the import must never leave a __pycache__ in the skill directory
+    try:
+        import routing_layers
+    except ImportError as exc:
+        _fail("%s needs routing_layers.py beside throttle.py (%s)" % (OVERLAY_REL, exc))
+    try:
+        return routing_layers.load(path)
+    except routing_layers.Broken as exc:
+        _fail(str(exc))
 
 
 def schema_of(rec, rel):
@@ -331,7 +356,7 @@ def validate_v2(rec, rel):
                 _fail("%s: class `%s` %s default %r is not one of its options (%s)"
                       % (rel, cls, axis, ax["default"], " ".join(map(str, opts))))
         for name, model in preset_models(rec, rel).items():
-            if model not in spec["model"]["options"]:
+            if model not in spec["model"]["options"] and cls not in rec.get("preset_free", ()):
                 _fail("%s: `preset_model.%s` names %r, which class `%s` does not list among its "
                       "model options (%s)" % (rel, name, model, cls,
                                               " ".join(map(str, spec["model"]["options"]))))
@@ -405,7 +430,7 @@ def resolve(rec, name):
             model, effort = tuple(
                 pick_option(rec["order"][axis], spec[axis]["options"], spec[axis]["default"], how)
                 for axis, how in (("model", mh), ("effort", eh)))
-            out[cls] = (pinned or model, effort)
+            out[cls] = (pinned if pinned in spec["model"]["options"] else model, effort)
         return out
     mi, ei = SELECT[name]
     return {role: (spec["model"][mi], spec["effort"][ei])

@@ -1,0 +1,42 @@
+{
+  "hands-off": {
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "set +f; if [ \"${AIMYTH_HANDSOFF-}\" != 1 ] && [ -z \"${AIMYTH_STATE_DIR-}\" ] && [ -n \"${HOME-}\" ]; then _hl_d=\"$HOME/.aimyth/handoffs\"; _hl_f=; if [ -d \"$_hl_d\" ] && [ ! -r \"$_hl_d\" ]; then _hl_f=unlistable; else for _hl_f in \"$_hl_d\"/armed-*; do [ -e \"$_hl_f\" ] && break; _hl_f=; done; fi; [ -n \"$_hl_f\" ] || exit 0; fi; python3 -B \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/handsoff-gate.py\" || true"
+            }
+          ]
+        },
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "set +f; if [ \"${AIMYTH_HANDSOFF-}\" != 1 ] && [ -z \"${AIMYTH_STATE_DIR-}\" ] && [ -n \"${HOME-}\" ]; then _hl_d=\"$HOME/.aimyth/handoffs\"; _hl_f=; if [ -d \"$_hl_d\" ] && [ ! -r \"$_hl_d\" ]; then _hl_f=unlistable; else for _hl_f in \"$_hl_d\"/armed-*; do [ -e \"$_hl_f\" ] && break; _hl_f=; done; fi; [ -n \"$_hl_f\" ] || exit 0; fi; python3 -B \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/head-fence.py\" || true",
+              "timeout": 10
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "ingest-check": {
+    "hooks": {
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "/bin/sh \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/ingest-ledger-check.sh\" || true",
+              "timeout": 10
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

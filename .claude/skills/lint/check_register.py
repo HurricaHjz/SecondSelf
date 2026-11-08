@@ -29,19 +29,31 @@ Open entries citing one locator in two spellings must produce one finding of eac
 closed Status under `## Closed` must not be one. A control that does not behave is PROBE FAILED
 (exit 2).
 
+Capability arm (`--capability`): a separate read of the structured capability register through
+the adopt skill's shared reader, never its generated Markdown. It requires explicit vault and home
+roots, verifies the data, receipt and complete generated page (a hand edit is PAGE DRIFT), rechecks
+every active row's resources and evaluates each skill row's assurance per model target; legacy rows
+and assurance gaps are findings. `--adopt-dir` names the adopt skill when it is not the sibling one.
+
 Usage (from the vault root):
   python3 .claude/skills/lint/check_register.py [--vault ROOT] [--register FILE]
+  python3 .claude/skills/lint/check_register.py --capability --vault ROOT --home ROOT [--adopt-dir DIR]
   exit 0 = clean, or n/a when the vault has no register yet (CLAUDE.md §12: a missing register
   is not an error) · 1 = findings · 2 = broken premise (not a vault root, a named register file
   missing, an unreadable register, no `## Open` heading, a control that did not behave)
 """
+import json
 import os
 import re
+import secrets
 import sys
 
-USAGE = ("usage: check_register.py [--vault ROOT] [--register FILE]   "
+USAGE = ("usage: check_register.py [--vault ROOT] [--register FILE] | "
+         "--capability --vault ROOT --home ROOT [--adopt-dir DIR]   "
          "(exit 0 clean or n/a · 1 findings · 2 broken premise)")
 REGISTER_REL = "wiki/developments/known-issues.md"
+CAPABILITY_REL = "wiki/developments/capability-register.md"
+CAPABILITY_FLAGS = ("--home", "--adopt-dir")
 
 SECTION_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")          # `### x` never matches: `#` is not a blank
 ENTRY_RE = re.compile(r"^###[ \t]+(.+?)[ \t]*$")
@@ -90,26 +102,36 @@ def probe_failed(message):
 
 
 def parse_args(argv):
-    """(vault, register, file_mode). An unknown flag is refused, never read as a root."""
+    """(vault, register, options). An unknown flag is refused, never read as a root; the capability
+    arm's own flags are refused without --capability."""
     vault, register, rest = None, None, list(argv)
+    options = {"capability": False}
     while rest:
         arg = rest.pop(0)
         if arg in ("-h", "--help"):
             print(USAGE)
             raise SystemExit(0)
-        if arg in ("--vault", "--register"):
+        if arg == "--capability":
+            options["capability"] = True
+            continue
+        if arg in ("--vault", "--register") + CAPABILITY_FLAGS:
             if not rest:
                 probe_failed(f"{arg} needs an argument")
             value = rest.pop(0)
-        elif arg.startswith("--vault=") or arg.startswith("--register="):
+        elif any(arg.startswith(f + "=") for f in ("--vault", "--register") + CAPABILITY_FLAGS):
             arg, value = arg.split("=", 1)
         else:
             probe_failed(f"unknown argument {arg} ({USAGE})")
         if arg == "--vault":
             vault = value
-        else:
+        elif arg == "--register":
             register = value
-    return vault, register
+        else:
+            options[arg[2:].replace("-", "_")] = value
+    given = [f for f in CAPABILITY_FLAGS if f[2:].replace("-", "_") in options]
+    if given and not options["capability"]:
+        probe_failed(f"{given[0]} belongs to the capability arm: add --capability ({USAGE})")
+    return vault, register, options
 
 
 def read_text(path):
@@ -201,8 +223,54 @@ def locator_text(loc):
     return f"{loc[0]}:{loc[1]}"
 
 
+def capability_main(vault, register, options):
+    root = options.get("adopt_dir") or os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "adopt")
+    sys.path.insert(0, str(root))
+    from adopt_data import Context, Problem, require, load_current, control, cli_error
+    from adopt_resources import recheck
+    from adopt_freshness import evaluate
+    try:
+        require(vault and options.get("home"), "capability checks require explicit vault and home roots")
+        ctx = Context(vault, options["home"])
+        require(register is None or os.path.realpath(register) == os.path.realpath(str(ctx.data)),
+                "capability authority is the structured data path; Markdown is output only")
+        doc, raw = load_current(ctx)
+        legacy, assurance, gaps = [], [], []
+        checked = 0
+        for row in doc["rows"]:
+            if row["lifecycle"]["state"] == "legacy-recorded":
+                legacy.append(row["id"])
+            else:
+                if row["lifecycle"]["state"] == "active":
+                    recheck(doc, row, ctx)
+                    checked += 1
+                if row["freshness"]["status"] == "applicable":
+                    models = sorted({c["model_id"] for s in row["freshness"]["skills"] for c in s["comparisons"]} |
+                                    {t["model_id"] for t in doc["policy"]["model_targets"]})
+                    if not models:
+                        gaps.append(row["id"] + ": unproven; model evidence unresolved")
+                    for model in models:
+                        result = evaluate(doc, row, ctx, model)
+                        assurance.append({"row_id": row["id"], "model_id": model, **result})
+                        if result["tier"] == "unproven":
+                            gaps.append(row["id"] + ": unproven for " + model)
+        print(f"capability-check: {len(doc['rows'])} rows; {checked} active checked; "
+              f"{len(legacy)} legacy findings; {len(gaps)} assurance gaps; control OK {control()}")
+        for rid in legacy:
+            print(rid + ": unproven; model evidence unresolved; legacy recorded, not re-proved")
+        for assessment in assurance:
+            print("ASSURANCE " + json.dumps(assessment, sort_keys=True))
+        for gap in gaps:
+            print(gap)
+        return 1 if legacy or gaps else 0
+    except (Problem, OSError) as exc:
+        return cli_error(exc)
+
+
 def main():
-    vault, register = parse_args(sys.argv[1:])
+    vault, register, options = parse_args(sys.argv[1:])
+    if options["capability"]:
+        return capability_main(vault, register, options)
     if register is None:
         root = vault if vault else "."
         if not all(os.path.isdir(os.path.join(root, d)) for d in ("raw", "wiki")):

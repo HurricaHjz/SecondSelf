@@ -433,6 +433,38 @@ else
 fi
 if grep -q 'recovery n/a · scope pdf · readable-words 0.950' "$HERE/SKILL.md"; then ok 'F7-step-eight: readable-words follows recovery and scope in the example'; else no 'F7-step-eight'; fi
 
+echo '--- cosmetic residues: the readable-words provenance under an override, the n/a reasons, one measure order ---'
+OUT="$(score --thresholds off,off,off,off,0.5 "$READABLE/equal.md")"; rc=$?
+eq "K2-override-provenance: a fifth override value names the override on the readable-words cut, not the derived note" '0-1-0' "$rc-$(has "^SCORED: .*| readable-words < 0\.5 (override 'off,off,off,off,0\.5')\$" "$OUT")-$(has '^SCORED: .*validate on a separately labelled local corpus' "$OUT")"
+OUT="$(score --thresholds -,-,-,off "$F/runs.md")"; rc=$?
+eq "K2-derived-kept: four values override the first four and keep the readable-words cut with its own provenance" '0-1' "$rc-$(has "^SCORED: .*recovery < 0\.15 (override '-,-,-,off') | readable-words < 0\.367 (validate on a separately labelled local corpus)\$" "$OUT")"
+OUT="$(score --thresholds -,-,-,-,- "$F/clean.md")"; rc=$?
+eq "K2-derived-kept-dash: a fifth field of - keeps the derived cut and its provenance" '0-1' "$rc-$(has "^SCORED: .*| readable-words < 0\.367 (validate on a separately labelled local corpus)\$" "$OUT")"
+printf -- '---\nconverted_by: markitdown\n---\n\n%s\n\n%s\n' 'Éé àà ùù ôô çç ëë ïï üü ÿÿ àâ éè îï ôö ûü' 'Èè Àà Ùù Ôô Çç Ëë Ïï Üü Ââ Êê Îî Ûû' > "$T/accented.md"
+OUT="$(score "$T/accented.md")"; rc=$?
+eq "K2-no-ascii-reason: a Latin-majority body of accented letters only reads its own n/a reason, not non-Latin-majority" '0-1-0' "$rc-$(has 'readable-words n/a (no ASCII letter in the body)' "$OUT")-$(has 'readable-words n/a (non-Latin-majority text)' "$OUT")"
+OUT="$(score "$F/cjk.md")"; rc=$?
+eq "K2-non-latin-reason (control): a non-Latin-majority body keeps its reason" '0-1-0' "$rc-$(has 'readable-words n/a (non-Latin-majority text)' "$OUT")-$(has 'no ASCII letter' "$OUT")"
+ORDER="$("$PY" -B - "$HERE/SKILL.md" "$(score "$F/clean.md")" <<'PY_MEASURE_ORDER'
+import sys
+skill, scored = open(sys.argv[1], encoding="utf-8").read(), sys.argv[2]
+names = ["short-lines", "run-together", "long-run", "recovery", "scope", "readable-words"]
+def order(text):
+    return [n for _i, n in sorted((text.find(n), n) for n in names if n in text)]
+verdict = order(next(line for line in scored.splitlines() if line.startswith("clean ")))
+lines = skill.splitlines()
+sites = [l for l in lines if "conversion_score: " in l and "short-lines" in l]
+sites += [l for l in lines if l.strip().startswith(chr(96) + "flagged: <YYYY-MM-DD> source conversion suspect")]
+sites += [l for l in lines if l.startswith("- raw/2-papers/some-paper.md — short-lines")]
+bad = [s.strip()[:70] for s in sites if order(s) != [n for n in verdict if n in order(s)]]
+planted = sites[0].replace("recovery 0.96 · scope pdf", "scope pdf · recovery 0.96") if sites else ""
+caught = order(planted) != [n for n in verdict if n in order(planted)]
+print("ok 4 sites, planted swap caught" if verdict == names and len(sites) == 4 and not bad and caught
+      else "PROBE FAILED: verdict %r · sites %d · out of order %r · control caught %s" % (verdict, len(sites), bad, caught))
+PY_MEASURE_ORDER
+)"
+eq "K2-one-order: the provenance template, its example, the flagged line and the Step 8 example all follow the verdict line's order" 'ok 4 sites, planted swap caught' "$ORDER"
+
 echo '--- recovery: the pdftotext reference must itself be readable (register minor, 2026-09-17; fold of the critic finding) ---'
 # A reference is unreadable only when its readable-words share is below that arm's cut AND its
 # letter density (letters per character) is below the reference density cut, pinned here as TD.

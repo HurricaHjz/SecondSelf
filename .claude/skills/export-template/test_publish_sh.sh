@@ -40,7 +40,7 @@ VAULT_DIR=${VAULT_DIR:-$(cd "$SKILL/../../.." && pwd)}
 # make the gate fire on this file, and each leg's "clean" would be this suite's own defect
 # (the rule test_publish_guard.sh states at its head, for the same reason).
 ID="$$"
-ROOT="${TMPDIR:-/tmp}/pubshtest.$ID"
+ROOT="${TMPDIR:-/tmp}"; ROOT="${ROOT%/}/pubshtest.$ID"  # macOS TMPDIR ends in "/": a doubled slash never matches the path publish.sh prints
 V="$ROOT/vlt$ID"
 REMOTE="$ROOT/remote.git"
 CLONE="$ROOT/clone"
@@ -74,6 +74,7 @@ build_fake_vault(){
   printf '# README (test)\n\n![graph](assets/framework_demo.png)\n\nSee the [Manual](MANUAL.md).\n' > "$V/README.md"
   printf 'FAKE-PNG-BYTES\n' > "$V/assets/framework_demo.png"
   printf 'MIT License (test)\n' > "$V/LICENSE.md"
+  printf 'cff-version: 1.2.0\ntitle: test\n' > "$V/CITATION.cff"
   printf '# the fixture vault ignores its own scratch\n/output/**\n' > "$V/.gitignore"
   for f in app core-plugins appearance; do printf '{\n  "x": 1\n}\n' > "$V/.obsidian/$f.json"; done
   printf '{ "colorGroups": [ {"query":"path:wiki/models/","color":1} ], "scale": 0.5, "close": true }\n' \
@@ -86,8 +87,23 @@ build_fake_vault(){
     || { echo "PROBE FAILED: the fixture's skill copy is a symbolic link — the fixture's writes would leave the fixture"; rm -rf "$ROOT"; exit 2; }
   cp "$VAULT_DIR/.claude/skills/delegate/throttle.py" "$VAULT_DIR/.claude/skills/delegate/routing.json" \
      "$V/.claude/skills/delegate/"
+  chmod -R u+w "$V/.claude"   # a copy of a locked core is read-only, and these legs write in it
+  # The real table, with any row the vault has not marked yet marked core here, so that these legs test
+  # the chain whatever the table's state; the unmarked case has its own leg in group 6.
+  python3 - "$V/.claude/skills/delegate/routing.json" <<'MARK_FIXTURE'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    table = json.load(handle)
+for row in table.get("classes", {}).values():
+    row.setdefault("layer", "core")
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(table, handle, indent=2, ensure_ascii=False)
+    handle.write("\n")
+MARK_FIXTURE
   printf '# delegate skill (throttle.py + routing.json are the real ones)\n' > "$V/.claude/skills/delegate/SKILL.md"
   cp "$VAULT_DIR"/.claude/agents/*.md "$V/.claude/agents/"
+  chmod -R u+w "$V/.claude/agents"
+  printf '{ "vault": "own settings" }\n' > "$V/.claude/settings.json"   # the vault's own, which never ships
   printf '# secret note\npersonal data here\n' > "$V/wiki/sources/secret.md"
   printf 'raw source\n' > "$V/raw/source1.md"
   set_throttle auto
@@ -205,6 +221,7 @@ echo "== group 1: the clean run stops at the recap with nothing committed =="
 bump_vault one
 add_vault_local one
 bump_graph 2
+mkdir -p "$V/.claude/skills/added"; printf '# a new skill\n' > "$V/.claude/skills/added/SKILL.md"   # its deny rule stages the settings file
 rm -f "$RECAP"
 M_BEFORE="$(manifest)"
 run_publish --release "$VER" "$CLONE"
@@ -216,6 +233,7 @@ chk "clean: the clone gained no commit"        '[ "$(count_clone)" = "$C0" ]'
 chk "clean: the recap file is non-empty"       '[ -s "$RECAP" ]'
 chk "clean: the recap carries this run's completion marker" 'grep -q "^recap-complete " "$RECAP"'
 chk "clean: the recap names the candidate version" 'grep -q "candidate   $VER" "$RECAP"'
+chk "clean: the recap names the tag the publish would make" 'grep -q "^tag         $VER " "$RECAP"'
 chk "clean: the recap quotes the payload gate's check line" 'grep -q "^check: clean" "$RECAP"'
 chk "clean: the recap quotes the personal-strings line" 'grep -q "^personal-strings:" "$RECAP"'
 chk "clean: the recap carries the staged stat"     'grep -q "files* changed" "$RECAP"'
@@ -224,6 +242,7 @@ chk "clean: the recap carries the throttle gate line" 'grep -q "match throttle .
 chk "drift: a transformed path is exempt, not drift"    'grep -q "exempt  .obsidian/graph.json  (transformed by apply_fixes())" "$RECAP"'
 chk "drift: a vault-local block is exempt, not drift"   'grep -q "exempt  CLAUDE.md  (a vault-local:begin block was stripped" "$RECAP"'
 chk "drift: a payload-packaged file is exempt, not drift" 'grep -q "exempt  .gitignore  (packaged from the skill payload" "$RECAP"'
+chk "drift: the settings the export generates are exempt as a transform" 'grep -q "exempt  .claude/settings.json  (transformed by apply_fixes())" "$RECAP"'
 chk "drift: the run reports no drift"                   'grep -q "  drift: none" "$RECAP"'
 chk "digest: the recap carries a 12-character recap-digest line" 'grep -q "^recap-digest [0-9a-f]\{12\}$" "$RECAP"'
 chk "digest: the recap names the staged index tree hash" 'grep -q "^tree        [0-9a-f]\{40\}$" "$RECAP"'
@@ -296,7 +315,12 @@ chk "publish: the commit carries the given message"    '$GIT -C "$REMOTE" log -1
 chk "publish: the committed tree IS the tree the recap named" \
     '[ "$($GIT -C "$REMOTE" rev-parse "main^{tree}")" = "$(sed -n "s/^tree        //p" "$RECAP" | head -1)" ]'
 chk "publish: the recap records the owner word"        'grep -q "owner word   yes, publish it" "$RECAP"'
+chk "publish: the release's tag is annotated"          '[ "$($GIT -C "$REMOTE" cat-file -t "refs/tags/$VER")" = tag ]'
+chk "publish: the tag names the published commit"      '[ "$($GIT -C "$REMOTE" rev-parse "refs/tags/$VER^{commit}")" = "$($GIT -C "$REMOTE" rev-parse main)" ]'
+chk "publish: the recap records the tag"               'grep -q "^tag          $VER$" "$RECAP"'
+chk "control: the same probe finds no tag that was never made" '! $GIT -C "$REMOTE" rev-parse -q --verify refs/tags/v9.9.9'
 B1="$(count_bare)"; C1="$(count_clone)"
+VER="v0.9.1"                                   # a tag is made once, so each later publish names the next release
 
 echo "== group 2d: a vault that moved after the recap is drift, never a publish =="
 bump_vault vaultmoved
@@ -326,6 +350,94 @@ chk "release gate: a candidate at a provisional entry's expiry stops the chain" 
 chk "release gate: the release gate is the named stop"      'hasline "STOP release-gate"'
 chk "release gate: the payload gate passed on the same tree" 'hasline "^check: clean"'
 chk "release gate: nothing committed"                        '[ "$(count_bare)" = "$B1" ]'
+
+echo "== group 2f: the release's tag: its form, a clash, and an atomic push =="
+VER="v0.9.2"
+bump_vault tagged
+run_publish --release "$VER" "$CLONE"
+D7="$(sed -n 's/^recap-digest //p' "$RECAP")"
+chk "fixture: a fresh recap to publish"        '[ "$RC" = 0 ] && [ "${#D7}" = 12 ]'
+for bad in 0.9.2 v0.9 v0.9.2.1 v0.9.2-rc1; do
+  run_publish --release "$bad" --publish "yes, publish it" --message "publish: bad" --approved "$D7" "$CLONE"
+  chk "tag form: $bad is refused, exit 2"      '[ "$RC" = 2 ] && hasline "of the form vMAJOR.MINOR.PATCH"'
+done
+chk "tag form: nothing committed"              '[ "$(count_bare)" = "$B1" ] && [ "$(count_clone)" = "$C1" ]'
+HOOKFILE="$REMOTE/hooks/pre-receive"
+cat > "$HOOKFILE" <<'REFUSE_TAGS'
+#!/bin/sh
+# Refuses any push that carries a tag. The guard keeps it from acting twice in one push.
+[ -z "${PUBSH_HOOK_GUARD:-}" ] || exit 0
+PUBSH_HOOK_GUARD=1; export PUBSH_HOOK_GUARD
+while read -r old new ref; do
+  case "$ref" in refs/tags/*) echo "fixture: tags refused" >&2; exit 1 ;; esac
+done
+exit 0
+REFUSE_TAGS
+chmod +x "$HOOKFILE"
+TREE7="$($GIT -C "$CLONE" write-tree)"
+run_publish --release "$VER" --publish "yes, publish it" --message "publish: $VER (fixture)" --approved "$D7" "$CLONE"
+chk "failed push: exit 3, the push the named stop" '[ "$RC" = 3 ] && hasline "STOP push"'
+chk "failed push: atomic, so the branch did not move either" '[ "$(count_bare)" = "$B1" ]'
+chk "failed push: no tag reached the bare repo"  '! $GIT -C "$REMOTE" rev-parse -q --verify "refs/tags/$VER"'
+chk "failed push: the local tag is gone"         '! $GIT -C "$CLONE" rev-parse -q --verify "refs/tags/$VER"'
+chk "failed push: the local commit is taken back" '[ "$(count_clone)" = "$C1" ]'
+chk "failed push: the index still names the approved tree" '[ "$($GIT -C "$CLONE" write-tree)" = "$TREE7" ]'
+chk "failed push: the approved recap is intact"  'grep -q "^recap-digest $D7$" "$RECAP"'
+rm -f "$HOOKFILE"
+run_publish --release "$VER" --publish "yes, publish it" --message "publish: $VER (fixture)" --approved "$D7" "$CLONE"
+chk "retry: the same line publishes once the push can pass" '[ "$RC" = 0 ] && hasline "PUBLISHED:"'
+chk "retry: the commit and the tag land together" '[ "$(count_bare)" = "$((B1 + 1))" ] && [ "$($GIT -C "$REMOTE" rev-parse "refs/tags/$VER^{commit}")" = "$($GIT -C "$REMOTE" rev-parse main)" ]'
+B1="$(count_bare)"; C1="$(count_clone)"
+bump_vault tagclash
+run_publish --release "$VER" "$CLONE"
+D8="$(sed -n 's/^recap-digest //p' "$RECAP")"
+run_publish --release "$VER" --publish "yes, publish it" --message "publish: again" --approved "$D8" "$CLONE"
+chk "tag clash: an existing tag stops the run, exit 1" '[ "$RC" = 1 ] && hasline "STOP tag" && hasline "already exists in"'
+chk "tag clash: it stops before the commit"      '[ "$(count_clone)" = "$C1" ] && [ "$(count_bare)" = "$B1" ]'
+$GIT -C "$CLONE" tag -d "$VER" >/dev/null 2>&1
+run_publish --release "$VER" --publish "yes, publish it" --message "publish: again" --approved "$D8" "$CLONE"
+chk "tag clash: a tag only on the remote stops it too, exit 1" '[ "$RC" = 1 ] && hasline "STOP tag" && hasline "already exists on"'
+chk "tag clash: that also stops before the commit" '[ "$(count_clone)" = "$C1" ] && [ "$(count_bare)" = "$B1" ]'
+$GIT -C "$CLONE" fetch -q --tags origin >/dev/null 2>&1
+
+echo "== group 2g: the push reaches the recap's address or nothing =="
+VER="v0.9.3"
+OTHER="$ROOT/other.git"
+$GIT clone -q --bare "$REMOTE" "$OTHER" >/dev/null 2>&1
+count_other(){ $GIT -C "$OTHER" rev-list --count main; }
+O1="$(count_other)"
+$GIT -C "$CLONE" remote add fork "$OTHER"
+$GIT -C "$CLONE" config branch.main.remote fork
+bump_vault destination
+run_publish --release "$VER" "$CLONE"
+D9="$(sed -n 's/^recap-digest //p' "$RECAP")"
+chk "fixture: the branch tracks another remote, the recap names origin" '[ "$RC" = 0 ] && [ "${#D9}" = 12 ] && grep -qF "remote      $REMOTE" "$RECAP"'
+assert_fixture_remote "destination leg"
+PUBLINE9=(--release "$VER" --publish "yes, publish it" --message "publish: $VER (fixture)" --approved "$D9" "$CLONE")
+run_publish "${PUBLINE9[@]}"
+chk "destination: a branch tracking another remote is refused, exit 1" '[ "$RC" = 1 ] && hasline "STOP remote"'
+chk "destination: the stop names both addresses"  'hasline "$REMOTE" && hasline "$OTHER"'
+chk "destination: it stops before the commit"     '[ "$(count_clone)" = "$C1" ]'
+chk "destination: neither remote moved"           '[ "$(count_bare)" = "$B1" ] && [ "$(count_other)" = "$O1" ]'
+chk "destination: no tag was made anywhere"       '! $GIT -C "$CLONE" rev-parse -q --verify "refs/tags/$VER" && ! $GIT -C "$OTHER" rev-parse -q --verify "refs/tags/$VER" && ! $GIT -C "$REMOTE" rev-parse -q --verify "refs/tags/$VER"'
+$GIT -C "$CLONE" config branch.main.remote origin
+$GIT -C "$CLONE" config remote.origin.pushurl "$OTHER"
+run_publish "${PUBLINE9[@]}"
+chk "destination: a push address set apart on origin is refused too" '[ "$RC" = 1 ] && hasline "STOP remote" && [ "$(count_other)" = "$O1" ] && [ "$(count_clone)" = "$C1" ]'
+$GIT -C "$CLONE" config --add remote.origin.pushurl "$REMOTE"
+run_publish "${PUBLINE9[@]}"
+chk "destination: two push addresses are refused" '[ "$RC" = 1 ] && hasline "STOP remote" && [ "$(count_other)" = "$O1" ] && [ "$(count_bare)" = "$B1" ]'
+$GIT -C "$CLONE" config --unset-all remote.origin.pushurl
+$GIT -C "$CLONE" config branch.main.remote .
+run_publish "${PUBLINE9[@]}"
+chk "destination: a branch with no real remote is a broken premise, exit 2" '[ "$RC" = 2 ] && hasline "STOP remote" && [ "$(count_clone)" = "$C1" ]'
+$GIT -C "$CLONE" config branch.main.remote origin
+run_publish "${PUBLINE9[@]}"
+chk "control: with the addresses agreeing the same line publishes" '[ "$RC" = 0 ] && hasline "PUBLISHED:"'
+chk "control: it reached the recap's address and only that" '[ "$(count_bare)" = "$((B1 + 1))" ] && [ "$(count_other)" = "$O1" ] && [ "$($GIT -C "$REMOTE" rev-parse "refs/tags/$VER^{commit}")" = "$($GIT -C "$REMOTE" rev-parse main)" ]'
+$GIT -C "$CLONE" remote remove fork
+B1="$(count_bare)"; C1="$(count_clone)"
+VER="v0.9.4"
 
 echo "== group 3: a planted payload leak stops the chain at the gate =="
 bump_vault three
@@ -435,6 +547,61 @@ $GIT -C "$CLONE" reset -q >/dev/null 2>&1
 run_publish --release "$VER" "$CLONE"
 chk "control: with the drift removed the same tree reaches the recap" '[ "$RC" = 0 ] && hasline "STOP: recap written"'
 
+echo "== group 6b: a marked file is compared after the same strip, never exempted unread =="
+bump_vault sixb
+add_vault_local sixb
+$GIT -C "$CLONE" reset -q >/dev/null 2>&1
+run_publish --release "$VER" "$CLONE"
+D6="$(sed -n 's/^recap-digest //p' "$RECAP")"
+chk "fixture: a marked file reaches a fresh recap, exempt after the strip" \
+    '[ "$RC" = 0 ] && grep -q "exempt  CLAUDE.md  (a vault-local:begin block was stripped on export, and the copies match after the same strip)" "$RECAP"'
+B6="$(count_bare)"
+add_vault_local sixb-moved                     # a concurrent session edits the marked file OUTSIDE its block
+run_publish --release "$VER" --publish "yes, publish it" --message "publish: marked moved" --approved "$D6" "$CLONE"
+chk "marked file moved: exit 1"                '[ "$RC" = 1 ]'
+chk "marked file moved: the drift check is the named stop" 'hasline "STOP drift"'
+chk "marked file moved: the file is listed as drift" 'hasline "DRIFT   CLAUDE.md"'
+chk "marked file moved: nothing committed"     '[ "$(count_bare)" = "$B6" ]'
+add_vault_local sixb
+printf '<!-- vault-local:begin -->\nunfinished block\n' >> "$V/CLAUDE.md"
+run_publish --release "$VER" --publish "yes, publish it" --message "publish: broken" --approved "$D6" "$CLONE"
+chk "broken marker: exit 2, never read as a match" '[ "$RC" = 2 ]'
+chk "broken marker: the strip's failure is named"  'hasline "PROBE FAILED: the strip could not read"'
+chk "broken marker: nothing committed"         '[ "$(count_bare)" = "$B6" ]'
+add_vault_local sixb
+STRIPV="$V/.claude/skills/export-template/strip_vault_local.py"
+mv "$STRIPV" "$STRIPV.away"
+run_publish --release "$VER" "$CLONE"
+chk "no strip script: exit 2 and says so"      '[ "$RC" = 2 ] && hasline "STOP premise — no strip_vault_local.py"'
+chk "no strip script: the chain never started" '! hasline "^-- pull"'
+mv "$STRIPV.away" "$STRIPV"
+TABLEV="$V/.claude/skills/delegate/routing.json"
+cp "$TABLEV" "$ROOT/table.kept"
+python3 - "$TABLEV" <<'UNMARK_FIXTURE'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    table = json.load(handle)
+first = sorted(table["classes"])[0]
+del table["classes"][first]["layer"]
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(table, handle, indent=2, ensure_ascii=False)
+    handle.write("\n")
+UNMARK_FIXTURE
+STATUS6="$($GIT -C "$CLONE" status --porcelain)"
+run_publish --release "$VER" "$CLONE"
+chk "unmarked routing row: the overlay is the named stop" '[ "$RC" = 3 ] && hasline "STOP overlay" && hasline "PROBE FAILED: 1 routing row(s) carry no mark"'
+chk "unmarked routing row: the clone was not touched"  '[ "$($GIT -C "$CLONE" status --porcelain)" = "$STATUS6" ]'
+chk "unmarked routing row: nothing committed"          '[ "$(count_bare)" = "$B6" ]'
+cp "$ROOT/table.kept" "$TABLEV"
+run_publish --release "$VER" "$CLONE"
+D6B="$(sed -n 's/^recap-digest //p' "$RECAP")"
+chk "fixture: the recap is fresh again"        '[ "$RC" = 0 ] && [ "${#D6B}" = 12 ]'
+printf '# CLAUDE (test contract)\n\nA line every copy carries — %s.\n<!-- vault-local:begin -->\nowner-only wiring, edited\n<!-- vault-local:end -->\n' \
+  sixb > "$V/CLAUDE.md"                        # the same edit INSIDE the block: the public copy is unchanged
+run_publish --release "$VER" --publish "yes, publish it" --message "publish: inside the block" --approved "$D6B" "$CLONE"
+chk "control: an edit inside the block alone is no drift" '[ "$RC" = 0 ] && hasline "PUBLISHED:"'
+chk "control: that publish made exactly one commit" '[ "$(count_bare)" = "$((B6 + 1))" ]'
+
 echo "== group 7: the chain's shape is the one the skill describes =="
 chk "publish.sh runs the payload gate script"   'grep -q "publish_guard.py" "$PUB"'
 chk "publish.sh runs the overlay script"        'grep -q "export_template.sh" "$PUB"'
@@ -446,6 +613,7 @@ chk "the publish chain carries an approval step" 'grep -q "&& step_drift" "$PUB"
 chk "header: the write scope is stated, not summed as two things" \
     'grep -q "^# WHAT IT WRITES" "$PUB" && ! grep -q "writes exactly two things" "$PUB"'
 chk "header: it says what a STOP leaves in the clone"   'grep -q "reset -q" "$PUB"'
+chk "header: the write scope names the tag"             'grep -q "annotated tag and one atomic push" "$PUB"'
 chk "header: the recap doc drops the false gitignore claim" '! grep -q "output/. is gitignored, so it never ships" "$PUB"'
 chk "header: the recap doc says the vault backup may commit the recap" 'grep -q "private backup commits every recap" "$PUB"'
 chk "control: the same greps still find text the header does carry" \

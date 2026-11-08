@@ -3,72 +3,96 @@
   "ts": "2000-01-01T00:00:01Z",
   "sid": "00000001",
   "full": "cd /tmp && T=\"/private/tmp/claude-fixture/@@PROJECT_KEY@@/00000001-0000-4000-8000-000000000001/tasks\"; echo '---B-VIEWER bg watch---'; tail -3 \"$T/fixture-task-1.output\"; echo '---B-SESSION bg watch---'; tail -3 \"$T/fixture-task-2.output\"; echo '---lane transcripts activity---'; for s in 00000000-0000-4000-8000-000000000101 00000000-0000-4000-8000-000000000102; do f=$(ls @@HOME@@/.claude/projects/*/$s.jsonl 2>/dev/null | head -1); echo \"$s: $(ls -la \"$f\" | awk '{print $5, $6, $7, $8}') · assistant records: $(grep -c '\"type\":\"assistant\"' \"$f\")\"; done; echo '---stage files changed---'; ls -la @@STORE@@/spawn-records/run-fixture-a-stage/B-VIEWER/delegate/handsoff.py @@STORE@@/spawn-records/run-fixture-a-stage/B-VIEWER/delegate/test_handsoff.sh @@STORE@@/spawn-records/run-fixture-a-stage/B-SESSION/delegate/watch.py @@STORE@@/spawn-records/run-fixture-a-stage/B-SESSION/delegate/test_watch.sh @@STORE@@/spawn-records/run-fixture-a-stage/B-SESSION/hooks/role-style-anchor.py | awk '{print $5, $6, $7, $8, $9}' | sed 's#@@STORE@@/spawn-records/run-fixture-a-stage/##'",
-  "result": "lane-fence: `/` is outside the granted directories — report the gap (`needs: <path> because <reason>`) instead of working around it"
+  "result": "lane-fence: `/` is outside the granted directories — report the gap (`needs: <path> because <reason>`) instead of working around it",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "silent"
  },
  {
   "ts": "2000-01-01T00:00:02Z",
   "sid": "00000001",
   "full": "cd \"@@VAULT@@/.claude/skills/delegate\" && patch -p1 --dry-run < @@STORE@@/spawn-records/run-fixture-a-stage/B-SESSION/DIFFS/handsoff-watch-session.diff && patch -p1 < @@STORE@@/spawn-records/run-fixture-a-stage/B-SESSION/DIFFS/handsoff-watch-session.diff && ls -la handsoff.py handsoff.py.orig 2>&1 | head -3; rm -f handsoff.py.orig; python3 -m py_compile handsoff.py watch.py @@STORE@@/hooks/role-style-anchor.py && echo compile-ok; rm -rf __pycache__ @@STORE@@/hooks/__pycache__; python3 -B handsoff.py watch --help 2>&1 | head -3; ls -la handsoff.py; git -C \"@@VAULT@@\" status --short -- .claude/skills/delegate/ | head",
-  "result": "lane-fence: `rm` targets `handsoff.py.orig`, which is outside the write whitelist"
+  "result": "lane-fence: `rm` targets `handsoff.py.orig`, which is outside the write whitelist",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "silent"
  },
  {
   "ts": "2000-01-01T00:00:03Z",
   "sid": "00000001",
   "full": "cd /tmp && D=\"@@VAULT@@/.claude/skills/delegate\"; patch -d \"$D\" -p1 --dry-run --no-backup-if-mismatch < @@STORE@@/spawn-records/run-fixture-a-stage/B-SESSION/DIFFS/handsoff-watch-session.diff && patch -d \"$D\" -p1 --no-backup-if-mismatch < @@STORE@@/spawn-records/run-fixture-a-stage/B-SESSION/DIFFS/handsoff-watch-session.diff && python3 -m py_compile \"$D/handsoff.py\" \"$D/watch.py\" @@STORE@@/hooks/role-style-anchor.py && echo compile-ok; rm -rf \"$D/__pycache__\" @@STORE@@/hooks/__pycache__; python3 -B \"$D/handsoff.py\" watch --help 2>&1 | head -3; ls -la \"$D/handsoff.py\"; ls \"$D\" | grep -c orig; git -C \"@@VAULT@@\" status --short -- .claude/skills/delegate/",
-  "result": "lane-fence: `rm` takes the target `$D/__pycache__`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)"
+  "result": "lane-fence: `rm` takes the target `$D/__pycache__`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  },
  {
   "ts": "2000-01-01T00:00:04Z",
   "sid": "00000002",
   "full": "V=@@VAULT@@; T=/tmp/fixture-b-draft; rm -rf \"$T\"; mkdir -p \"$T/a/.claude/skills/delegate/templates\" \"$T/b/.claude/skills/delegate/templates\" \"$T/a/.claude/agents\" \"$T/b/.claude/agents\" \"$T/a/.claude/skills/export-template/payload\" \"$T/b/.claude/skills/export-template/payload\" \"$T/a/wiki/developments\" \"$T/b/wiki/developments\"; for rel in .claude/skills/delegate/SKILL.md .claude/skills/delegate/templates/brief-ingest-verify.md .claude/skills/export-template/payload/setup.sh MANUAL.md CUSTOMISATION.md wiki/developments/fixture-item-01.md wiki/developments/fixture-item-02.md wiki/developments/fixture-item-03.md; do cp \"$V/$rel\" \"$T/a/$rel\"; cp \"$V/$rel\" \"$T/b/$rel\"; done; for f in \"$V\"/.claude/agents/*.md; do cp \"$f\" \"$T/a/.claude/agents/\"; cp \"$f\" \"$T/b/.claude/agents/\"; done; find \"$T\" -type f | wc -l; ls \"$T/a/.claude/agents\"",
-  "result": "lane-fence: `rm` takes the target `$T`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)"
+  "result": "lane-fence: `rm` takes the target `$T`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  },
  {
   "ts": "2000-01-01T00:00:05Z",
   "sid": "00000002",
   "full": "V=@@VAULT@@; rm -rf /tmp/fixture-b-draft; mkdir -p /tmp/fixture-b-draft/a/.claude/skills/delegate/templates /tmp/fixture-b-draft/b/.claude/skills/delegate/templates /tmp/fixture-b-draft/a/.claude/agents /tmp/fixture-b-draft/b/.claude/agents /tmp/fixture-b-draft/a/.claude/skills/export-template/payload /tmp/fixture-b-draft/b/.claude/skills/export-template/payload /tmp/fixture-b-draft/a/wiki/developments /tmp/fixture-b-draft/b/wiki/developments; for rel in .claude/skills/delegate/SKILL.md .claude/skills/delegate/templates/brief-ingest-verify.md .claude/skills/export-template/payload/setup.sh MANUAL.md CUSTOMISATION.md wiki/developments/fixture-item-01.md wiki/developments/fixture-item-02.md wiki/developments/fixture-item-03.md; do cp \"$V/$rel\" \"/tmp/fixture-b-draft/a/$rel\"; cp \"$V/$rel\" \"/tmp/fixture-b-draft/b/$rel\"; done; for f in \"$V\"/.claude/agents/*.md; do cp \"$f\" /tmp/fixture-b-draft/a/.claude/agents/; cp \"$f\" /tmp/fixture-b-draft/b/.claude/agents/; done; find /tmp/fixture-b-draft -type f | wc -l; ls /tmp/fixture-b-draft/a/.claude/agents",
-  "result": "lane-fence: `cp` takes the target `/tmp/fixture-b-draft/a/$rel`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)"
+  "result": "lane-fence: `cp` takes the target `/tmp/fixture-b-draft/a/$rel`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  },
  {
   "ts": "2000-01-01T00:00:06Z",
   "sid": "00000003",
   "full": "cd /tmp && python3 -B \"@@VAULT@@/.claude/skills/delegate/vault-writes.py\" register add --vault \"@@VAULT@@\" --date 2000-01-01 --surface \"fixture surface: a stray untracked file in a skill directory\" --symptom \"fixture symptom: the file reads KEPT <a mktemp dir> chmod -R u+w \\\"\\$T\\\" 2>/dev/null; rm -rf \\\"\\$T\\\" EXIT INT TERM2: a trap argument list written as a file\" --cause \"fixture cause: unknown\" --severity minor --status \"open: fixture status\" --where \"fixture location\"; echo \"reg-exit=$?\"",
-  "result": "lane-fence: `rm` takes the target `\\$T\\`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)"
+  "result": "lane-fence: `rm` takes the target `\\$T\\`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  },
  {
   "ts": "2000-01-01T00:00:07Z",
   "sid": "00000003",
   "full": "V=\"@@VAULT@@\"; D=\"$V/.claude/skills/delegate\"; for s in test_throttle.sh test_fable_share.sh test_vault_writes.sh test_parity.sh; do echo \"== $s\"; ( cd /tmp && env LC_ALL=en_GB.UTF-8 sh \"$D/$s\" > \"/tmp/fixture-b-suite-$s.log\" 2>&1; echo \"exit=$?\" >> \"/tmp/fixture-b-suite-$s.log\" ); grep -E '^(PASS|FAIL) [0-9]+/[0-9]+' \"/tmp/fixture-b-suite-$s.log\" | tail -1; tail -1 \"/tmp/fixture-b-suite-$s.log\"; grep -E '^FAIL ' \"/tmp/fixture-b-suite-$s.log\" | grep -v -E '^FAIL [0-9]+/' | head -8; done",
-  "result": "lane-fence: the redirection target `/tmp/fixture-b-suite-$s.log` carries a variable or a substitution, which this fence cannot resolve — write the literal path"
+  "result": "lane-fence: the redirection target `/tmp/fixture-b-suite-$s.log` carries a variable or a substitution, which this fence cannot resolve — write the literal path",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  },
  {
   "ts": "2000-01-01T00:00:08Z",
   "sid": "00000003",
   "full": "V=\"@@VAULT@@\"; IS=@@STORE@@/spawn-records/run-fixture-b-stage/head/install-stage; mkdir -p \"$IS/export-template/payload\"; cp \"$V/.claude/skills/export-template/payload/setup.sh\" \"$IS/export-template/payload/setup.sh\"; cp \"$V/.claude/skills/export-template/test_setup_customisation.sh\" \"$IS/export-template/test_setup_customisation.sh\"; cd \"$IS\" && patch -p3 --dry-run < @@STORE@@/spawn-records/run-fixture-b-stage/B-THROTTLE/DIFFS/export-template-setup.sh.diff && patch -p3 < @@STORE@@/spawn-records/run-fixture-b-stage/B-THROTTLE/DIFFS/export-template-setup.sh.diff; patch -p3 --dry-run < @@STORE@@/spawn-records/run-fixture-b-stage/B-THROTTLE/DIFFS/export-template-test_setup_customisation.sh.diff && patch -p3 < @@STORE@@/spawn-records/run-fixture-b-stage/B-THROTTLE/DIFFS/export-template-test_setup_customisation.sh.diff; echo \"patched; line 91 now:\"; sed -n 91p \"$IS/export-template/payload/setup.sh\" | cut -c1-120; cd /tmp && python3 -B @@STORE@@/spawn-records/run-fixture-b-stage/head/install.py item2 \"$IS\" .claude/skills/export-template/payload/setup.sh .claude/skills/export-template/test_setup_customisation.sh; echo \"install-exit=$?\"; git -C \"$V\" diff --summary | wc -l; cd /tmp && env LC_ALL=en_GB.UTF-8 sh \"$V/.claude/skills/export-template/test_setup_customisation.sh\" > /tmp/fixture-b-suite-setup-cust.log 2>&1; echo \"setup-cust exit=$?\"; grep -E '^(PASS|FAIL) [0-9]+/[0-9]+' /tmp/fixture-b-suite-setup-cust.log | tail -1; grep -E '^FAIL ' /tmp/fixture-b-suite-setup-cust.log | grep -v -E '^FAIL [0-9]+/' | cut -c1-200 | head -5",
-  "result": "lane-fence: `mkdir` takes the target `$IS/export-template/payload`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)"
+  "result": "lane-fence: `mkdir` takes the target `$IS/export-template/payload`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  },
  {
   "ts": "2000-01-01T00:00:09Z",
   "sid": "00000003",
   "full": "V=\"@@VAULT@@\"; mkdir -p /tmp/fixture-b-cust/a /tmp/fixture-b-cust/b; cp \"$V/CUSTOMISATION.md\" /tmp/fixture-b-cust/a/CUSTOMISATION.md; cp \"$V/CUSTOMISATION.md\" /tmp/fixture-b-cust/b/CUSTOMISATION.md; cd /tmp && python3 - <<'PYEOF'\nimport sys, os, re, tempfile\nsys.path.insert(0, \"@@VAULT@@/.claude/skills/delegate\")\nimport throttle\nline = throttle.SETTINGS_LINE % \"auto\"\np = \"/tmp/fixture-b-cust/b/CUSTOMISATION.md\"\ns = open(p, encoding=\"utf-8\").read()\nm = throttle.SETTINGS_LINE_RE.findall(s)\nassert len(m) == 1, m\ns2 = throttle.SETTINGS_LINE_RE.sub(lambda _: line, s, count=1)\nfd, tmp = tempfile.mkstemp(dir=\"/tmp/fixture-b-cust/b\", prefix=\".c-\")\nwith os.fdopen(fd, \"wb\") as fh: fh.write(s2.encode(\"utf-8\"))\nos.replace(tmp, p)\nprint(\"new line length\", len(line)); print(line)\nPYEOF\ncd /tmp/fixture-b-cust && diff -u --label a/CUSTOMISATION.md --label b/CUSTOMISATION.md a/CUSTOMISATION.md b/CUSTOMISATION.md > @@STORE@@/spawn-records/run-fixture-b-proposed-diffs/10-CUSTOMISATION.diff; echo \"diff10 exit=$?\"; cat @@STORE@@/spawn-records/run-fixture-b-proposed-diffs/10-CUSTOMISATION.diff | cut -c1-160; echo '--- rule 14: PREVDIFFS targets ---'; grep -l '^+++ ' @@STORE@@/spawn-records/run-fixture-a-proposed-diffs/*.diff; grep -n '^@@' @@STORE@@/spawn-records/run-fixture-a-proposed-diffs/01-CUSTOMISATION.diff; echo '--- PREVDIFFS/01 against the b copy (my change applied) ---'; cd /tmp/fixture-b-cust/b && patch -p1 --dry-run < @@STORE@@/spawn-records/run-fixture-a-proposed-diffs/01-CUSTOMISATION.diff; echo \"dry-run exit=$?\"; echo '--- 11: the suite line-72 fix ---'; mkdir -p /tmp/fixture-b-suitefix/a/.claude/skills/export-template /tmp/fixture-b-suitefix/b/.claude/skills/export-template; cp \"$V/.claude/skills/export-template/test_setup_customisation.sh\" /tmp/fixture-b-suitefix/a/.claude/skills/export-template/; cp \"$V/.claude/skills/export-template/test_setup_customisation.sh\" /tmp/fixture-b-suitefix/b/.claude/skills/export-template/; python3 - <<'PYEOF'\nimport os, tempfile\np=\"/tmp/fixture-b-suitefix/b/.claude/skills/export-template/test_setup_customisation.sh\"\ns=open(p,encoding=\"utf-8\").read()\nold=\"ok \\\"seed parity: '$anchor…' byte-identical to the live vault\\\"\"\nassert s.count(old)==1, s.count(old)\ns2=s.replace(old, \"ok \\\"seed parity: '${anchor}…' byte-identical to the live vault\\\"\",1)\nfd,tmp=tempfile.mkstemp(dir=os.path.dirname(p),prefix=\".f-\")\nwith os.fdopen(fd,\"wb\") as fh: fh.write(s2.encode(\"utf-8\"))\nos.replace(tmp,p); print(\"fixed line staged\")\nPYEOF\ncd /tmp/fixture-b-suitefix && diff -u --label a/.claude/skills/export-template/test_setup_customisation.sh --label b/.claude/skills/export-template/test_setup_customisation.sh a/.claude/skills/export-template/test_setup_customisation.sh b/.claude/skills/export-template/test_setup_customisation.sh > @@STORE@@/spawn-records/run-fixture-b-proposed-diffs/11-test_setup_customisation.diff; echo \"diff11 exit=$?\"; echo '--- proof the fix runs green from the vault path: probe copy of b at the vault path ---'; cp /tmp/fixture-b-suitefix/b/.claude/skills/export-template/test_setup_customisation.sh \"$V/.claude/skills/export-template/fixture-b-probe-fixed-test_setup_customisation.sh\"; cd /tmp && env LC_ALL=en_GB.UTF-8 bash \"$V/.claude/skills/export-template/fixture-b-probe-fixed-test_setup_customisation.sh\" > /tmp/fixture-b-suite-setup-cust-fixed.log 2>&1; echo \"fixed-probe exit=$?\"; rm \"$V/.claude/skills/export-template/fixture-b-probe-fixed-test_setup_customisation.sh\"; ls \"$V/.claude/skills/export-template/\" | grep -c fixture-b-probe; grep -E 'RESULT' /tmp/fixture-b-suite-setup-cust-fixed.log | tail -1",
-  "result": "lane-fence: `cp` takes the target `$V/.claude/skills/export-template/fixture-b-probe-fixed-test_setup_customisation.sh`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)"
+  "result": "lane-fence: `cp` takes the target `$V/.claude/skills/export-template/fixture-b-probe-fixed-test_setup_customisation.sh`, which carries a variable or a substitution this fence cannot resolve — write the literal path (N3)",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  },
  {
   "ts": "2000-01-01T00:00:10Z",
   "sid": "00000004",
   "full": "grep -n \"TMPDIR\" @@VAULT@@/.claude/skills/delegate/templates/lane-core.md | head -3; for L in B-DELEG B-EXPORT B-HOOK; do printf '\\nSHELL NOTE (the fence): /tmp is a sanctioned scratch root, $TMPDIR is not (on macOS it points into /var/folders, which the fence refuses). Create fixtures with `mktemp -d /tmp/%s.XXXXXX` and run every suite with `env TMPDIR=/tmp` in front of the interpreter; a denial on a /var/folders path is that premise, not a gap.\\n' \"$L\" >> \"@@STORE@@/spawn-records/run-fixture-c-brief-$L.md\"; done; wc -c @@STORE@@/spawn-records/run-fixture-c-brief-B-*.md; tail -2 @@STORE@@/spawn-records/run-fixture-c-brief-B-HOOK.md",
-  "result": "lane-fence: the redirection target `@@STORE@@/spawn-records/run-fixture-c-brief-$L.md` carries a variable or a substitution, which this fence cannot resolve — write the literal path"
+  "result": "lane-fence: the redirection target `@@STORE@@/spawn-records/run-fixture-c-brief-$L.md` carries a variable or a substitution, which this fence cannot resolve — write the literal path",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  },
  {
   "ts": "2000-01-01T00:00:11Z",
   "sid": "00000004",
   "full": "cd /tmp && for s in test_role_style_anchor_throttle.sh test_reply_contracts_plainness.sh test_reply_contracts_dedupe.sh test_spawn_record_guard.sh; do echo \"=== $s\"; env LC_ALL=en_GB.UTF-8 TMPDIR=/tmp sh \"@@STORE@@/hooks/$s\" > \"/tmp/fixture-c-hooksuite-$s.log\" 2>&1; echo \"exit=$?\"; tail -1 \"/tmp/fixture-c-hooksuite-$s.log\"; done; cd @@VAULT@@",
-  "result": "lane-fence: the redirection target `/tmp/fixture-c-hooksuite-$s.log` carries a variable or a substitution, which this fence cannot resolve — write the literal path"
+  "result": "lane-fence: the redirection target `/tmp/fixture-c-hooksuite-$s.log` carries a variable or a substitution, which this fence cannot resolve — write the literal path",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  },
  {
   "ts": "2000-01-01T00:00:12Z",
   "sid": "00000004",
   "full": "cd /tmp/fixture-d/fetch && for f in fixture-item-04 fixture-item-05 fixture-item-06 fixture-item-07 fixture-item-08 fixture-item-09 fixture-item-10 fixture-item-11 fixture-item-12 fixture-item-13 fixture-item-14 fixture-item-15 fixture-item-16; do /opt/homebrew/bin/pdftotext \"/tmp/fixture-d/fetch/$f-refetch-2000-01-01.pdf\" - > \"/tmp/fixture-d/fetch/$f-refetch-2000-01-01.txt\"; echo \"$? $(wc -w < \"/tmp/fixture-d/fetch/$f-refetch-2000-01-01.txt\" | tr -d ' ') words $f\"; done; cd @@VAULT@@",
-  "result": "lane-fence: the redirection target `/tmp/fixture-d/fetch/$f-refetch-2000-01-01.txt` carries a variable or a substitution, which this fence cannot resolve — write the literal path"
+  "result": "lane-fence: the redirection target `/tmp/fixture-d/fetch/$f-refetch-2000-01-01.txt` carries a variable or a substitution, which this fence cannot resolve — write the literal path",
+  "provenance": "sanitised regression shape; not an exact replay of a truncated event",
+  "expected_head": "deny"
  }
 ]

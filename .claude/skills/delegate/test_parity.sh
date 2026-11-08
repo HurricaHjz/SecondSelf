@@ -74,6 +74,21 @@ infile() { if grep -q -- "$2" "$3"; then ok "$1"; else no "$1"; fi; }
 hasnt() { if grep -q -- "$2" "$O"; then no "$1 — output carries: $2"; else ok "$1"; fi; }
 notinfile() { if grep -q -- "$2" "$3"; then no "$1 — $3 carries: $2"; else ok "$1"; fi; }
 skip() { printf 'skip %s — %s\n' "$1" "$2"; }
+# The arm-leak check of a judge's brief (register 2026-10-04 13:01). Path tokens go first: a run
+# of characters holding a `/`, between whitespace, quotes, backticks or brackets, names a file,
+# and a scratch folder named CR-HOST-B2 is not an arm. What is left is searched for an arm id as
+# a standalone token (A or B and digits, with no letter, digit, `_` or `-` either side) and for
+# the arm words. Exit 0 with the hits on stdout when the file names an arm, 1 when it names none.
+arm_named() {
+  python3 -B -c '
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+bare = re.sub(r"[^\s`\x27\x22()<>\[\]{},;]*/[^\s`\x27\x22()<>\[\]{},;]*", " ", text)
+hits = re.findall(r"(?<![A-Za-z0-9_-])[AB][0-9]+(?![A-Za-z0-9_-])|arm-a|arm-b|thin arm", bare)
+print(" ".join(hits))
+raise SystemExit(0 if hits else 1)
+' "$1"
+}
 
 # ---------------------------------------------------------------- fixture tree
 reset_dir /tmp/b6-parity-suite
@@ -339,7 +354,9 @@ m = re.search(r'CONTROL[+]: (.+?) in ', open(sys.argv[1]).read())
 print(m.group(1) if m else '')
 " "$B")
 if [ -n "$phrase" ] && grep -qF "$phrase" /tmp/b6-parity-suite/tr/truth.md; then ok "the control phrase really occurs in the truth file"; else no "the control phrase is not in the truth file"; fi
-if grep -q -E 'A[0-9]|B[0-9]|arm-a|arm-b|thin arm' "$B"; then no "the brief names an arm"; else ok "the brief names no arm (blind)"; fi
+# The arm check reads ids as tokens outside paths (arm_named); 7c below plants a path that must
+# pass and a disclosure that must fail, the positive control for this clean result.
+if armhit=$(arm_named "$B"); then no "the brief names an arm: $armhit"; else ok "the brief names no arm (blind)"; fi
 
 run 0 "judge-brief composes the query brief" judge-brief --fixture /tmp/b6-parity-suite/fx/fixture \
   --truth /tmp/b6-parity-suite/tr --out /tmp/b6-parity-suite/brief-query.md --rubric query
@@ -389,6 +406,30 @@ run 2 "judge-brief still refuses a bare arm id outside a path" judge-brief \
   --fixture /tmp/b6-parity-suite/store-B6/fixture --truth /tmp/b6-parity-suite/tr \
   --out /tmp/b6-parity-suite/brief-bad4.md --rubric lint --lane A1 --run run-x
 has "the bare id is named as the leak (positive control for the narrowed marker)" "the judge would not be blind"
+
+# ---------------------------------------------------------------- 7c the arm check: token, not path
+# The suite's own arm check (arm_named, the brief leg above) read the B2 of a scratch folder named
+# CR-HOST-B2 as an arm (register 2026-10-04 13:01). Two planted briefs on the shape of the
+# generated one: a path holding B2 must pass, and a sentence disclosing arm B2 must still fail.
+ALD=/tmp/b6-parity-suite/arm-leak
+make_dir "$ALD"
+cat > "$ALD/brief-path.md" <<'BRIEF_PATH'
+You are gate-judge (definition: .claude/agents/gate-judge.md), lane J1 of run run-x.
+Read: `/tmp/CR-HOST-B2/x` (the fixture artefacts) and `/tmp/CR-HOST-B2/x/tr` (the truth files).
+CONTROL+: SCANNED: 3 pages | 4 page links in /tmp/CR-HOST-B2/x/tr/truth.md
+BRIEF_PATH
+cat > "$ALD/brief-arm.md" <<'BRIEF_ARM'
+You are gate-judge (definition: .claude/agents/gate-judge.md), lane J1 of run run-x.
+Read: `/tmp/CR-HOST-B2/x` (the fixture artefacts) and `/tmp/CR-HOST-B2/x/tr` (the truth files).
+These artefacts come from arm B2, the thinner of the two.
+BRIEF_ARM
+cat > "$ALD/brief-lane.md" <<'BRIEF_LANE'
+You are gate-judge, lane A1 of run run-x; score the fixture at /tmp/store-A1/fixture.
+BRIEF_LANE
+if hit=$(arm_named "$ALD/brief-path.md"); then no "AL01 a brief naming /tmp/CR-HOST-B2/x reads as naming an arm: $hit"; else ok "AL01 (must fire) a brief naming /tmp/CR-HOST-B2/x passes the arm check: the B2 inside a path is not an arm"; fi
+if hit=$(arm_named "$ALD/brief-arm.md"); then ok "AL02 (must not fire) a brief disclosing \"arm B2\" beside the same path still fails the arm check ($hit)"; else no "AL02 the arm check passed a brief that discloses arm B2"; fi
+hit=$(arm_named "$ALD/brief-lane.md")
+if [ "$hit" = "A1" ]; then ok "AL03 (must fire) a bare id outside a path (lane A1) fails the check as exactly one hit: the A1 of the path beside it is not counted"; else no "AL03 the arm check on a bare lane A1 beside a path holding A1 read: '$hit'"; fi
 
 # ---------------------------------------------------------------- 8 score
 python3 -B -c "

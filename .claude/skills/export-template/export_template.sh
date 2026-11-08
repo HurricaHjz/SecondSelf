@@ -4,8 +4,10 @@
 #   bash export_template.sh [OUT_DIR]               fresh build  (default OUT_DIR = <vault>/template-export)
 #   bash export_template.sh --push <repo>           vault → repo : overlay framework + packaging into a clone
 #   bash export_template.sh --pull <repo>           repo → vault : PREVIEW (git pull + diff; writes NOTHING)
-#   bash export_template.sh --pull <repo> --apply   repo → vault : APPLY (CLAUDE/Manual/skills + README/LICENSE at root, screenshot in assets/, + payload)
+#   bash export_template.sh --pull <repo> --apply   repo → vault : APPLY (CLAUDE/Manual/skills/shipped hooks + README/LICENSE at root, screenshot in assets/, + payload)
 #       add  --with-graph  to also pull .obsidian/graph.json (colour scheme); never app/appearance/core-plugins.
+#   bash export_template.sh --pull <this vault> [--apply]   the vault IS the clone: one fast-forward with git's own refusals,
+#       then the core locks again.
 #   (--sync is kept as an alias for --push.)
 #
 # Exactly ONE direction per invocation — passing --pull AND --push together is an error.
@@ -18,6 +20,7 @@ SRC="$(cd "$SCRIPT_DIR/../../.." && pwd)"                 # vault root = 3 level
 [ -f "$SRC/CLAUDE.md" ] || { echo "ERROR: $SRC has no CLAUDE.md — not a vault root"; exit 1; }
 KIT="$SCRIPT_DIR/payload"   # the publish payload (build machinery: setup.sh, git dotfiles, seed demo) lives in this skill
 [ -d "$KIT/example" ] || { echo "ERROR: skill payload missing at $KIT"; exit 1; }
+ROOT_DOCS="README.md LICENSE.md CITATION.cff"   # canonical at the vault root, shipped and pulled by name; a later root file joins here
 
 # Images under assets/ are shipped only when the README references them (force-tracked).
 # Keep the `!` exceptions in payload/gitignore.txt in sync, or the file copies but stays uncommittable.
@@ -36,6 +39,7 @@ list_skills() {  # echo EVERY skill folder under $1/.claude/skills — auto-disc
   for d in "$1/.claude/skills"/*/; do
     [ -d "$d" ] || continue
     d="${d%/}"; d="${d##*/}"
+    case "$d" in my-*) continue ;; esac    # a user's own skill: the reserved prefix never ships
     printf '%s\n' "$d"
   done
 }
@@ -45,9 +49,22 @@ list_agents() {  # echo EVERY subagent definition FILE under $1/.claude/agents �
   for f in "$1/.claude/agents"/*.md; do    # a lane's `memory` directory is excluded by construction, never shipped.
     [ -f "$f" ] || continue
     f="${f##*/}"
+    case "$f" in my-*) continue ;; esac    # a user's own helper stays in the user's layer
     printf '%s\n' "$f"
   done
 }
+
+# The hook files that ship: payload/shipped-hooks.txt, one file name a line. Every other hook stays in
+# the vault, so this is a list, never a discovery; payload/settings.json is what runs the hooks. A
+# payload without that list ships the calendar's reminder hook and its suite.
+shipped_hooks() {   # $1 the payload folder to read
+  if [ -f "$1/shipped-hooks.txt" ]; then
+    grep -vE '^[[:space:]]*(#|$)' "$1/shipped-hooks.txt" || true
+  else
+    printf '%s\n' calendar-digest.py test_calendar_digest.sh
+  fi
+}
+SHIPPED_HOOKS="$(shipped_hooks "$KIT")"
 
 # ── vault-owned framework files: vault → $1  (build & push) ─────────────────────────────────
 copy_framework() {
@@ -70,21 +87,30 @@ copy_framework() {
       rm -f "$D/.claude/agents/$a"; cp "$SRC/.claude/agents/$a" "$D/.claude/agents/"
     done
   fi
+  mkdir -p "$D/.claude/hooks"
+  for h in $SHIPPED_HOOKS; do
+    if [ -f "$SRC/.claude/hooks/$h" ]; then cp "$SRC/.claude/hooks/$h" "$D/.claude/hooks/"; fi
+  done
   mkdir -p "$D/.obsidian"
   for f in graph.json app.json core-plugins.json appearance.json; do
     [ -f "$SRC/.obsidian/$f" ] && cp "$SRC/.obsidian/$f" "$D/.obsidian/"
   done
   rm -rf "$D/examples/seed"; mkdir -p "$D/examples/seed"          # the demo (tracked, separate from wiki/raw)
   cp -R "$KIT/example/." "$D/examples/seed/"
-  strip_junk "$D/.claude/skills" "$D/examples"                    # never ship __pycache__/*.pyc/.DS_Store
+  strip_junk "$D/.claude/skills" "$D/.claude/hooks" "$D/examples"  # never ship __pycache__/*.pyc/.DS_Store
 }
 
 # ── publish-only packaging: vault root + payload → $1  (build & push) ────────────────────────
 copy_packaging() {
   local D="$1" f
-  for f in README.md LICENSE.md; do                                                 # canonical at the vault root
-    [ -f "$SRC/$f" ] || { echo "ERROR: $SRC/$f missing — it is canonical at the vault root"; exit 1; }
-    cp "$SRC/$f" "$D/$f"
+  for f in $ROOT_DOCS; do                                                           # canonical at the vault root
+    if [ -f "$SRC/$f" ]; then
+      cp "$SRC/$f" "$D/$f"
+    elif [ -f "$D/$f" ]; then                                                       # an older updater's pull did not know this root file
+      echo "NOTE: $f is not at the vault root yet, so $D keeps its own copy; your next --pull <repo> --apply brings it to the vault"
+    else
+      echo "ERROR: $SRC/$f missing — it is canonical at the vault root (a vault updated from a version without it gets it at its next --pull <repo> --apply)"; exit 1
+    fi
   done
   rm -f "$D/LICENSE" "$D/CONTRIBUTING.md"; rm -rf "$D/docs"                         # drop legacy no-ext LICENSE, retired CONTRIBUTING + old docs/ folder
   mkdir -p "$D/assets"
@@ -94,6 +120,10 @@ copy_packaging() {
   cp "$KIT/gitignore.txt"      "$D/.gitignore"
   cp "$KIT/gitattributes.txt"  "$D/.gitattributes"
   cp "$KIT/setup.sh"           "$D/setup.sh"; chmod +x "$D/setup.sh"
+  mkdir -p "$D/.claude"
+  cp "$KIT/settings.json"      "$D/.claude/settings.json"                         # never the vault's own settings file
+  if [ -f "$KIT/core-paths.txt" ]; then cp "$KIT/core-paths.txt" "$D/.claude/core-paths"; fi   # the public copy's core list; the vault has none, so nothing locks there
+  if [ -d "$KIT/github" ]; then mkdir -p "$D/.github"; cp -R "$KIT/github/." "$D/.github/"; fi   # issue forms and any other repository furniture
 }
 
 # ── empty content skeleton (.gitkeep) — NO content, NO index/log (those are gitignored) ─────
@@ -101,7 +131,7 @@ make_skeleton() {
   local D="$1"
   for d in 1-articles 2-papers 3-notes 4-webinfo 5-blogs 6-social 7-reviews 8-transcripts 9-originals archives duplicates; do
     mkdir -p "$D/raw/$d"; touch "$D/raw/$d/.gitkeep"; done
-  for d in concepts entities tools models benchmarks sources syntheses developments maps user; do
+  for d in concepts entities tools models benchmarks sources syntheses experience developments maps user; do
     mkdir -p "$D/wiki/$d"; touch "$D/wiki/$d/.gitkeep"; done
   mkdir -p "$D/assets" "$D/output" "$D/attic"; touch "$D/assets/.gitkeep" "$D/output/.gitkeep" "$D/attic/.gitkeep"
 }
@@ -140,9 +170,60 @@ a = json.load(open(p))
 a.pop("enabledCssSnippets", None)
 json.dump(a, open(p, "w"), indent=2)
 PY2
+  # The shipped value of Obsidian's sync plugin stays what users hold: a vault's own toggle reaching the
+  # public copy would change a file a user's Obsidian also rewrites, and stop that user's plain pull.
+  python3 - "$D/.obsidian/core-plugins.json" <<'PY_PLUGINS' || true
+import json, sys
+p = sys.argv[1]
+try: c = json.load(open(p))
+except Exception: sys.exit(0)
+if "sync" in c and c["sync"] is not True:
+    c["sync"] = True
+    json.dump(c, open(p, "w"), indent=2)
+PY_PLUGINS
+  # The deny rules are the read-only core's half for the agent's own file tools, which pass a read-only
+  # file. Their one source is payload/core-paths.txt, the same list the lock, the session check and the
+  # updater read. A file line gives one rule. A folder line gives a rule per shipped entry in it, never
+  # one for the folder, so a user's own `my-` name beside them stays free. Run after the packaging.
+  if [ -f "$KIT/core-paths.txt" ]; then
+  python3 - "$KIT/core-paths.txt" "$D" "$D/.claude/settings.json" <<'PY_DENY'
+import json, os, sys
+listing, root, settings = sys.argv[1:4]
+rules = []
+with open(listing, encoding="utf-8") as fh:
+    for line in fh:
+        path = line.strip()
+        if not path or path.startswith("#"):
+            continue
+        if not path.endswith("/"):
+            rules.append("Edit(/%s)" % path)
+            continue
+        folder = path.rstrip("/")
+        full = os.path.join(root, folder)
+        if not os.path.isdir(full):
+            continue
+        for name in sorted(os.listdir(full)):
+            if name.startswith("my-") or name in (".DS_Store", "__pycache__"):
+                continue
+            tail = "/**" if os.path.isdir(os.path.join(full, name)) else ""
+            rules.append("Edit(/%s/%s%s)" % (folder, name, tail))
+if not rules:
+    print("PROBE FAILED: %s gave no deny rule, so the public copy would ship with no guard" % listing)
+    sys.exit(2)
+with open(settings, encoding="utf-8") as fh:
+    data = json.load(fh)
+data.setdefault("permissions", {})["deny"] = rules
+with open(settings, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2, ensure_ascii=False)
+    fh.write("\n")
+PY_DENY
+  fi
   # Local cost samples and gate histories stay in the source routing record.
   # A fresh installation collects its own advisory costs; operational routing is unchanged.
+  # A row marked "layer": "yours" is the owner's own choice and is held back from the public copy; a
+  # row marked "core" ships. A row with no mark, or any other mark, stops the export (routing_marks.py).
   if [ -f "$D/.claude/skills/delegate/routing.json" ]; then
+  python3 "$SCRIPT_DIR/routing_marks.py" --hold-back "$D/.claude/skills/delegate/routing.json"
   python3 - "$D/.claude/skills/delegate/routing.json" <<'PY_ROUTING_PUBLIC'
 import json, sys
 p = sys.argv[1]
@@ -197,55 +278,26 @@ PY_PRICES_PUBLIC
   # Strip VAULT-LOCAL blocks from every shipped Markdown file — content the vault needs but the
   # template must never ship (owner-specific setup: tier-3 activation wiring, machine paths, burner).
   # Marker: <!-- vault-local:begin --> … <!-- vault-local:end -->. General conditional-compile, so any
-  # future vault-specific block ships nothing by wrapping it (added 2026-08-26).
-  find "$D" -type f \( -name '*.md' -o -name '*.py' -o -name '*.sh' -o -name '*.txt' \) -print0 | while IFS= read -r -d '' f; do
-    python3 - "$f" <<'PY3'
-import re, sys
-p = sys.argv[1]
-with open(p, encoding="utf-8") as fh:
-    t = fh.read()
-if p.endswith(".md"):
-    marker = r"<!-- *vault-local:(begin|end) *-->"
-    pattern = r"[ \t]*<!-- *vault-local:begin *-->.*?<!-- *vault-local:end *-->[ \t]*\n?"
-else:
-    marker = r"^[ \t]*# +<!-- *vault-local:(begin|end) *-->[ \t]*$"
-    pattern = r"^[ \t]*# +<!-- *vault-local:begin *-->[ \t]*\n.*?^[ \t]*# +<!-- *vault-local:end *-->[ \t]*(?:\n|$)"
-depth = 0
-for match in re.finditer(marker, t, flags=re.M):
-    if match.group(1) == "begin":
-        if depth:
-            print("PROBE FAILED: nested vault-local block in " + p)
-            sys.exit(2)
-        depth = 1
-    else:
-        if not depth:
-            print("PROBE FAILED: unmatched vault-local end in " + p)
-            sys.exit(2)
-        depth = 0
-if depth:
-    print("PROBE FAILED: unmatched vault-local begin in " + p)
-    sys.exit(2)
-n = re.sub(pattern, "", t, flags=re.S | re.M)
-if n != t:
-    with open(p, "w", encoding="utf-8") as fh:
-        fh.write(n)
-PY3
-  done
+  # future vault-specific block ships nothing by wrapping it (added 2026-08-26). strip_vault_local.py is
+  # the one implementation: publish.sh's drift check runs the same strip before it compares a marked file.
+  find "$D" -type f \( -name '*.md' -o -name '*.py' -o -name '*.sh' -o -name '*.txt' \) -print0 \
+    | xargs -0 python3 "$SCRIPT_DIR/strip_vault_local.py"
 }
 
 # ── pull publish files from the repo: README/LICENSE → vault root, screenshot → assets/, rest → payload ──
 refresh_local() {
   local R="$1" f
-  for f in README.md LICENSE.md; do                                                 # canonical at the vault root
-    [ -f "$R/$f" ] && cp "$R/$f" "$SRC/$f"
+  for f in $ROOT_DOCS; do                                                           # canonical at the vault root
+    if [ -f "$R/$f" ]; then cp "$R/$f" "$SRC/$f"; fi                                # a repo older than a root file simply lacks it
   done
   mkdir -p "$SRC/assets"
   for img in $(readme_images "$R/README.md"); do
     if [ -f "$R/$img" ]; then cp "$R/$img" "$SRC/$img"; fi
   done
-  for pair in ".gitignore:gitignore.txt" ".gitattributes:gitattributes.txt" "setup.sh:setup.sh"; do
+  for pair in ".gitignore:gitignore.txt" ".gitattributes:gitattributes.txt" "setup.sh:setup.sh" ".claude/settings.json:settings.json" ".claude/core-paths:core-paths.txt"; do
     s="${pair%%:*}"; d="${pair##*:}"; [ -f "$R/$s" ] && cp "$R/$s" "$KIT/$d"
   done
+  [ -d "$R/.github" ] && { rm -rf "$KIT/github"; mkdir -p "$KIT/github"; cp -R "$R/.github/." "$KIT/github/"; }
   [ -d "$R/examples/seed" ] && { rm -rf "$KIT/example"; mkdir -p "$KIT/example"; cp -R "$R/examples/seed/." "$KIT/example/"; }
   strip_junk "$KIT"
 }
@@ -268,12 +320,50 @@ if [ "$WANT_PULL" = 1 ]; then
   REPO="$(cd "$REPO" && pwd)"
   [ -d "$REPO/.git" ]      || { echo "ERROR: $REPO is not a git clone — clone it first: git clone <repo-url> $REPO (RUNBOOK section D)"; exit 1; }
   [ -f "$REPO/CLAUDE.md" ] || { echo "ERROR: $REPO has no CLAUDE.md — not the framework repo"; exit 1; }
+  if [ "$(cd "$REPO" && pwd -P)" = "$(cd "$SRC" && pwd -P)" ]; then   # the README's setup: the vault IS the clone, so git is the update and a copy onto itself would fail
+    # One fast-forward with git's own refusals, which are atomic and name the file.
+    echo "PULL ← this vault is the repo clone itself, so git is the update (your knowledge is ignored by git and never touched)"
+    git -C "$REPO" fetch --tags || { echo "ERROR: 'git fetch' failed; check the connection, then retry."; exit 1; }
+    if [ "$APPLY" != 1 ]; then
+      echo "--- framework changes git pull would apply ---"
+      git -C "$REPO" diff --stat HEAD..@{u} || echo "  (this clone has no upstream branch set)"
+      echo
+      echo "PREVIEW only — no working file written. To apply, re-run with --apply."
+      exit 0
+    fi
+    PULL_TARGET="$(git -C "$REPO" rev-parse --verify "@{u}^{commit}")" || { echo "ERROR: this clone has no usable upstream commit."; exit 1; }
+    # Setup's skip-worktree marks make git refuse a release that changes a marked file, even one left
+    # as shipped, so they lift for the merge; a file you changed is then refused by name, atomically.
+    for f in .obsidian/graph.json .obsidian/app.json .obsidian/core-plugins.json .obsidian/appearance.json; do
+      if git -C "$REPO" ls-files --error-unmatch -- "$f" >/dev/null 2>&1; then git -C "$REPO" update-index --no-skip-worktree -- "$f"; fi
+    done
+    MERGE_RC=0
+    git -C "$REPO" merge --ff-only --no-overwrite-ignore "$PULL_TARGET" || MERGE_RC=$?
+    if [ -f "$REPO/setup.sh" ]; then bash "$REPO/setup.sh" --lock; fi   # the marks return and the files git wrote lock, whichever way the merge went
+    if [ "$MERGE_RC" != 0 ]; then
+      PULL_NAME="$(git -C "$REPO" describe --tags --exact-match "$PULL_TARGET" 2>/dev/null || git -C "$REPO" rev-parse --short "$PULL_TARGET")"
+      echo "ERROR: the update failed; working files may have changed. Git's lines above name the file in the way. If this copy holds commits of its own, merge by hand: git merge $PULL_NAME"
+      exit 1
+    fi
+    echo "DONE — vault framework updated by git pull. Re-read CLAUDE.md; reopen Obsidian if skills/graph changed."
+    exit 0
+  fi
+  # A vault that is itself a clone of this release would take the copied files as uncommitted edits and
+  # keep its old root files in history, so it updates in place. Keyed on the clone's root commit in
+  # the vault's own history: a separate vault shares no history with the release, so it never fires.
+  REPO_ROOT_COMMIT="$(git -C "$REPO" rev-list --max-parents=0 HEAD 2>/dev/null | tail -1 || true)"
+  if git -C "$SRC" merge-base --is-ancestor "$REPO_ROOT_COMMIT" HEAD >/dev/null 2>&1; then
+    echo "ERROR: this vault is itself a clone of the release, so it updates in place, never from a second clone: bash .claude/skills/export-template/export_template.sh --pull \"$SRC\" --apply"
+    exit 1
+  fi
   echo "PULL ← $REPO   (your knowledge — wiki/ raw/ output/ + your assets media — and .obsidian config are never touched)"
   git -C "$REPO" pull --ff-only || { echo "ERROR: 'git pull' failed; resolve it in $REPO, then retry."; exit 1; }
+  SHIPPED_HOOKS="$(shipped_hooks "$REPO/.claude/skills/export-template/payload")"   # the release's own list, read after the pull so a hook new in it arrives
 
   echo "--- framework changes pull would apply to your vault ---"
   CHG=0
-  for f in CLAUDE.md MANUAL.md README.md LICENSE.md; do
+  for f in CLAUDE.md MANUAL.md $ROOT_DOCS; do
+    [ -f "$REPO/$f" ] || continue                                                   # a repo older than a root file simply lacks it
     diff -q "$REPO/$f" "$SRC/$f" >/dev/null 2>&1 || { echo "  update  $f"; CHG=1; }
   done
   for img in $(readme_images "$REPO/README.md"); do
@@ -287,11 +377,23 @@ if [ "$WANT_PULL" = 1 ]; then
   for a in $(list_agents "$REPO"); do
     diff -q "$REPO/.claude/agents/$a" "$SRC/.claude/agents/$a" >/dev/null 2>&1 || { echo "  update  .claude/agents/$a"; CHG=1; }
   done
+  for h in $SHIPPED_HOOKS; do
+    [ -f "$REPO/.claude/hooks/$h" ] || continue
+    diff -q "$REPO/.claude/hooks/$h" "$SRC/.claude/hooks/$h" >/dev/null 2>&1 || { echo "  update  .claude/hooks/$h"; CHG=1; }
+  done
   if [ "$WITH_GRAPH" = 1 ] && [ -f "$REPO/.obsidian/graph.json" ]; then
     diff -q "$REPO/.obsidian/graph.json" "$SRC/.obsidian/graph.json" >/dev/null 2>&1 || { echo "  update  .obsidian/graph.json"; CHG=1; }
   fi
   [ "$CHG" = 0 ] && echo "  (vault framework already matches the repo)"
-  echo "  + payload refresh (setup.sh, .gitignore/.gitattributes, seed demo)"
+  echo "  + payload refresh (setup.sh, .gitignore/.gitattributes, settings.json, seed demo)"
+  # A copying pull never deletes. What the release dropped is listed, and removing it stays your act.
+  for s in $(list_skills "$SRC"); do
+    case "$s" in professor-loop) continue ;; esac   # the one skill the export leaves out, so the repo never holds it
+    [ -d "$REPO/.claude/skills/$s" ] || echo "  stale   .claude/skills/$s (the release no longer ships it; delete it by hand if you do not want it)"
+  done
+  for a in $(list_agents "$SRC"); do
+    [ -f "$REPO/.claude/agents/$a" ] || echo "  stale   .claude/agents/$a (the release no longer ships it; delete it by hand if you do not want it)"
+  done
 
   if [ "$APPLY" != 1 ]; then
     G=""; [ "$WITH_GRAPH" = 1 ] && G=" --with-graph"
@@ -310,10 +412,19 @@ if [ "$WANT_PULL" = 1 ]; then
     mkdir -p "$SRC/.claude/agents"
     for a in $(list_agents "$REPO"); do cp "$REPO/.claude/agents/$a" "$SRC/.claude/agents/"; done
   fi
+  mkdir -p "$SRC/.claude/hooks"
+  for h in $SHIPPED_HOOKS; do
+    if [ -f "$REPO/.claude/hooks/$h" ]; then cp "$REPO/.claude/hooks/$h" "$SRC/.claude/hooks/$h"; fi
+  done
   [ "$WITH_GRAPH" = 1 ] && [ -f "$REPO/.obsidian/graph.json" ] && cp "$REPO/.obsidian/graph.json" "$SRC/.obsidian/graph.json"
   refresh_local "$REPO"
   echo "DONE — vault framework updated from $REPO. Re-read CLAUDE.md; reopen Obsidian if skills/graph changed."
   exit 0
+fi
+
+# Check routing before either overlaying a clone or resetting a fresh-build destination.
+if [ -f "$SRC/.claude/skills/delegate/routing.json" ]; then
+  python3 "$SCRIPT_DIR/routing_marks.py" --check "$SRC/.claude/skills/delegate/routing.json"
 fi
 
 # ── PUSH mode (vault → repo) ────────────────────────────────────────────────────────────────

@@ -43,6 +43,34 @@ fresh; sk '[[Alphabet]] [[x]] [[Alpha 2]]'
 expect "near-miss names are not findings" 0 0 'clean'
 fresh; sk '[[Bee]] [[b two|x]] [[gam]]'
 expect "inline and block-list frontmatter aliases resolve, any case" 1 3 'dead'
+# An inline alias list is read as YAML reads it (check-links.py's reader, kept identical here): a quoted
+# alias carrying a comma is one name, and the fragment after its comma is no name at all.
+fresh; printf -- '---\ntitle: "Delta"\naliases: ["Delta, Inc.", Dee]\n---\nx\n' > "$F/wiki/Delta.md"; sk '[[Delta, Inc.]] [[Inc.]]'
+DOUT="$(python3 "$S" "$F" 2>&1)"; rc=$?
+if [ "$rc" = 1 ] && printf '%s\n' "$DOUT" | grep -qF '→ [[Delta, Inc.]]' && ! printf '%s\n' "$DOUT" | grep -qF '→ [[Inc.]]' \
+   && printf '%s\n' "$DOUT" | grep -q '^shipped-links: 1 dead'
+then ok "a quoted alias carrying a comma is one name; the fragment after the comma is none"
+else no "a quoted alias carrying a comma is one name  [exit $rc: $DOUT]"; fi
+# A malformed list gives no name and never a traceback (closed review of 2026-10-11): text after the
+# closing bracket, and an escape naming no character. A shipped link to either list's alias is then a
+# target resolving nowhere here, never a finding; the link to a real page stays one.
+fresh; printf -- '---\ntitle: "Epsilon"\naliases: [Eps] trailing\n---\nx\n' > "$F/wiki/Epsilon.md"
+printf -- '---\ntitle: "Zeta"\naliases: ["\\U00110000", Zed]\n---\nx\n' > "$F/wiki/Zeta.md"; sk '[[Eps]] [[Zed]] [[Alpha]]'
+MOUT="$(python3 "$S" "$F" 2>&1)"; rc=$?
+if [ "$rc" = 1 ] && printf '%s\n' "$MOUT" | grep -q '^shipped-links: 1 dead' && ! printf '%s\n' "$MOUT" | grep -qF '→ [[Eps]]' \
+   && ! printf '%s\n' "$MOUT" | grep -qF '→ [[Zed]]' && ! printf '%s\n' "$MOUT" | grep -q 'Traceback'
+then ok "a malformed alias list (text after ], an escape naming no character) gives no name and no traceback"
+else no "a malformed alias list gives no name and no traceback  [exit $rc: $MOUT]"; fi
+# A value spread over more than one line is malformed too (second review of 2026-10-11): a flow list followed
+# by a `- ` line, and a block item continued by text below it, give no name; the link to a real page stays one.
+fresh; printf -- '---\ntitle: "Eta"\naliases: [Eta-one]\n- Eta-two\nupdated: 2026-10-11\n---\nx\n' > "$F/wiki/Eta.md"
+printf -- '---\ntitle: "Theta"\naliases:\n  - Theta-one\n    more\nupdated: 2026-10-11\n---\nx\n' > "$F/wiki/Theta.md"
+sk '[[Eta-one]] [[Eta-two]] [[Theta-one]] [[Theta-one more]] [[Alpha]]'
+SOUT="$(python3 "$S" "$F" 2>&1)"; rc=$?
+if [ "$rc" = 1 ] && printf '%s\n' "$SOUT" | grep -q '^shipped-links: 1 dead' && ! printf '%s\n' "$SOUT" | grep -qF '→ [[Eta-one]]' \
+   && ! printf '%s\n' "$SOUT" | grep -qF '→ [[Theta-one more]]' && ! printf '%s\n' "$SOUT" | grep -q 'Traceback'
+then ok "a value spread over more than one line (a - line under a flow list, text under an item) gives no name and no traceback"
+else no "a value spread over more than one line gives no name and no traceback  [exit $rc: $SOUT]"; fi
 fresh; printf 'i\n' > "$F/wiki/index.md"; printf 'l\n' > "$F/wiki/log.md"; printf 's\n' > "$F/wiki/Seed.md"; printf 's\n' > "$F/.claude/skills/x/payload/example/wiki/Seed.md"; sk '[[index.md]] [[log]] [[seed]]'
 expect "index, log and bundled example pages ship, so links to them are not findings" 0 0 'clean.*3 shipping names excluded'
 fresh; sk '[[no-such-page]] [[Alpha]]'
@@ -66,5 +94,30 @@ else no "a root with no raw/ is refused [exit $rc: $GOUT]"; fi
 fresh; sk '[[Alpha]]'; COUT="$(python3 "$S" "$F" 2>&1)"; rc=$?
 if [ "$rc" -ne 2 ] && printf '%s' "$COUT" | grep -q 'shipped-links:'; then ok "control: the same fixture WITH raw/ still scans (exit $rc)"
 else no "control: the same fixture with raw/ still scans [exit $rc: $COUT]"; fi
+# A skill the exporter's skip lines keep out of every public build is no shipped surface, for a bare
+# caller too: lint's helper slice and the parity runner call this script with the root alone.
+# The agent file keeps one shipped surface in each tree: with every surface skipped, the no-surfaces premise fires.
+exporter(){ mkdir -p "$F/.claude/skills/export-template"; printf '%s\n' "$1" > "$F/.claude/skills/export-template/export_template.sh"; printf 'plain\n' > "$F/.claude/agents/a.md"; }
+SKIPLINE='    [ "$s" = t ] && continue'
+fresh; sk '[[Alpha]]'; exporter "$SKIPLINE"
+expect "a skill the exporter's skip line names is not a surface, on a bare run" 0 0 'clean.*1 skill\(s\) skipped as not shipped'
+# Same run's control: the skip reaches that skill alone, so a shipped skill's link beside it is still caught.
+mkdir -p "$F/.claude/skills/u"; printf '[[Beta]]\n' > "$F/.claude/skills/u/SKILL.md"
+expect "control: a skill the skip line does not name is still scanned" 1 1 'dead.*1 skill\(s\) skipped as not shipped'
+fresh; sk '[[Alpha]]'; exporter '    # [ "$s" = t ] && continue'
+expect "control: a commented-out skip line skips nothing" 1 1 'dead.*0 skill\(s\) skipped as not shipped'
+fresh; sk '[[Alpha]]'; exporter '    [ "$s" = t ] && echo continue'
+expect "control: a line of another shape skips nothing" 1 1 'dead.*0 skill\(s\) skipped as not shipped'
+fresh; sk '[[Alpha]]'
+expect "control: a tree with no exporter skips nothing" 1 1 'dead.*0 skill\(s\) skipped as not shipped'
+fresh; sk '[[Alpha]]'; exporter "$SKIPLINE"; XOUT="$(python3 "$S" --skip-skill t "$F" 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && printf '%s' "$XOUT" | grep -q '1 skill(s) skipped as not shipped'; then ok "a skill named by the exporter and by --skip-skill counts once"
+else no "a skill named both ways counts once  [exit $rc: $XOUT]"; fi
+fresh; sk '[[Alpha]]'; mkdir -p "$F/.claude/skills/u"; printf '[[Beta]]\n' > "$F/.claude/skills/u/SKILL.md"; exporter "$SKIPLINE"
+YOUT="$(python3 "$S" --skip-skill u "$F" 2>&1)"; rc=$?
+if [ "$rc" = 0 ] && printf '%s' "$YOUT" | grep -q '2 skill(s) skipped as not shipped'; then ok "--skip-skill adds to the exporter's list and never replaces it"
+else no "--skip-skill adds to the exporter's list  [exit $rc: $YOUT]"; fi
+fresh; sk '[[Alpha]]'; mkdir -p "$F/.claude/skills/export-template"; printf 'bad \xff byte\n' > "$F/.claude/skills/export-template/export_template.sh"
+expect "an undecodable exporter is a broken premise, never a run with no skips" 2 0 'PROBE FAILED.*cannot read'
 echo "================  RESULT: $PASS passed, $FAIL failed  ================"
 [ "$FAIL" -eq 0 ]

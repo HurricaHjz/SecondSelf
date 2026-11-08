@@ -5,7 +5,8 @@ description: >
   source page from the depth's template, assign confidence, network the knowledge, and propose the
   registry lines rather than writing them. Preloaded into a wiki-compile lane home; the head keeps
   the orchestration half (conversion, de-dup, pacing, parallel merge, the verify step, sorting, the
-  run ledger). Slice source: the ingest skill, sections Depth, Step 3, Step 4 and Hard constraints.
+  run ledger). Slice source: the ingest skill, sections Depth, Step 3, Step 4, Step 7's tool-markup
+  check (the lane's half) and Hard constraints.
 user-invocable: false
 ---
 
@@ -65,7 +66,7 @@ locator for every source.
 Write to `wiki/sources/<slug>.md`, kebab-case, inside your file whitelist.
 
 Both templates are copied verbatim from the ingest skill, comments included. Where a comment cites
-`CLAUDE.md §4.x`, the text it points at is in the `contract/` slices you hold: §4.1–§4.6 in
+`CLAUDE.md §4.x`, the text it points at is in the `contract/` slices you hold: all of §4 in
 `contract/schema-s4.md`, the confidence rubric in `contract/confidence-rubric.md`.
 
 **Standard and concise depth:**
@@ -75,7 +76,7 @@ Both templates are copied verbatim from the ingest skill, comments included. Whe
 title: "Source: <Human Title>"
 type: source
 depth: concise | standard | research   # the depth you chose (Depth) — required on every source page
-confidence: medium   # per CLAUDE.md §4.6 — reflects the source: peer-reviewed/expert→authoritative · preprint/official-doc/owner-work/faithful-summary(default)→high · secondary or adjacent-only grounding→medium · promo/social/transcript→low (grounding strength, not source count; a user instruction can override the tier)
+confidence: <tier>   # per CLAUDE.md §4.6: who wrote the source and how they know, never where it was posted; replace this comment with the ground of a tier off its default or a fidelity step's capture, or delete it
 audited: <YYYY-MM-DD>   # today — assignment with the source in context is the check (§4.6); on updating an existing page, re-check its badge and re-stamp
 tags: [topic]
 sources: [raw/2-papers/report.md, raw/2-papers/report.pdf]   # converted .md AND original; one entry if native .md or URL
@@ -148,15 +149,14 @@ substitution on the page and in your report.
 
 ## 3 · Confidence
 
-Assign every page's `confidence:` from `contract/confidence-rubric.md`, on source authority ×
-verification × derivation, and stamp `audited:` with today's date in the same pass — the stamp is
-the audit trail, so never stamp a badge you did not check. Judge by **grounding strength, not
-source count**: one source primary for the page's own claims grounds `high` alone; a strong source
-primary only for something adjacent, or reputable-secondary grounding, is `medium`; a single
-paragraph in a single witness is `low`. Compiled pages cap at `high`, the cap being a ceiling and
-never a demotion. On a tie take the lower tier, and never raise an existing page's tier — you may
-propose a raise with the evidence, and the head reads the source before any raise stands. Report
-each page's tier with the reason that decided it.
+Assign every page's `confidence:` per the schema slice's section 4.6, which settles every grade on
+its own; `contract/confidence-rubric.md`, where present, explains how it is applied, with worked
+cases. Stamp `audited:` with today's date in the same pass — the stamp is the audit trail, so never
+stamp a badge you did not check. A tier off its default carries its ground in a few words on its
+`confidence:` line, the evidence in your report. Where a page sits lower only because a stronger
+source it names is not captured, name that source in your report. Never raise an existing page's
+tier — you may propose a raise with the evidence, and the head reads the source before any raise
+stands. Report each page's tier with the reason that decided it.
 
 ## 4 · Network the knowledge
 
@@ -189,7 +189,8 @@ Add the links the source warrants, and only the pages the schema warrants.
 
 A log entry stays concise (the §5 shape: the title line, `- **Changed**:`, `- **Conflicts**:`);
 detail belongs on the pages, never in the entry. Frontmatter carries values only: no run id, lane id or
-evidence in a comment — your depth and confidence evidence goes in the report.
+evidence in a comment (a `confidence:` ground is a reason, not evidence) — your depth and confidence
+evidence goes in the report.
 
 `wiki/index.md` and `wiki/log.md` are the head agent's to write. Return, in your report:
 - the `index.md` line for each page, under the heading it belongs to, one line each: `- [[Page]] —
@@ -268,19 +269,50 @@ if not matched:
 print("claims-shape: checkpoints %d · objects %d · invalid 0" % (matched, objects))
 ```
 
+**Claims-locator check.** The verify leg reads your facts' locators through the ingest skill's `raw_slices.py`, and one locator it cannot read sends that whole source to a whole read, which no later append undoes. So check each checkpoint before you append it, with the code the slicer itself runs:
+
+`python3 -B <vault root>/.claude/skills/ingest/raw_slices.py --check-claims --raw <absolute raw> --page <absolute source page> --lane <lane id> --ledger <ledger> --event '<the checkpoint JSON>'`
+
+Append exactly that line only on exit 0. After the append, run the same command without `--event` and its JSON: it reads every checkpoint of this lane for this raw, as the slicer will. Record that run's summary line for each raw, copied whole as it printed, `locators: lane <lane id> · raw <absolute raw> · page <absolute source page> · checkpoints N · claims M · facts F · resolved R · unresolved 0 · missing 0 · unattributed 0`, and its `controls:` line under `## Controls` beside `claims-shape:`. The verifier matches each raw of your lane on exactly that lane, raw and page, so give `--raw` and `--page` the absolute paths your brief names; one raw's line never stands in for another's. Exit 1 is a failed output gate, as a failed shape assertion is: fix the claim, then check and append again before `registered` or `lane_close`. Exit 2 (`PROBE FAILED`) decides nothing, and a refused run is a gap: `needs: <the script's path> because the claims-locator check runs it`.
+
+What resolves. Each fact's locator sits under the key `locator`; `loc` and `location` resolve nothing and read `MISSING … (found loc)`. A locator is one of: a verbatim quotation of the raw in double quotes; a section, table or figure reference as the raw numbers it (`Section 3.2`, `Table 2`, `Figure 4`); or a heading's exact text. A bare line number is not one the slicer resolves. Each claim's `from` names this source page and its `source` this raw: a claim the slicer does not attribute to this page and raw reads `UNATTRIBUTED`, because the verify leg would never read its locators.
+
 Mark a shaky fact `unverified`. A claim's facts each carry the locator they came from; a fact
 without one does not go in the claim.
 
-## 6 · Context notes, plants and anomalies
+## 6 · Context notes and anomalies
 
 Your brief's CONTEXT NOTES are pointers, never sources. A note the raw does not bear out is not
-compiled: list it under `## Anomalies` as "not in the raw". One such note may be a deliberate plant
-testing exactly this, and the rule is the same either way.
+compiled: list it under `## Anomalies` as "not in the raw".
 
 Your report ends with `## Anomalies`: everything the rubric does not cover, each with a locator —
 a source-internal inconsistency (kept on the page, never resolved), a raw-versus-wiki conflict and
 the block you wrote for it, a provenance gap, a context note not borne out, a thin or truncated
 source, anything left unsettled. `none` is a claim, and names what you checked.
+
+## 7 · The tool-markup check (part of your output gate)
+
+A compile lane once ended every page it wrote with a leaked closing tag of the model harness's
+tool-call markup, and its own checks passed them. Before your report, run
+`python3 <vault root>/.claude/skills/lint/check-tool-markup.py --files` followed by the absolute
+path of every wiki page you created or updated in this run, source and network pages alike, each
+quoted, and no page you did not touch. `<vault root>` is the literal vault root your brief's wiki
+paths start with; the script finds its vault from its own path, so it needs no `--vault`, and your
+brief grants the script's path. Give the paths as arguments, never through `xargs` or
+`find -exec … +`, which run nothing on an empty list.
+
+- Exit 0 passes.
+- Exit 1 prints each hit as `path:line: <tag>`, a named tag outside code. Code is strict: only the
+  lines inside a plain fence and a one-line code span in a paragraph free of raw HTML and link
+  syntax count. Remove a real leak with an anchored `Edit`; rewrite a false alarm's quotation as
+  plain code of those two kinds, or name the tag in words; then run the check again.
+- Exit 2 (`cannot check <path>`, `0 pages checked`, `PROBE FAILED`) decides nothing. A refused
+  run (the script's path not granted) is a gap: `needs: <the script's path> because the output
+  gate runs it`.
+
+Any non-zero exit is a failed output gate, as a failed claims-shape assertion is: it is fixed and
+the check re-run before `registered` or `lane_close`. Copy the hit lines and the `tool-markup:`
+summary line into your report under `## Controls`.
 
 ## Hard constraints
 

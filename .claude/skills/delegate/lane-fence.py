@@ -26,12 +26,18 @@ exist under the system bin directories, so a lane may invoke /usr/bin/grep witho
 reading that path as data access.
 
 What it denies, in this order, so the reason names the real cause:
-  1. an invocation of `claude` (a lane may not spawn lanes, nor escape its own fence);
-  N. a network command (`curl`, `wget`, `ssh`, `scp`, `sftp`, `nc`, `telnet`, `ftp`, or an
+  1. an invocation of `claude` (a lane may not spawn lanes, nor escape its own fence); the
+     PATTERN words of a search command (grep and its family, rg) are not read for it, since a search
+     runs nothing it matches (Kc37755f0), while an awk or sed program is program text and is read;
+  N. a network command (`curl`, `wget`, `ssh`, `scp`, `sftp`, remote `rsync`, `nc`, `telnet`, `ftp`, or an
      interpreter payload importing `urllib`, `requests`, `http.client`, `socket` or `aiohttp`)
-     unless the `network` grant names the host it addresses (the first `https?://host` or
-     `user@host` token); no `network` grant is no network, a network command with no host token
-     under a grant is unresolvable and denied (register 2026-09-07, memory-hunter);
+     unless the `network` grant names every identified connection host; no `network` grant is no network, a network command with no host token
+     under a grant is unresolvable and denied (register 2026-09-07, memory-hunter). The separated
+     value of a curl or wget option that names a file or a datum (`-o x.md`, `--header …`) is no
+     host (Kb2a266d1, `NETWORK_VALUE_FLAGS`); an endpoint option's value (`--url`, a proxy,
+     `--connect-to`) and any option not on that list keep the host reading. Explicit curl/wget
+     configuration, wget input lists and curl alternative-service caches are unresolvable and
+     denied even beside a granted URL: their contents can name further machines;
   2. a write channel — redirection, tee, `sed -i` / `perl -i`, or a mutating command word
      (mv, cp, rm, mkdir, rmdir, touch, ln, install, truncate, dd, chmod, chown) — whose
      target is outside the write set, or ANY such channel when the write set is empty
@@ -42,15 +48,27 @@ What it denies, in this order, so the reason names the real cause:
      quoted argument starts no segment and a mutator word inside another command's quoted prose
      is prose; and an operand that names no file — a chmod mode, a chown or chgrp owner spec, a
      flag's value, a redirection target — is dropped by the SHAPE of the token, never by a list
-     of known values, so `chmod 644 644` still reads its second operand as the file it writes;
+     of known values, so `chmod 644 644` still reads its second operand as the file it writes.
+     Curl/wget file options face the same write test, as does the download directory for remote
+     names (wget's default). Curl's write-out file directives are checked too; an indirect or
+     computed format is unresolvable. A documented standard-output target creates no file;
   3. a relative path token that escapes the working directory (a `..` component);
   4. an absolute path token outside the read grants.
+
+Between checks 1 and N, the ssh-family classifier separates local shell I/O, then returns
+connection hosts, local reads, local writes and unresolved syntax. Local copy endpoints and
+option files retain their grants. Literal remote operands and simple double-quoted parameters
+after a fixed SSH host are remote data, exempt from local path and host scans. Local program
+substitution, unknown options and unseen explicit configuration refuse. Plain shell program
+wrappers share this reading; unsupported wrappers refuse. Each preceding controlling literal
+`cd <absolute directory> &&` supplies its following segments' base before permissions are tested.
 
 Before any of those four run, the HEREDOC BODIES are removed (`strip_heredocs`, design D33):
 `<<` and `<<-`, quoted (`'EOF'`, `"EOF"`) and bare terminators, several heredocs opened on one
 command line consumed in marker order, a line equal to the terminator (after `<<-` strips leading
 tabs) ending that body there, and an unterminated body running to the end of the text — each as
-the shell reads it, so what the fence calls data is what the shell calls data. The command line
+the shell reads the terminator. For ssh-family lines, unquoted heredoc substitution is separately
+refused as unresolved local evaluation; protected bodies remain data. The command line
 carrying the `<<` STAYS: its own redirect targets and command words are checked as before, and a
 `>` on that line still denies when its target is outside the write set. A `<<` inside quotes, and
 anything after an unquoted `#`, opens no heredoc, so neither can hide a command from the checks.
@@ -66,7 +84,9 @@ whitespace-bearing content is prose and is payload; a bare word is a token like 
 `$`-led quoted string takes whatever is GLUED to it as part of the same token (`"$V"/wiki`), the
 spelling `"$V/wiki"` and the bare `$V/wiki` both already having passed (N9c). Check 1 keeps the
 whole (heredoc-stripped) text and its quoted content, so `python3 -c "... claude ..."` still
-denies. Check 2 runs on the QUOTED-STRIPPED text (N9): a `>` inside quotes is not a redirection in
+denies, less a search command's pattern words (`search_pattern_indices`); a pattern word holding a
+command substitution, and an rg call carrying an option that runs a program, are read all the same.
+Check 2 runs on the QUOTED-STRIPPED text (N9): a `>` inside quotes is not a redirection in
 any shell, so scanning it as one would falsely deny a read-only command. A quoted
 single-path target survives the strip as a target (`> "/x/y"`), so on the WRITE side (N3, measured
 by C2) a redirection, `tee` or mutator target whose text carries `$` or a backtick is still denied
@@ -94,8 +114,12 @@ Premise cases, each made to behave rather than to guess:
     reads nothing.
   - LLM_WIKI_LANE_WRITES absent or empty → a read-only lane: every write channel outside the
     temporary roots denies. Absent is not "unfenced", it is "no writes".
-The process exits 0 in every case; a non-zero exit from a PreToolUse hook is a harness error,
-not a denial, so it is never used to express one.
+  - the unplaced-read logger's premises fail (not a real hook event, no run-id-shaped run, no
+    run record in the store, a blank command) → it writes nothing and the decision stands. A
+    failed append is noted beside the log and the decision stands; every file the logger opens
+    is opened non-blocking and must be a regular file, so no open can hold a decision back.
+The process exits 0 in every case (the report mode exits 0, 1 or 2); a non-zero exit from a
+PreToolUse hook is a harness error, not a denial, so it is never used to express one.
 
 A cleared command gets an explicit `allow` decision rather than silence IN THE LANE ROLE. Silence
 leaves the command to the ordinary permission flow, and a lane spawned with `--permission-prompts
@@ -117,29 +141,36 @@ grants — write it with an anchor, a class or a range (`'/^foo/'`, `'/a/,/b/'`)
 A quoted glob (`"/x/*.md"`) is a path token, and `* ? [ ]` are for that reason not pattern
 metacharacters: reading them as pattern markers would clear `cat "/etc/*"`. What that costs is
 the other way round and is accepted: a two-segment path whose file name carries a brace, a bar or
-a plus (`"/etc/{a}"`) is read as a pattern and passes unchecked, a file name no vault holds. On
+a plus (`"/etc/{a}"`) is read as a pattern and passes unchecked, a file name no vault holds. An
+UNQUOTED glob word is read whole and judged by its deepest literal directory (`glob_bound`,
+Kef9c30da): `ls -d /x/*/` tests `/x/`, and `/x/*/f.md` tests `/x/`, never the `/` or `/f.md` a cut
+at the `*` used to leave. A glob with a component after its first glob character that is `..` or
+dot-led keeps the split reading and fails closed. What the bound does not see is named: the names a
+glob matches are not resolved before the test, so a symlink inside the bound directory is judged by
+that directory. The inline-program literal half stays a residue, fail-closed by design: a `/` or
+`~` string literal inside a `-c` program is read as a path and false-denies outside the grants. On
 the READ side a LITERAL quoted directory glued to a name (`cat "/x"/y`) is still split into two
 tokens, so the tail (`/y`) is tested as a path of its own and false-denies; N9c glues only a
 `$`-led string, and the write side reads the same word whole (N10).
-A relative mutator target is resolved against the directory a LEADING `cd` moved into, when that
-directory is itself inside the write roots (`leading_cd_base`, register 2026-09-08): `cd <dir in W>
-&& … ; rm -f x.orig` resolves against that directory instead of the hook's working directory.
-The narrowing is bounded to exactly one `cd`, standing first, with a literal
-absolute operand and no parentheses in the command, and the resolved path still faces the same write
-test, so a target that climbs back out (`../x`) denies as before. NOT changed, and named as the
-residue it is: with no such `cd`, a relative target is still measured against the hook's working
-directory, so `cd /outside && rm rel` under a cwd inside W is a fail-OPEN this fix does not close.
+Relative local targets use the directory of their own command segment. A preceding literal
+absolute `cd ... &&` establishes that base independently of its permissions, then the resolved
+target faces the read or write grants. Earlier operands retain their earlier base. Ambiguous,
+variable or subshell directory changes cannot establish permission for relative targets.
 Fail-closed residues that stay: a mutator whose
 target is a variable (`chmod +x "$f"`, `cp a "$D/b"`) is denied, because the fence sees no literal
 path to test — a lane writes the literal path; an interpreter's program argument (`sh -c '…'`,
 `python3 -c '…'`) keeps its content for the read checks, so a path inside it is tested and an
 outside one denies as before D33, while a program passed with no `-c`/`-e` flag (an awk or sed
 script) is payload the fence cannot decide; `sh -c '...'` still hides its payload from the
-command-word tests. A symlink whose own location (its parent chain resolved, its final component
-left as it lies) sits INSIDE a grant is now granted even when its realpath leaves the roots (fix 4,
-`within_leaf`), so a venv `bin/python` symlinked to the framework install reads as granted; a token
-outside on both readings is denied as before, and a symlinked directory COMPONENT that points out
-is still resolved and so still denies. Each of these
+command-word tests. A path token is judged by its REALPATH (`within`); the second reading
+(`within_leaf`, fix 4 as narrowed on 14 September after review F2b) serves only a leaf that does
+NOT exist yet, testing its resolved parent chain with the final component as written, so a file a
+command is about to create under a symlinked grant directory (`/tmp` → `/private/tmp`) clears. A leaf
+that EXISTS, a live symlink included, is judged by its resolved target alone: a symlink sitting
+inside a grant but pointing outside the roots is denied, so a venv `bin/python` symlinked to an
+interpreter outside the grants is refused (create the venv with `--copies`, or grant the
+interpreter's real location), and a symlinked directory COMPONENT that points out is resolved and
+so denies too. Each of these
 fails towards denial; a lane that hits one reports the gap and the head re-spawns it with the grant
 (the re-spawn rule), which is the designed recovery. The one direction that is NOT fail-closed is
 named, and it is a READ: a quoted target whose variable the fence cannot expand — `cat
@@ -147,6 +178,27 @@ named, and it is a READ: a quoted target whose variable the fence cannot expand 
 so checks 3 and 4 have nothing to test and it passes. Unquoted it always passed too (`tokens_of`
 splits on `$`), and the WRITE side of the same shape denies outright (N3), so what remains is a
 lane reading through a variable it set itself; the grants, not this fence, are what bound that.
+Such a read is LOGGED, never refused (the owner's decision of 23 October 2026: log these reads,
+and refuse only if the logs later show real reads outside a helper's folders). After a command
+is cleared (the lane's `allow` in `main`, the head's silence in head-fence.py),
+`record_unplaced_reads` scans it with `unplaced_reads`: a parameter, command substitution,
+arithmetic, brace or ANSI-C expansion this fence cannot place, and shell code handed to `eval`,
+`alias` or `trap` or to a shell by `-c`, heredoc, here-string or pipe. A command holding one
+gains one JSON line in `<store>/spawn-records/<run>-unplaced-reads.jsonl` (`<store>` is
+LLM_WIKI_STORE or ~/.llm-wiki; `<run>` is LLM_WIKI_LANE_RUN, or the head's run in
+head-fence.py). Each writer session also leaves one TRACE line on its first cleared command,
+marked by an empty file `<LLM_WIKI_PROGRESS_DIR or /tmp>/<run>-unplaced-reads-seen-<16 hex>`,
+so the close can tell a writer with nothing to log from one that never ran. The writer writes
+only for a real PreToolUse event, a run-id-shaped run, a regular file at
+`<store>/spawn-records/<run>.jsonl` and a non-blank command. A failed append is noted in
+`<run>-unplaced-reads.failed` beside the log and on stderr, and the decision stands. The close
+reads the log with `lane-fence.py --unplaced-reads <run> [--limit N]`, stdout only and
+read-only: exit 0 complete, 1 incomplete (a premise warning; a low count is then no clean
+result), 2 probe failed (no log, or one that cannot be read). The log holds command text, never
+a variable's value; whether a logged read left its helper's folders is the reader's judgement.
+A suite that sends this checker an event whose `hook_event_name` is `PreToolUse` points
+LLM_WIKI_STORE at a fixture holding no live run record, so none of its legs can write a real
+run's log.
 CLASS W COVERS SHELL WRITES. An interpreter's own write is a TRIPWIRE for the literal shape only,
 never a complete fence. Check 2b reads the `-c`/`-e` program text and every heredoc
 body handed to an interpreter for write-opening calls whose target is a STRING LITERAL — an
@@ -171,10 +223,14 @@ head-fence.py exempts it, before calling `check()`, and logs it as a `grant-chan
 never runs that command, so the divergence is the head's alone.
 """
 
+import hashlib
 import json
 import os
 import re
+import stat
 import sys
+import time
+from datetime import datetime
 
 FENCE = "lane-fence:"
 
@@ -443,6 +499,22 @@ def cut_glob(path):
     return path[:slash + 1] if slash >= 0 else path
 
 
+def glob_bound(word):
+    """The deepest literal directory of an unquoted glob WORD (Kef9c30da), or None when the word
+    cannot be bounded that way: a component at or after the first glob character that is `..`, or
+    that starts with a dot (escaped or not) and carries a glob character, may name a parent entry in
+    some shells, so the directory before the glob would no longer be a bound. The caller then keeps
+    the split reading, which tests each piece as a path of its own and so fails closed."""
+    hits = [word.find(ch) for ch in GLOB_CHARS if word.find(ch) >= 0]
+    if not hits:
+        return word
+    slash = word.rfind("/", 0, min(hits))
+    for part in word[slash + 1:].split("/"):
+        if part == ".." or (part.lstrip("\\").startswith(".") and any(ch in part for ch in GLOB_CHARS)):
+            return None
+    return cut_glob(word)
+
+
 # N11 (register, 2026-09-06): the PATTERN position of a pattern-taking command. A quoted string
 # standing there is what the command searches for, never a file it reads, whatever its content
 # looks like. A bare slash-led pattern need not have a closing delimiter; key the decision on the
@@ -557,6 +629,152 @@ def pattern_operand(words):
     return None
 
 
+# Kc37755f0: the SEARCH commands whose pattern check 1 does not read as a command word. A search
+# pattern is text the command matches and never runs, so `grep -n '"claude"' f` invokes nothing. Only
+# search commands are here: an awk or sed PROGRAM can run commands (awk's `system()` and pipes,
+# sed's `e`), so it is program text like `python3 -c`, and check 1 keeps reading it.
+SEARCH_COMMANDS = {"grep": "grep", "egrep": "grep", "fgrep": "grep", "zgrep": "grep", "rg": "rg"}
+# Per family: the letters and long options whose value IS a pattern (`-e`), those whose value is a
+# file of patterns (`-f`; the file name stays visible), and every other value-taking option, so the
+# positional pattern is found where the command finds it. A value option missing from a table can
+# only move the skip onto that option's value, never onto a word the command runs.
+SEARCH_FLAGS = {
+    "grep": {"pattern": set("e"), "pattern_long": {"--regexp"},
+             "value": PATTERN_FLAGS["grep"]["value"], "supply": PATTERN_FLAGS["grep"]["supply"],
+             "value_long": PATTERN_FLAGS["grep"]["value_long"],
+             "supply_long": PATTERN_FLAGS["grep"]["supply_long"]},
+    "rg":   {"pattern": set("e"), "pattern_long": {"--regexp"},
+             "value": set("efgtTmABCEjMdr"), "supply": set("ef"),
+             "value_long": {"--regexp", "--file", "--glob", "--iglob", "--type", "--type-not",
+                            "--type-add", "--type-clear", "--max-count", "--after-context",
+                            "--before-context", "--context", "--encoding", "--threads",
+                            "--max-columns", "--max-depth", "--max-filesize", "--replace",
+                            "--color", "--colors", "--context-separator", "--path-separator",
+                            "--sort", "--sortr", "--engine", "--ignore-file", "--pre-glob",
+                            "--field-context-separator", "--field-match-separator",
+                            "--dfa-size-limit", "--regex-size-limit", "--hyperlink-format"},
+             "supply_long": {"--regexp", "--file"}},
+}
+# rg options whose value is a program rg runs: a segment carrying one gets no skip at all.
+SEARCH_EXEC_OPTIONS = {"rg": ("--pre", "--hostname-bin")}
+
+
+def search_pattern_indices(words):
+    """The indices of a search command's PATTERN words in one segment (Kc37755f0): the values of
+    `-e`/`--regexp`, and the first operand after the flags when no option supplied the pattern.
+    Empty for any other command, for an rg segment carrying an option that runs a program, and for
+    any word holding a command substitution (`$(` or a backtick), which the shell runs before the
+    search starts."""
+    index, base = segment_command(words)
+    family = SEARCH_COMMANDS.get(base)
+    if family is None:
+        return set()
+    plain = [unquote_token(raw).strip() for raw in words]
+    exec_options = SEARCH_EXEC_OPTIONS.get(family, ())
+    if exec_options and any(word.startswith(exec_options) for word in plain):
+        return set()                          # `--pre-glob` shares the prefix: no skip, fail-closed
+    flags = SEARCH_FLAGS[family]
+    out, supplied, positional = set(), False, False
+    i, end_of_flags = index + 1, False
+    while i < len(words):
+        raw, word = words[i], plain[i]
+        i += 1
+        if raw[:1] in "<>":
+            if "&" not in raw and i < len(words):
+                i += 1                        # the redirection's target
+            continue
+        if not word:
+            continue
+        if not end_of_flags and word == "--":
+            end_of_flags = True
+            continue
+        if not end_of_flags and word.startswith("-") and word != "-":
+            if word.startswith("--"):
+                name, sep, _ = word.partition("=")
+                if name in flags["pattern_long"]:
+                    supplied = True
+                    if sep:
+                        out.add(i - 1)
+                    elif i < len(words):
+                        out.add(i)
+                        i += 1
+                    continue
+                if name in flags["supply_long"]:
+                    supplied = True
+                if not sep and name in flags["value_long"]:
+                    i += 1
+                continue
+            for position in range(1, len(word)):
+                letter = word[position]
+                if letter not in flags["value"]:
+                    continue
+                glued = position + 1 < len(word)
+                if letter in flags["pattern"]:
+                    supplied = True
+                    if glued:
+                        out.add(i - 1)
+                    elif i < len(words):
+                        out.add(i)
+                        i += 1
+                else:
+                    if letter in flags["supply"]:
+                        supplied = True
+                    if not glued:
+                        i += 1                # the value is the next token
+                break
+            continue
+        if not positional:
+            positional = True
+            if not supplied:
+                out.add(i - 1)
+    return {j for j in out if "$(" not in words[j] and "`" not in words[j]}
+
+
+def remote_search_view(body):
+    """Classify search patterns inside fully literal SSH remote-command operands.
+
+    SSH joins its remote arguments with spaces before the remote shell parses them.
+    Only that literal grammar supplies a pattern exemption; locally evaluated words
+    retain their original spelling for check 1 and the later SSH boundary checks.
+    Local redirections and actual remote program words remain visible.
+    """
+    changes = []
+    for segment in ssh_shell_words(body):
+        words = [item[0] for item in segment]
+        remote_indices = []
+        _, _, _, errors = ssh_family_info(words, remote_indices=remote_indices)
+        if errors or not remote_indices:
+            continue
+        remote_words = [ssh_literal(words[index]) for index in remote_indices]
+        if any(error for _, error in remote_words):
+            continue
+        remote = shell_segments(" ".join(value for value, _ in remote_words))
+        skips = [search_pattern_indices(part) for part in remote]
+        if not any(skips):
+            continue
+        replacement = "\n".join(" ".join(word for index, word in enumerate(part) if index not in skip)
+                                for part, skip in zip(remote, skips))
+        for offset, index in enumerate(remote_indices):
+            _, start, end = segment[index]
+            changes.append((start, end, replacement if offset == 0 else ""))
+    for start, end, replacement in sorted(changes, reverse=True):
+        body = body[:start] + replacement + body[end:]
+    return body
+
+
+def check1_text(body):
+    """The text check 1 reads: the heredoc-stripped command, with the pattern words of every search
+    command blanked (Kc37755f0). Unchanged, byte for byte, when no segment is a search command with a
+    pattern word."""
+    body = remote_search_view(body)
+    segments = shell_segments(body)
+    skips = [search_pattern_indices(words) for words in segments]
+    if not any(skips):
+        return body
+    return "\n".join(" ".join(word for j, word in enumerate(words) if j not in skip)
+                     for words, skip in zip(segments, skips))
+
+
 def quoted_tokens_marked(word):
     """The read-side reading of ONE shell word (D33, N1, N9, N9c): each quoted span that
     `quoted_kind` calls a path, whole and with its glob part cut; a `$`-led span with the text
@@ -576,7 +794,7 @@ def quoted_tokens_marked(word):
         return " %s " % glued if glued else " "
     rest = QUOTED_WORD.sub(replace, word)
     # A quoted span is a WHOLE word, never a fragment, so it is marked False (a path operand).
-    return [(p, False) for p in paths] + tokens_marked(rest)
+    return [(p, False) for p in paths] + tokens_marked(rest, whole_globs=True)
 
 
 def quoted_tokens(word):
@@ -594,10 +812,15 @@ def read_tokens(text):
     tokens = []
     for words in shell_segments(text):
         if interpreter_segment(words):
-            tokens += tokens_marked(" ".join(words))
+            tokens += tokens_marked(" ".join(words), whole_globs=True)
             continue
         skip = pattern_operand(words)
+        command_index, _ = segment_command(words)
         for index, word in enumerate(words):
+            if command_index is not None and index < command_index and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
+                _, error = ssh_literal(word)
+                if error is None:
+                    continue              # A literal environment value is data, not a local read.
             if index != skip:
                 tokens += quoted_tokens_marked(word)
     return tokens
@@ -611,7 +834,7 @@ _CUT_CHARS = "|;&<>()`$*?[]{}=,"
 _GLOB_CUTS = "*?[]"
 
 
-def tokens_marked(command):
+def tokens_marked(command, whole_globs=False):
     """(token, fragment) for every path-ish token: quote characters dropped and the metacharacters
     above turned into separators, so `--file=/etc/x` and `"/etc/x"` both yield /etc/x.
 
@@ -619,30 +842,53 @@ def tokens_marked(command):
     token is the residue of cutting a longer word rather than a word the shell would pass. That is
     distinction between a whole path operand, which the grants must cover, and a token left
     by splitting shell syntax. Cutting at a glob character alone does NOT make a
-    fragment, so `cat /etc/*.md` still tests `/etc/` and denies."""
+    fragment, so `cat /etc/*.md` still tests `/etc/` and denies.
+
+    `whole_globs` (the read checks, Kef9c30da): a glob character does not cut the word. The word is
+    read WHOLE and judged by `glob_bound`, its deepest literal directory, as `cut_glob` states:
+    `ls -d /x/*/` tests `/x/`, never a lone `/` left after the `*`, and `/x/*/f.md` tests `/x/`, never
+    `/f.md`. A word `glob_bound` cannot bound keeps the split reading below. Check 1 does not use this
+    mode: its test is on names, and the split reading is what shows it a name inside a glob."""
     # A URL is not a filesystem path and its remnants must not be read as one. `https://[2001:db8::1]/x`
     # cuts at the brackets and would leave `/x` standing as an absolute path token, which check 4 then
     # denied even under a grant naming that host (review N3). No filesystem path carries `://`, so the
     # whole URL run is blanked here; the network check reads the raw text and owns the host itself.
     text = re.sub(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"]*", " ", unquote(command))
+    cuts = "".join(ch for ch in _CUT_CHARS if ch not in _GLOB_CUTS) if whole_globs else _CUT_CHARS
     out, buf, left = [], [], False
+
+    def close(right):
+        token = "".join(buf)
+        del buf[:]
+        if whole_globs and any(ch in token for ch in _GLOB_CUTS):
+            bound = glob_bound(token)
+            if bound is not None:
+                out.append((bound, left or right))
+                return
+            parts = tokens_marked(token)  # the split reading, for a word with no bound
+            if parts and token[0] not in _GLOB_CUTS:
+                parts[0] = (parts[0][0], parts[0][1] or left)
+            if parts and token[-1] not in _GLOB_CUTS:
+                parts[-1] = (parts[-1][0], parts[-1][1] or right)
+            out.extend(parts)
+            return
+        out.append((token, left or right))
+
     for ch in text:
-        if ch in _CUT_CHARS:
+        if ch in cuts:
             nonglob = ch not in _GLOB_CUTS
             if buf:
-                out.append(("".join(buf), left or nonglob))
-                del buf[:]
+                close(nonglob)
             left = nonglob
             continue
         if ch.isspace():
             if buf:
-                out.append(("".join(buf), left))
-                del buf[:]
+                close(False)
             left = False
             continue
         buf.append(ch)
     if buf:
-        out.append(("".join(buf), left))
+        close(False)
     return out
 
 
@@ -748,50 +994,64 @@ def first_separator(text):
     return None
 
 
-def leading_cd_base(text):
-    """The directory a LEADING `cd` moves into, for resolving a relative mutator target, else None
-    (register 2026-09-08).
-    The narrowing can only ever turn a false
-    DENY into a clear and never the reverse — the caller still tests the resolved path against the
-    write roots:
-      - no unquoted `(` or `)` anywhere: a `cd` inside a subshell does not outlive it, and
-        `shell_segments` discards that structure, so a parenthesised command gets no base at all;
-      - exactly ONE `cd` segment, and it is the FIRST segment, so there is no ambiguity about which
-        directory a later target is relative to;
-      - its single operand is a LITERAL absolute path (no `$`, no backtick) the fence can resolve,
-        and that path EXISTS as a directory; a failed `cd` cannot authorise a different write base;
-      - the `cd` is joined to what follows by `&&` and nothing else: after `;` or `||` the shell
-        runs the rest whatever the `cd` did, so only `&&` guarantees the move happened.
-    A `cd` the caller finds is used only when it lies inside the write roots (the caller's test)."""
-    if re.search(r"[()]", strip_quoted(text)):
-        return None
-    if first_separator(text) != "&&":
-        return None
-    segments = shell_segments(text)
-    cd_positions = []
-    for position, words in enumerate(segments):
-        index, base = segment_command(words)
-        if base == "cd":
-            cd_positions.append((position, index, words))
-    if len(cd_positions) != 1:
-        return None
-    position, index, words = cd_positions[0]
-    if position != 0:
-        return None
-    operands = []
-    for raw in words[index + 1:]:
-        if "$" in raw or "`" in raw:
-            return None                   # a directory this fence cannot resolve
-        word = unquote_token(raw).strip()
-        if not word or word.startswith("-"):
-            continue
-        operands.append(word)
-    if len(operands) != 1:
-        return None
-    target = os.path.expanduser(operands[0])
-    if not os.path.isabs(target) or not os.path.isdir(target):
-        return None
-    return norm(target)
+CURRENT_DIRECTORY = object()
+
+
+def command_base_segments(text, initial_base=CURRENT_DIRECTORY):
+    """Pair each segment with its preceding controlling literal directory.
+
+    Resolution never tests permissions. Only an existing absolute literal `cd ... &&`
+    establishes a new base. Ambiguous changes leave subsequent relative paths unresolved;
+    earlier segments retain their own base. Subshell directory changes are not modelled.
+    """
+    segments = ssh_shell_words(text)
+    base = os.getcwd() if initial_base is CURRENT_DIRECTORY else initial_base
+    has_cd = any(segment_command([word[0] for word in segment])[1] == "cd"
+                 for segment in segments)
+    subshell = has_cd and bool(re.search(r"[()]", strip_quoted(text)))
+    previous_end = 0
+    stable_base = base
+    seen_cd, or_chain = False, False
+    for number, segment in enumerate(segments):
+        start, end = segment[0][1], segment[-1][2]
+        preceding_text = text[previous_end:start]
+        preceding = preceding_text.strip() or ("\n" if "\n" in preceding_text else "")
+        if preceding in (";", "\n", "&"):
+            or_chain = False
+        if "||" in preceding:
+            or_chain = True
+        if seen_cd and preceding in (";", "\n"):
+            base = stable_base
+        if subshell or (seen_cd and preceding in ("&", "||")):
+            base = stable_base = None
+        yield segment, base
+        words = [word[0] for word in segment]
+        index, client = segment_command(words)
+        if client == "cd":
+            seen_cd = True
+            next_start = segments[number + 1][0][1] if number + 1 < len(segments) else len(text)
+            following = text[end:next_start].strip()
+            operands = words[index + 1:]
+            if operands[:1] == ["--"]:
+                operands = operands[1:]
+            target, error = ssh_literal(operands[0]) if len(operands) == 1 else (None, "missing directory")
+            if (not subshell and not or_chain and following == "&&" and preceding not in ("|", "|&", "&")
+                    and not error and os.path.isabs(target) and os.path.isdir(target)):
+                base = norm(target)
+                # Preserve the established existing-directory premise for an unconditional
+                # literal cd; a conditionally skipped cd cannot outlive its AND-list.
+                stable_base = base if preceding in ("", ";", "\n") else None
+            else:
+                base = stable_base = None
+        previous_end = end
+
+
+def resolve_command_path(path, base):
+    """An absolute path or a relative path against a known base; None never grants access."""
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        return expanded
+    return os.path.join(base, path) if base is not None else None
 
 
 def is_grant_change(command):
@@ -1059,6 +1319,594 @@ def script_file_write_deny(command):
     return None
 
 
+SSH_FAMILY = frozenset({"ssh", "scp", "sftp", "rsync"})
+SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh", "ksh", "dash"})
+
+
+def ssh_shell_words(text):
+    """Segments of (raw word, start, end), retaining quotes and local evaluation.
+
+    This bounded lexer never evaluates text. A substitution stays in its word so that
+    the literal reader can refuse it, rather than losing its shell provenance.
+    """
+    segments, words = [], []
+    i, size = 0, len(text)
+    while i < size:
+        if text[i].isspace() and text[i] != "\n":
+            i += 1
+            continue
+        if text[i] in ";&|\n()":
+            if words:
+                segments.append(words)
+                words = []
+            i += 1
+            continue
+        start = i
+        if text[i] in "<>":
+            while i < size and text[i] in "<>&0123456789-":
+                i += 1
+        else:
+            quote, depth = None, 0
+            while i < size:
+                ch = text[i]
+                if ch == "\\" and quote != "'":
+                    i = min(i + 2, size)
+                    continue
+                if quote:
+                    if ch == quote:
+                        quote = None
+                    i += 1
+                    continue
+                if ch in "'\"`":
+                    quote = ch
+                    i += 1
+                    continue
+                if text.startswith("$(", i):
+                    depth += 1
+                    i += 2
+                    continue
+                if depth:
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                    i += 1
+                    continue
+                if ch.isspace() or ch in ";&|()<>":
+                    break
+                i += 1
+        words.append((text[start:i], start, i))
+    if words:
+        segments.append(words)
+    return segments
+
+
+def ssh_literal(raw, remote_data=False):
+    """Decode a protected shell word; refuse unresolved local evaluation.
+
+    Single quotes protect every byte. Double quotes protect glob syntax but not
+    command substitution. Only remote data after a fixed SSH host may retain simple
+    double-quoted parameters: their substituted text has no local file or program
+    effect. The returned parameter spelling is never used to resolve a local path.
+    Unquoted expansion syntax is deliberately not evaluated.
+    """
+    value, quote, i = [], None, 0
+    while i < len(raw):
+        ch = raw[i]
+        if quote == "'":
+            if ch == "'":
+                quote = None
+            else:
+                value.append(ch)
+        elif ch == "\\":
+            if i + 1 >= len(raw):
+                return None, "unresolved trailing shell escape"
+            nxt = raw[i + 1]
+            if quote == '"' and nxt not in '$`"\\\n':
+                value.append("\\")
+            if nxt != "\n":
+                value.append(nxt)
+            i += 1
+        elif ch in "'\"" and (quote is None or ch == quote):
+            quote = None if quote else ch
+        elif ch == "$" and quote == '"' and remote_data:
+            parameter = re.match(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*#?$!-]|"
+                                 r"\{(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*#?$!-])\})", raw[i:])
+            if parameter is None:
+                return None, "unresolved local evaluation in `%s`" % raw
+            value.append(parameter.group(0))
+            i += len(parameter.group(0)) - 1
+        elif ch in "$`" or (quote is None and ch in "*?[]{}~!"):
+            return None, "unresolved local evaluation in `%s`" % raw
+        else:
+            value.append(ch)
+        i += 1
+    if quote:
+        return None, "unresolved unterminated shell quote"
+    return "".join(value), None
+
+
+def ssh_local_io(words, arg_indices=None):
+    """Separate shell I/O before identifying any remote operands."""
+    args, reads, writes, errors = [], [], [], []
+    i = 0
+    while i < len(words):
+        raw = words[i]
+        i += 1
+        if not re.match(r"^[0-9]*[<>]", raw):
+            # The lexer may leave an fd number just before its operator.
+            if raw.isdigit() and i < len(words) and re.match(r"^[<>]", words[i]):
+                continue
+            args.append(raw)
+            if arg_indices is not None:
+                arg_indices.append(i - 1)
+            continue
+        op = re.sub(r"^[0-9]+", "", raw)
+        if re.fullmatch(r"[<>]&[0-9-]+", op):
+            continue
+        if op not in ("<", ">", ">>", "<<", "<<-", "<<<"):
+            errors.append("unresolved local redirection `%s`" % raw)
+            continue
+        if i == len(words):
+            errors.append("missing local redirection target for `%s`" % raw)
+            continue
+        target, error = ssh_literal(words[i])
+        i += 1
+        if error:
+            errors.append(error)
+        elif not target:
+            errors.append("missing local redirection target for `%s`" % raw)
+        elif op == "<":
+            reads.append(("shell input", target))
+        elif op in (">", ">>"):
+            writes.append(("shell redirection", target))
+        # Here-doc delimiters and literal here-strings are data, not file paths.
+    return args, reads, writes, errors
+
+
+def ssh_host(value, port=False):
+    """A literal host/userinfo authority, including bracketed IPv6."""
+    if "@" in value:
+        user, value = value.rsplit("@", 1)
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", user):
+            return None
+    if value.startswith("["):
+        match = re.fullmatch(r"\[([0-9A-Fa-f:.]+)\](?::([0-9]+))?", value)
+        if not match or (match.group(2) and not port):
+            return None
+        return match.group(1)
+    if port and ":" in value:
+        value, sep, number = value.rpartition(":")
+        if not sep or not number.isdigit():
+            return None
+    return value.lower() if re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", value) else None
+
+
+def ssh_endpoint(value, client):
+    """Return (host, local path, error); never call unrecognised remote syntax local."""
+    if "://" in value:
+        scheme, rest = value.split("://", 1)
+        if (client == "rsync" and scheme == "rsync") or (client in {"scp", "sftp"} and scheme == client):
+            authority, slash, path = rest.partition("/")
+            host = ssh_host(authority, port=True)
+            if host and (slash or client == "sftp"):
+                return host, None, None
+        return None, None, "unresolved %s URI endpoint `%s`" % (client, value)
+    # An explicit relative/absolute local path may itself contain a colon.
+    if value.startswith(("/", "./", "../")):
+        return None, value, None
+    match = re.match(r"^((?:[^@/:]+@)?\[[^\]]+\]|[^/:]+)(::?)(.*)$", value, re.S)
+    if match:
+        host = ssh_host(match.group(1))
+        if host and (match.group(2) == ":" or client == "rsync"):
+            return host, None, None
+        return None, None, "unresolved %s remote endpoint `%s`" % (client, value)
+    if ":" in value or "[" in value or "]" in value:
+        return None, None, "unresolved %s remote endpoint `%s`" % (client, value)
+    if client == "sftp":
+        host = ssh_host(value)
+        return (host, None, None) if host else (None, None, "unresolved sftp host `%s`" % value)
+    return None, value, None
+
+
+# Closed option grammars: an absent entry is an unresolved effect, never an ignored flag.
+SSH_OPTIONS = {
+    "ssh": (set("46AaCfGgKkMNnqsTtVvXxYy"), set("BbcDEeFIiJLlmOoPpQRSWw")),
+    "scp": (set("346ABCOpqRrsTv"), set("cDFiJloPSX")),
+    "sftp": (set("46aACfpqrv"), set("BbcDFiJloPRSsX")),
+}
+SSH_READ_SETTINGS = frozenset({"identityfile", "certificatefile", "userknownhostsfile", "globalknownhostsfile"})
+SSH_DATA_SETTINGS = frozenset({
+    "batchmode", "stricthostkeychecking", "connecttimeout", "connectionattempts",
+    "serveraliveinterval", "serveralivecountmax", "loglevel", "identitiesonly",
+    "preferredauthentications", "passwordauthentication", "pubkeyauthentication",
+    "compression", "tcpkeepalive", "requesttty", "addressfamily", "port", "user",
+    "hostkeyalgorithms", "kexalgorithms", "ciphers", "macs", "numberofpasswordprompts",
+    "forwardagent", "forwardx11", "exitonforwardfailure", "clearallforwardings",
+})
+RSYNC_DATA_LONG = frozenset({"--bwlimit", "--timeout", "--contimeout", "--port", "--block-size",
+                            "--max-size", "--min-size", "--chmod", "--usermap", "--groupmap",
+                            "--chown", "--exclude", "--include", "--out-format", "--info", "--debug"})
+RSYNC_FLAGS_LONG = frozenset({"--archive", "--recursive", "--verbose", "--quiet", "--compress",
+                             "--progress", "--partial", "--delete", "--delete-before", "--delete-after",
+                             "--delete-during", "--delete-delay", "--delete-excluded", "--dry-run",
+                             "--checksum", "--times", "--perms", "--owner", "--group", "--links",
+                             "--hard-links", "--numeric-ids", "--stats", "--human-readable",
+                             "--itemize-changes", "--whole-file", "--update", "--ignore-existing",
+                             "--existing", "--size-only", "--inplace", "--append", "--append-verify",
+                             "--no-inc-recursive", "--protect-args", "--secluded-args"})
+
+
+def ssh_config_paths(text, key):
+    """Accept only a configuration spelling whose filenames need no client decoding.
+
+    The outer shell has already decoded -o's argument. Retained quotes and escapes
+    belong to SSH's different configuration grammar, not to the local filename.
+    Refuse them rather than turn a quoted absolute path into a relative one. Only
+    known-host settings accept a list; identity and certificate settings take one
+    filename. The admitted separators are ASCII spaces/tabs and one optional '='.
+    """
+    match = re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(?:[ \t]*=[ \t]*|[ \t]+)(.*)", text, re.S)
+    val = match.group(1).strip(" \t") if match else ""
+    if (not val or any(ch in val for ch in "\"'\\%$~`*?[]{}#=")
+            or any((ch.isspace() and ch not in " \t") or ord(ch) < 32 and ch != "\t"
+                   or ord(ch) == 127 for ch in val)):
+        return [], "unresolved ssh -o %s option file configuration grammar `%s`" % (key, text)
+    paths = re.split(r"[ \t]+", val)
+    if key in {"identityfile", "certificatefile"} and len(paths) != 1:
+        return [], "unresolved ssh -o %s option file: expected one filename" % key
+    return paths, None
+
+
+def ssh_family_info(words, remote_indices=None):
+    """One segment, four results: connection hosts, local reads, local writes, unresolved syntax.
+
+    Every returned path is already a decoded literal; the caller applies the grants.
+    Remote data is exempt only after local shell effects and client options are classified.
+    """
+    arg_indices = []
+    args, reads, writes, errors = ssh_local_io(words, arg_indices=arg_indices)
+    index, client = segment_command(args)
+    hosts = []
+    if client not in SSH_FAMILY:
+        return hosts, reads, writes, errors
+    for raw in args[:index]:
+        _, error = ssh_literal(raw)
+        if error:
+            errors.append(error)
+    program, error = ssh_literal(args[index])
+    if error:
+        errors.append(error)
+    elif "/" in program:
+        reads.append(("client program", program))
+
+    def value(raw, remote_data=False):
+        result, error = ssh_literal(raw, remote_data=remote_data)
+        if error:
+            errors.append(error)
+        return result
+
+    def connection(authority, option, port=False):
+        host = ssh_host(authority, port=port)
+        if host:
+            hosts.append(host)
+        else:
+            errors.append("unresolved %s host `%s`" % (option, authority))
+
+    def option_path(origin, path, writing=False):
+        # These options receive argv filenames, with no configuration unquoting.
+        # Keep literal quote/backslash/space bytes. The shared resolver expands
+        # leading '~', so refuse that spelling rather than check another filename.
+        if not path or path.startswith("~") or any(ord(ch) < 32 or ord(ch) == 127 for ch in path):
+            errors.append("unresolved %s option file `%s`" % (origin, path))
+        else:
+            (writes if writing else reads).append((origin, path))
+
+    def setting(text):
+        parts = re.split(r"[=\s]+", text, maxsplit=1)
+        if len(parts) != 2 or not parts[1]:
+            errors.append("missing ssh -o option value")
+            return
+        key, val = parts[0].lower(), parts[1]
+        if key == "proxyjump":
+            if val != "none":
+                for jump in val.split(","):
+                    connection(jump, "jump", port=True)
+        elif key == "hostname":
+            connection(val, "effective destination")
+        elif key in SSH_READ_SETTINGS:
+            paths, error = ssh_config_paths(text, key)
+            if error:
+                errors.append(error)
+            reads.extend(("ssh -o " + key, path) for path in paths)
+        elif key in SSH_DATA_SETTINGS:
+            return
+        else:
+            errors.append("unresolved ssh -o %s option (configuration or local program effects)" % parts[0])
+
+    operands, i, options = [], index + 1, True
+    while i < len(args):
+        raw = args[i]
+        i += 1
+        word = value(raw)
+        if word is None:
+            continue
+        if options and word == "--":
+            options = False
+            continue
+        if not options or not word.startswith("-") or word == "-":
+            operands.append(word)
+            if client in {"ssh", "sftp"}:
+                # SSH stops option parsing at its destination. These are remote words.
+                for remote in args[i:]:
+                    value(remote, remote_data=(client == "ssh"))
+                if client == "ssh" and remote_indices is not None:
+                    remote_indices.extend(arg_indices[i:])
+                if client == "sftp" and i < len(args):
+                    errors.append("unresolved extra sftp operands")
+                break
+            continue
+        if client == "rsync":
+            if word.startswith("--"):
+                name, equals, supplied = word.partition("=")
+                if name in RSYNC_FLAGS_LONG and not equals:
+                    continue
+                if name not in RSYNC_DATA_LONG | {"--rsh", "--rsync-path", "--log-file", "--files-from", "--include-from", "--exclude-from", "--password-file"}:
+                    errors.append("unresolved rsync option `%s`" % name)
+                    continue
+                if not equals:
+                    if i >= len(args):
+                        errors.append("missing rsync option value for `%s`" % name)
+                        continue
+                    supplied = value(args[i])
+                    i += 1
+            else:
+                supplied, name = None, None
+                for j, letter in enumerate(word[1:], 1):
+                    if letter in "eBfMT":
+                        name = {"e": "--rsh", "B": "--block-size"}.get(letter, "unsupported -" + letter)
+                        supplied = word[j + 1:]
+                        if not supplied:
+                            if i >= len(args):
+                                errors.append("missing rsync option value for `-%s`" % letter)
+                                break
+                            supplied = value(args[i])
+                            i += 1
+                        break
+                    if letter not in "avzrtplogDHAXSxWnqcuIRLPihs":
+                        errors.append("unresolved rsync option `-%s`" % letter)
+                if name is None:
+                    continue
+            if supplied is None:
+                continue
+            if name == "--rsh":
+                # Rsync splits a command string using its own grammar, not a shell.
+                # Admit only the common literal subset; quoting, escapes, operators
+                # and expansions cannot be decoded exactly by the shell reader.
+                if (not supplied or any(ch in supplied for ch in "\"'\\$`;&|()<>*?[]{}~!")
+                        or any((ch.isspace() and ch != " ") or ord(ch) < 32
+                               or ord(ch) == 127 for ch in supplied)):
+                    errors.append("unresolved rsync --rsh transport grammar")
+                    continue
+                transport = ssh_shell_words(supplied)
+                if len(transport) != 1 or not transport[0] or transport[0][0][0] != "ssh":
+                    errors.append("unresolved rsync --rsh local program (only plain ssh is supported)")
+                else:
+                    # A sentinel supplies the destination, which rsync supplies at runtime.
+                    transport_words = [item[0] for item in transport[0]] + ["transport.invalid"]
+                    remote = []
+                    hs, rs, ws, es = ssh_family_info(transport_words, remote_indices=remote)
+                    if remote or not hs or hs[-1] != "transport.invalid":
+                        es.append("unresolved rsync --rsh destination or missing option value")
+                    # The destination is appended last by the SSH classifier. Remove
+                    # only that occurrence: a real option host may have the same name.
+                    hosts.extend(hs[:-1] if hs and hs[-1] == "transport.invalid" else hs)
+                    reads.extend(rs)
+                    writes.extend(ws)
+                    errors.extend(es)
+            elif name in {"--files-from", "--include-from", "--exclude-from", "--password-file"}:
+                if supplied.startswith(":") or (name == "--files-from" and ":" in supplied):
+                    errors.append("unresolved rsync option file `%s`" % supplied)
+                else:
+                    option_path("rsync " + name, supplied)
+            elif name == "--log-file":
+                option_path("rsync --log-file", supplied, writing=True)
+            elif name == "--rsync-path":
+                pass                      # The remote server program is remote data.
+            elif name not in RSYNC_DATA_LONG:
+                errors.append("unresolved rsync option `%s`" % name)
+            continue
+        flags, taking = SSH_OPTIONS[client]
+        if word.startswith("--"):
+            errors.append("unresolved %s option `%s`" % (client, word))
+            continue
+        for j, letter in enumerate(word[1:], 1):
+            if letter in taking:
+                supplied = word[j + 1:]
+                if not supplied:
+                    if i >= len(args):
+                        errors.append("missing %s option value for `-%s`" % (client, letter))
+                        break
+                    supplied = value(args[i])
+                    i += 1
+                if supplied is None:
+                    break
+                if letter == "o":
+                    setting(supplied)
+                elif letter == "J":
+                    for jump in supplied.split(","):
+                        connection(jump, "jump", port=True)
+                elif letter == "i" or (client == "sftp" and letter == "b"):
+                    if letter == "i" and any(c in supplied for c in "%$~"):
+                        errors.append("unresolved ssh option file `%s`" % supplied)
+                    else:
+                        option_path(client + " -" + letter, supplied)
+                elif client == "ssh" and letter == "E":
+                    option_path("ssh -E log", supplied, writing=True)
+                elif letter == "F":
+                    errors.append("unresolved %s -F configuration file" % client)
+                elif (client == "ssh" and letter in "DILORSWw") or (client in {"scp", "sftp"} and letter in "DSs"):
+                    errors.append("unresolved %s -%s option (local program or further connection)" % (client, letter))
+                elif letter not in ("BbcelmPpQ" if client == "ssh" else "BclPRX"):
+                    errors.append("unresolved %s -%s option" % (client, letter))
+                break
+            if letter not in flags:
+                errors.append("unresolved %s option `-%s`" % (client, letter))
+    if client == "ssh":
+        if not operands:
+            errors.append("unresolved ssh: missing destination host")
+        else:
+            destination = operands[0]
+            if destination.startswith("ssh://"):
+                connection(destination[len("ssh://"):].rstrip("/"), "destination", port=True)
+            else:
+                connection(destination, "destination")
+    elif client == "sftp":
+        if not operands:
+            errors.append("unresolved sftp: missing destination host")
+        else:
+            host, _, error = ssh_endpoint(operands[0], client)
+            if error:
+                errors.append(error)
+            elif host:
+                hosts.append(host)
+            else:
+                errors.append("unresolved sftp destination host")
+    else:
+        if len(operands) < 2:
+            errors.append("unresolved %s: missing source or destination endpoint" % client)
+        for j, operand in enumerate(operands):
+            host, path, error = ssh_endpoint(operand, client)
+            if error:
+                errors.append(error)
+            elif host:
+                hosts.append(host)
+            elif path:
+                (writes if j == len(operands) - 1 else reads).append((client + " endpoint", path))
+    return hosts, reads, writes, errors
+
+
+def ssh_command_view(text, initial_base=CURRENT_DIRECTORY):
+    """Mask classified remote segments, retaining independent local command checks.
+
+    Returns the local view and the four classifier collections. Shell program strings
+    are recursively read only when they contain a supported client invocation.
+    """
+    edits, hosts, reads, writes, errors = [], [], [], [], []
+    active = False
+    def local_paths(paths, base, kind):
+        resolved = []
+        for origin, path in paths:
+            target = resolve_command_path(path, base)
+            if target is None:
+                errors.append("unresolved local %s base after compound or missing cd" % kind)
+            else:
+                resolved.append((origin, target))
+        return resolved
+
+    for segment, base in command_base_segments(text, initial_base):
+        words = [item[0] for item in segment]
+        args, _, _, _ = ssh_local_io(words)
+        index, client = segment_command(args)
+        if index is not None:
+            for raw in args[:index]:
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", raw):
+                    _, error = ssh_literal(raw)
+                    if error:
+                        errors.append(error)
+        if client in SSH_FAMILY:
+            hs, rs, ws, es = ssh_family_info(words)
+            hosts.extend(hs)
+            reads.extend(local_paths(rs, base, "read"))
+            writes.extend(local_paths(ws, base, "write"))
+            errors.extend(es)
+            edits.append((segment[0][1], segment[-1][2], ":"))
+            active = True
+        elif client in SHELL_PROGRAMS and index is not None:
+            tail = args[index + 1:]
+            flag = re.match(r"^-[lexu]*c(.*)$", tail[0], re.S) if tail else None
+            if flag and (flag.group(1) or len(tail) >= 2):
+                raw_payload = flag.group(1) or tail[1]
+                payload, error = ssh_literal(raw_payload)
+                if payload is not None:
+                    view, hs, rs, ws, es, used = ssh_command_view(payload, base)
+                    if used:
+                        hosts.extend(hs)
+                        reads.extend(rs)
+                        writes.extend(ws)
+                        errors.extend(es)
+                        wrapper, wrapper_error = ssh_literal(args[index])
+                        if wrapper_error:
+                            errors.append(wrapper_error)
+                        elif "/" in wrapper:
+                            reads.extend(local_paths([("client program", wrapper)], base, "read"))
+                        for raw in tail[1 if flag.group(1) else 2:]:
+                            _, extra_error = ssh_literal(raw)
+                            if extra_error:
+                                errors.append(extra_error)
+                        _, outer_rs, outer_ws, outer_es = ssh_local_io(words)
+                        reads.extend(local_paths(outer_rs, base, "read"))
+                        writes.extend(local_paths(outer_ws, base, "write"))
+                        errors.extend(outer_es)
+                        # Flatten only wrappers with no directory changes: their cwd is inherited.
+                        if any(segment_command([t[0] for t in s])[1] == "cd" for s in ssh_shell_words(payload)):
+                            errors.append("unresolved shell wrapper write base after cd")
+                        edits.append((segment[0][1], segment[-1][2], view))
+                        active = True
+                elif any(ssh_command_view(p)[5] for p in interpreter_payloads(" ".join(args))):
+                    errors.append(error or "unresolved shell wrapper local evaluation")
+            else:
+                for payload in interpreter_payloads(" ".join(args)):
+                    if ssh_command_view(payload)[5]:
+                        errors.append("unresolved ssh-family shell wrapper grammar")
+        elif client in INTERPRETERS:
+            for payload in interpreter_payloads(" ".join(args)):
+                if ssh_command_view(payload)[5]:
+                    errors.append("unresolved ssh-family interpreter wrapper grammar")
+        elif args and os.path.basename(unquote_token(args[0])) in PREFIXES:
+            if any(unquote_token(raw) in SSH_FAMILY for raw in args[1:]):
+                errors.append("unresolved ssh-family command wrapper options")
+    for start, end, replacement in reversed(edits):
+        text = text[:start] + replacement + text[end:]
+    return text, hosts, reads, writes, errors, active
+
+
+def ssh_heredoc_error(command):
+    """An unquoted local heredoc can substitute even when its consumer is remote."""
+    lines, i = command.split("\n"), 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        markers = heredoc_markers(line)
+        if not markers:
+            continue
+        words = [word[0] for segment in ssh_shell_words(line) for word in segment]
+        raw_markers = [words[j + 1] for j, word in enumerate(words[:-1]) if word in ("<<", "<<-")]
+        if len(raw_markers) != len(markers):
+            return "unresolved local heredoc delimiter grammar"
+        for raw, (marker, dash) in zip(raw_markers, markers):
+            protected = any(ch in raw for ch in "'\"\\")
+            ended = False
+            while i < len(lines):
+                text = lines[i]
+                i += 1
+                if (text.lstrip("\t") if dash else text) == marker:
+                    ended = True
+                    break
+                if not protected:
+                    j = 0
+                    while j < len(text):
+                        if text[j] == "\\":
+                            j += 2
+                            continue
+                        if text[j] in "$`":
+                            return "unresolved local evaluation in unquoted heredoc input"
+                        j += 1
+            if not ended:
+                return "unresolved unterminated local heredoc input"
+    return None
+
+
 def is_network_command(body, command):
     """True when the command's program is a network client, when an interpreter payload reaches the
     network, or a payload itself runs a network client, including a shell program string."""
@@ -1105,16 +1953,243 @@ def command_hosts(text):
     return hosts
 
 
+# Kb2a266d1: the options of curl and wget whose VALUE names a local file or a datum (an output file,
+# a header, a method, a time), never a machine the client connects to. Such a value is skipped as a
+# host candidate, so `curl -o x.md https://h/x` addresses `h` alone. An ALLOWLIST: an option missing
+# from it keeps the old reading (its value may be read as a host, which fails closed), and every
+# option whose value is an endpoint — `--url`, a proxy, `--connect-to`, `--resolve`, `--doh-url`,
+# wget's `-e` (a wgetrc command, which can set a proxy) — is left off it deliberately. Configuration
+# and address-list inputs are refused by NETWORK_INDIRECT_OPTIONS, not skipped as harmless data.
+NETWORK_VALUE_FLAGS = {
+    "curl": {"short": set("oDcbTdFHAeuXwmrCyYzQEtU"),
+             "long": {"--output", "--output-dir", "--dump-header", "--cookie", "--cookie-jar",
+                      "--upload-file", "--data", "--data-ascii", "--data-binary",
+                      "--data-raw", "--data-urlencode", "--json", "--form", "--form-string",
+                      "--header", "--proxy-header", "--user-agent", "--referer", "--user",
+                      "--proxy-user", "--request", "--write-out", "--max-time",
+                      "--connect-timeout", "--range", "--continue-at", "--speed-time",
+                      "--speed-limit", "--time-cond", "--quote", "--cert", "--cert-type", "--key",
+                      "--key-type", "--cacert", "--capath", "--crlfile", "--telnet-option",
+                      "--retry", "--retry-delay", "--retry-max-time", "--limit-rate",
+                      "--max-filesize", "--max-redirs", "--stderr", "--trace", "--trace-ascii",
+                      "--libcurl", "--etag-save", "--etag-compare", "--hsts",
+                      "--netrc-file", "--expect100-timeout", "--keepalive-time",
+                      "--oauth2-bearer", "--url-query", "--variable"}},
+    "wget": {"short": set("OoaPUtTwQ"),
+             "long": {"--output-document", "--output-file", "--append-output",
+                      "--directory-prefix", "--user-agent", "--header",
+                      "--post-data", "--post-file", "--body-data", "--body-file", "--method",
+                      "--tries", "--timeout", "--wait", "--quota", "--limit-rate", "--user",
+                      "--password", "--http-user", "--http-password", "--load-cookies",
+                      "--save-cookies", "--ca-certificate", "--certificate", "--private-key",
+                      "--referer", "--level", "--accept", "--reject", "--hsts-file",
+                      "--rejected-log", "--warc-file"}},
+}
+
+# These values carry more addresses or settings, so a URL elsewhere in the command proves
+# nothing about their destinations. --alt-svc is also a file write, but check N refuses it first.
+NETWORK_INDIRECT_OPTIONS = {
+    "curl": {"-K", "--config", "--alt-svc"},
+    "wget": {"-i", "--input-file", "--config", "-e", "--execute"},
+}
+NETWORK_FILE_OPTIONS = {
+    "curl": {"-o", "--output", "--output-dir", "-D", "--dump-header", "-c", "--cookie-jar",
+             "--trace", "--trace-ascii", "--stderr", "--libcurl", "--etag-save", "--hsts",
+             "--alt-svc"},
+    "wget": {"-O", "--output-document", "-o", "--output-file", "-a", "--append-output",
+             "-P", "--directory-prefix", "--save-cookies", "--hsts-file", "--rejected-log",
+             "--warc-file"},
+}
+# Only options for which '-' denotes standard output get that exemption. A directory named '-'
+# and wget's log options still name files. '%' denotes standard error for curl's trace options.
+NETWORK_STDOUT_OPTIONS = {
+    "curl": {"-o", "--output", "-D", "--dump-header", "-c", "--cookie-jar", "--trace",
+             "--trace-ascii", "--stderr", "--libcurl", "--etag-save"},
+    "wget": {"-O", "--output-document"},
+}
+
+
+def network_client_options(base, words):
+    """Literal option names and values, including glued values and short clusters.
+
+    This reading serves the deny/write checks. The narrower network_value_skips reading is
+    unchanged: a clustered option's separated value still remains a host candidate. Known
+    non-output values are consumed too, so a header or user agent containing '-K' is data.
+    """
+    def value_of(raw):
+        try:
+            parsed = record_words(raw)
+        except ValueError:
+            return raw                       # malformed/expanded text stays visible, fail-closed
+        return parsed[0][1] if len(parsed) == 1 and parsed[0][0] == "word" else raw
+
+    table = NETWORK_VALUE_FLAGS[base]
+    takes = ({"-" + letter for letter in table["short"]} | table["long"] |
+             NETWORK_INDIRECT_OPTIONS[base] | NETWORK_FILE_OPTIONS[base])
+    if base == "curl":
+        takes |= {"-x", "--proxy", "--preproxy", "--url", "--connect-to", "--resolve", "--doh-url"}
+    options, i = [], 0
+    while i < len(words):
+        raw = words[i]
+        i += 1
+        if raw[:1] in "<>":
+            if "&" not in raw:
+                i += 1
+            continue
+        word = value_of(raw)
+        if word == "--":
+            break
+        if not word.startswith("-") or word == "-":
+            continue
+        if word.startswith("--"):
+            name, sep, value = word.partition("=")
+            if not sep:
+                value = None
+                if name in takes and i < len(words):
+                    value = value_of(words[i])
+                    i += 1
+            options.append((name, value))
+            continue
+        for position in range(1, len(word)):
+            name, value = "-" + word[position], None
+            if name in takes:
+                value = word[position + 1:] or None
+                if value is None and i < len(words):
+                    value = value_of(words[i])
+                    i += 1
+                options.append((name, value))
+                break
+            options.append((name, value))
+    return options
+
+
+def network_client_calls(body, command):
+    """Curl/wget options in shell segments and in the interpreter payloads check N already reads."""
+    calls = []
+    for text in [body] + list(interpreter_payloads(command)):
+        for words in shell_segments(text):
+            index, base = segment_command(words)
+            if base in NETWORK_VALUE_FLAGS:
+                calls.append((base, network_client_options(base, words[index + 1:])))
+    return calls
+
+
+def network_file_targets(calls):
+    """File/directory targets plus any unresolved write format. Never read config or run a client.
+
+    All named outputs are tested, even when a later flag overrides them. Directory outputs bound
+    server-chosen names. Curl's final output directory within a transfer prefixes explicit output
+    names regardless of option order, including names beginning with '/'. WARC names have generated
+    suffixes, so their parent must be writable.
+    """
+    transfers = []
+    for base, options in calls:
+        current = []
+        for option in options:
+            if base == "curl" and option[0] in {"--next", "-:"}:
+                transfers.append((base, current))
+                current = []
+            else:
+                current.append(option)
+        transfers.append((base, current))
+    targets = []
+    for base, options in transfers:
+        directory = "."
+        output_directory = None
+        if base == "curl":
+            for name, value in options:
+                if name == "--output-dir":
+                    output_directory = value
+            if output_directory is not None:
+                directory = output_directory
+        default_name = base == "wget"
+        for name, value in options:
+            label = base + " " + name
+            if name in NETWORK_FILE_OPTIONS[base]:
+                if value is None or (not value and name != "--hsts"):
+                    return [], label + " has no literal file target — denied as unresolvable"
+                if base == "wget" and name in {"-P", "--directory-prefix"}:
+                    directory = value
+                if base == "wget" and name in {"-O", "--output-document"}:
+                    default_name = False
+                if value == "-" and name in NETWORK_STDOUT_OPTIONS[base]:
+                    continue
+                if base == "curl" and ((name == "--hsts" and not value) or
+                                       (name in {"--trace", "--trace-ascii"} and value == "%")):
+                    continue
+                # URL-glob captures in output names cannot be resolved from this option alone.
+                if base == "curl" and name in {"-o", "--output"} and re.search(r"#\d", value):
+                    return [], label + " contains a URL-glob capture — denied as unresolvable"
+                if name == "--warc-file" and ("$" in value or "`" in value):
+                    return [], label + " prefix is computed — denied as unresolvable"
+                target = (os.path.dirname(value) or ".") if name == "--warc-file" else value
+                if base == "curl" and name in {"-o", "--output"} and output_directory is not None:
+                    # curl prefixes even an absolute filename: os.path.join would discard the
+                    # directory in that case and test a different target from the client's.
+                    target = output_directory + "/" + value
+                targets.append((label, target))
+            if base == "curl" and name in {"-O", "--remote-name", "--remote-name-all"}:
+                default_name = True
+            if base == "curl" and name in {"-w", "--write-out"}:
+                if value is None or value.startswith("@") or "$" in value or "`" in value:
+                    return [], label + " format is indirect or missing — denied as unresolvable"
+                for directive in re.finditer(r"%output\{([^}]*)\}", value):
+                    target = directive.group(1).removeprefix(">>")
+                    if not target or any(char in target for char in "%{}"):
+                        return [], label + " file target is computed — denied as unresolvable"
+                    targets.append((label, target))
+                if "%output{" in re.sub(r"%output\{[^}]*\}", "", value):
+                    return [], label + " file directive is incomplete — denied as unresolvable"
+        if default_name:
+            targets.append((base + " download directory", directory))
+    return targets, None
+
+
+def network_value_skips(base, words):
+    """The indices of words that are the separated VALUE of an allowlisted curl or wget option
+    (`NETWORK_VALUE_FLAGS`): a lone short option (`-o x.md`) or a long one (`--output x.md`). A glued
+    value (`-ox.md`, `--output=x.md`) is part of its dash-led word, which is never a host candidate
+    anyway. A short CLUSTER (`-sSo x.md`) skips nothing: getopt may give an earlier letter the rest of
+    the cluster as its value, so its next word keeps the old reading (a false deny, fail-closed)."""
+    table = NETWORK_VALUE_FLAGS.get(base)
+    skips = set()
+    if table is None:
+        return skips
+    i = 0
+    while i < len(words):
+        word = unquote_token(words[i]).strip()
+        i += 1
+        if word == "--":
+            break
+        if not word.startswith("-") or word == "-":
+            continue
+        if word.startswith("--"):
+            name, sep, _ = word.partition("=")
+            if not sep and name in table["long"] and i < len(words):
+                skips.add(i)
+                i += 1
+            continue
+        if len(word) == 2 and word[1] in table["short"] and i < len(words):
+            skips.add(i)
+            i += 1
+    return skips
+
+
 def network_operand_hosts(text):
     """The bare hostnames a network CLIENT takes as operands (`curl evil.example.com https://ok/x`
     addresses both). Only operands of a network command count, and only those that carry a dot, no
-    path separator, no `@` and no scheme, and that name nothing on disk."""
+    path separator, no `@` and no scheme, and that name nothing on disk. The separated value of an
+    allowlisted curl or wget option is no operand (Kb2a266d1): `-o x.md` names a file."""
     hosts = []
     for words in shell_segments(text):
         index, base = segment_command(words)
         if base not in NETWORK_CMDS:
             continue
-        for raw in words[index + 1:]:
+        operands = words[index + 1:]
+        skips = network_value_skips(base, operands)
+        for position, raw in enumerate(operands):
+            if position in skips:
+                continue
             word = unquote_token(raw).strip()
             if not word or word.startswith("-") or "://" in word or "@" in word:
                 continue
@@ -1136,6 +2211,361 @@ def host_granted(host, network):
     return False
 
 
+# The record writer has a closed argument grammar. These paths and options follow
+# vault-writes.py: LOG_REL, REGISTER_REL, atomic_write and build_parser. Register writes
+# read the followed leaf, lock the directory, create an unpredictable temporary sibling, then
+# replace the directory entry. A file-only grant therefore cannot authorise a register operation.
+# `register add` requires --why-not-fixed-now; `ideas annotate` is left out on purpose, so no
+# lane gains IDEAS authority (the suite checks both against the writer's own parser).
+RECORD_OPTIONS = {
+    ("log-append",): (
+        {"--vault", "--action", "--title", "--changed", "--conflicts"},
+        {"--date", "--extra"}),
+    ("register", "add"): (
+        {"--vault", "--date", "--surface", "--symptom", "--cause", "--why-not-fixed-now", "--severity",
+         "--status"},
+        {"--where"}),
+    ("register", "close"): (
+        {"--vault", "--match", "--date", "--status"}, set()),
+    ("register", "annotate"): (
+        {"--vault", "--match", "--kind", "--note"}, {"--by", "--date"}),
+}
+RECORD_TARGETS = {"log-append": ("wiki", "log.md"),
+                  "register": ("wiki", "developments", "known-issues.md")}
+RECORD_NAME = "vault-writes.py"
+
+
+class RecordWriterGrantError(ValueError):
+    """An admitted writer operation lacks its target or temporary-directory grant."""
+
+
+def record_words(text):
+    """Literal shell words with source spans: (kind, value, start, end, literal).
+
+    Single quotes preserve every byte. Double quotes remove a backslash only before
+    dollar, backtick, double quote, backslash or newline. Adjacent spans concatenate;
+    whitespace inside quotes remains significant. Expansions are marked, never run.
+    Operators remain separate so exceptions can attach to argument occurrences.
+    This is deliberately a bounded grammar, not a shell evaluator.
+    """
+    out, i = [], 0
+    while i < len(text):
+        if text[i] in " \t":
+            i += 1
+            continue
+        if text[i] == "#":
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end
+            continue
+        start = i
+        if text[i] in ";&|\n<>()":
+            i += 1
+            if text[start:i] in ("&", "|") and text[i:i + 1] == text[start:i]:
+                i += 1
+            out.append(("op", text[start:i], start, i, True))
+            continue
+        value, quote, literal, quoted = [], None, True, False
+        while i < len(text):
+            ch = text[i]
+            if quote == "'":
+                if ch == "'":
+                    quote = None
+                else:
+                    value.append(ch)
+                i += 1
+                continue
+            if ch == "\\":
+                if i + 1 == len(text):
+                    raise ValueError("unfinished shell escape")
+                nxt = text[i + 1]
+                if quote == '"' and nxt not in '$`"\\\n':
+                    value.append("\\")
+                    i += 1
+                    continue
+                if nxt != "\n":
+                    value.append(nxt)
+                i += 2
+                continue
+            if quote == '"':
+                if ch == '"':
+                    quote = None
+                else:
+                    if ch in "$`":
+                        literal = False
+                    value.append(ch)
+                i += 1
+                continue
+            if ch in "'\"":
+                quote = ch
+                quoted = True
+                i += 1
+                continue
+            if ch in " \t\n;&|<>()":
+                break
+            # Expansion syntax outside quotes is unsupported, including zsh globbing,
+            # history, brace and tilde expansion. Quoted spellings are ordinary data.
+            if ch in "$`*?[]{}~!^":
+                literal = False
+            value.append(ch)
+            i += 1
+        if quote:
+            raise ValueError("unfinished shell quote")
+        if value or quoted:
+            out.append(("word", "".join(value), start, i, literal))
+    return out
+
+
+def record_deployment():
+    """Trusted vault and writer, from this checker's deployment, never from --vault.
+
+    The head imports the checker in .claude/skills/delegate. lane.py init copies it
+    into the lane home and records its source and both hashes in the adjacent init
+    manifest. A copied checker needs that exact provenance and unchanged source bytes;
+    an absent, malformed or stale manifest refuses the exception. The manifest has
+    the same deployment trust as the hook itself, not command-supplied authority.
+    """
+    deployed = os.path.realpath(__file__)
+    source = deployed
+
+    def in_layout(path):
+        return path.endswith(os.sep + os.path.join(".claude", "skills", "delegate", "lane-fence.py"))
+
+    if not in_layout(source):
+        manifest = os.path.join(os.path.dirname(deployed), ".lane-home-state.json")
+        with open(manifest, encoding="utf-8") as handle:
+            state = json.load(handle)
+        entry = state["lane-fence.py"]
+        source = entry["source"]
+        if not isinstance(source, str) or not os.path.isabs(source):
+            raise ValueError("invalid checker provenance")
+        source = os.path.realpath(source)
+        if not in_layout(source):
+            raise ValueError("checker source is outside the deployment layout")
+        with open(deployed, "rb") as handle:
+            copied_sha = hashlib.sha256(handle.read()).hexdigest()
+        with open(source, "rb") as handle:
+            source_sha = hashlib.sha256(handle.read()).hexdigest()
+        if not (copied_sha == source_sha == entry["src_sha"] == entry["out_sha"]):
+            raise ValueError("checker provenance hashes disagree")
+    delegate = os.path.dirname(source)
+    vault = os.path.dirname(os.path.dirname(os.path.dirname(delegate)))
+    writer = os.path.join(delegate, RECORD_NAME)
+    # The deployed writer must be a real sibling, not a link escaping to another script.
+    if os.path.realpath(writer) != writer or not os.path.isfile(writer):
+        raise ValueError("deployed record writer is missing or redirected")
+    return vault, writer
+
+
+def record_python(program):
+    """A Python executable in the hook's environment, not an arbitrary same-named file.
+
+    Bare names use the first PATH match, then face the same identity check as absolute
+    paths. System-bin launchers and the running checker's interpreter are supported;
+    relative paths and a PATH shadow under a scratch directory are refused.
+    """
+    if os.sep not in program:
+        for directory in os.get_exec_path():
+            candidate = os.path.join(directory, program)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                program = candidate
+                break
+        else:
+            return False
+    if not os.path.isabs(program):
+        return False
+    if not re.fullmatch(r"python3(?:\.[0-9]+)?|python", os.path.basename(program)):
+        return False
+    lexical = os.path.abspath(program)
+    if program != lexical:
+        return False                      # do not collapse symlink/.. paths lexically
+    system = os.path.dirname(lexical) + os.sep in SYSTEM_BIN
+    current = lexical == os.path.abspath(sys.executable)
+    return (system or current) and os.path.isfile(program) and os.access(program, os.X_OK)
+
+
+def record_arguments(words, script_at, vault, writes):
+    """Validate one verified invocation and return only its exempt argument spans.
+
+    No abbreviations, unknown flags, duplicate scalar options or dynamic values.
+    --extra alone is repeatable, matching argparse's append action. Help still needs
+    a selected operation and one --vault with that operation's full write scope.
+    Top-level help has no selected target and receives no exception.
+    """
+    args = words[script_at + 1:]
+    key = tuple(w[1] for w in args[:2]) if args and args[0][1] == "register" else tuple(w[1] for w in args[:1])
+    if key not in RECORD_OPTIONS:
+        raise ValueError("unsupported record-writer operation")
+    required, optional = RECORD_OPTIONS[key]
+    values, spans = {}, [words[script_at]]
+    i = len(key)
+    while i < len(args):
+        word = args[i]
+        name, equals, value = word[1].partition("=")
+        if name in ("--help", "-h", "--dry-run"):
+            if equals or name in values:
+                raise ValueError("malformed or repeated writer switch")
+            values[name] = True
+            i += 1
+            continue
+        if name not in required | optional:
+            raise ValueError("unknown or abbreviated writer option")
+        if name in values and name != "--extra":
+            raise ValueError("repeated writer option")
+        if equals:
+            spans.append(word)
+        else:
+            i += 1
+            # A value may open with "- " (a note, a symptom or a change line written as a list
+            # item): no option string holds a space, so argparse never reads such a word as an
+            # option and the writer takes it as a value. Any other leading dash still refuses.
+            if i >= len(args) or (args[i][1].startswith("-") and not args[i][1].startswith("- ")):
+                raise ValueError("missing writer option value")
+            value = args[i][1]
+            spans.append(args[i])
+        values[name] = value
+        i += 1
+    root = values.get("--vault")
+    if not root or not os.path.isabs(root) or os.path.realpath(root) != vault:
+        raise ValueError("--vault must name the trusted vault literally and absolutely")
+    if not (values.get("--help") or values.get("-h")) and required - values.keys():
+        raise ValueError("missing required writer options")
+    relative = RECORD_TARGETS[key[0]]
+    target = os.path.join(root, *relative)
+    if not within(target, writes):
+        raise RecordWriterGrantError("record-writer target outside the write whitelist: " + target)
+    if key != ("log-append",):
+        directory = os.path.realpath(os.path.dirname(target))
+        if not within(directory, writes):
+            raise RecordWriterGrantError("register temporary-file directory outside the write whitelist: " + directory)
+        # Directory coverage includes the replaced entry even when its followed leaf
+        # points elsewhere; target coverage above separately checks that followed leaf.
+    return spans
+
+
+def record_writer_view(command, writes):
+    """Mask admitted writer arguments; refuse only an admitted operation's missing grant.
+
+    Only the verified script, root and typed data occurrences are masked. The caller
+    still runs every ordinary check on every remaining segment, without wider roots.
+    Compound syntax is limited to literal simple commands joined by ;, &&, || or |.
+    Any other premise failure leaves the entire command unchanged with no reason, so
+    ordinary checks decide it. Heredocs, substitutions, wrappers and unsupported grammar
+    confer no exception; no segment is partially masked. No shell is executed here.
+    """
+    body = strip_heredocs(command)
+    # A conservative hint survives adjacent quoting and escapes, including malformed
+    # input. It is only a reason to try admission, never sufficient for an exception.
+    hint = RECORD_NAME in re.sub(r"['\"\\]", "", body)
+    try:
+        words = record_words(body)
+    except (ValueError, TypeError):
+        return command, None
+    # Also recognise an alias whose destination has the writer's name. Such an alias
+    # gains no exception if it leads to a counterfeit script, even with reads.
+    hint = hint or any(w[0] == "word" and os.path.isabs(w[1]) and "\x00" not in w[1]
+                       and os.path.basename(os.path.realpath(w[1])) == RECORD_NAME for w in words)
+    try:
+        vault, writer = record_deployment()
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return command, None
+
+    def writer_word(word):
+        value = word[1]
+        return (RECORD_NAME in value or
+                (word[0] == "word" and os.path.isabs(value) and "\x00" not in value
+                 and (os.path.realpath(value) == writer or
+                      os.path.basename(os.path.realpath(value)) == RECORD_NAME)))
+
+    if not hint and not any(writer_word(w) for w in words):
+        return command, None
+    try:
+        if command != body:
+            raise ValueError("heredocs with a writer invocation are unsupported")
+        if any(not w[4] or "\x00" in w[1] for w in words):
+            raise ValueError("writer commands require literal shell words")
+        segments, current = [], []
+        for word in words:
+            if word[0] == "op":
+                if word[1] not in (";", "&&", "||", "|", "\n"):
+                    raise ValueError("unsupported shell structure around writer")
+                if current:
+                    segments.append(current)
+                    current = []
+                elif word[1] != "\n":
+                    raise ValueError("missing command around writer separator")
+            else:
+                current.append(word)
+        if current:
+            segments.append(current)
+        elif words and words[-1][1] in ("&&", "||", "|"):
+            raise ValueError("unfinished writer pipeline or compound")
+        def invokes_writer(segment):
+            # A pathname reused as cat/ls/printf data is not an executable occurrence.
+            # It keeps its ordinary read check, even beside an eligible writer call.
+            return (writer_word(segment[0]) or
+                    (os.path.basename(segment[0][1]) not in {"printf", "cat", "ls"}
+                     and any(writer_word(w) for w in segment)))
+
+        spans, grant_failure = [], None
+        last_writer = max((i for i, s in enumerate(segments) if invokes_writer(s)), default=-1)
+        has_pipe = any(w[0] == "op" and w[1] == "|" for w in words)
+        for position, segment in enumerate(segments):
+            first = segment[0][1]
+            if (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", first) or first in PREFIXES
+                    or first in {"cd", "export", "unset", "set", "typeset", "declare", "local",
+                                 "readonly", "alias", "unalias", "hash", "eval", "source", "."}):
+                raise ValueError("shell state changes or wrappers around writer are unsupported")
+            if not invokes_writer(segment):
+                companion = os.path.basename(first)
+                if companion not in ({"printf", "cat", "ls", "tee"} | MUTATORS | NETWORK_CMDS):
+                    raise ValueError("unsupported companion command around writer")
+                if companion == "printf" and any(w[1].startswith("-v") for w in segment[1:]):
+                    raise ValueError("printf variable assignment around writer is unsupported")
+                if companion not in {"printf", "cat", "ls"} and (position < last_writer or has_pipe):
+                    raise ValueError("a companion could change writer targets before execution")
+                continue
+            if os.path.isabs(first) and os.path.realpath(first) == writer:
+                script_at = 0
+                # The deployed script uses env python3; its PATH lookup needs the same
+                # check as an explicit Python call, including scratch shadow refusal.
+                if not record_python("python3"):
+                    raise ValueError("untrusted direct writer interpreter")
+            else:
+                if not record_python(first):
+                    raise ValueError("untrusted writer invocation or interpreter")
+                script_at = 1
+                # Explicit zero-arity switches only. -c/-m, option clusters and value
+                # flags such as -W/-X are unsupported, not skipped speculatively.
+                while script_at < len(segment) and segment[script_at][1] in ("-B", "-E", "-I"):
+                    script_at += 1
+                if script_at < len(segment) and segment[script_at][1] == "--":
+                    script_at += 1
+                if script_at >= len(segment):
+                    raise ValueError("missing writer script operand")
+                script = segment[script_at][1]
+                if not os.path.isabs(script) or os.path.realpath(script) != writer:
+                    raise ValueError("script operand is not the trusted record writer")
+            try:
+                spans.extend(record_arguments(segment, script_at, vault, writes))
+            except RecordWriterGrantError as exc:
+                # Finish checking every segment's grammar before imposing a grant
+                # denial. A later premise failure cancels the whole writer rule.
+                if grant_failure is None:
+                    grant_failure = exc
+        if grant_failure is not None:
+            raise grant_failure
+        if not spans:
+            return command, None          # data occurrences confer no exception
+        view = command
+        for word in sorted(spans, key=lambda w: w[2], reverse=True):
+            view = view[:word[2]] + "record-argument" + view[word[3]:]
+        return view, None
+    except RecordWriterGrantError as exc:
+        return command, "record writer: " + str(exc)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return command, None
+
+
 def check(event, grants, writes, head=False, network=None):
     """The whole decision as a pair — ("deny", reason), ("allow", reason) or ("silent", "") —
     computed, never printed and never exited, so head-fence.py can IMPORT this module and call
@@ -1146,6 +2576,8 @@ def check(event, grants, writes, head=False, network=None):
     def denial(reason):
         return "deny", "%s %s" % (FENCE, reason)
 
+    if not isinstance(event, dict):
+        return denial("hook input unreadable — fail-closed")
     if (event.get("tool_name") or "Bash") != "Bash":
         return "silent", ""               # not our channel; the harness decides
     if not grants:
@@ -1155,7 +2587,9 @@ def check(event, grants, writes, head=False, network=None):
     tool_input = event.get("tool_input")
     if not isinstance(tool_input, dict) or "command" not in tool_input:
         return denial("no command in hook input — fail-closed")
-    command = tool_input.get("command") or ""
+    command = tool_input.get("command")
+    if not isinstance(command, str):
+        return denial("non-text command in hook input — fail-closed")
     if not command.strip():
         return "silent", ""               # writes nothing, reads nothing
 
@@ -1163,27 +2597,68 @@ def check(event, grants, writes, head=False, network=None):
     read_roots = grants + writes + temps
     write_roots = writes + temps
 
+    # Admitted writer operations need their grants even with broad read access. Every
+    # other premise failure leaves the command unmasked for the ordinary checks below.
+    command, writer_reason = record_writer_view(command, writes)
+    if writer_reason:
+        return denial(writer_reason)
+
     # Heredoc bodies are data, whoever wrote them: removed once, before every check (D33). The
     # command lines that opened them stay, so their own redirects and command words are checked.
     body = strip_heredocs(command)
 
     # 1 — a lane never spawns a lane. Off in the head role: a head spawns lanes for a living.
     if not head:
-        for token in tokens_of(body):
+        for token in tokens_of(check1_text(body)):
             if os.path.basename(token.rstrip(os.sep)) == "claude":
                 return denial("a lane may not invoke `claude` (no nested spawns)")
+
+    original_body = body
+    body, ssh_hosts, ssh_reads, ssh_writes, ssh_errors, ssh_active = ssh_command_view(body)
+    if ssh_errors:
+        return denial(ssh_errors[0])
+    if ssh_active:
+        heredoc_error = ssh_heredoc_error(command)
+        if heredoc_error:
+            return denial(heredoc_error)
+    for kind, paths, roots in (("write", ssh_writes, write_roots),
+                               ("read", ssh_reads, read_roots + [norm(os.getcwd())])):
+        for origin, target in paths:
+            if origin == "client program" and any(target.startswith(p) for p in SYSTEM_BIN) and os.path.exists(target):
+                continue
+            if not within(target, roots):
+                return denial("%s local %s `%s` is outside the %s grants" % (origin, kind, target, kind))
+    # The original is still needed for interpreter heredocs. Only replace literal shell
+    # program strings which the classifier actually read; remote data never enters check N.
+    local_command = command
+    inline_payloads = interpreter_payloads(original_body)
+    for payload in interpreter_payloads(command):
+        local_payload, _, _, _, errors, used = ssh_command_view(payload)
+        if used:
+            if errors:
+                return denial(errors[0])
+            if not ssh_active or payload not in inline_payloads:
+                return denial("unresolved ssh-family interpreter or heredoc wrapper grammar")
+            local_command = local_command.replace(payload, local_payload)
+    network_text = body if ssh_active else local_command
+    client_calls = network_client_calls(body, local_command)
 
     # N — network (register 2026-09-07, memory-hunter; N class of the permission table). A network
     #     client, or an interpreter payload that imports a network module, is denied unless the run's
     #     `network` grant names the host it addresses. An absent or empty `network` grant means no
     #     network at all; a network command that names no host under a grant is unresolvable.
-    if is_network_command(body, command):
+    if ssh_hosts or is_network_command(body, local_command):
         hosts = sorted({h.lower() for h in
-                        command_hosts(body) + command_hosts(command) + network_operand_hosts(body)
+                        ssh_hosts + command_hosts(body) + command_hosts(network_text) + network_operand_hosts(body)
                         if h})
         if not network:
             return denial("a network command is denied: the run's grants carry no `network` list "
                           "(N class off)%s" % ((" — it addresses `%s`" % ", ".join(hosts)) if hosts else ""))
+        for base, options in client_calls:
+            for name, _ in options:
+                if name in NETWORK_INDIRECT_OPTIONS[base]:
+                    return denial("`%s %s` can supply further network addresses or settings "
+                                  "— denied as unresolvable" % (base, name))
         if not hosts:
             return denial("a network command under a `network` grant names no host this fence can "
                           "resolve (no `https://host` or `user@host` token) — denied as unresolvable")
@@ -1194,77 +2669,113 @@ def check(event, grants, writes, head=False, network=None):
 
     # 2 — write channels. Strip fd duplications, then quoted content (keeping a quoted single-path
     #     target), then redirect/tee targets already inside the write set; deny on what survives.
-    stripped = re.sub(r"[0-9]*>&[0-9-]+", " ", body)
-    # N9: the quoted content goes FIRST, before any target is looked for, keeping a quoted
-    # single-path target as a target. A `>` inside quotes is not a redirection in any shell, and
-    # scanning it as one would falsely deny a read-only command.
-    stripped = strip_quoted_for_writes(stripped)
-    # Sanctioned write channels are removed by TESTING each target with the same path
-    # comparison the read side uses, never by matching the root as a literal string: on this
-    # platform a temporary root reaches the command unresolved (/var/folders/...) while the
-    # environment carries it resolved (/private/var/folders/...), and a literal match would
-    # deny a lane writing inside its own whitelist.
-    for pattern in (r"(>>?)\s*[\"']?([^\s\"';|&<>]+)",
-                    r"(tee)(?:\s+-a)?\s+[\"']?([^\s\"';|&<>]+)"):
-        # N3, measured by critic C2: a target carrying a variable or a substitution is denied
-        # outright. A dynamic target can resolve outside the write roots. The fence cannot
-        # expand it safely, so it refuses it: write the literal path.
-        for match in re.finditer(pattern, stripped):
-            if "$" in match.group(2) or "`" in match.group(2):
-                return denial("the %s target `%s` carries a variable or a substitution, which "
-                              "this fence cannot resolve — write the literal path"
-                              % ("redirection" if match.group(1) != "tee" else "`tee`",
-                                 match.group(2)))
-        while True:
-            for match in re.finditer(pattern, stripped):
-                target = match.group(2)
-                if not os.path.isabs(os.path.expanduser(target)):
-                    target = os.path.join(os.getcwd(), target)
-                if within(target, write_roots):
-                    stripped = (stripped[:match.start()] + " " * (match.end() - match.start())
-                                + stripped[match.end():])
-                    break
-            else:
-                break
-    cd_base = leading_cd_base(body)
     scope = "outside the write whitelist" if writes else "on a lane with no write grant"
-    if ">" in stripped:
-        return denial("shell redirection %s is denied (writes go to the granted directories, or "
-                      "the change comes back as a proposed diff)" % scope)
-    if re.search(r"(^|[^A-Za-z0-9_])tee([^A-Za-z0-9_]|$)", stripped):
-        return denial("`tee` %s is denied" % scope)
-    if re.search(r"(^|[^A-Za-z0-9_])(sed|perl)[^|;&]{0,60}\s-[A-Za-z]*i", stripped):
-        return denial("an in-place editor (sed -i / perl -i) %s is denied" % scope)
-    for mutator, raw in mutator_targets(body):
+    local_segments = [(body[words[0][1]:words[-1][2]], base)
+                      for words, base in command_base_segments(body)]
+    for segment_text, base in local_segments:
+        stripped = re.sub(r"[0-9]*>&[0-9-]+", " ", segment_text)
+        # N9: the quoted content goes FIRST, before any target is looked for, keeping a quoted
+        # single-path target as a target. A `>` inside quotes is not a redirection in any shell, and
+        # scanning it as one would falsely deny a read-only command.
+        stripped = strip_quoted_for_writes(stripped)
+        # Sanctioned write channels are removed by TESTING each target with the same path
+        # comparison the read side uses, never by matching the root as a literal string: on this
+        # platform a temporary root reaches the command unresolved (/var/folders/...) while the
+        # environment carries it resolved (/private/var/folders/...), and a literal match would
+        # deny a lane writing inside its own whitelist.
+        for pattern in (r"(>>?)\s*[\"']?([^\s\"';|&<>]+)",
+                        r"(tee)(?:\s+-a)?\s+[\"']?([^\s\"';|&<>]+)"):
+            # N3, measured by critic C2: a target carrying a variable or a substitution is denied
+            # outright. A dynamic target can resolve outside the write roots. The fence cannot
+            # expand it safely, so it refuses it: write the literal path.
+            for match in re.finditer(pattern, stripped):
+                if "$" in match.group(2) or "`" in match.group(2):
+                    return denial("the %s target `%s` carries a variable or a substitution, which "
+                                  "this fence cannot resolve — write the literal path"
+                                  % ("redirection" if match.group(1) != "tee" else "`tee`",
+                                     match.group(2)))
+            while True:
+                for match in re.finditer(pattern, stripped):
+                    target = match.group(2)
+                    target = resolve_command_path(target, base)
+                    if target is None:
+                        return denial("unresolved local write base after compound or missing cd")
+                    if within(target, write_roots):
+                        stripped = (stripped[:match.start()] + " " * (match.end() - match.start())
+                                    + stripped[match.end():])
+                        break
+                else:
+                    break
+        scope = "outside the write whitelist" if writes else "on a lane with no write grant"
+        if ">" in stripped:
+            return denial("shell redirection %s is denied (writes go to the granted directories, or "
+                          "the change comes back as a proposed diff)" % scope)
+        if re.search(r"(^|[^A-Za-z0-9_])tee([^A-Za-z0-9_]|$)", stripped):
+            return denial("`tee` %s is denied" % scope)
+        if re.search(r"(^|[^A-Za-z0-9_])(sed|perl)[^|;&]{0,60}\s-[A-Za-z]*i", stripped):
+            return denial("an in-place editor (sed -i / perl -i) %s is denied" % scope)
+    targets = []
+    remaining_calls = list(client_calls)
+    for segment_text, base in local_segments:
+        calls = network_client_calls(segment_text, segment_text)
+        for call in calls:
+            if call in remaining_calls:
+                remaining_calls.remove(call)
+        file_targets, file_reason = network_file_targets(calls)
+        if file_reason:
+            return denial(file_reason)
+        targets.extend((name, raw, cut_glob(unquote(raw).strip()), base)
+                       for name, raw in mutator_targets(segment_text))
+        # A shell wrapper with its own directory changes needs a separate grammar.
+        nested_cd = any(segment_command(words)[1] == "cd"
+                        for payload in interpreter_payloads(segment_text)
+                        for words in shell_segments(payload))
+        targets.extend((name, target, target, None if nested_cd else base)
+                       for name, target in file_targets)
+    # Interpreter heredoc bodies are absent from local_segments, but their client outputs
+    # remain write targets. Only a unique header base can resolve their relative names.
+    if remaining_calls:
+        header_bases = {base for text, base in local_segments if heredoc_markers(text)}
+        inherited = next(iter(header_bases)) if len(header_bases) == 1 else None
+        if any(segment_command(words)[1] == "cd"
+               for payload in interpreter_payloads(local_command) for words in shell_segments(payload)):
+            inherited = None
+        file_targets, file_reason = network_file_targets(remaining_calls)
+        if file_reason:
+            return denial(file_reason)
+        targets.extend((name, target, target, inherited) for name, target in file_targets)
+    for mutator, raw, target, base in targets:
         # N3 on the TARGET alone: a variable or a substitution the fence cannot resolve. A source
         # carrying one is a read, and the read side owns it.
         if "$" in raw or "`" in raw:
             return denial("`%s` takes the target `%s`, which carries a variable or a substitution "
                           "this fence cannot resolve — write the literal path (N3)" % (mutator, raw))
-        target = cut_glob(unquote(raw).strip())
         if not target:
             continue
-        # A relative target is resolved against the directory a LEADING `cd` moved into when that
-        # directory is itself inside the write roots (register 2026-09-08), else against the hook's
-        # own working directory as before. The `within` test below is unchanged either way, so a
-        # target that climbs back out (`../x`) still denies.
-        base = cd_base if cd_base is not None and within(cd_base, write_roots) else os.getcwd()
-        if not within(target if os.path.isabs(os.path.expanduser(target))
-                      else os.path.join(base, target), write_roots):
+        resolved = resolve_command_path(target, base)
+        if resolved is None:
+            return denial("unresolved local write base after compound or missing cd")
+        if not within(resolved, write_roots):
             return denial("`%s` targets `%s`, which is %s" % (mutator, target, scope))
 
     # 2b — an interpreter's OWN write (register fix b): a write-opening call in a `-c`/`-e` program
     #      or a heredoc body whose target is a string literal, checked against the write roots. A
     #      variable target is the stated residual. Scanned on the ORIGINAL command, heredocs intact.
-    for call, target in interpreter_write_literals(command):
+    for call, target in interpreter_write_literals(local_command):
         if not target:
             continue
-        # A relative literal takes the same leading-`cd` base as a mutator target (review F8), so
-        # a `cd <dir in W>` followed by an interpreter writing a RELATIVE literal clears where the
-        # shell would actually write, instead of being measured against the hook's own directory.
-        lit_base = cd_base if cd_base is not None and within(cd_base, write_roots) else os.getcwd()
-        resolved = (target if os.path.isabs(os.path.expanduser(target))
-                    else os.path.join(lit_base, target))
+        interpreter_body = strip_heredocs(local_command)
+        contexts = [(interpreter_body[words[0][1]:words[-1][2]], base)
+                    for words, base in command_base_segments(interpreter_body)]
+        matching = [base for text, base in contexts
+                    if (call, target) in interpreter_write_literals(text)]
+        if not matching:
+            matching = [base for text, base in contexts if heredoc_markers(text)]
+        # Multiple matching payloads all have to grant the target; an unknown base refuses.
+        resolved_targets = [resolve_command_path(target, base) for base in matching or [None]]
+        if any(path is None for path in resolved_targets):
+            return denial("unresolved local interpreter write base after compound or missing cd")
+        resolved = next((path for path in resolved_targets if not within(path, write_roots)), resolved_targets[0])
         if not within(resolved, write_roots):
             return denial("an interpreter's `%s` writes `%s`, which is %s — the literal-shape "
                           "tripwire: class W covers shell writes, and a write-opening call whose "
@@ -1306,7 +2817,7 @@ def check(event, grants, writes, head=False, network=None):
         if any(expanded.startswith(prefix) for prefix in SYSTEM_BIN) and os.path.exists(expanded):
             continue                      # invoking a system binary is not data access
         if within(expanded, read_roots + [cwd]) or within_leaf(expanded, read_roots + [cwd]):
-            continue                      # within_leaf: a symlink sitting inside a grant (fix 4)
+            continue                      # within_leaf: a leaf not yet created, by its parent (fix 4)
         return denial("`%s` is outside the granted directories — report the gap "
                       "(`needs: <path> because <reason>`) instead of working around it" % token)
 
@@ -1545,7 +3056,767 @@ def mutator_targets(text):
     return out
 
 
+# --------------------------------------------------------------------------------------------------
+# Unplaced reads: logged, never refused (owner decision of 23 October 2026). A cleared command whose
+# read target this checker cannot place (a parameter, a substitution, arithmetic, a brace or ANSI-C
+# expansion, or shell code handed to a builtin or a shell) gains one line in the run's log. Nothing
+# here changes a decision: the callers run it only after `check()` has cleared the command, and
+# every file it opens is opened non-blocking and must be a regular file.
+# The numbers below are bounds that decide nothing; each was set by judgement, with its headroom noted.
+UNPLACED_LOG_SUFFIX = "-unplaced-reads.jsonl"
+UNPLACED_NOTE_SUFFIX = "-unplaced-reads.failed"
+UNPLACED_SEEN_INFIX = "-unplaced-reads-seen-"
+UNPLACED_LINE_CAP = 4096          # one line, one appending write; a typical line is about 160 bytes
+UNPLACED_LOG_CAP = 8 * 1024 * 1024        # per run: room for 2,048 lines of the largest size
+UNPLACED_NOTE_CAP = 64 * 1024             # failure notes per run: some 300 lines of about 200 bytes
+# Both caps are SOFT. An append tests the size it sees and then writes, so W appends whose tests
+# overlap can all pass and end the file up to (W - 1) * UNPLACED_LINE_CAP bytes past its cap (eight
+# overlapping appends at the cap, measured: 28,672 bytes past). The report therefore reads a log or a
+# note whole up to its cap plus UNPLACED_READ_SLACK, and of a larger file only that many bytes, saying
+# so: a file the writer can produce always reads, as INCOMPLETE, never as a probe failure.
+UNPLACED_READ_SLACK = 256 * UNPLACED_LINE_CAP   # 257 overlapping appends, far more hook processes
+                                                # than one run holds at once: set by judgement
+UNPLACED_WORD_CAP = 200           # characters per logged word, then a cut mark
+UNPLACED_WORDS_CAP = 8            # words per line; `n` keeps the uncut count
+UNPLACED_COMMAND_CAP = 2000       # characters of the command per line, half the line cap
+UNPLACED_RECORD_CAP = 64 * 1024 * 1024    # a run record read by the report; a night's record is under 1 MiB
+UNPLACED_COPY_CAP = 16 * 1024 * 1024      # a checker copy read by the report; this file is about 0.2 MiB
+UNPLACED_LIST_CAP = 10            # lane ids named in one warning, then "and <m> more"
+UNPLACED_HEAD_STARTS = {"head-successor": "session_id", "head-resumed": "session_id",
+                        "run-resume": "session", "run-open": "session"}   # the run-record events that
+#   name a head session, and the field naming it, as handsoff.py's run_heads counts them: the
+#   supervisor's two starts and the head's own two. A run-open marked `session_kind: seed` is a
+#   launcher's placeholder that never ran, so it expects no trace; every other start names its head.
+RUN_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
+UNPLACED_NAME_START = re.compile(r"[A-Za-z_]")
+UNPLACED_SPECIALS = "0123456789@*#?$!-"
+UNPLACED_NUMERIC_ONLY = re.compile(r'^(?:"?(?:\$[?#$!-]|\$\{[?#$!-]\})"?)+$')
+UNPLACED_ARITH_ONLY = re.compile(r'^"?(?:\$\(\((?:(?!\$\(|`).)*\)\)|\$\[(?:(?!\$\(|`).)*\])"?$', re.S)
+UNPLACED_PRINTERS = frozenset({"echo", "printf"})
+UNPLACED_CODE_WORDS = frozenset({"eval", "alias", "trap"})               # S1
+UNPLACED_SHELL_FLAG = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")             # S2: a one-dash cluster holding c
+UNPLACED_SHELL_VALUE = re.compile(r"^(?:[-+][A-Za-z]*[oO]|--rcfile|--init-file)$")   # its value follows
+UNPLACED_DESCRIPTOR_OP = re.compile(r"[<>]&[0-9-]+")
+
+
+def strip_shell_comments(text, steps=None):
+    """The text with every shell comment removed: an unquoted `#` that starts a word runs to its
+    newline, which is kept. Quotes, backticks and a backslash escape are honoured. Pure."""
+    steps = steps if steps is not None else [0]
+    out, i, n, quote = [], 0, len(text), None
+    while i < n:
+        steps[0] += 1
+        c = text[i]
+        if quote == "'":
+            out.append(c)
+            quote = None if c == "'" else quote
+            i += 1
+            continue
+        if c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if quote in ('"', "`"):
+            out.append(c)
+            quote = None if c == quote else quote
+            i += 1
+            continue
+        if c in "'\"`":
+            quote = c
+            out.append(c)
+            i += 1
+            continue
+        if c == "#" and (i == 0 or text[i - 1] in " \t\n;&|()<>"):
+            while i < n and text[i] != "\n":
+                steps[0] += 1
+                i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _unplaced_skip_to(word, i, ch, steps):
+    """The index after the next `ch` from `i` (or the end), one forward pass."""
+    n = len(word)
+    while i < n and word[i] != ch:
+        steps[0] += 1
+        i += 1
+    return min(i + 1, n)
+
+
+def _unplaced_close(word, i, opener, closer, steps):
+    """From word[i] == opener, the index after its matching closer, and whether a `$(` or a
+    backtick stands inside (one pass, quotes honoured)."""
+    depth, quote, n, sub = 0, None, len(word), False
+    while i < n:
+        steps[0] += 1
+        c = word[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif c == "\\":
+            i += 1
+        elif quote == '"':
+            if c == '"':
+                quote = None
+            elif c == "`" or (c == "$" and word[i + 1:i + 2] == "("):
+                sub = True
+        elif c in "'\"":
+            quote = c
+        elif c == "`" or (c == "$" and word[i + 1:i + 2] == "("):
+            sub = True
+        elif c == opener:
+            depth += 1
+        elif c == closer:
+            depth -= 1
+            if depth == 0:
+                return i + 1, sub
+        i += 1
+    return n, sub
+
+
+def unplaced_forms(word, steps=None):
+    """The unplaced forms U1-U5 in one raw word (a set of their names), detected outside single
+    quotes and not after a backslash. Linear: a `$(`, `${`, `$[` or backtick jumps to its end, and
+    a brace is tested with one pass to the next brace. Pure."""
+    steps = steps if steps is not None else [0]
+    found, i, n, quote = set(), 0, len(word), None
+    while i < n:
+        steps[0] += 1
+        c = word[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+            i += 1
+            continue
+        if c == "\\":
+            i += 2
+            continue
+        if c == "'" and quote is None:
+            quote = "'"
+            i += 1
+            continue
+        if c == '"':
+            quote = None if quote == '"' else '"'
+            i += 1
+            continue
+        if c == "`":
+            found.add("U2")
+            i = _unplaced_skip_to(word, i + 1, "`", steps)
+            continue
+        if c == "$":
+            nxt = word[i + 1:i + 2]
+            if nxt == "'" and quote is None:                    # U5, ANSI-C quoting
+                j = i + 2
+                while j < n and word[j] != "'":
+                    steps[0] += 1
+                    if word[j] == "\\":
+                        found.add("U5")
+                        j += 1
+                    j += 1
+                i = j + 1
+                continue
+            if word.startswith("$((", i):                       # U3, arithmetic
+                found.add("U3")
+                i, sub = _unplaced_close(word, i + 1, "(", ")", steps)
+                if sub:
+                    found.add("U2")
+                continue
+            if nxt == "[":                                      # U3, the older $[ ... ] spelling
+                found.add("U3")
+                i, sub = _unplaced_close(word, i + 1, "[", "]", steps)
+                if sub:
+                    found.add("U2")
+                continue
+            if nxt == "(":                                      # U2, command substitution
+                found.add("U2")
+                i, _ = _unplaced_close(word, i + 1, "(", ")", steps)
+                continue
+            if nxt == "{":                                      # U1, braced
+                found.add("U1")
+                i = _unplaced_skip_to(word, i + 2, "}", steps)
+                continue
+            if nxt and (UNPLACED_NAME_START.match(nxt) or nxt in UNPLACED_SPECIALS):   # U1
+                found.add("U1")
+                i += 2
+                while nxt not in UNPLACED_SPECIALS and i < n and (word[i].isalnum() or word[i] == "_"):
+                    steps[0] += 1
+                    i += 1
+                continue
+            i += 1
+            continue
+        if c == "{" and quote is None:                          # U4: one pass to the next brace
+            j, mark, quoted = i + 1, False, False
+            while j < n and word[j] not in "{}":
+                steps[0] += 1
+                ch = word[j]
+                if ch == "," or (ch == "." and word[j + 1:j + 2] == "."):
+                    mark = True
+                elif ch in "'\"":
+                    quoted = True
+                j += 1
+            if j < n and word[j] == "}" and mark and not quoted:
+                found.add("U4")
+        i += 1
+    return found
+
+
+def heredoc_bodies(command, steps=None):
+    """[(protected, [body lines])] for every heredoc, in order, read the way `ssh_heredoc_error`
+    reads them: a raw marker holding a quote or a backslash is protected. When the markers cannot be
+    aligned with the line's words, every body is read as unprotected (the broad reading). Pure."""
+    steps = steps if steps is not None else [0]
+    lines, i, out = command.split("\n"), 0, []
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        steps[0] += 1
+        markers = heredoc_markers(line)
+        if not markers:
+            continue
+        words = [word[0] for segment in ssh_shell_words(line) for word in segment]
+        raw = [words[j + 1] for j, word in enumerate(words[:-1]) if word in ("<<", "<<-")]
+        protected = ([any(ch in r for ch in "'\"\\") for r in raw] if len(raw) == len(markers)
+                     else [False] * len(markers))
+        for (marker, dash), prot in zip(markers, protected):
+            body = []
+            while i < len(lines):
+                text = lines[i]
+                i += 1
+                steps[0] += 1
+                if (text.lstrip("\t") if dash else text) == marker:
+                    break
+                body.append(text)
+            out.append((prot, body))
+    return out
+
+
+def _unplaced_substitution_line(text, steps):
+    """True when a heredoc body line holds an unescaped `$(` or a backtick."""
+    j = 0
+    while j < len(text):
+        steps[0] += 1
+        if text[j] == "\\":
+            j += 2
+            continue
+        if text[j] == "`" or text.startswith("$(", j):
+            return True
+        j += 1
+    return False
+
+
+def _unplaced_piped(text, previous, first):
+    """True when the separator text before a segment is a pipe (`|` or `|&`)."""
+    gap = "".join(ch for ch in text[previous:first] if not ch.isspace() and ch not in "()")
+    return gap in ("|", "|&")
+
+
+def unplaced_reads(command, steps=None):
+    """[(kind, word)] for every word of `command` that names a read this checker cannot place:
+    the forms U1-U5 less the exclusions X1-X6, shell code (S1-S3) and heredoc substitutions. Pure:
+    it reads and writes nothing. `steps`, a one-element list, counts the new walkers' visits."""
+    steps = steps if steps is not None else [0]
+    text = strip_shell_comments(strip_heredocs(command), steps)
+    out, feeds_heredoc, previous_end = [], False, 0
+    for segment in ssh_shell_words(text):
+        words = [item[0] for item in segment]
+        piped = _unplaced_piped(text, previous_end, segment[0][1])
+        previous_end = segment[-1][2]
+        ci, base = segment_command(words)
+        skip = set()
+        if not (base == "rg" and any(unquote_token(w).strip() == "--files" for w in words)):
+            pattern = pattern_operand(words)                    # X3, except rg --files (no pattern)
+            if pattern is not None:
+                skip.add(pattern)
+            skip |= search_pattern_indices(words)
+        # S2 and S3: one forward pass over the segment's words.
+        code, armed, want, value, stdin_shell = {}, None, False, False, None
+        for j, w in enumerate(words):
+            steps[0] += 1
+            plain = unquote_token(w).strip()
+            if want:
+                if value:
+                    value = False
+                    continue
+                if plain[:1] in "-+" and len(plain) > 1:
+                    value = bool(UNPLACED_SHELL_VALUE.match(plain))
+                    continue
+                code[j] = (armed == ci and interpreter_segment(words))
+                want, armed = False, None
+                continue
+            if (os.path.basename(plain.rstrip("/")) in SHELL_PROGRAMS and w[:1] not in "<>"
+                    and j not in skip and base not in UNPLACED_PRINTERS):
+                armed, stdin_shell = j, j
+                continue
+            if armed is not None and UNPLACED_SHELL_FLAG.match(plain):
+                want, stdin_shell = True, None
+                continue
+        if stdin_shell is not None and piped:
+            out.append(("shell-code", words[stdin_shell]))      # S3: its program arrives on the pipe
+        op = None
+        for j, w in enumerate(words):
+            steps[0] += 1
+            if w[:1] in "<>":
+                op = None if UNPLACED_DESCRIPTOR_OP.fullmatch(w) else w
+                if op in ("<<", "<<-") and stdin_shell is not None:
+                    feeds_heredoc = True                         # S3: a heredoc feeds a shell
+                continue
+            this_op, op = op, None
+            if this_op == "<<<" and stdin_shell is not None:
+                out.append(("shell-code", w))                   # S3: a here-string feeds a shell
+                continue
+            if j in code:
+                if not code[j] or "$" in w or "`" in w:
+                    out.append(("shell-code", w))               # S2
+                continue
+            if (base in UNPLACED_CODE_WORDS and ci is not None and j > ci and this_op is None
+                    and (base != "trap" or j == ci + 1)):       # S1: trap's code is its first argument
+                out.append(("shell-code", w))
+                continue
+            forms = unplaced_forms(w, steps)
+            if not forms:
+                continue
+            if this_op is not None:
+                if this_op.startswith(">") or this_op.startswith("&>") or this_op in ("<<", "<<-"):
+                    continue                                    # X5, X6
+                if this_op == "<<<" and "U2" not in forms:
+                    continue                                    # X5
+                out.append(("input", w) if this_op != "<<<" else ("operand", w))
+                continue
+            assignment = (ci is None or j < ci)
+            if "U2" not in forms:
+                if assignment:
+                    continue                                    # X1
+                if base in UNPLACED_PRINTERS or j in skip:
+                    continue                                    # X2, X3
+                if UNPLACED_NUMERIC_ONLY.match(w) or UNPLACED_ARITH_ONLY.match(w):
+                    continue                                    # X4
+            out.append(("program" if j == ci else "assignment" if assignment else "operand", w))
+    bodies = heredoc_bodies(command, steps)
+    if feeds_heredoc:
+        out += [("shell-code", "\n".join(body)) for _, body in bodies]
+    else:
+        out += [("heredoc", line) for prot, body in bodies if not prot
+                for line in body if _unplaced_substitution_line(line, steps)]
+    return out
+
+
+def unplaced_store():
+    """The run store, derived as head-fence.py and lane.py derive it."""
+    return os.path.realpath(os.path.expanduser(os.environ.get("LLM_WIKI_STORE") or "~/.llm-wiki"))
+
+
+def unplaced_notes_dir():
+    """Where a writer session's marker goes: the run-scoped scratch folder lane.py uses."""
+    return os.environ.get("LLM_WIKI_PROGRESS_DIR") or "/tmp"
+
+
+def unplaced_lane_who():
+    """`lane:<id>` for a lane's line, `lane:?` when the id is not a run-id-shaped string."""
+    lane = os.environ.get("LLM_WIKI_LANE_ID") or ""
+    return "lane:" + (lane if RUN_ID.fullmatch(lane) else "?")
+
+
+def _unplaced_line(obj):
+    """One encoded line of at most UNPLACED_LINE_CAP bytes: halve `cmd`, then drop `reads`
+    pairs from the end, then shorten `cwd`; `n` is never cut."""
+    while True:
+        data = (json.dumps(obj, ensure_ascii=True, separators=(",", ":")) + "\n").encode("ascii")
+        if len(data) <= UNPLACED_LINE_CAP:
+            return data
+        obj["cut"] = True
+        if obj["cmd"]:
+            obj["cmd"] = obj["cmd"][:len(obj["cmd"]) // 2]
+        elif obj["reads"]:
+            obj["reads"].pop()
+        else:
+            obj["cwd"] = obj["cwd"][:64]
+
+
+def _unplaced_warn(message):
+    """One stderr line; never raises."""
+    try:
+        sys.stderr.write("[unplaced-reads] %s\n" % message)
+    except Exception:
+        pass
+
+
+def _unplaced_first_in_session(notes, run, who, sid):
+    """True when this call made the session's marker, so this is its first cleared command."""
+    tag = hashlib.sha256(("%s\n%s" % (who, sid)).encode("utf-8", "backslashreplace")).hexdigest()[:16]
+    try:
+        _unplaced_append(os.path.join(notes, run + UNPLACED_SEEN_INFIX + tag), b"", 0, exclusive=True)
+        return True
+    except OSError:             # a later command of this session, or no marker possible: no trace
+        return False
+
+
+def _unplaced_append(path, data, cap, exclusive=False):
+    """The ONLY function in this file that opens a file for writing: a non-blocking, no-follow
+    append to a regular file, one write of one whole line. Returns "ok" or "capped"; raises
+    OSError on any failure, a non-regular file and a short write included."""
+    flags = (os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
+             | getattr(os, "O_CLOEXEC", 0) | (os.O_EXCL if exclusive else 0))
+    fd = os.open(path, flags, 0o600)
+    try:
+        status = os.fstat(fd)
+        if not stat.S_ISREG(status.st_mode):
+            raise OSError("not a regular file")
+        if not data:
+            return "ok"
+        if status.st_size + len(data) > cap:
+            return "capped"
+        if os.write(fd, data) != len(data):
+            raise OSError("short write")
+        return "ok"
+    finally:
+        os.close(fd)
+
+
+def record_unplaced_reads(event, store, run, who):
+    """Log-only: append the run's line for one CLEARED command, and the writer session's trace on
+    its first one. Never raises and never prints to stdout; returns a short status for tests."""
+    try:
+        if not isinstance(event, dict) or event.get("hook_event_name") != "PreToolUse":
+            return "skip: not a hook event"
+        tool_input = event.get("tool_input")
+        command = tool_input.get("command") if isinstance(tool_input, dict) else None
+        if not isinstance(command, str) or not command.strip():
+            return "skip: no command"
+        if not isinstance(run, str) or not RUN_ID.fullmatch(run):
+            return "skip: no run id"
+        records = os.path.join(store, "spawn-records")
+        if not os.path.isfile(os.path.join(records, run + ".jsonl")):
+            return "skip: no run record"
+        try:
+            reads = unplaced_reads(command)
+        except Exception as exc:
+            reads = [("scan-error", type(exc).__name__)]
+        sid = event.get("session_id")
+        sid = sid if isinstance(sid, str) and RUN_ID.fullmatch(sid) else "?"
+        first = _unplaced_first_in_session(unplaced_notes_dir(), run, who, sid)
+        if not reads and not first:
+            return "ok: nothing to log"
+        cut, words = False, []
+        for kind, word in reads[:UNPLACED_WORDS_CAP]:
+            if len(word) > UNPLACED_WORD_CAP:
+                word, cut = word[:UNPLACED_WORD_CAP] + "…", True
+            words.append([kind, word])
+        cwd = event.get("cwd")
+        if not isinstance(cwd, str):
+            try:
+                cwd = os.getcwd()
+            except OSError:
+                cwd = "?"
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        obj = {"v": 1, "ts": stamp, "who": who, "sid": sid, "cwd": cwd[:512], "n": len(reads),
+               "reads": words, "cmd": command[:UNPLACED_COMMAND_CAP] if reads else "",
+               "cut": (cut or len(reads) > UNPLACED_WORDS_CAP or len(cwd) > 512
+                       or (bool(reads) and len(command) > UNPLACED_COMMAND_CAP))}
+        data = _unplaced_line(obj)
+        log = os.path.join(records, run + UNPLACED_LOG_SUFFIX)
+        try:
+            status = _unplaced_append(log, data, UNPLACED_LOG_CAP)
+            return ("ok" if reads else "ok: trace") if status == "ok" else status
+        except OSError as exc:
+            note = (json.dumps({"v": 1, "ts": stamp, "who": who, "error": "%s: %s" % (type(exc).__name__, exc),
+                                "n": len(reads)}, ensure_ascii=True) + "\n").encode("ascii")
+            try:
+                _unplaced_append(os.path.join(records, run + UNPLACED_NOTE_SUFFIX), note, UNPLACED_NOTE_CAP)
+                _unplaced_warn("append failed at %s (%s); noted beside it" % (log, exc))
+                return "failed: noted"
+            except OSError as exc2:
+                _unplaced_warn("append failed at %s (%s) and its note failed (%s)" % (log, exc, exc2))
+                return "failed: lost"
+    except Exception as exc:      # the belt: nothing here may change a decision
+        _unplaced_warn("skipped (%s)" % type(exc).__name__)
+        return "failed: belt"
+
+
+def _unplaced_read(path, limit, prefix=False):
+    """The ONLY function in this file that opens the report's files: read-only, non-blocking,
+    no-follow, regular files only. By default the file must hold at most `limit` bytes, else OSError.
+    With `prefix`, it returns (at most the first `limit` bytes, whether more followed) and size is
+    never an error, so a log its writers took past the soft cap still reads. Raises OSError otherwise."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0))
+    try:
+        status = os.fstat(fd)
+        if not stat.S_ISREG(status.st_mode):
+            raise OSError("not a regular file")
+        if status.st_size > limit and not prefix:
+            raise OSError("larger than %d bytes" % limit)
+        chunks, total = [], 0
+        while total <= limit:                   # at most limit + 1 bytes are ever held
+            block = os.read(fd, min(1 << 20, limit + 1 - total))
+            if not block:
+                break
+            chunks.append(block)
+            total += len(block)
+        data = b"".join(chunks)
+        if not prefix:
+            if total > limit:
+                raise OSError("larger than %d bytes" % limit)
+            return data
+        return data[:limit], total > limit
+    finally:
+        os.close(fd)
+
+
+def _unplaced_names(items):
+    items = sorted(items)
+    shown = ", ".join(items[:UNPLACED_LIST_CAP])
+    return shown + (" and %d more" % (len(items) - UNPLACED_LIST_CAP) if len(items) > UNPLACED_LIST_CAP else "")
+
+
+def _unplaced_record_flaw(event):
+    """Why one parsed run-record event cannot be counted for coverage, or None: it names no event,
+    it is a lane-open naming no lane, or it is a head start (UNPLACED_HEAD_STARTS) naming no
+    run-id-shaped session. Each such line could hide a writer the report would otherwise expect.
+    A seed run-open is no head start, whatever it names, so its session is not judged."""
+    kind = event.get("event")
+    if not isinstance(kind, str) or not kind:
+        return "names no event"
+    if kind == "lane-open" and not (isinstance(event.get("lane"), str) and event.get("lane")):
+        return "is a lane-open naming no lane"
+    if kind == "run-open" and event.get("session_kind") == "seed":
+        return None
+    key = UNPLACED_HEAD_STARTS.get(kind)
+    if key is not None and not (isinstance(event.get(key), str) and RUN_ID.fullmatch(event.get(key))):
+        return "is a %s naming no session in `%s`" % (kind, key)
+    return None
+
+
+def _unplaced_head_sessions(events):
+    """The head sessions the run record names (UNPLACED_HEAD_STARTS), first-seen order, each once:
+    a head-successor and the run-resume its head writes share one session by design. A seed run-open
+    never ran, so it names no head; a later head start naming the same session still does."""
+    sessions = []
+    for e in events:
+        kind = e.get("event")
+        key = UNPLACED_HEAD_STARTS.get(kind) if isinstance(kind, str) else None
+        if kind == "run-open" and e.get("session_kind") == "seed":
+            continue
+        sid = e.get(key) if key is not None else None
+        if isinstance(sid, str) and RUN_ID.fullmatch(sid) and sid not in sessions:
+            sessions.append(sid)
+    return sessions
+
+
+def _unplaced_claude_lanes(events):
+    """(expected, exempt): the Claude lanes the run record shows as opened that may have cleared a
+    shell command, and those it shows could not have (no Bash, or a close with no cleared one)."""
+    opened, codex, no_bash, quiet = set(), set(), set(), set()
+    for e in events:
+        lane, kind = e.get("lane"), e.get("event")
+        if not isinstance(lane, str) or not lane:
+            continue
+        if e.get("harness") == "codex" or str(e.get("mechanism", "")).startswith("codex-lane.py"):
+            codex.add(lane)
+        if kind == "lane-open":
+            opened.add(lane)
+            tools = e.get("tools")
+            if isinstance(tools, list) and "Bash" not in tools:
+                no_bash.add(lane)
+            else:
+                no_bash.discard(lane)
+        elif kind == "lane-closed":
+            denials = e.get("denials") if isinstance(e.get("denials"), dict) else {}
+            allows, transcript = denials.get("fence_allows"), e.get("transcript")
+            if type(allows) is int and allows == 0 and isinstance(transcript, str) and transcript:
+                quiet.add(lane)
+            else:
+                quiet.discard(lane)
+    return opened - codex - no_bash - quiet, ((no_bash | quiet) & opened) - codex
+
+
+def report_unplaced_reads(run, limit=60):
+    """The close report: stdout only, read-only. Returns the exit code: 0 complete, 1 incomplete,
+    2 probe failed. The last line is exactly one VERDICT or PROBE FAILED line."""
+    if not isinstance(run, str) or not RUN_ID.fullmatch(run):
+        print("PROBE FAILED: %r is not a run id" % (run,))
+        return 2
+    store = unplaced_store()
+    records = os.path.join(store, "spawn-records")
+    log = os.path.join(records, run + UNPLACED_LOG_SUFFIX)
+    print("UNPLACED-READS run=%s log=%s" % (run, log))
+    if not os.path.lexists(log):
+        print("PROBE FAILED: no log at %s: no writer left a line for this run, or the log was removed; "
+              "nothing can be concluded" % log)
+        return 2
+    bound = UNPLACED_LOG_CAP + UNPLACED_READ_SLACK
+    try:
+        raw, overfull = _unplaced_read(log, bound, prefix=True)
+    except OSError as exc:
+        print("PROBE FAILED: cannot read %s (%s: %s); nothing can be concluded" % (log, type(exc).__name__, exc))
+        return 2
+    if overfull:                                 # keep the whole lines before the bound; the rest is not read
+        cut = raw.rfind(b"\n")
+        raw = raw[:cut + 1] if cut >= 0 else raw
+    lines, torn = [], 0
+    for chunk in raw.split(b"\n"):
+        if not chunk:
+            continue
+        try:
+            obj = json.loads(chunk)
+            if not isinstance(obj, dict) or obj.get("v") != 1 or type(obj.get("n")) is not int:
+                raise ValueError
+            lines.append(obj)
+        except (ValueError, RecursionError):
+            torn += 1
+    entries = [e for e in lines if e["n"] >= 1]
+    warnings, notes_line = [], []
+    if torn:
+        warnings.append("%d unreadable line(s)" % torn)
+    if not lines and not torn:
+        warnings.append("the log is empty: no writer left a line")
+    errors = sum(1 for e in entries for pair in (e.get("reads") if isinstance(e.get("reads"), list) else [])
+                 if isinstance(pair, list) and pair[:1] == ["scan-error"])
+    if errors:
+        warnings.append("%d scan error(s)" % errors)
+    if len(raw) >= UNPLACED_LOG_CAP - UNPLACED_LINE_CAP:
+        warnings.append("cap reached: later entries dropped, counts are lower bounds")
+    if overfull:
+        warnings.append("the log runs past this reader's %d-byte bound (appends overlapping at the soft cap): "
+                        "only its first %d bytes were read" % (bound, len(raw)))
+    failed = os.path.join(records, run + UNPLACED_NOTE_SUFFIX)
+    if os.path.lexists(failed):
+        try:
+            notes, more = _unplaced_read(failed, UNPLACED_NOTE_CAP + UNPLACED_READ_SLACK, prefix=True)
+            count = len([l for l in (notes[:notes.rfind(b"\n") + 1] if more else notes).split(b"\n") if l])
+            warnings.append("%s%d write failure note(s) in %s" % ("at least " if more else "", count, failed))
+        except OSError as exc:
+            warnings.append("write failure notes unreadable at %s (%s)" % (failed, exc))
+    own = os.path.realpath(__file__)
+    lane_copy = os.path.join(os.environ.get("LLM_WIKI_LANE_HOME") or os.path.join(store, "lane-home"),
+                             "lane-fence.py")
+    head_hook = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(own))), "hooks", "head-fence.py")
+    if os.path.realpath(lane_copy) == own:
+        warnings.append("this reporter is the lane-home copy: lane logging not compared")
+    else:
+        try:
+            if (hashlib.sha256(_unplaced_read(own, UNPLACED_COPY_CAP)).digest()
+                    != hashlib.sha256(_unplaced_read(lane_copy, UNPLACED_COPY_CAP)).digest()):
+                warnings.append("the lane-home checker differs from this one: lanes may not have logged")
+        except OSError as exc:
+            warnings.append("lane-home checker unreadable (%s): lane logging not confirmed" % exc)
+    head_present = os.path.isfile(head_hook)
+    if not head_present:
+        notes_line.append("head-fence.py not beside this checker: its install time and the head's coverage not checked")
+    events, first, flaws = None, None, []
+    try:
+        rows = [(number, c) for number, c in
+                enumerate(_unplaced_read(os.path.join(records, run + ".jsonl"), UNPLACED_RECORD_CAP).split(b"\n"), 1)
+                if c.strip()]
+        events = []
+        for index, (number, chunk) in enumerate(rows):
+            # A line that cannot be counted is never skipped silently: torn, it may have been the
+            # lane-open or head start that names a writer the log lacks (it is named below).
+            try:
+                obj = json.loads(chunk)
+            except (ValueError, RecursionError):
+                flaws.append("line %d does not parse" % number)
+                continue
+            if not isinstance(obj, dict):
+                flaws.append("line %d is not a JSON object" % number)
+                continue
+            events.append(obj)
+            if index == 0:
+                first = obj
+            why = _unplaced_record_flaw(obj)
+            if why:
+                flaws.append("line %d %s" % (number, why))
+    except OSError as exc:
+        events = None
+        warnings.append("run record unreadable (%s): install time, lane and head coverage not checked" % exc)
+    if flaws:
+        warnings.append("%d run record line(s) cannot be counted, so a lane or head session may be missing: %s"
+                        % (len(flaws), "; ".join(flaws[:UNPLACED_LIST_CAP])
+                           + (" and %d more" % (len(flaws) - UNPLACED_LIST_CAP) if len(flaws) > UNPLACED_LIST_CAP else "")))
+    if events is not None:
+        try:
+            opened = datetime.strptime(first["ts"], "%Y-%m-%dT%H:%M:%S%z").timestamp()
+            hooks = [own, lane_copy] + ([head_hook] if head_present else [])
+            if [p for p in hooks if os.path.getmtime(p) > opened]:
+                warnings.append("the logger was installed after the run opened (%s): earlier commands were not logged"
+                                % first["ts"])
+        except (KeyError, TypeError, ValueError, OSError) as exc:
+            warnings.append("run-open time unreadable (%s): install time not checked" % type(exc).__name__)
+        seen = {str(e.get("who", ""))[5:] for e in lines if str(e.get("who", "")).startswith("lane:")}
+        expected, exempt = _unplaced_claude_lanes(events)
+        missing = expected - seen
+        if exempt - seen:
+            notes_line.append("not expected to log: %s" % _unplaced_names(exempt - seen))
+        if missing:
+            warnings.append("%d Claude lane(s) left no line in the log though they may have cleared a command: %s"
+                            % (len(missing), _unplaced_names(missing)))
+        if head_present and not any(e.get("who") == "head" for e in lines):
+            warnings.append("no line from the head: its commands were not logged (an unarmed head never logs, "
+                            "and a head hook without the logger does not either)")
+        elif head_present:
+            # Per session: one head session's trace must not stand in for another's absence.
+            traced = {str(e.get("sid")) for e in lines if e.get("who") == "head"}
+            untraced = [s for s in _unplaced_head_sessions(events) if s not in traced]
+            if untraced:
+                warnings.append("%d head session(s) the run record names left no line in the log though they may "
+                                "have cleared a command: %s" % (len(untraced), _unplaced_names(untraced)))
+    distinct = {}
+    for e in entries:
+        reads = e.get("reads") if isinstance(e.get("reads"), list) else []
+        d = distinct.setdefault(str(e.get("cmd", "")), {"n": 0, "first": str(e.get("ts", "?")), "who": set(),
+                                                         "reads": reads})
+        d["n"] += 1
+        d["who"].add(str(e.get("who", "?")))
+    writers = sorted({str(e.get("who", "?")) for e in lines})
+    print("premises: %s" % ("; ".join(warnings + notes_line) if warnings or notes_line else "all hold"))
+    print("entries: %d in %d distinct command(s) · trace lines: %d · writers seen: %d%s"
+          % (len(entries), len(distinct), len(lines) - len(entries), len(writers),
+             " (%s)" % _unplaced_names(writers) if writers else ""))
+    print("coverage: not covered by this log: Codex lanes; programs read from files; aliases and functions "
+          "from start-up files; interpreter-internal reads; names taken from input; zsh-only expansions; "
+          "commands the head hook lets through as broken machinery")
+    for cmd, d in sorted(distinct.items(), key=lambda kv: kv[1]["first"])[:limit]:
+        pairs = [p for p in d["reads"] if isinstance(p, list) and len(p) == 2][:6]
+        print("[%dx] %s %s · %s" % (d["n"], d["first"], ",".join(sorted(d["who"])),
+                                         "; ".join("%s %s" % (k, str(w)[:80]) for k, w in pairs)))
+        print("    $ %s" % " ".join(cmd.split())[:240])
+    if len(distinct) > limit:
+        print("(%d more distinct commands not shown; the full log is the file above)" % (len(distinct) - limit))
+    if warnings:
+        print("VERDICT: INCOMPLETE (%d premise warning(s)) · %d recorded — a low count here is not a clean result"
+              % (len(warnings), len(entries)))
+        return 1
+    print("VERDICT: complete · %s" % ("none recorded" if not entries else
+          "%d recorded reads through an expansion; each needs judgement on whether it left its helper's folders"
+          % len(entries)))
+    return 0
+
+
+def unplaced_reads_cli(argv):
+    """`--unplaced-reads RUN [--limit N]`: the close report. Reads no stdin."""
+    run, limit, rest = None, 60, list(argv)
+    while rest:
+        word = rest.pop(0)
+        if word == "--limit" and rest and rest[0].isdigit():
+            limit = int(rest.pop(0))
+        elif run is None and not word.startswith("--"):
+            run = word
+        else:
+            run = None
+            break
+    if run is None:
+        print("PROBE FAILED: usage: lane-fence.py --unplaced-reads RUN [--limit N]")
+        return 2
+    try:
+        return report_unplaced_reads(run, limit)
+    except Exception as exc:      # the last line is always a verdict or a probe failure
+        print("PROBE FAILED: the report raised %s: %s; nothing can be concluded" % (type(exc).__name__, exc))
+        return 2
+
+
 def main():
+    if sys.argv[1:2] == ["--unplaced-reads"]:
+        sys.exit(unplaced_reads_cli(sys.argv[2:]))   # the close report: reads no stdin
     raw = sys.stdin.read()
     try:
         event = json.loads(raw) if raw.strip() else None
@@ -1556,6 +3827,14 @@ def main():
     action, reason = check(event, roots_from("LLM_WIKI_LANE_GRANTS"),
                            roots_from("LLM_WIKI_LANE_WRITES"), head_role(),
                            hosts_from("LLM_WIKI_LANE_NETWORK"))
+    if action == "allow":
+        # Log-only (owner decision 2026-10-23): before `decide`, which exits. Nothing here may
+        # change the decision, so even SystemExit and KeyboardInterrupt are caught.
+        try:
+            record_unplaced_reads(event, unplaced_store(), os.environ.get("LLM_WIKI_LANE_RUN"),
+                                  unplaced_lane_who())
+        except BaseException as exc:
+            _unplaced_warn("skipped in main (%s)" % type(exc).__name__)
     if action == "silent":
         sys.exit(0)
     decide(action, reason)

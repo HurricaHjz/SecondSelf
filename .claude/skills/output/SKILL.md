@@ -41,6 +41,20 @@ deliverables (CLAUDE.md §1) — this gap-fill covers content-format defaults on
 truth:** deliverable defaults live *only* in that Customisation section — re-read it on every run and
 never copy its values into this skill, any config, or the deliverable itself (beyond applying them).
 
+**Folder conventions:** before writing, choose the destination under `output/` and read the README of
+that folder, then the README of each parent folder up to and including `output/README.md`, nearest
+first. Read every README that exists along that path. Apply their folder-specific conventions; where
+two READMEs disagree, the nearer one wins.
+
+READMEs hold only folder-specific conventions and point to `CUSTOMISATION.md` for global deliverable
+defaults without copying them. Where a README and `CUSTOMISATION.md` disagree, follow
+`CUSTOMISATION.md` and name the difference in the reply for the owner to settle. A live instruction
+outranks both; when it overrides either, follow it and say so in the reply, unless it asks for
+something a README rule forbids with "never": then ask the owner first. Likewise ask before adding
+any topic, item or question they have not already approved. Write such content only on their yes; in
+an unattended run, leave it out and list each question in the report. The README shape is in
+`README-template.md` beside this skill.
+
 ### Step 2 — Ground in the wiki (read first, like `query`)
 Read `wiki/index.md` **whole** (`route` mode, CLAUDE.md §5), then deep-read the relevant pages (follow `## Related`
 one hop, which widens a shortlist route already produced and never replaces it). Collect the
@@ -76,7 +90,7 @@ if the deliverable is external-facing or the user asks.
 
 ### Step 5 — Write to `output/<slug>.<ext>` (never into `wiki/`)
 Save to **`output/`** (the deliverables layer — *not* the knowledge graph). Filename = a clean
-kebab-case slug + correct extension. Do **not** modify `wiki/` or `raw/`. (If the user wants the result
+kebab-case slug + correct extension. Do **not** modify `raw/`, or `wiki/` beyond the two named exceptions under Hard constraints. (If the user wants the result
 compounded back into the knowledge base, that's a `query` synthesis, not an `output`.)
 **Root vs subfolders (CLAUDE.md §2):** the root holds one-off / temporary deliverables; a report
 (run, morning, audit, review) goes to `reports/`, the inbox the owner sorts later; standing
@@ -99,10 +113,10 @@ the freshness line (`query` Step 3b's gate, style-invariant):
 - **No hallucination.** Grounded → cite; general → label; unknown → omit / flag / abstain. **Never
   invent facts, figures, quotes, or citations.**
 - **Weight by `confidence`.** Prefer higher-confidence wiki pages for key claims; attribute and hedge anything resting only on `low`/`very-low` pages.
-- **Write only to `output/`.** Never edit `wiki/` or `raw/`. Outputs are deliverables, not knowledge.
+- **Write only to `output/`.** Never edit `raw/`. Never edit `wiki/`, with two named exceptions: the Freshness duty's on-page marks on a stale or contradicted page (Step 2), and the "maintained derivative" line on a source page's `## Related` (Step 5). Outputs are deliverables, not knowledge.
 - **British/UK English** and all other CLAUDE.md rules apply.
 - **Not logged by default** — a deliverable is not a brain-update (CLAUDE.md §5). Log only if the user
   asks, or if the run also files a wiki page.
 
 ## Deliverable graphics (routing rule, moved here from CLAUDE.md §7 on 2026-09-05)
-`lieflat-charts` for browser-viewed HTML and interactive charts, dashboards and full-page HTML reports (some templates need CDN network); `scientific-figure-making` (from figures4papers) for publication-grade matplotlib figures for papers, theses and slides (PDF or PNG for LaTeX). Rule of thumb: web-viewed → lieflat-charts; print or venue-bound → scientific-figure-making. Both are `auto` rows in `wiki/developments/capability-register.md`.
+`lieflat-charts` for browser-viewed HTML and interactive charts, dashboards and full-page HTML reports (some templates need CDN network); `scientific-figure-making` (from figures4papers) for publication-grade matplotlib figures for papers, theses and slides (PDF or PNG for LaTeX). Rule of thumb: web-viewed → lieflat-charts; print or venue-bound → scientific-figure-making. Both keep a recorded `auto` ruling in `wiki/developments/capability-register.md`, as legacy rows whose proof is not re-established; under the adopt skill an existing use ruling remains authoritative.

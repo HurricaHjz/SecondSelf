@@ -1,6 +1,6 @@
 #!/bin/bash
 # test_deep_lint_scripts.sh — suite for the deep-lint report-only scripts
-# (audit-pools.py, sweeps.py, prefix-budget.py).
+# (audit-pools.py, sweeps.py, prefix-budget.py, spawn-record-review.py, recapture-compare.py).
 #
 # Fixture vaults are built under one mktemp -d, each isolating one thing. A PLANTED vault, where
 # every behaviour has a case that must be caught and a trap that must not fire; a CLEAN vault, which
@@ -23,6 +23,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 AUDIT="$HERE/audit-pools.py"
 SWEEPS="$HERE/sweeps.py"
 PREFIX="$HERE/prefix-budget.py"
+RECAP="$HERE/recapture-compare.py"
 PY=python3
 
 TMP="$(mktemp -d)"
@@ -1707,6 +1708,669 @@ r=""
 printf '%s\n' "$STEP6" | grep -q 'leakage control per neighbouring section' || r="$r no leakage-control sentence;"
 printf '%s\n' "$STEP6" | grep -q 'Re-read `IDEAS.md` immediately before staging' || r="$r no re-read-before-staging sentence;"
 leg "49 Step 6 requires a leakage control per neighbouring section and a re-read of IDEAS.md immediately before staging" "$r"
+
+# ---------------------------------------------------------------- raw-tag reading (known-issues 2026-10-02 and 2026-09-29)
+# sweeps.py reports closing tags as well as opening ones. A code span is a run of n backticks closed by the next
+# run of exactly n on the same line, read where spans were always read: on the line once its one-line comments
+# are cut. A span over two lines protects nothing (the strict one-line policy of lint's tool-markup check). The
+# inline formatting tags u, sub, sup, br, kbd and mark are not reported; b and every other tag are. Comment and
+# fence reading are not part of the change, and two legs pin them as they stood. One page per behaviour, so each
+# hit names its case, and each fixture's total is pinned, so a stray hit or a lost one fails as well. A leg
+# labelled guard also passed on sweeps.py as it stood before these two entries were fixed: it protects a
+# behaviour that already held, and is no evidence that the change works.
+RTV="$TMP/rawtags"
+w "$RTV/wiki/concepts/Closing Tag.md" <<'FIXTURE_END'
+---
+title: Closing Tag
+---
+
+A stray </div> in prose closes nothing and renders wrongly.
+FIXTURE_END
+w "$RTV/wiki/concepts/Code Spans.md" <<'FIXTURE_END'
+---
+title: Code Spans
+---
+
+Quote ``<div>`` and `<div>` on one line, beside a raw <em> that is reported.
+FIXTURE_END
+w "$RTV/wiki/concepts/Two Line Span.md" <<'FIXTURE_END'
+---
+title: Two Line Span
+---
+
+A span opens `here
+<div>` and closes on the next line, so the tag is prose.
+
+A double span opens ``here
+<div>`` and closes on the next line as well.
+FIXTURE_END
+w "$RTV/wiki/concepts/Formatting Tags.md" <<'FIXTURE_END'
+---
+title: Formatting Tags
+---
+
+Underline <u>this</u> on purpose.
+
+Water is H<sub>2</sub>O.
+
+A square is x<sup>2</sup>.
+
+A break<br>here, another<br/>there, a third<br />too, and an upper-case one<BR>.
+
+Press <kbd>Ctrl</kbd> to copy.
+
+A <mark>highlight</mark> renders.
+
+Bold through <b>a tag</b> is still reported.
+FIXTURE_END
+rc_rt=$(run rt.txt "$PY" "$SWEEPS" --vault "$RTV")
+RT1="$OUT/rt.txt"
+# The page that carries the skipped tags also carries a b tag on line 17: its hit proves the page was scanned,
+# so each skip leg's absences below cannot pass on a page the sweep never read.
+FT_CONTROL="$(want "$RT1" 'wiki/concepts/Formatting Tags.md:17 <b>')"
+
+# Comment reading as it stood before the change, limits included: legs 53 and 63 pin it on inputs that earlier
+# drafts of this change read differently. A comment cut from a line leaves nothing in its place; a line holding
+# `<!--` outside its code spans and no `-->` opens a comment, which runs until a line holding `-->`, dropped
+# whole. A backticked opener in prose opens nothing since the fix of known-issues 2026-10-11: legs 83 to 86.
+RTC="$TMP/rawtags-comments"
+w "$RTC/wiki/concepts/Backtick In Comment.md" <<'FIXTURE_END'
+---
+title: Backtick In Comment
+---
+
+x <!-- ` --> <!-- <i> ` --> <span>
+FIXTURE_END
+w "$RTC/wiki/concepts/Comment Then Opener.md" <<'FIXTURE_END'
+---
+title: Comment Then Opener
+---
+
+a <!-- b --> c <!-- d
+--> <div>
+raw <probe>
+FIXTURE_END
+w "$RTC/wiki/developments/Comment Elision.md" <<'FIXTURE_END'
+---
+title: Comment Elision
+---
+
+no<!-- comment --> longer
+FIXTURE_END
+rc_rtc=$(run rtc.txt "$PY" "$SWEEPS" --vault "$RTC")
+RTC1="$OUT/rtc.txt"
+
+r=""
+r="$r$(wantrc "$rc_rt" 0)"
+r="$r$(want "$RT1" 'wiki/concepts/Closing Tag.md:5 </div>')"
+r="$r$(want "$RT1" 'wiki/concepts/Formatting Tags.md:17 </b>')"
+leg "50 a closing tag in prose is reported: a stray div's, and the b tag's beside its opener" "$r"
+
+r=""
+r="$r$(want "$RT1" 'wiki/concepts/Code Spans.md:5 <em>')"
+r="$r$(notwant "$RT1" 'wiki/concepts/Code Spans.md:5 <div>')"
+leg "51 a double-backtick and a single-backtick span on one line are code; the raw tag beside them is reported" "$r"
+
+r=""
+r="$r$(want "$RT1" 'wiki/concepts/Two Line Span.md:6 <div>')"
+r="$r$(want "$RT1" 'wiki/concepts/Two Line Span.md:9 <div>')"
+leg "52 guard: a span opened on one line and closed on the next protects nothing, single or double: the tag on its second line is reported" "$r"
+
+r=""
+r="$r$(wantrc "$rc_rtc" 0)$(want "$RTC1" 'tag-control: fired')"
+r="$r$(want "$RTC1" 'wiki/concepts/Backtick In Comment.md:5 <span>')"
+r="$r$(notwant "$RTC1" '<i>')"
+leg "53 guard: comment reading is as before the change: a backtick inside a comment hides no later opener, so only the tag after both comments is reported" "$r"
+
+r="$FT_CONTROL"
+r="$r$(notwant "$RT1" '<u>')$(notwant "$RT1" '</u>')"
+leg "54 the u tag, opening and closing, is not reported" "$r"
+
+r="$FT_CONTROL"
+r="$r$(notwant "$RT1" '<sub>')$(notwant "$RT1" '</sub>')"
+leg "55 the sub tag, opening and closing, is not reported" "$r"
+
+r="$FT_CONTROL"
+r="$r$(notwant "$RT1" '<sup>')$(notwant "$RT1" '</sup>')"
+leg "56 the sup tag, opening and closing, is not reported" "$r"
+
+r="$FT_CONTROL"
+r="$r$(notwant "$RT1" '<br>')$(notwant "$RT1" '<br/>')$(notwant "$RT1" '<br />')$(notwant "$RT1" '<BR>')"
+leg "57 the br tag, plain, self-closing and in upper case, is not reported" "$r"
+
+r="$FT_CONTROL"
+r="$r$(notwant "$RT1" '<kbd>')$(notwant "$RT1" '</kbd>')"
+leg "58 the kbd tag, opening and closing, is not reported" "$r"
+
+r="$FT_CONTROL"
+r="$r$(notwant "$RT1" '<mark>')$(notwant "$RT1" '</mark>')"
+leg "59 the mark tag, opening and closing, is not reported" "$r"
+
+r=""
+r="$r$(want "$RT1" 'wiki/concepts/Formatting Tags.md:17 <b>')"
+leg "60 guard: the b tag is still reported, so the skip list holds six names only (its closing form is leg 50's)" "$r"
+
+r=""
+r="$r$(wantrc "$rc_rt" 0)"
+r="$r$(want "$RT1" 'raw tags in rendered prose: 6')"
+r="$r$(want "$RT1" 'tag-control: fired')"
+r="$r$(notwant "$RT1" 'PROBE FAILED')"
+leg "61 the raw-tag fixture returns exactly its six planted hits, with the tag control fired" "$r"
+
+RTR="$TMP/readonly-rawtags"
+cp -R "$RTV" "$RTR"
+chmod -R a-w "$RTR"
+manifest "$RTR" "$OUT/rtr_before.txt"
+manifest "$HERE" "$OUT/rt_home_before.txt"
+"$PY" "$SWEEPS" --vault "$RTR" > "$OUT/rtr1.txt" 2>&1; rc_rtr1=$?
+"$PY" "$SWEEPS" --vault "$RTR" --format json > "$OUT/rtr2.txt" 2>&1; rc_rtr2=$?
+manifest "$RTR" "$OUT/rtr_after.txt"
+manifest "$HERE" "$OUT/rt_home_after.txt"
+r=""
+r="$r$(wantrc "$rc_rtr1" 0)$(wantrc "$rc_rtr2" 0)"
+r="$r$(wantre "$OUT/rtr1.txt" 'raw tags in rendered prose: [1-9]')"
+cmp -s "$OUT/rtr_before.txt" "$OUT/rtr_after.txt" || r="$r the read-only raw-tag fixture changed;"
+cmp -s "$OUT/rt_home_before.txt" "$OUT/rt_home_after.txt" || r="$r the script home changed;"
+[ "$(grep -c . "$OUT/rtr_before.txt")" -ge 10 ] || r="$r the raw-tag fixture manifest came back nearly empty;"
+grep -qE -- "$WRITE_RE" "$OUT/write_control.py" || r="$r the write-pattern grep did not match its positive control;"
+if grep -qE -- "$WRITE_RE" "$SWEEPS"; then r="$r write pattern in sweeps.py;"; fi
+leg "62 guard: stdout-only: the raw-tag fixture, read-only, and the script home are byte-identical after both formats run, and sweeps.py carries no write pattern" "$r"
+
+r=""
+r="$r$(wantrc "$rc_rtc" 0)$(want "$RTC1" 'tag-control: fired')"
+r="$r$(want "$RTC1" 'wiki/concepts/Comment Then Opener.md:6 <div>')"
+r="$r$(want "$RTC1" 'wiki/concepts/Comment Then Opener.md:7 <probe>')"
+[ "$(grep -c 'Comment Then Opener.md:' "$RTC1")" = 2 ] || r="$r the comment-then-opener page did not give exactly its two hits;"
+r="$r$(want "$RTC1" 'narrative phrases: 1 hits over 1 development pages')"
+grep -qxF -- '  wiki/developments/Comment Elision.md:5 [no longer] no longer' "$RTC1" || r="$r missing the narrative hit across the cut comment, with its excerpt;"
+r="$r$(want "$RTC1" 'raw tags in rendered prose: 3')"
+leg "63 guard: two more inputs read as before the change: after a comment closed on its line, a second opener with no closer opens nothing, so the next line's tag and the one after it are reported; a comment cut from inside a phrase leaves the phrase whole, so it is still a narrative hit; the comment fixture's total is exactly three" "$r"
+
+# ---------------------------------------------------------------- audit-pools: the inline alias reader (2026-10-11)
+# audit-pools.py reads `aliases:` with the lint alias reader, kept byte-identical to check-links.py's: a quoted
+# alias carrying a comma stays one alias, a list with text after its `]` gives none and no traceback, and a valid
+# one-line list reads as before. Each page is read in process through read_page, and the whole script runs over
+# the fixture, whose index names each alias, so the index section shows which names resolve. Everything runs
+# against a read-only copy, and the last leg proves nothing was written.
+wantx() { grep -qxF -- "$2" "$1" || printf 'missing line [%s]; ' "$2"; }
+notwantx() { if grep -qxF -- "$2" "$1"; then printf 'unexpected line [%s]; ' "$2"; fi; }
+AV="$TMP/aliases-inline"
+AVRO="$TMP/aliases-inline-readonly"
+w "$AV/wiki/index.md" <<'FIXTURE_END'
+---
+title: Index
+type: index
+confidence: high
+updated: 2026-08-20
+---
+
+# Index — alias fixture catalogue
+
+## Concepts
+- [[Comma Alias]] — a quoted alias carrying a comma.
+- [[Trailing Alias]] — a list with text after its closing bracket.
+- [[Valid Alias]] — a valid one-line flow list.
+- [[Block Alias]] — a valid block list.
+
+## Names
+- [[a, b]] — the quoted comma alias, one name.
+- [[c]] — the plain alias beside it.
+- [[b]] — half of the comma alias, never a name of its own.
+- [[good]] — the malformed list's alias, never read.
+- [[Valid One]], [[Valid Two]] and [[Valid Three]] — the flow list's names.
+- [[Block One]] and [[Block Two]] — the block list's names.
+FIXTURE_END
+w "$AV/wiki/log.md" <<'FIXTURE_END'
+---
+title: Log
+type: log
+confidence: high
+updated: 2026-08-20
+---
+
+## [2026-08-20] ingest | Alias fixture
+- **Changed**: created [[Comma Alias]]; updated [[index.md]]
+FIXTURE_END
+w "$AV/wiki/concepts/Comma Alias.md" <<'FIXTURE_END'
+---
+title: Comma Alias
+type: concept
+confidence: high
+updated: 2026-08-20
+aliases: ["a, b", c]
+---
+
+# Comma Alias
+
+A page named by a quoted alias carrying a comma.
+FIXTURE_END
+w "$AV/wiki/concepts/Trailing Alias.md" <<'FIXTURE_END'
+---
+title: Trailing Alias
+type: concept
+confidence: high
+updated: 2026-08-20
+aliases: [good] trailing
+---
+
+# Trailing Alias
+
+A page whose alias list carries text after its closing bracket, which YAML refuses.
+FIXTURE_END
+w "$AV/wiki/concepts/Valid Alias.md" <<'FIXTURE_END'
+---
+title: Valid Alias
+type: concept
+confidence: high
+updated: 2026-08-20
+aliases: [Valid One, "Valid Two", 'Valid Three']
+---
+
+# Valid Alias
+
+A page with a valid one-line flow list, plain, double-quoted and single-quoted.
+FIXTURE_END
+w "$AV/wiki/concepts/Block Alias.md" <<'FIXTURE_END'
+---
+title: Block Alias
+type: concept
+confidence: high
+updated: 2026-08-20
+aliases:
+  - Block One
+  - "Block Two"
+---
+
+# Block Alias
+
+A page with a valid block list of one-line items.
+FIXTURE_END
+cp -R "$AV" "$AVRO"
+chmod -R a-w "$AVRO"
+manifest "$AVRO" "$OUT/avro_before.txt"
+manifest "$HERE" "$OUT/av_home_before.txt"
+rc_avr=$(run avr.txt "$PY" -B - "$AUDIT" "$AVRO" <<'PYAVR'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("audit_pools", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+for name in ("Comma Alias", "Trailing Alias", "Valid Alias", "Block Alias"):
+    rel = "wiki/concepts/" + name + ".md"
+    try:
+        got = repr(m.read_page(os.path.join(sys.argv[2], rel), rel)["aliases"])
+    except Exception as exc:
+        got = "raised " + type(exc).__name__
+    print(name + ": " + got)
+PYAVR
+)
+rc_av1=$(run av1.txt "$PY" "$AUDIT" --vault "$AVRO" --today 2026-09-02)
+rc_av2=$(run av2.txt "$PY" "$AUDIT" --vault "$AVRO" --today 2026-09-02 --format json)
+manifest "$AVRO" "$OUT/avro_after.txt"
+manifest "$HERE" "$OUT/av_home_after.txt"
+AVR="$OUT/avr.txt"
+AV1="$OUT/av1.txt"
+
+r=""
+r="$r$(wantrc "$rc_avr" 0)$(wantx "$AVR" "Comma Alias: ['a, b', 'c']")"
+r="$r$(notwantx "$AV1" '  registered but absent: a, b')"
+r="$r$(notwantx "$AV1" '  registered but absent: c')"
+r="$r$(wantx "$AV1" '  registered but absent: b')"
+leg "66 a quoted alias carrying a comma is one alias: [\"a, b\", c] gives two aliases, so an index entry naming a, b resolves and one naming b alone dangles" "$r"
+
+r=""
+r="$r$(wantx "$AVR" 'Trailing Alias: []')$(wantrc "$rc_av1" 0)"
+r="$r$(notwant "$AVR" 'Traceback')$(notwant "$AVR" 'raised ')$(notwant "$AV1" 'Traceback')"
+r="$r$(wantx "$AV1" '  registered but absent: good')"
+leg "67 a list with text after its closing bracket gives no alias and no traceback: [good] trailing gives none, the run exits 0, and an index entry naming good dangles" "$r"
+
+r=""
+r="$r$(wantx "$AVR" "Valid Alias: ['Valid One', 'Valid Two', 'Valid Three']")"
+r="$r$(wantx "$AVR" "Block Alias: ['Block One', 'Block Two']")"
+r="$r$(wantre "$AV1" '^registered names: 13 ')"
+for n in 'valid one' 'valid two' 'valid three' 'block one' 'block two'; do
+  r="$r$(notwantx "$AV1" "  registered but absent: $n")"
+done
+leg "68 guard: a valid one-line list, flow or block, reads as before: plain, double- and single-quoted entries and two - items give their names, and none of the five dangles (the index read all 13 names)" "$r"
+
+r=""
+r="$r$(wantrc "$rc_av2" 0)"
+r="$r$($PY -c 'import json, sys; json.load(open(sys.argv[1]))' "$OUT/av2.txt" 2>&1)"
+cmp -s "$OUT/avro_before.txt" "$OUT/avro_after.txt" || r="$r the read-only alias fixture changed;"
+cmp -s "$OUT/av_home_before.txt" "$OUT/av_home_after.txt" || r="$r the script home changed;"
+[ "$(grep -c . "$OUT/avro_before.txt")" -ge 10 ] || r="$r the alias fixture manifest came back nearly empty;"
+grep -qE -- "$WRITE_RE" "$OUT/write_control.py" || r="$r the write-pattern grep did not match its positive control;"
+if grep -qE -- "$WRITE_RE" "$AUDIT"; then r="$r write pattern in audit-pools.py;"; fi
+leg "69 guard: stdout-only: the alias fixture, read-only, and the script home are byte-identical after the in-process reads and both formats run, and audit-pools.py carries no write pattern" "$r"
+
+# ---------------------------------------------------------------- recapture-compare.py: the literal compare (known-issues 2026-08-28)
+# The script drops each file's frontmatter and compares the rest literally, line by line. It lists every differing
+# run up to its cap and counts the rest; a run shown only in part counts as unread, as does a run not shown. Each
+# capture's engine field must be one plain word and the two words identical, or it refuses with its reason.
+# Every fixture is a variant of raw.md: its body runs from line 7, and its line 10 reads "The limit is 32 tokens
+# per call." The checks quote the script's own lines, so a reworded output fails here rather than passing unread.
+RC="$TMP/recapture"
+w "$RC/raw.md" <<'FIXTURE_END'
+---
+title: Limits
+source_url: https://example.org/docs/limits
+converted_by: defuddle
+converted_on: 2026-01-01
+---
+
+# Limits
+
+The limit is 32 tokens per call.
+
+See https://example.org/a_b for the *full* table.
+FIXTURE_END
+cp "$RC/raw.md" "$RC/same.md"
+sed -e 's/^converted_on: 2026-01-01$/converted_on: 2026-03-03/' -e 's/^title: Limits$/title: Limits, again/' "$RC/raw.md" > "$RC/fm.md"
+sed 's/ 32 / 64 /' "$RC/raw.md" > "$RC/fig.md"
+sed 's/per call\.$/per call.  /' "$RC/raw.md" > "$RC/ws.md"
+sed 's/\*full\*/_full_/' "$RC/raw.md" > "$RC/emph.md"
+sed 's/^converted_by: defuddle$/converted_by: jina/' "$RC/raw.md" > "$RC/cross.md"
+sed 's/^converted_by: defuddle$/converted_by: Defuddle/' "$RC/raw.md" > "$RC/case.md"
+sed 's/^converted_by: defuddle$/converted_by: "defuddle"/' "$RC/raw.md" > "$RC/quoted.md"
+sed 's/^converted_by: defuddle$/converted_by: null/' "$RC/raw.md" > "$RC/null.md"
+sed 's/^converted_by: defuddle$/converted_by: defuddle # captured by hand/' "$RC/raw.md" > "$RC/comment.md"
+sed 's/^converted_by: defuddle$/converted_by: defuddle\
+  + markitdown/' "$RC/raw.md" > "$RC/cont.md"
+sed 's/^converted_by: defuddle$/converted_by:/' "$RC/raw.md" > "$RC/blank.md"
+sed '/^converted_by: /d' "$RC/raw.md" > "$RC/none.md"
+sed 's/^converted_by: defuddle$/converted_by: defuddle\
+converter: defuddle/' "$RC/raw.md" > "$RC/two.md"
+sed 's/^converted_by: defuddle$/converted_by:defuddle/' "$RC/raw.md" > "$RC/nospace.md"
+sed '1,6d' "$RC/raw.md" > "$RC/nofm.md"
+printf -- '---\nconverted_by: defuddle\n---\n\n   \n' > "$RC/empty.md"
+awk '{print} /^# Limits$/ {for (k = 1; k <= 8; k++) print "inserted line " k}' "$RC/raw.md" > "$RC/block.md"
+"$PY" - "$RC" > "$OUT/rc-gen.txt" 2>&1 <<'PYGEN_RC'
+import os, sys
+d = sys.argv[1]
+head = "---\nconverted_by: defuddle\n---\n"
+def w(name, text):
+    with open(os.path.join(d, name), "w", encoding="utf-8") as handle:
+        handle.write(text)
+# 50 changed lines, each between two unchanged ones: body from line 4, value k on line 2k + 5.
+w("many-raw.md", head + "".join("keep %d\nvalue %d = 1\n" % (k, k) for k in range(50)))
+w("many-fresh.md", head + "".join("keep %d\nvalue %d = 2\n" % (k, k) for k in range(50)))
+# One 1,000-character line replaced by two lines: the long line cannot print whole, so the run is in part.
+long_line = "x" * 991 + " limit=32"
+w("cut-raw.md", head + "\nbefore\n" + long_line + "\nafter\n")
+w("cut-fresh.md", head + "\nbefore\nlimit=64\nsplit\nafter\n")
+# One word changed deep inside a 2,890-character line: the pair prints from 60 characters before the change.
+words = " ".join("word%d" % k for k in range(400))
+w("deep-raw.md", head + "\n" + words + "\n")
+w("deep-fresh.md", head + "\n" + words.replace("word350 ", "word350X ") + "\n")
+# 100 runs of ten long lines each, every line unlike its partner: the output limit stops the printing.
+raw, fresh = [head], [head]
+for k in range(100):
+    raw.append("anchor %d\n" % k + "".join(("r%d-%d|" % (k, j)) * 400 + "\n" for j in range(10)))
+    fresh.append("anchor %d\n" % k + "".join(("f%d-%d|" % (k, j)) * 400 + "\n" for j in range(9)))
+w("flood-raw.md", "".join(raw))
+w("flood-fresh.md", "".join(fresh))
+PYGEN_RC
+rcmp() { local out="$1" fresh="$2" raw="${3:-raw}"; run "$out" "$PY" "$RECAP" --raw "$RC/$raw.md" --fresh "$RC/$fresh.md"; }
+rc_same=$(rcmp rc-same.txt same); rc_fm=$(rcmp rc-fm.txt fm); rc_fig=$(rcmp rc-fig.txt fig)
+rc_ws=$(rcmp rc-ws.txt ws); rc_emph=$(rcmp rc-emph.txt emph); rc_block=$(rcmp rc-block.txt block)
+rc_many=$(rcmp rc-many.txt many-fresh many-raw); rc_cut=$(rcmp rc-cut.txt cut-fresh cut-raw)
+rc_deep=$(rcmp rc-deep.txt deep-fresh deep-raw); rc_flood=$(rcmp rc-flood.txt flood-fresh flood-raw)
+rc_cross=$(rcmp rc-cross.txt cross); rc_case=$(rcmp rc-case.txt case)
+for f in quoted null comment cont blank none two nospace nofm empty absent; do
+  rcmp "rc-$f.txt" "$f" > "$OUT/rc-$f.rc"
+done
+rc_selfsame=$(rcmp rc-selfsame.txt raw)
+RCO="$OUT"
+
+r=""
+r="$r$(wantrc "$rc_same" 0)"
+r="$r$(wantx "$RCO/rc-same.txt" 'IDENTICAL: the two bodies match line for line, character for character (frontmatter not compared)')"
+r="$r$(wantre "$RCO/rc-same.txt" '^recapture-compare: raw .*/raw\.md \(converted_by: defuddle; body from line 7\) · fresh .*/same\.md \(converted_by: defuddle; body from line 7\) · compared literally, line by line, frontmatter dropped$')"
+[ "$(grep -c '^control: .*(fired)$' "$RCO/rc-same.txt")" = 2 ] || r="$r not both control lines fired;"
+r="$r$(notwant "$RCO/rc-same.txt" 'DIFFERS')"
+leg "70 recapture: identical texts read IDENTICAL, exit 0, with both in-memory controls fired" "$r"
+
+r=""
+r="$r$(wantrc "$rc_fig" 1)"
+r="$r$(wantx "$RCO/rc-fig.txt" 'DIFFERS: 1 differing run · 1 shown in full · 0 shown in part · 0 not shown')"
+r="$r$(wantx "$RCO/rc-fig.txt" '- run 1 · raw line 10 · fresh line 10 · 1 line became 1 · shown in full')"
+r="$r$(wantx "$RCO/rc-fig.txt" '  - raw 10: The limit is 32 tokens per call.')"
+r="$r$(wantx "$RCO/rc-fig.txt" '  + fresh 10 (differs from character 14): The limit is 64 tokens per call.')"
+r="$r$(wantx "$RCO/rc-fig.txt" 'UNREAD: none: every differing run is shown in full above')"
+leg "71 recapture: a changed line is one run, shown in full with its line in each file and both texts, exit 1, nothing unread" "$r"
+
+r=""
+r="$r$(wantrc "$rc_fm" 0)$(want "$RCO/rc-fm.txt" 'IDENTICAL: ')"
+r="$r$(notwant "$RCO/rc-fm.txt" '- run ')$(notwant "$RCO/rc-fm.txt" '2026-03-03')$(notwant "$RCO/rc-fm.txt" 'again')"
+cmp -s "$RC/raw.md" "$RC/fm.md" && r="$r the frontmatter fixture does not differ from raw.md;"
+leg "72 recapture: a change in frontmatter only is not listed: IDENTICAL, exit 0" "$r"
+
+r=""
+r="$r$(wantrc "$rc_ws" 1)$(wantrc "$rc_emph" 1)"
+r="$r$(wantx "$RCO/rc-ws.txt" '  + fresh 10 (differs from character 33): The limit is 32 tokens per call.<U+0020><U+0020>')"
+r="$r$(wantx "$RCO/rc-emph.txt" '  + fresh 12 (differs from character 37): See https://example.org/a_b for the _full_ table.')"
+leg "73 recapture: nothing is normalised: two trailing spaces and an emphasis mark changed from * to _ are each a run, the spaces printed visibly" "$r"
+
+r=""
+r="$r$(wantrc "$rc_many" 1)"
+r="$r$(wantx "$RCO/rc-many.txt" 'DIFFERS: 50 differing runs · 40 shown in full · 0 shown in part · 10 not shown')"
+[ "$(grep -c '^- run ' "$RCO/rc-many.txt")" = 40 ] || r="$r not exactly 40 runs printed;"
+r="$r$(wantx "$RCO/rc-many.txt" '- run 40 · raw line 83 · fresh line 83 · 1 line became 1 · shown in full')"
+r="$r$(notwant "$RCO/rc-many.txt" '- run 41 ')"
+r="$r$(want "$RCO/rc-many.txt" 'UNREAD: 10 runs (not shown, past the cap of 40 runs: runs 41 to 50, from raw line 85 · fresh line 85 on): ')"
+leg "74 recapture: past 40 differing runs the first 40 are shown and the other 10 counted unread, with the line where they start" "$r"
+
+r=""
+r="$r$(wantrc "$rc_block" 1)$(wantrc "$rc_cut" 1)"
+r="$r$(wantx "$RCO/rc-block.txt" '- run 1 · raw nothing, after line 8 · fresh lines 9-16 · 0 lines became 8 · SHOWN IN PART: 2 more fresh lines not shown')"
+r="$r$(wantx "$RCO/rc-block.txt" '  ... 2 more fresh lines not shown')"
+r="$r$(wantx "$RCO/rc-block.txt" 'DIFFERS: 1 differing run · 0 shown in full · 1 shown in part · 0 not shown')"
+r="$r$(want "$RCO/rc-block.txt" 'UNREAD: 1 run (shown in part: run 1): ')"
+r="$r$(wantx "$RCO/rc-cut.txt" '- run 1 · raw line 6 · fresh lines 6-7 · 1 line became 2 · SHOWN IN PART: 1 line cut')"
+r="$r$(wantre "$RCO/rc-cut.txt" '^  - raw 6: x+ \[cut: 700 more characters not shown\]$')"
+r="$r$(notwant "$RCO/rc-cut.txt" 'limit=32')"
+r="$r$(want "$RCO/rc-cut.txt" 'UNREAD: 1 run (shown in part: run 1): ')"
+leg "75 recapture: a run shown only in part counts as unread: one with more than 6 lines a side, and one whose long line is cut before its changed figure" "$r"
+
+r=""
+r="$r$(wantrc "$rc_cross" 2)$(wantrc "$rc_case" 2)"
+r="$r$(wantx "$RCO/rc-cross.txt" "CANNOT COMPARE: the engines differ (raw \"defuddle\", fresh \"jina\"): re-capture with the raw's engine and record it exactly, since a cross-engine compare reads render noise as change")"
+r="$r$(want "$RCO/rc-case.txt" 'CANNOT COMPARE: the engines differ (raw "defuddle", fresh "Defuddle")')"
+r="$r$(notwant "$RCO/rc-cross.txt" 'DIFFERS')$(notwant "$RCO/rc-case.txt" 'IDENTICAL')"
+leg "76 recapture: an engine mismatch is refused, exit 2, naming both words, a difference of case included" "$r"
+
+r=""
+pre='CANNOT COMPARE: the fresh capture names no plain engine (its converted_by, line 4): '
+for f in quoted null comment cont blank nospace none two nofm; do
+  [ "$(cat "$OUT/rc-$f.rc")" = 2 ] || r="$r $f: exit $(cat "$OUT/rc-$f.rc"), expected 2;"
+  r="$r$(notwant "$OUT/rc-$f.txt" 'IDENTICAL')"
+done
+r="$r$(wantx "$OUT/rc-quoted.txt" "${pre}it is not one plain word (a letter, then letters, digits, . _ + or -)")"
+r="$r$(wantx "$OUT/rc-comment.txt" "${pre}it is not one plain word (a letter, then letters, digits, . _ + or -)")"
+r="$r$(wantx "$OUT/rc-null.txt" "${pre}YAML reads it as null or a boolean, not a name")"
+r="$r$(wantx "$OUT/rc-cont.txt" "${pre}its value continues on the indented line below")"
+r="$r$(wantx "$OUT/rc-blank.txt" "${pre}it is empty")"
+r="$r$(want "$OUT/rc-nospace.txt" 'CANNOT COMPARE: the fresh capture names no plain engine: its frontmatter line 4 may write an engine field in a form this script does not read')"
+r="$r$(wantx "$OUT/rc-none.txt" 'CANNOT COMPARE: the fresh capture names no plain engine: its frontmatter has none of the engine fields (converted_by, conversion_engine, converter)')"
+r="$r$(wantx "$OUT/rc-two.txt" 'CANNOT COMPARE: the fresh capture names no plain engine: its frontmatter writes an engine field 2 times (lines 4, 5), where one is needed')"
+r="$r$(wantx "$OUT/rc-nofm.txt" 'CANNOT COMPARE: the fresh capture names no plain engine: it has no frontmatter block (a first line --- closed by another), so no engine field')"
+leg "77 recapture: an engine field that is not one plain word is refused, exit 2, with its reason: quoted, null, commented, continued below, empty, no space after the colon, absent, written twice, no frontmatter" "$r"
+
+r=""
+r="$r$(wantrc "$rc_deep" 1)"
+r="$r$(wantx "$RCO/rc-deep.txt" 'DIFFERS: 1 differing run · 1 shown in full · 0 shown in part · 0 not shown')"
+r="$r$(wantre "$RCO/rc-deep.txt" '^  \+ fresh 5 \(differs from character 2698\): \[2637 characters before, the same in both\] .* word350X word351 .* \[332 characters after, the same in both\]$')"
+r="$r$(wantre "$RCO/rc-deep.txt" '^  - raw 5: \[2637 characters before, the same in both\] .* word350 word351 .* \[332 characters after, the same in both\]$')"
+r="$r$(wantx "$RCO/rc-deep.txt" 'UNREAD: none: every differing run is shown in full above')"
+leg "78 recapture: a change deep inside a long line is shown in full: the pair prints around the change and counts the text both lines share" "$r"
+
+r=""
+for f in empty absent; do [ "$(cat "$OUT/rc-$f.rc")" = 2 ] || r="$r $f: exit $(cat "$OUT/rc-$f.rc"), expected 2;"; done
+r="$r$(wantrc "$rc_selfsame" 2)"
+r="$r$(want "$OUT/rc-empty.txt" 'empty.md holds nothing but whitespace once its frontmatter is dropped: a capture that returned nothing is not an unchanged page')"
+r="$r$(want "$OUT/rc-absent.txt" 'absent.md does not exist')"
+r="$r$(wantx "$RCO/rc-selfsame.txt" 'CANNOT COMPARE: the raw file and the fresh capture are one file, so the compare would show nothing')"
+leg "79 recapture: an empty capture, a missing file and one file given twice are each refused, exit 2, never read as unchanged" "$r"
+
+r=""
+r="$r$(wantrc "$rc_flood" 1)"
+r="$r$(want "$RCO/rc-flood.txt" 'past the 60000-character output limit')"
+[ "$(wc -c < "$RCO/rc-flood.txt")" -le 62000 ] || r="$r the output passed 62,000 characters (60,000 of runs plus the head and tail);"
+[ "$(awk '{ if (length($0) > m) m = length($0) } END { print m + 0 }' "$RCO/rc-flood.txt")" -le 1000 ] || r="$r a printed line passed 1,000 characters;"
+r="$r$(wantre "$RCO/rc-flood.txt" '^DIFFERS: 100 differing runs · 0 shown in full · [0-9]+ shown in part · [0-9]+ not shown$')"
+leg "80 recapture: the output stays bounded: 100 runs of long lines stop at the 60,000-character limit, the rest counted" "$r"
+
+# A body is compared as read, its line ends included. A carriage return is read past only in the frontmatter
+# (its fences and its fields), and a byte-order mark only before the opening fence.
+{ printf '\xef\xbb\xbf'; awk '{printf "%s\r\n", $0}' "$RC/raw.md"; } > "$RC/bomcrlf.md"
+printf -- '---\nconverted_by: defuddle\n---\nalpha\r\nbeta\r\n' > "$RC/eol-crlf.md"
+printf -- '---\nconverted_by: defuddle\n---\nalpha\nbeta\n' > "$RC/eol-lf.md"
+printf -- '---\r\nconverted_by: defuddle\r\nconverted_on: 2026-01-01\r\n---\r\nalpha\r\nbeta\r\n' > "$RC/crlf-a.md"
+printf -- '---\r\nconverted_by: defuddle\r\nconverted_on: 2026-02-02\r\n---\r\nalpha\r\nbeta\r\n' > "$RC/crlf-b.md"
+printf -- '---\r\nconverted_by: defuddle\r\n---\r\nalpha\nbeta\n' > "$RC/fm-crlf.md"
+{ cat "$RC/raw.md"; printf 'caf\xa0\n'; } > "$RC/bytes-a.md"
+{ cat "$RC/raw.md"; printf 'caf\xb0\n'; } > "$RC/bytes-b.md"
+rc_eol=$(rcmp rc-eol.txt eol-lf eol-crlf); rc_crlf=$(rcmp rc-crlf.txt crlf-b crlf-a)
+rc_fmcrlf=$(rcmp rc-fmcrlf.txt eol-lf fm-crlf); rc_bom=$(rcmp rc-bom.txt bomcrlf)
+rc_bytes=$(rcmp rc-bytes.txt bytes-b bytes-a)
+r=""
+r="$r$(wantrc "$rc_eol" 1)"
+r="$r$(wantx "$RCO/rc-eol.txt" 'DIFFERS: 1 differing run · 1 shown in full · 0 shown in part · 0 not shown')"
+r="$r$(wantx "$RCO/rc-eol.txt" '- run 1 · raw lines 4-5 · fresh lines 4-5 · 2 lines became 2 · shown in full')"
+r="$r$(wantx "$RCO/rc-eol.txt" '  - raw 4: alpha<U+000D>')$(wantx "$RCO/rc-eol.txt" '  + fresh 4 (differs from character 6): alpha')"
+r="$r$(wantx "$RCO/rc-eol.txt" '  - raw 5: beta<U+000D>')$(wantx "$RCO/rc-eol.txt" '  + fresh 5 (differs from character 5): beta')"
+r="$r$(wantrc "$rc_crlf" 0)"
+r="$r$(wantx "$RCO/rc-crlf.txt" 'IDENTICAL: the two bodies match line for line, character for character (frontmatter not compared)')"
+r="$r$(wantre "$RCO/rc-crlf.txt" '^recapture-compare: raw .*/crlf-a\.md \(converted_by: defuddle; body from line 5\) · fresh .*/crlf-b\.md \(converted_by: defuddle; body from line 5\) · ')"
+r="$r$(notwant "$RCO/rc-crlf.txt" '2026-02-02')"
+r="$r$(wantrc "$rc_fmcrlf" 0)$(want "$RCO/rc-fmcrlf.txt" 'IDENTICAL: ')"
+r="$r$(wantre "$RCO/rc-fmcrlf.txt" '^recapture-compare: raw .*/fm-crlf\.md \(converted_by: defuddle; body from line 4\) · fresh .*/eol-lf\.md \(converted_by: defuddle; body from line 4\) · ')"
+r="$r$(wantrc "$rc_bom" 1)"
+r="$r$(wantre "$RCO/rc-bom.txt" '^recapture-compare: raw .*/raw\.md \(converted_by: defuddle; body from line 7\) · fresh .*/bomcrlf\.md \(converted_by: defuddle; body from line 7\) · ')"
+r="$r$(wantx "$RCO/rc-bom.txt" '- run 1 · raw lines 7-12 · fresh lines 7-12 · 6 lines became 6 · shown in full')"
+r="$r$(wantx "$RCO/rc-bom.txt" '  + fresh 10 (differs from character 33): The limit is 32 tokens per call.<U+000D>')"
+cmp -s "$RC/raw.md" "$RC/bomcrlf.md" && r="$r the byte-order-mark fixture does not differ from raw.md;"
+cmp -s "$RC/crlf-a.md" "$RC/crlf-b.md" && r="$r the two CRLF fixtures do not differ;"
+r="$r$(wantrc "$rc_bytes" 1)"
+r="$r$(wantx "$RCO/rc-bytes.txt" '  - raw 13: caf<U+DCA0>')"
+r="$r$(wantx "$RCO/rc-bytes.txt" '  + fresh 13 (differs from character 4): caf<U+DCB0>')"
+leg "80b recapture: a body is compared as read: lines ending CRLF against the same lines in LF are a run, each carriage return printed <U+000D>; two identical CRLF bodies are IDENTICAL; a frontmatter written in CRLF, behind a byte-order mark or not, is still recognised and dropped; two different bytes that are not UTF-8 stay apart, a run" "$r"
+
+ROR="$TMP/readonly-recapture"
+cp -R "$RC" "$ROR"
+chmod -R a-w "$ROR"
+manifest "$ROR" "$OUT/ror_before.txt"
+manifest "$HERE" "$OUT/rc_home_before.txt"
+for f in same fig block cross quoted empty; do
+  "$PY" "$RECAP" --raw "$ROR/raw.md" --fresh "$ROR/$f.md" > "$OUT/ro-rc-$f.txt" 2>&1
+done
+manifest "$ROR" "$OUT/ror_after.txt"
+manifest "$HERE" "$OUT/rc_home_after.txt"
+r=""
+[ -f "$RECAP" ] || r="$r recapture-compare.py is absent;"
+r="$r$(want "$OUT/ro-rc-fig.txt" 'DIFFERS: 1 differing run')$(want "$OUT/ro-rc-cross.txt" 'CANNOT COMPARE')"
+cmp -s "$OUT/ror_before.txt" "$OUT/ror_after.txt" || r="$r the read-only recapture fixtures changed;"
+cmp -s "$OUT/rc_home_before.txt" "$OUT/rc_home_after.txt" || r="$r the script home changed;"
+[ "$(grep -c . "$OUT/ror_before.txt")" -ge 10 ] || r="$r the recapture manifest came back nearly empty;"
+grep -qE -- "$WRITE_RE" "$OUT/write_control.py" || r="$r the write-pattern grep did not match its positive control;"
+if [ -f "$RECAP" ] && grep -qE -- "$WRITE_RE" "$RECAP"; then r="$r write pattern in recapture-compare.py;"; fi
+leg "81 stdout-only: recapture-compare.py leaves read-only fixtures and its home byte-identical and carries no write pattern (grep control-verified)" "$r"
+
+STEP5="$(awk 'index($0, "### 5 ") == 1 {f = 1} index($0, "### 6 ") == 1 {f = 0} f' "$HERE/SKILL.md")"
+r=""
+for phrase in 'recapture-compare.py --raw <raw file> --fresh <fresh capture>' 'never another engine' \
+  'literally, line by line, with only the frontmatter dropped' 'Its `UNREAD` line counts the runs shown only in part' \
+  'report the page as unadjudicated with the count unread' '`CANNOT COMPARE: <why>`'; do
+  printf '%s\n' "$STEP5" | grep -qF -- "$phrase" || r="$r Step 5 lacks [$phrase];"
+done
+[ -n "$STEP5" ] || r="$r no Step 5 text was read;"
+if [ -f "$RECAP" ]; then
+  { grep -qF 'add_argument("--raw"' "$RECAP" && grep -qF 'add_argument("--fresh"' "$RECAP"; } || r="$r the script does not take the flags Step 5 names;"
+else
+  r="$r recapture-compare.py is absent;"
+fi
+leg "82 Step 5: the no-validator rung names recapture-compare.py with the flags the script takes, the same-engine rule and the reading of UNREAD and CANNOT COMPARE" "$r"
+
+# ---------------------------------------------------------------- sweeps.py: a backticked comment opener (known-issues 2026-10-11)
+# A line opens a comment only where it holds `<!--` outside its code spans, so a backticked opener in prose is
+# code: the lines after it are read. A real comment still hides its tags. Leg 84's hidden tags are guards (live
+# hid them too); the leg fails on live through the tag between the quoted opener and the first real comment.
+RTO="$TMP/rawtags-opener"
+w "$RTO/wiki/concepts/Opener In Prose.md" <<'FIXTURE_END'
+---
+title: Opener In Prose
+---
+
+Write `<!--` to open a comment; the raw <span> beside it renders.
+
+A raw <em> on a later line renders too.
+
+A double span ``<!--`` is code as well, so a raw <dfn> renders.
+
+A span holding more, `a <!-- b`, is code, so a raw <aside> renders.
+FIXTURE_END
+w "$RTO/wiki/concepts/Real Comment.md" <<'FIXTURE_END'
+---
+title: Real Comment
+---
+
+Quote `<!--` in prose, then a raw <b> renders.
+
+<!--
+A <div> inside a real comment is not reported.
+-->
+
+See `x` here <!-- a real opener after a span
+<section> hidden
+-->
+
+<!-- a comment quoting `code` opens too
+<nav> hidden
+-->
+
+`<!--` quoted, then a real <!-- opener
+<main> hidden
+-->
+
+After the comments a raw <i> renders.
+FIXTURE_END
+rc_rto=$(run rto.txt "$PY" "$SWEEPS" --vault "$RTO")
+RTO1="$OUT/rto.txt"
+
+r=""
+r="$r$(wantrc "$rc_rto" 0)$(want "$RTO1" 'tag-control: fired')"
+r="$r$(want "$RTO1" 'wiki/concepts/Opener In Prose.md:5 <span>')"
+r="$r$(want "$RTO1" 'wiki/concepts/Opener In Prose.md:7 <em>')"
+r="$r$(want "$RTO1" 'wiki/concepts/Opener In Prose.md:9 <dfn>')"
+r="$r$(want "$RTO1" 'wiki/concepts/Opener In Prose.md:11 <aside>')"
+leg "83 a backticked comment opener in prose opens no comment: the raw tag beside it and those on later lines are reported, after a single, a double and a longer span" "$r"
+
+r=""
+r="$r$(wantrc "$rc_rto" 0)"
+r="$r$(want "$RTO1" 'wiki/concepts/Real Comment.md:5 <b>')"
+r="$r$(want "$RTO1" 'wiki/concepts/Real Comment.md:23 <i>')"
+for t in '<div>' '<section>' '<nav>' '<main>'; do r="$r$(notwant "$RTO1" "$t")"; done
+[ "$(grep -c 'Real Comment.md:' "$RTO1")" = 2 ] || r="$r the real-comment page did not give exactly its two hits;"
+r="$r$(want "$RTO1" 'raw tags in rendered prose: 6')"
+leg "84 a real comment holding a tag is still not reported, alone on its lines, after a span on its line, quoting code, or after a quoted opener on its line (guards); the tag between a quoted opener and the first real comment is reported" "$r"
+
+MUT="$TMP/sweeps-old-opener.py"
+"$PY" - "$SWEEPS" "$MUT" > "$OUT/mut-opener.txt" 2>&1 <<'PYMUT_END'
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+new = 'if "<!--" in INLINE_CODE_RE.sub(" ", stripped) and "-->" not in stripped:'
+if src.count(new) != 1:
+    print("the opener test was not found exactly once")
+    sys.exit(2)
+open(sys.argv[2], "w", encoding="utf-8").write(src.replace(new, 'if "<!--" in stripped and "-->" not in stripped:'))
+PYMUT_END
+rc_mut_made=$?
+rc_mut=$(run mut-run.txt "$PY" "$MUT" --vault "$RTO")
+r=""
+r="$r$(wantrc "$rc_mut_made" 0)$(wantrc "$rc_mut" 2)"
+r="$r$(want "$OUT/mut-run.txt" 'tag-control: DID NOT FIRE')"
+r="$r$(want "$OUT/mut-run.txt" 'PROBE FAILED: the raw-tag control did not return exactly its one planted tag')"
+r="$r$(notwant "$OUT/mut-run.txt" 'Opener In Prose.md:5')"
+leg "85 the tag control carries a backticked-opener trap: the same sweeps.py with the old opener test misses the planted tags and fails its control, exit 2" "$r"
 
 # ---------------------------------------------------------------- teardown
 chmod -R u+w "$TMP"

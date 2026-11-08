@@ -186,7 +186,8 @@ mkfix() {
 #   memory-hunter sonnet/sonnet/fable + high/max
 # top = ceiling/ceiling · default = default/ceiling · cheap = floor/ceiling
 # fast = default/floor · cheap-fast = floor/floor · auto = as default (frozen legacy on a v1 record;
-# 2026-09-08)
+# 2026-09-08). On a v1 record the default effort IS the ceiling, so `cheap` at the ceiling never
+# exceeds the default there: the schema-2 rule of register 2026-09-06 changes no v1 pin.
 pins() { # $1 throttle -> "role model effort" triples, one per line
 	case "$1" in
 	auto) pins default ;;
@@ -677,20 +678,21 @@ fi
 #                 high → xhigh on 2026-09-08: the anchor under the per-call rule of 2026-09-07 17:0x)
 #   wiki-compile  models sonnet opus* fable   · efforts medium high xhigh* max
 #   gate-judge    models opus (single)        · efforts max (single)
-# top = strongest/strongest · default = default/default · cheap = weakest/strongest
-# fast = default/weakest · cheap-fast = weakest/weakest · auto = default/default (the anchors)
+# top = strongest/strongest · default = default/default · cheap = weakest/default (the row's default
+# effort, never above it: register 2026-09-06, where `cheap` at the ceiling resolved dearer than
+# `default`) · fast = default/weakest · cheap-fast = weakest/weakest · auto = default/default (the anchors)
 rpins() { # $1 class · $2 throttle -> "model effort"
 	case "$1/$2" in
 	verifier/auto) echo "sonnet xhigh" ;;
 	verifier/top) echo "fable max" ;;
 	verifier/default) echo "sonnet xhigh" ;;
-	verifier/cheap) echo "sonnet max" ;;
+	verifier/cheap) echo "sonnet xhigh" ;;
 	verifier/fast) echo "sonnet high" ;;
 	verifier/cheap-fast) echo "sonnet high" ;;
 	wiki-compile/auto) echo "opus xhigh" ;;
 	wiki-compile/top) echo "fable max" ;;
 	wiki-compile/default) echo "opus xhigh" ;;
-	wiki-compile/cheap) echo "sonnet max" ;;
+	wiki-compile/cheap) echo "sonnet xhigh" ;;
 	wiki-compile/fast) echo "opus medium" ;;
 	wiki-compile/cheap-fast) echo "sonnet medium" ;;
 	gate-judge/top) echo "opus max" ;;
@@ -714,6 +716,28 @@ run "$PY" "$S" resolve --class gate-judge --throttle top --root "$D2"
 eq "L37a resolve gate-judge under 'top'" "$(rgot)" "$(rpins gate-judge top)"
 run "$PY" "$S" resolve --class gate-judge --throttle cheap-fast --root "$D2"
 eq "L37b resolve gate-judge under 'cheap-fast' (single-option row)" "$(rgot)" "$(rpins gate-judge cheap-fast)"
+run "$PY" "$S" resolve --class gate-judge --throttle cheap --root "$D2"
+eq "L37c resolve gate-judge under 'cheap' (single-option row: its one effort is its default)" "$(rgot)" "opus max"
+# `cheap` never exceeds a row's default effort, on every class of the record under test (register
+# 2026-09-06); the control is `top`, under which the same comparison must see an effort above the
+# default, so the probe can fire.
+cat >"$W/cheapcap.py" <<'CHEAP_CAP_END'
+import json, subprocess, sys
+rec = json.load(open(sys.argv[1]))
+order = rec["order"]["effort"]
+def over(preset):
+    hits = []
+    for cls, row in rec["classes"].items():
+        out = subprocess.run([sys.executable, sys.argv[2], "resolve", "--class", cls, "--throttle", preset,
+                              "--root", sys.argv[3]], capture_output=True, text=True).stdout
+        effort = [l.split(": ", 1)[1] for l in out.splitlines() if l.startswith("effort: ")][0]
+        if order.index(effort) > order.index(row["effort"]["default"]):
+            hits.append(cls)
+    return hits
+print(len(over("cheap")), len(over("top")) > 0)
+CHEAP_CAP_END
+eq "L37d under 'cheap' no class's effort exceeds its row default; under 'top' some does (the control)" \
+	"$("$PY" "$W/cheapcap.py" "$V2" "$S" "$D2")" "0 True"
 
 # ======================================================= 17p · preset_model ===========
 # The owner's ruling of 2026-09-29: `top` and `cheap` both resolve every class's model to opus until a
@@ -733,7 +757,7 @@ mkfix v2p "$V2P"
 run "$PY" "$S" resolve --class verifier --throttle top --root "$D2P"
 eq "L37p1 preset_model: verifier under 'top' resolves to opus, the effort ceiling kept" "$(rgot)" "opus max"
 run "$PY" "$S" resolve --class verifier --throttle cheap --root "$D2P"
-eq "L37p2 verifier under 'cheap' resolves to opus, the effort ceiling kept" "$(rgot)" "opus max"
+eq "L37p2 verifier under 'cheap' resolves to opus at the row's default effort (never above it)" "$(rgot)" "opus xhigh"
 run "$PY" "$S" resolve --class wiki-compile --throttle top --root "$D2P"
 eq "L37p3 wiki-compile under 'top' resolves to opus" "$(rgot)" "opus max"
 run "$PY" "$S" resolve --class wiki-compile --throttle cheap-fast --root "$D2P"
@@ -955,8 +979,8 @@ else
 	# Option sets, pinned as literals hand-derived from the design page's class table. A gate
 	# moves a DEFAULT within its set; it never edits the set, so these hold across the phase-3
 	# moves. An install that quietly narrowed a class is exactly what this catches. Fable left
-	# every set but the writer's under the owner rulings of 2026-09-22 and 2026-09-29 (fable only on
-	# the owner's word; the writer keeps it for an important check), and the gate-judge's fixed
+	# every set under the owner rulings of 2026-09-22 and 2026-09-29, the writer's last on 2026-11-02
+	# (fable only when the owner asks by name), and the gate-judge's fixed
 	# effort moved to xhigh under the first.
 	opts() { # $1 class -> "models|efforts"
 		case "$1" in
@@ -964,7 +988,7 @@ else
 		memory-hunter) echo "sonnet,opus|high,xhigh,max" ;;
 		wiki-compile) echo "sonnet,opus|medium,high,xhigh,max" ;;
 		builder) echo "sonnet,opus|high,xhigh,max" ;;
-		writer) echo "opus,fable|xhigh,max" ;;
+		writer) echo "opus|xhigh,max" ;;
 		critic) echo "opus|xhigh,max" ;;
 		planner) echo "opus|high,xhigh,max" ;;
 		reflector) echo "opus|high,xhigh,max" ;;
@@ -1010,9 +1034,12 @@ ROWOPTS_END
 	eq "L47g and under 'cheap-fast'" "$(rgot)" "sonnet medium"
 	# The owner's ruling of 2026-09-29 (`preset_model`): `top` and `cheap` resolve every class to opus.
 	run "$PY" "$S" resolve --class writer --throttle top --root "$VAULT"
-	eq "L47h the installed record resolves the writer under 'top' to opus (fable stays an option)" "$(rgot)" "opus max"
+	eq "L47h the installed record resolves the writer under 'top' to opus" "$(rgot)" "opus max"
 	run "$PY" "$S" resolve --class verifier --throttle cheap --root "$VAULT"
-	eq "L47i and the verifier under 'cheap' to opus (sonnet stays an option)" "$(rgot)" "opus max"
+	# The effort is the installed row's own default, read from the record rather than pinned: an anchor
+	# moves by a dated edit, and `cheap` follows it (register 2026-09-06).
+	VDEF=$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1]))["classes"]["verifier"]["effort"]["default"])' "$VAULT/.claude/skills/delegate/routing.json")
+	eq "L47i and the verifier under 'cheap' to opus at its row default effort (sonnet stays an option)" "$(rgot)" "opus $VDEF"
 	eq "L47j the installed record's preset_model names opus for top and cheap" \
 		"$("$PY" -c 'import json,sys; b=json.load(open(sys.argv[1])).get("preset_model", {}); print(b.get("top"), b.get("cheap"))' "$R")" "opus opus"
 	# Consistency: what the wrapper would spawn under the vault's own throttle is what the
@@ -1212,7 +1239,7 @@ eq "L55c control — a planted write into the sibling makes the same probe fire"
 if [ -z "${THROTTLE_SUITE_NESTED:-}" ]; then
 	STAGED="$W/staged/a/b/delegate"
 	mkdir -p "$STAGED"
-	cp "$S" "$R" "$HERE/test_throttle.sh" "$STAGED/"
+	cp "$S" "$R" "$HERE/routing_layers.py" "$HERE/test_throttle.sh" "$STAGED/"
 	NESTED_OUT="$W/nested.txt"
 	env THROTTLE_SUITE_NESTED=1 VAULT_DIR="$VAULT" sh "$STAGED/test_throttle.sh" >"$NESTED_OUT" 2>&1
 	NESTED_RC=$?
@@ -1234,6 +1261,48 @@ if [ -z "${THROTTLE_SUITE_NESTED:-}" ]; then
 		ok "L56d the nested run read the live definitions through VAULT_DIR"
 	else no "L56d the nested run never read the live definitions (no L34b line in its output)"; fi
 fi
+
+# ================================================================== L57 the overlay ===
+# A user's overlay merges over the table through routing_layers.py. The merge's own legs are
+# test_routing_layers.py's; these prove that this script reaches it, stops on a bad one with nothing
+# written, and runs alone where there is none. L57a is the control: the value L57b moves.
+mkfix ov "$V2"
+OVL="$W/ov/.claude/routing.local.json"
+run "$PY" "$S" resolve --root "$W/ov" --class wiki-compile
+has "L57a control: with no overlay wiki-compile resolves to the table's default" "model: opus"
+printf '{"classes": {"wiki-compile": {"model": {"default": "sonnet"}}}}\n' >"$OVL"
+run "$PY" "$S" resolve --root "$W/ov" --class wiki-compile
+has "L57b an overlay's class override reaches resolve" "model: sonnet"
+printf '{ nope\n' >"$OVL"
+OVBEFORE=$(manifest "$W/ov")
+run "$PY" "$S" set cheap --root "$W/ov"
+eq "L57c a malformed overlay stops set with exit 2" "$RC" "2"
+has "L57d and says PROBE FAILED" "PROBE FAILED"
+eq "L57e and set wrote nothing" "$(manifest "$W/ov")" "$OVBEFORE"
+rm -f "$OVL"
+mkdir -p "$W/alone"
+cp "$S" "$W/alone/throttle.py"
+run "$PY" "$W/alone/throttle.py" show --root "$W/ov"
+eq "L57f throttle.py copied alone runs where there is no overlay" "$RC" "0"
+printf '{"rules": []}\n' >"$OVL"
+run "$PY" "$W/alone/throttle.py" show --root "$W/ov"
+eq "L57g alone with an overlay it stops, never the table alone" "$RC" "2"
+has "L57h and names the module it needs" "routing_layers.py"
+# A user may exclude a preset's model from a class. L57i is the control: the pin L57j and L57k lift.
+# L57l proves the pin stays on every other class; L37p6 is the table alone, which stays refused.
+mkfix ovp "$V2P"
+OVP="$W/ovp/.claude/routing.local.json"
+run "$PY" "$S" resolve --class wiki-compile --throttle cheap --root "$W/ovp"
+has "L57i control: with no overlay 'cheap' pins wiki-compile to opus" "model: opus"
+printf '{"classes": {"wiki-compile": {"model": {"options": ["sonnet"], "default": "sonnet"}}}}\n' >"$OVP"
+run "$PY" "$S" resolve --class wiki-compile --throttle cheap --root "$W/ovp"
+has "L57j an overlay that leaves opus out frees the class under 'cheap'" "model: sonnet"
+run "$PY" "$S" resolve --class wiki-compile --throttle top --root "$W/ovp"
+has "L57k and under 'top'" "model: sonnet"
+run "$PY" "$S" resolve --class verifier --throttle cheap --root "$W/ovp"
+has "L57l control: every other class keeps the preset's model" "model: opus"
+run "$PY" "$S" set cheap --root "$W/ovp"
+eq "L57m set writes the freed class's definition" "$RC $(fmval "$W/ovp/.claude/agents/wiki-compile.md" model)" "0 sonnet"
 
 # ================================================================== tally =============
 TOTAL=$((PASS + FAIL))

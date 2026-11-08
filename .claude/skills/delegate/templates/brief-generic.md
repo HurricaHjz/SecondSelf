@@ -22,6 +22,11 @@ SCOPE
 - A lane under /tmp dry-runs a returned diff on a flat copy (no `.claude` path component: the
   fence refuses one there) with `patch -p<depth> --dry-run` run inside the copy, `<depth>` the
   leading components to strip (4 for `a/.claude/skills/<skill>/<file>`).
+- Scratch under /tmp goes through Bash: the file tools refuse it unless the head granted
+  `/tmp/{{RUN_ID}}-{{LANE_ID}}/` with `--write`.
+- A hook you plant in scratch (a git hook, a file watcher) carries a recursion guard: it never
+  re-enters what fires it, so a git hook runs no git command in its own repository unless a flag it
+  sets first stops the re-entry.
 
 REGISTRIES
 wiki/index.md and wiki/log.md are propose-don't-write: return entries as ready-to-apply
@@ -40,14 +45,35 @@ DECISIONS
 statement, not an omission. A decision this lane needs and cannot find here is a gap to
 report, never one to invent.}}
 
+FOLD
+<!-- For a fold, fill the hand-off below. For other tasks, replace its entire body with
+"n/a — not a fold", leaving no unused slots. -->
+- Earlier report: {{literal path}}.
+- Findings to fold: {{each finding, its evidence and overturn condition; label its kind
+  depth (missed reasoning) or spec (a gap in the brief or design), beside the critic's
+  origin label: made by the last fix, older than the build, or a limit of the approach}}.
+  Each overturn condition is quoted verbatim from the critic's report, never paraphrased into a
+  weaker test.
+- Your product carries no reviewer verdict: no "passed", "approved", "ready" or score from an
+  earlier round goes into a file a later blind check reads; dispositions go in your report.
+- Held files: {{literal paths and the state to continue from}}.
+- Must not change: {{requirements, decisions and accepted behaviour the fold must preserve}}.
+
 VERIFICATION
+- {{Builders: list checks the sandbox cannot run, each as command · blocked capability ·
+  head's permitted execution context (or missing grant); write "none known" if empty.
+  Other roles: omit this bullet.}}
+  The head runs each listed check against the same candidate in that context; until then
+  it stays unverified. Return new sandbox denials with the command for the same hand-off,
+  never as code defects or passes.
 - Output gate: {{the assert-nonzero / expected-shape assertion for EVERY stage of the
   lane's work, e.g. "≥N pages, each with §4.1 frontmatter"}} — report each assertion's
   result.
 CONTROL+: {{a probe that must hit}} in {{the file that must hold it — a real path, nothing after it}}
-Negative control: {{a planted pattern that must NOT hit / must be caught}}
-- {{Write lanes with a link whitelist: name the link-whitelist sweep and its planted-fake
-  negative control | read-only lanes: "—"}}
+Negative control: {{an invented string that must NOT hit / must be caught}}
+- {{Write lanes with a link whitelist: name the link-whitelist sweep and its negative control,
+  a fake link in a scratch copy of a page, which stays out of any page the lane delivers
+  (CLAUDE.md §12, "Tests stay out of formal work") | read-only lanes: "—"}}
 - Folds must parse: a count over a run ledger, a spawn record or any JSONL more than one
   writer appends to reads every line with `json.loads` or `jq` before it counts; a key-pattern grep
   is a locator, never a verdict (two writers spell one key two ways).

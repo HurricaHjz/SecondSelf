@@ -3,7 +3,8 @@
 
 Given the page budget and the brief's sub-question count (plus optional overrides), it fixes
 every Discover-round knob — queries, menu (shortlist), pool, date-check policy, remainder
-display — clamps out-of-range values, and reports every clamp. The rendered block is echoed
+display — clamps out-of-range derived values, keeps an explicit --shortlist or --queries as given
+(floor 1), and reports every clamp and every explicit value. The rendered block is echoed
 VERBATIM at the Discover gate, so every knob is auditable. v3.1: --advice N (the agent's judged
 worth-capturing count) widens the one-liner display, never what a rule may buy; --ledger-id
 reads pages-captured AND the audited budget from the run ledger instead of trusting supplied
@@ -16,12 +17,12 @@ import argparse, json, math, sys
 
 HARD_CEILING = 100           # cumulative page ceiling — mirrors gather_links.py, non-overridable
 SHORTLIST_CAP_DEFAULT = 12   # default full-detail menu rows (human review bandwidth)
-SHORTLIST_MAX = 20           # --shortlist clamp
+
 QUERIES_PER_FACET = 2
-QUERIES_BAND = (3, 12)       # band for the DERIVED value; an explicit --queries clamps to [1, 12]
+QUERIES_BAND = (3, 12)       # band for the DERIVED value; an explicit --queries stands (floor 1)
 POOL_SHORTLIST_FACTOR = 3.0  # ranking headroom over the menu (v2 parity: default run -> pool 30)
 POOL_BUDGET_FACTOR = 1.5     # selection headroom over the capture budget (rule needs choice)
-POOL_CEILING = 60            # snippet-cost ceiling: <=12 searches (~1k tokens each) fill it
+POOL_CEILING = 60            # <=12 searches fill it; explicit --queries or --shortlist raises it (derive)
 DATECHECK_BASELINE = 6       # WebFetch date checks per round when no hard date window
 
 
@@ -35,6 +36,7 @@ def derive(max_pages, facets, shortlist=None, queries=None, pages_captured=0,
     if advice is not None and advice < 0:
         raise ValueError("--advice must be >= 0")
     clamps = []
+    explicit = []
     budget = max_pages
     if budget > HARD_CEILING:
         clamps.append(f"--max-pages {budget} > hard ceiling -> {HARD_CEILING}")
@@ -44,18 +46,17 @@ def derive(max_pages, facets, shortlist=None, queries=None, pages_captured=0,
         budget = 1
     remaining = budget - pages_captured
     if remaining <= 0:
-        return {"exhausted": True, "budget": budget, "remaining": 0, "clamps": clamps,
+        return {"exhausted": True, "budget": budget, "remaining": 0, "clamps": clamps, "explicit": explicit,
                 "note": "budget spent — stop, or raise --max-pages"}
     if shortlist is None:
         k = min(SHORTLIST_CAP_DEFAULT, remaining)
     else:
         k = shortlist
-        if k > SHORTLIST_MAX:
-            clamps.append(f"--shortlist {k} -> {SHORTLIST_MAX}")
-            k = SHORTLIST_MAX
+
         if k < 1:
             clamps.append(f"--shortlist {k} -> 1")
             k = 1
+        explicit.append(f"--shortlist {k}")
     if queries is None:
         q = QUERIES_PER_FACET * facets
         lo, hi = QUERIES_BAND
@@ -67,13 +68,18 @@ def derive(max_pages, facets, shortlist=None, queries=None, pages_captured=0,
             q = hi
     else:
         q = queries
-        if q > QUERIES_BAND[1]:
-            clamps.append(f"--queries {q} -> {QUERIES_BAND[1]}")
-            q = QUERIES_BAND[1]
+
         if q < 1:
             clamps.append(f"--queries {q} -> 1")
             q = 1
-    pool = min(POOL_CEILING, max(math.ceil(POOL_SHORTLIST_FACTOR * k),
+        explicit.append(f"--queries {q}")
+    # The derived ceiling fills at POOL_CEILING / QUERIES_BAND[1] candidates per search.
+    pool_ceiling = POOL_CEILING
+    if queries is not None:
+        pool_ceiling = max(pool_ceiling, math.ceil(POOL_CEILING * q / QUERIES_BAND[1]))
+    if shortlist is not None:
+        pool_ceiling = max(pool_ceiling, math.ceil(POOL_SHORTLIST_FACTOR * k))
+    pool = min(pool_ceiling, max(math.ceil(POOL_SHORTLIST_FACTOR * k),
                                  math.ceil(POOL_BUDGET_FACTOR * remaining)))
     if advice is not None and advice > pool:
         clamps.append(f"--advice {advice} > pool -> {pool}")
@@ -87,7 +93,7 @@ def derive(max_pages, facets, shortlist=None, queries=None, pages_captured=0,
             "shortlist": k, "queries": q, "pool": pool, "date_checks": date_checks,
             "date_window": date_window, "advice": advice,
             "show_remainder": show_remainder, "raise_marker": raise_marker,
-            "reachable": min(remaining, pool), "clamps": clamps}
+            "reachable": min(remaining, pool), "clamps": clamps, "explicit": explicit}
 
 
 def render(k):
@@ -97,11 +103,14 @@ def render(k):
         return (f"FUNNEL  budget {k['budget']} spent — stop, or raise --max-pages\n"
                 f"        clamps: {clamp_str}")
     advice = k["advice"]
+    query_origin = ("explicit" if any(v.startswith("--queries ") for v in k["explicit"]) else
+                    f"{k['facets']} sub-question{'s' if k['facets'] != 1 else ''} × {QUERIES_PER_FACET}")
+    if k["explicit"]:
+        clamp_str += " · explicit, standing as given: " + "; ".join(k["explicit"])
     lines = [(f"FUNNEL  {k['queries']} searches → pool ≤{k['pool']} ranked → "
               f"menu {k['shortlist']} → your approval → capture ≤{k['reachable']}"),
              (f"        budget {k['budget']} ({k['remaining']} left) · "
-              f"queries {k['queries']} ({k['facets']} sub-question"
-              f"{'s' if k['facets'] != 1 else ''} × {QUERIES_PER_FACET}) · "
+              f"queries {k['queries']} ({query_origin}) · "
               f"advice {'~' + str(advice) + ' worth capturing' if advice is not None else '—'}")]
     if k["date_window"]:
         lines.append(f"        date checks: cutoff active — all {k['shortlist']} menu rows "
@@ -130,9 +139,9 @@ def main():
     ap.add_argument("--facets", type=int, required=True,
                     help="number of distinct sub-questions in the brief (agent-stated, printed)")
     ap.add_argument("--shortlist", type=int, default=None,
-                    help="override the menu row count (clamp <=20)")
+                    help="override the menu row count (stands as given; floor 1)")
     ap.add_argument("--queries", type=int, default=None,
-                    help="override queries per round (clamp <=12)")
+                    help="override queries per round (stands as given; floor 1)")
     ap.add_argument("--pages-captured", type=int, default=0,
                     help="pages already captured this run (later rounds)")
     ap.add_argument("--advice", type=int, default=None,

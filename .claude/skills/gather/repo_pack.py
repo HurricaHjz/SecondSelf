@@ -14,17 +14,20 @@ Verbs:
 
 Snapshot guards (project-store design D4, 2026-09-07; they bind every pack, the study store's included):
   (a) a dirty tree is refused — a modified tracked file (staged or unstaged), or a SELECTED path that is
-      untracked; an unselected untracked file (.DS_Store) never blocks — so the header sha describes the bytes packed;
+      untracked; an unselected untracked file (.DS_Store) never blocks — and each selected file's bytes are read
+      from the commit, never the working tree (a selected path not in normal form, or not a regular file of the
+      commit's tree, is refused), so the header sha describes the bytes packed;
   (b) the remote URL is written without any user part; a URL carrying a password part (user:secret@host) is refused
       before anything is emitted, since the pack lands in raw/, source_url and the index;
   (c) a non-GitHub remote's provenance carries the slice, defaulting to the short sha, so two packs of one remote at
       different commits get distinct raw filenames (capture_write derives the filename from the provenance URL and
       refuses an existing one — the immutability rule).
 
-Caps (derivations in the design): --max-files 40 · per-file truncate 65536 B (judgement-set, marker emitted)
+Caps (derivations in the design): --max-files 40
 · soft-warn 122880 B (≈30k tokens at an assumed four bytes per token; set by judgement, unmeasured)
-· hard refuse 307200 B without --allow-large (2.5× the warn, stated headroom); --allow-large '<why>' lifts the hard cap AND
-  the per-file truncation (2026-09-07: a single-file document is packed whole, the reason recorded in the header).
+· no pack cut or refused for size (the owner's decision 6 of 24 October 2026)
+· a second warning above ingest's helper ceiling, computed from ../ingest/partition.py
+· --allow-large '<why>' accepted and recorded in the header, changing nothing.
 Skips, each noted in the header: binaries (NUL sniff) · git-LFS pointers · control-byte-bearing files (packed, noted).
 Fence rule: per-file fence length = longest interior backtick run + 1, minimum 3 (capture_write exact-closer semantics).
 """
@@ -33,9 +36,9 @@ import argparse, datetime, os, re, subprocess, sys, tempfile
 STORE = os.path.expanduser("~/.llm-wiki/repos")
 FOOTER = "<!-- repo-pack:end -->"
 MAX_FILES = 40
-TRUNCATE_AT = 65536          # bytes/file — set by judgement, unmeasured (design §Caps)
+
 SOFT_WARN = 122880           # 120 KiB ≈ 30k tokens
-HARD_CAP = 307200            # 300 KiB = 2.5× soft-warn
+
 LFS_HEAD = b"version https://git-lfs"
 CONTROL = re.compile(rb"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 USERINFO = re.compile(r"^([a-z][a-z0-9+.-]*://)([^/@]+)@")   # scheme://userinfo@… (a password part holds a colon)
@@ -102,8 +105,19 @@ def cmd_clone(a):
     dest = os.path.join(STORE, slug)
     if os.path.isdir(dest):
         have = run(["git", "rev-parse", "HEAD"], cwd=dest)
-        if a.sha and have != a.sha and not a.force_refresh:
-            die(f"{slug} exists at {have[:12]}, requested {a.sha[:12]} — pass --force-refresh to replace")
+        if a.sha and have != a.sha:
+            if not a.force_refresh:
+                die(f"{slug} exists at {have[:12]}, requested {a.sha[:12]} — pass --force-refresh to replace")
+            if run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=dest):
+                die(f"{slug} has local changes to tracked files — --force-refresh refused; discard or commit them first")
+            run(["git", "fetch", "--depth", "1", "origin", a.sha], cwd=dest)
+            # An untracked or ignored local file at a path the requested commit tracks makes the checkout refuse,
+            # never overwrite it: by default git replaces ignored files silently.
+            run(["git", "checkout", "--no-overwrite-ignore", a.sha], cwd=dest)
+            have = run(["git", "rev-parse", "HEAD"], cwd=dest)
+            if have != a.sha:
+                die(f"{slug} refresh ended at {have[:12]}, requested {a.sha[:12]}")
+            print(f"refreshed {dest} @ {have}"); return
         print(f"reuse {dest} @ {have}"); return
     cmd = ["git", "clone", "--depth", "1", "--filter=blob:none"]
     if a.sparse: cmd += ["--sparse"]
@@ -121,30 +135,68 @@ def fence_for(text):
     runs = re.findall(r"`{3,}", text)
     return "`" * max([3] + [len(r) + 1 for r in runs])
 
-def build_pack(repo_dir, rel_paths, url, sha, slice_name, tree_depth, rationale, truncate_at=TRUNCATE_AT):
+def commit_file(repo_dir, sha, rel):
+    """(None, blob id) when `rel` is a regular file of commit `sha`'s tree, else (why, None): no entry at all (an
+    untracked or ignored file, or a path through a symbolic-link directory), a symbolic link, a submodule or a
+    directory. The path is matched literally (no pathspec magic or glob) and must be the entry's own name."""
+    r = subprocess.run(["git", "--literal-pathspecs", "ls-tree", "-z", sha, "--", rel], cwd=repo_dir, capture_output=True)
+    if r.returncode != 0:
+        die(f"git ls-tree failed in {repo_dir}: {r.stderr.decode(errors='replace').strip()[:300]}")
+    for entry in r.stdout.split(b"\0"):
+        meta, _, path = entry.partition(b"\t")
+        if path == os.fsencode(rel):
+            mode, _kind, oid = meta.decode().split(" ")
+            if mode in ("100644", "100755"):
+                return None, oid
+            return {"120000": "a symbolic link", "160000": "a submodule", "040000": "a directory"}.get(mode, f"mode {mode}"), None
+    return f"not a file of commit {sha[:12]}", None
+
+def commit_blob(repo_dir, oid):
+    """A blob's bytes from the object store: the commit's content, whatever the working tree holds."""
+    r = subprocess.run(["git", "cat-file", "blob", oid], cwd=repo_dir, capture_output=True)
+    if r.returncode != 0:
+        die(f"git cat-file failed in {repo_dir}: {r.stderr.decode(errors='replace').strip()[:300]}")
+    return r.stdout
+
+def build_pack(repo_dir, rel_paths, url, sha, slice_name, tree_depth, rationale):
     url = clean_remote_url(url)
     owner_repo = re.sub(r"^.*[:/]([^/:]+/[^/]+?)(?:\.git)?$", r"\1", url.rstrip("/"))
     lines, skipped, noted, sections = [], [], [], 0
     date = datetime.date.today().isoformat()
-    tree = run(["find", ".", "-maxdepth", str(tree_depth), "-not", "-path", "./.git*", "-print"], cwd=repo_dir)
-    bodies = []
+    # Every selected path names a regular file of the commit's tree, refused before any file is read, and its bytes
+    # come from the commit, never the working tree, so the header's sha describes every byte packed. Refused: an
+    # absolute path, one resolving outside the repository, a symbolic link, a spelling not in normal form (./x
+    # matches no status line), and a path the commit holds no regular file at (an untracked or ignored file, a path
+    # through a symbolic-link directory, a submodule).
+    root = os.path.realpath(repo_dir)
+    blobs = {}
     for rel in rel_paths:
         p = os.path.join(repo_dir, rel)
-        if not os.path.isfile(p):
+        why = ("absolute" if os.path.isabs(rel) else "a symbolic link" if os.path.islink(p)
+               else "outside the repository" if os.path.commonpath([root, os.path.realpath(p)]) != root
+               else "not in normal form" if os.path.normpath(rel) != rel else None)
+        if not why:
+            why, blobs[rel] = commit_file(repo_dir, sha, rel)
+        if why:
+            die(f"selected path refused ({why}): {rel} — a pack holds only files inside the repository at its commit")
+    if tree_depth < 0: die("tree depth must be non-negative")
+    tree_paths = [e.partition("\t")[2] for e in run(["git", "ls-tree", "-r", "-t", "-z", sha], cwd=repo_dir).split("\0") if e]
+    tree = "\n".join(["."] + ["./" + p for p in tree_paths if p.count("/") < tree_depth])
+    bodies = []
+    for rel in rel_paths:
+        if not os.path.isfile(os.path.join(repo_dir, rel)):   # outside a sparse checkout: refused as before
             die(f"selected path missing in clone: {rel}")
-        raw = open(p, "rb").read()
+        raw = commit_blob(repo_dir, blobs[rel])
         if raw.startswith(LFS_HEAD):
             skipped.append(f"{rel} (git-LFS pointer)"); continue
         if b"\x00" in raw[:8192]:
             skipped.append(f"{rel} (binary)"); continue
         if CONTROL.search(raw):
             noted.append(f"{rel} (control bytes present — sanitiser strip applies)")
-        trunc = ""
-        if truncate_at and len(raw) > truncate_at:
-            raw = raw[:truncate_at]; trunc = f"\n[TRUNCATED at {truncate_at} bytes]"
+
         text = raw.decode("utf-8", errors="replace")
         f = fence_for(text)
-        bodies.append(f"## {rel}\n\n{f}\n{text}{trunc}\n{f}\n")
+        bodies.append(f"## {rel}\n\n{f}\n{text}\n{f}\n")
         sections += 1
     if sections == 0:
         die("empty selection after skips — a pack of nothing is refused (§11)")
@@ -170,6 +222,30 @@ def self_check(text):
         return f"header file-count {m.group(1) if m else '?'} != emitted sections {n}"
     return None
 
+def ingest_ceiling():
+    """Read ingest's default ceiling and its derivation without writing a bytecode cache."""
+    import importlib.util
+    import math
+    from fractions import Fraction
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ingest", "partition.py")
+    keep, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec = importlib.util.spec_from_file_location("repo_pack_partition", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        share = Fraction(mod.DEFAULT_CEILING_SHARE)
+        window, per_token = mod.DEFAULT_WINDOW_TOKENS, mod.BYTES_PER_TOKEN
+        if not 0 < share <= 1 or type(window) is not int or window < 1 or type(per_token) is not int or per_token < 1:
+            raise ValueError("invalid ingest ceiling constants")
+        ceiling = math.floor(share * window * per_token)
+        return ceiling, (f"share {mod.DEFAULT_CEILING_SHARE} × window {window} tokens × "
+                         f"{per_token} bytes per token, rounded down")
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+    finally:
+        sys.dont_write_bytecode = keep
+
+
 def cmd_pack(a):
     repo_dir = resolve_repo(a.repo)
     if not os.path.isdir(repo_dir): die(f"no clone at {repo_dir} — run clone first")
@@ -187,15 +263,21 @@ def cmd_pack(a):
     if dirty:
         die("dirty tree — the header sha would misdescribe the bytes packed; commit first. Offending: " + "; ".join(dirty[:20]))
     rationale = a.rationale or f"{len(rels)} paths named after in-clone study"
-    # --allow-large lifts per-file truncation as well as the total size bound.
+    # --allow-large is recorded in the header and changes nothing: no pack is cut or refused for size.
     body, n = build_pack(repo_dir, rels, url, sha, a.slice, a.tree_depth,
-                         rationale + (f" · allow-large: {a.allow_large}" if a.allow_large else ""),
-                         truncate_at=None if a.allow_large else TRUNCATE_AT)
+                         rationale + (f" · allow-large: {a.allow_large}" if a.allow_large else ""))
     size = len(body.encode())
-    if size > HARD_CAP and not a.allow_large:
-        die(f"pack {size} B exceeds hard cap {HARD_CAP} — split the slice or pass --allow-large '<why>'")
+
     if size > SOFT_WARN:
         print(f"repo_pack: WARN pack {size} B exceeds soft-warn {SOFT_WARN} (lane-budget derivation in the design)", file=sys.stderr)
+    ceiling, derivation = ingest_ceiling()
+    if ceiling is None:
+        print(f"repo_pack: WARN ingest's helper ceiling could not be read ({derivation}); "
+              f"check this {size} B pack against partition.py before /ingest", file=sys.stderr)
+    elif size > ceiling:
+        print(f"repo_pack: WARN pack {size} B exceeds ingest's helper ceiling of {ceiling} B "
+              f"({derivation}): /ingest cannot compile it whole and will list it as split: "
+              f"until it is split; narrow the slice or say so at the consent gate", file=sys.stderr)
     err = self_check(body)
     if err: die(f"self-check failed: {err}")
     fd, tmp = tempfile.mkstemp(suffix=".md", prefix="repo-pack-")
@@ -230,7 +312,8 @@ def main():
     p.add_argument("--tree-depth", type=int, default=3); p.add_argument("--ledger-id", required=True)
     p.add_argument("--slice"); p.add_argument("--title"); p.add_argument("--rationale")
     p.add_argument("--max-files", type=int, default=MAX_FILES)
-    p.add_argument("--allow-large"); p.add_argument("--allow-degraded")
+    p.add_argument("--allow-large", help="accepted for older commands and recorded in the header; packs are never cut or refused for size")
+    p.add_argument("--allow-degraded")
     p.add_argument("--capture-write"); p.add_argument("--no-write", action="store_true")
     x = sub.add_parser("clean"); x.add_argument("--repo", required=True)
     a = ap.parse_args()

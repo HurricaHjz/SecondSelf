@@ -1,0 +1,45 @@
+{
+  "commit": {
+    "at": "2026-01-01T00:00:00Z",
+    "id": "00000000-0000-0000-0000-000000000000",
+    "operation": "seed",
+    "proposal_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "evidence": [],
+  "installations": [],
+  "jobs": [],
+  "maintenance": [],
+  "page": {
+    "layout_version": 2,
+    "metadata": {
+      "aliases": [],
+      "audited": "2026-01-01",
+      "confidence": "low",
+      "created": "2026-01-01",
+      "tags": [
+        "capabilities"
+      ],
+      "title": "Capability register",
+      "type": "development",
+      "updated": "2026-01-01"
+    },
+    "prose_blocks": []
+  },
+  "policy": {
+    "config_exclusions": [],
+    "extension_decision_refs": {},
+    "extensions": {
+      "category_execution_gates": false,
+      "legacy_execution_gate": false
+    },
+    "freshness_rule_version": 2,
+    "how_to_successes_required": 2,
+    "model_targets": [],
+    "owner_identity": null
+  },
+  "register_id": "00000000-0000-0000-0000-000000000000",
+  "resources": [],
+  "revision": 0,
+  "rows": [],
+  "schema_version": 2
+}

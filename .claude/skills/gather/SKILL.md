@@ -44,8 +44,9 @@ every lever; a lever you don't know exists is one you can't reach for.
 - No URL, a topic/question present → **search mode**. The text is the **brief**: goal, any
   include/exclude criteria, recency expectations.
 - Explicit `--seed` / `--search "<brief>"` overrides inference. Neither URL nor topic — or `--seed`
-  with no URL — → **ask**. Out-of-range flag values are clamped to their bounds, the clamp reported
-  at the gate. NL intent maps to flags (*"two hops, only papers"* → `--expand 2 --include
+  with no URL — → **ask**. An explicit `--shortlist` or `--queries` stands as given (below 1 it is
+  raised to 1), marked explicit at the gate; other out-of-range values are clamped to their bounds,
+  the clamp reported at the gate. NL intent maps to flags (*"two hops, only papers"* → `--expand 2 --include
   arxiv,doi,/paper`; *"only the parts about X"* → `--focus "X"`; *"show me 10"* → `--shortlist
   10`); unstated → the defaults in Flags.
 - **Thin-brief clarify (search mode)**: a brief too thin to plan from — fewer than two derivable
@@ -61,9 +62,9 @@ seed 1 · search 0; no fixed clamp — the page caps bound it; `--max-depth` acc
 alias; link **hops**, unrelated to ingest's compile depth) · `--focus "<topic>"` — semantic
 relevance filter (implied by the brief in search mode) · `--rounds N` — search-mode iterative
 deepening (default 1, max 3) · `--max-pages N` (default 10; hard ceiling 100) · `--shortlist N` —
-full-detail rows at the Discover gate (search mode; default min(12, remaining budget); clamp ≤20) ·
+full-detail rows at the Discover gate (search mode; default min(12, remaining budget); an explicit N stands) ·
 `--queries N` — search queries per round (search mode; default 2 per brief facet within 3–12;
-clamp ≤12) · `--same-domain` · `--include a,b` / `--exclude c,d` (seed mode: URL substring
+an explicit N stands) · `--same-domain` · `--include a,b` / `--exclude c,d` (seed mode: URL substring
 patterns for the classifier · search mode: domain names for the search engine, non-domain patterns
 applied as substring post-filters) · `--yes` (skip the Step-4 previews and the seed `--expand 0`
 batch preview — the Discover gate always waits) · `--ingest` (compile after capturing) ·
@@ -76,16 +77,22 @@ otherwise auto-on when `--rounds > 1` or budget ≥ 30).
 prose):
 - `funnel_knobs.py --max-pages N --facets F [--shortlist N] [--queries N] [--pages-captured N |
   --ledger-id ID] [--advice N] [--date-window] [--json]` — derives and prints every funnel number
-  for a round: queries band, menu, pool, date-check policy, clamps, budget warnings.
+  for a round: queries band, menu, pool, date-check policy, clamps, explicit values, budget warnings.
 - `gather_links.py <seed.md> --seed-url "<url>" --max-pages N [--same-domain] [--include a,b]
   [--exclude c,d] --json` — the link classifier: returns `expand` / `maybe` / `skip` with the page
   caps pre-applied. Heuristics live in the script (docs/papers/repos/READMEs expand; nav/ads/
   login/social skip; a skip-path hit on the seed's OWN documentation-shaped host demotes to
   `maybe`, so a docs login *guide* reaches the owner while a commercial login *wall* stays out).
 - `capture_write.py` — three verbs. `write --url U --engine E --ledger-id ID [--title T]
-  < fetched.md`: the SOLE write path (budget + ceiling enforced against the ledger, refuses
-  existing paths, sanitises, stamps provenance frontmatter, appends to the ledger, runs the
-  capture quality gate; `--allow-degraded '<why>'` for a declared acceptance). `check`: the
+  [--probe-result P] < fetched.md`: the SOLE write path (budget + ceiling enforced against the
+  ledger, refuses existing paths, sanitises, stamps provenance frontmatter, appends to the ledger,
+  runs the capture quality gate; `--allow-degraded '<why>'` for a declared acceptance). Every write
+  also records the capture check's stamp, `capture_check:` in frontmatter and ledger: with
+  `--probe-result` (capture_probe.py's `result.json` for the page) the body is compared with the page
+  the probe fetched, whichever engine produced it; without one the stamp reads `not run — no probe
+  result given`. The check warns and never blocks: nothing it finds, and no missing, unreadable,
+  malformed or failed result, refuses a write, and a check that did not run is stamped `not run`,
+  never as no loss. `check`: the
   quality gate alone on stdin — pre-write probe, no write, no
   ledger. `dedup --urls u1,u2 [--titles 'T1' 'T2'] --control <known-present URL>`: vault de-dup over
   `source_url`/`converted_from` across `raw/` + `wiki/`, plus the arXiv ids and DOIs in those URLs and
@@ -93,11 +100,45 @@ prose):
   skill's `dedup_probe.py` (a paper compiled from a local PDF has no `source_url`)
   (candidates comma- or whitespace-separated, titles one argument each; the control URL must hit or
   the scan aborts — proof the probe ran, CLAUDE.md §11; `--allow-no-control` only for a provably
-  fresh vault, declared).
+  fresh vault, declared). Beside those definitive keys runs one advisory key: the same host
+  (`www.` dropped) and the same final path segment (case-folded; a trailing slash, `.html` and
+  `.htm` dropped; query and fragment ignored) as a raw capture's `source_url`, `converted_from` or
+  `resolved_url` prints a second line, `<url> ~> likely duplicate of <raw path> (same host and final
+  slug …)`, while the `->` line stays the verdict. It catches a publisher page at a moved address,
+  and it also joins versioned docs, generic index pages and query-selected items, so it is never
+  definitive and never excludes a row. A title naming a review site that meets a page by a stripped
+  key alone prints an advisory line in place of a match (step 1.3).
 - `capture_write.py`, the browser-rung options: `write … [--resolved-url R]` stamps `resolved_url:`
   beside `source_url:` when the body came from an open copy, and `dedup` greps `resolved_url:` too;
   `check [--engine E] [--url U]` adds the abstract-page rule when E names `chrome-burner`, which
   `write` applies to such an engine as well and `--allow-degraded` never lifts.
+- `capture_probe.py` — the structural routing for a web page, and the capture check. `capture "<url>"
+  --work <a new directory outside the vault>` fetches the page once with curl (its exit status kept beside the
+  HTTP status, content type and effective URL) and routes and converts that same copy: a page whose
+  HTML carries a collapsed or tabbed block (a `details` element; a `hidden`, `aria-hidden="true"`,
+  `display:none` or `visibility:hidden` container; a `collapse` or `accordion…` class; a `tablist`
+  or `tabpanel` role; an mkdocs tabbed set; a target a collapsed toggle or a tab controls) goes
+  through `python3 -m markitdown` with each tab label set as a heading directly before its own panel
+  (`curl+markitdown (structural route)`), any other page through defuddle on the fetched copy
+  (`curl+defuddle`). It then compares the capture with the fetched original, never its own
+  normalised copy: every collapsed text in its block's own order, every value counted (a cell
+  holding only a check mark or a cross, and the sign of `< 101`), every tab label directly before its
+  own panel, no relative link left (relative ones are resolved against the effective URL and any
+  `<base>` first). The comparison warns and never blocks. Its stamp reads `suspected loss —
+  <findings>`; `no loss found by the unit check (<counts>); not compared: …` (it reads only collapsed
+  blocks and tab panels and sets aside literal punctuation Markdown also uses and empty-cell positions
+  in tables, so it never says the capture is complete); or `not run — <why>` (no result, an unreadable,
+  malformed or failed one, a page the probe never fetched, tabs it cannot pair, a check that failed to
+  run). It writes `capture.md` and `result.json` in that directory and nothing else. Exit 0: a capture
+  was made, its stamp printed whatever the check found; exit 2 is `PROBE FAILED`, no capture made (an
+  HTTP error however long its body, a failed curl under any status, a non-HTML response, ambiguous tab
+  pairing, a failed converter or built-in control). `capture_probe.py stamp <result.json> --body <file>
+  --url <url> --engine <engine>` prints the provenance lines and the stamp for ingest Step 0's save
+  (stdout only, exit 0 whatever the check found; `converted_by:` is the engine named, never the probe's;
+  `--allow-degraded` adds a declaration); `route`, `normalise` and `check` run the steps one at a time.
+  In a lane, whose fence cannot see inside a script, it honours the lane's grants itself: it fetches
+  only a host the network grant names, follows no redirect (the target is reported instead) and
+  writes only within the lane's write grants or `/tmp`.
 - `oa_resolve.py <doi|arXiv id|url|title> [--json] [--hand-fetch]` — the open-access resolver
   (stdout only): Unpaywall, OpenAlex, the arXiv API and Europe PMC in order; prints
   `RESOLVED <url> via <source>`, `UNRESOLVED` or `PROBE FAILED` (exit 0/1/2); `--hand-fetch`
@@ -113,17 +154,34 @@ prose):
   never a pipe; caps + fence escalation in the script; contract: the repo-pack design; since
   2026-09-07 also the project store's snapshot path:
   `--repo` takes an absolute working-copy path, a dirty tree or a credential-bearing remote is refused,
-  `--allow-large` lifts the per-file cut). The resolved file list with byte totals is the
+  `--allow-large` is accepted and changes nothing, since no pack is cut or refused for size;
+  before the consent gate, run `--no-write`: it writes a temporary pack, prints its path and bytes,
+  and checks for warnings over 120 KiB or ingest's helper ceiling (ingest cannot compile a pack
+  above that ceiling whole until it is split). Remove the temporary pack after use; `--no-write`
+  does not call capture_write or write to raw/. The resolved file list with byte totals is the
   consent gate for a pack, and its cost line uses actual pack bytes/4, not the per-page default.
 
-**Capture chain** (type-routed, then fallback — same as ingest Step 0, carve-out included): `defuddle`
-for web pages · **arXiv HTML / LaTeXML pages** (`arxiv.org/html/…`, ar5iv) never through defuddle —
+**Capture chain** (type-routed, then fallback — same as ingest Step 0, carve-out included): **web
+pages** through the structural routing, never a bare `defuddle` of the URL:
+`python3 .claude/skills/gather/capture_probe.py capture "<url>" --work <a new directory outside the
+vault>` fetches once, sends a page carrying a collapsed or tabbed block through markitdown
+(`curl+markitdown (structural route)`) and any other through defuddle on the same fetched copy
+(`curl+defuddle`), and compares the capture with the fetched page (see Scripts); its
+`capture.md` is the body, written with `--probe-result <work>/result.json` and the engine the result
+names · **TED talk pages** (`ted.com/talks/…`) as ingest Step 0's TED route: the structural route
+keeps only the page's description, so capture the talk's YouTube upload by the YouTube route and
+check it with `python3 .claude/skills/ingest/ted_cue_check.py <the probe's page.html> <capture>` ·
+**arXiv HTML / LaTeXML pages** (`arxiv.org/html/…`, ar5iv) never through defuddle —
 `curl -sL` the page to a temp file, then convert with `python3 -m markitdown`, exactly as ingest Step 0
 routes them, because defuddle's Markdown converter crashes on LaTeXML and silently emits raw HTML ·
 `curl` for raw/`.md` URLs · `markitdown` for binaries (PDF, Office, …) · repo study →
 `repo_pack.py` (see Scripts) · **Jina Reader** as the
 fallback when the routed engine fails (third-party routing — consented via the preflight, see the
-envelope).
+envelope); for a page the probe made no capture of, the Jina body is written with that page's
+`--probe-result` too, so it is compared with the page wherever the probe fetched one (Writes). **The routing stays** until
+saved real pages, captured by both routes in an attended session, show defuddle keeping every
+collapsed text and every tab label with its table; that evidence, not a defuddle release note, retires
+it.
 
 
 **Discovery engines & probes** (discovery informs the gate; only capture writes):
@@ -156,7 +214,9 @@ delegation the same flow binds every agent, with three admission conditions — 
 against the vault, essentiality for the live or a named future task, strong-agent judgement
 (delegate skill §5, owner ruling 2026-08-29). The engine
 preflight verifies the capture chain and declares any substitution UP FRONT ("defuddle absent →
-Jina fallback") — third-party routing is consented before capture, never reported after.
+Jina fallback") — third-party routing is consented before capture, never reported after. A web page
+needs curl, defuddle and `python3 -m markitdown`: with one absent, the probe makes no capture of a page
+it would convert (`PROBE FAILED`), so the preflight says so before the gate.
 **Approval semantics (pinned).** A bare "approve" captures the MENU ONLY (the gate's prompt line
 says so; if an explicit `--shortlist` made the menu exceed the remaining budget, it captures the
 menu's top rows up to the budget, clamp reported). More takes a rule ("top N by relevance" — N
@@ -191,7 +251,14 @@ fence (fenced payloads sit outside the HTML heuristic; the sanitiser leaves them
 refuses a dominant fence that is a JSON error/empty payload or a served HTML page (a login wall),
 and bare unfenced whole-body JSON. Treat any refusal as that engine failing and retry with the
 next engine in the chain. A body you deliberately accept needs `--allow-degraded '<why>'` —
-stamped into frontmatter + ledger and declared in the run report.
+stamped into frontmatter + ledger and declared in the run report. A body the gate passes but you
+know is damaged (lost spacing, flattened tables) takes the same flag, stamped `declared — <why>`.
+**The capture check warns and never blocks**: a web page is written with the `--probe-result` of its
+`capture_probe.py capture` run, a `PROBE FAILED` page's fallback body included, and every write records
+the stamp `capture_check:` (`suspected loss — <findings>`, `no loss found by the unit check (<counts>);
+not compared: <what it does not compare>`, or `not run — <why>`). The stamp never says the capture is
+complete. The run report lists every capture stamped `suspected loss`, with its findings, and every web
+page stamped `not run`, with its reason.
 **Reporting duties (gate content = informed consent — exact duties, never paraphrased away).**
 Every run echoes its parsed **run-spec** at the first gate (mode · seeds/brief · focus · expand ·
 rounds · caps; search mode adds the brief's facet list, the declared provenance ranking frame,
@@ -307,10 +374,17 @@ ledger**: `python3 .claude/skills/gather/run_ledger.py init --id <run-id> --budg
     echo — into the pool.
 1.2 Triage on result metadata (multiplicity, provenance, relevance, dates — the hard-window
     policy and the backend-pain warn live in the rationale); state the advice count.
-    **Routing (parity gate G5, 2026-09-02):** *(applies under the `multi` regime, owner-set or head-resolved for the run under delegation `auto`; in `single` the head runs the step itself unless an instrument-rule reason holds — thin-lanes phase 4, 2026-09-04; delegation `auto` 2026-09-04)* the metadata triage runs in a read-only `verifier`-shaped lane on opus, blind to any expected shortlist, handed the pool WITH each hit's title, snippet, date and URL (a bare-URL pool loses exactly the signal-less rows, the gate's one caveat), the brief's facets, the declared provenance frame and the budget; it returns keep (ranked, one-line ground each), drop (ground each), anomalies (pool contamination, unverifiable rows, disclosed model priors) and its controls. The head reviews the lists, runs 1.3 and presents the Discover gate itself (1.4): the owner-facing step never routes.
+    **Routing (parity gate G5, 2026-09-02):** *(applies under the `multi` regime, owner-set or head-resolved for the run under delegation `auto`; in `single` the head runs the step itself unless an instrument-rule reason holds — thin-lanes phase 4, 2026-09-04; delegation `auto` 2026-09-04)* the metadata triage runs in a read-only `verifier`-shaped lane, at the class's per-call pick (delegate skill §2), blind to any expected shortlist, handed the pool WITH each hit's title, snippet, date and URL (a bare-URL pool loses exactly the signal-less rows, the gate's one caveat), the brief's facets, the declared provenance frame and the budget; it returns keep (ranked, one-line ground each), drop (ground each), anomalies (pool contamination, unverifiable rows, disclosed model priors) and its controls. The head reviews the lists, runs 1.3 and presents the Discover gate itself (1.4): the owner-facing step never routes.
 1.3 Vault de-dup pre-check: `capture_write.py dedup --urls … --titles '<title>' … --control <known-present URL>`
     (pass each hit's title, so a paper the vault compiled from a PDF still matches); matches shown as
-    "already in vault" with the key that matched, never proposed.
+    "already in vault" with the key that matched, never proposed. A `~> likely duplicate of <raw
+    path> (same host and final slug …)` line is not a match: the row stays on the menu, marked
+    "likely duplicate of <raw path>", for the owner to keep or drop; it is never excluded and never
+    counted as already in the vault. A `title "…" ~> paper or its review: <path> …` line is not a
+    match either: a title naming a review site (`… | OpenReview`) met the page by a stripped key
+    alone, and the site's name cannot say which it is. The row stays on the menu, marked "paper or
+    its review of <path>", for the owner to keep or drop (a review is never a duplicate, CLAUDE.md
+    section 3).
 1.4 Present the **Discover gate** (contents per the envelope's reporting duties; never skipped,
     even with `--yes`). Approval per the pinned semantics; record it in the ledger (`add-gate`;
     every explicit drop → `add-drop`; the round's literal queries + shown rows → `add-round`,
@@ -319,12 +393,14 @@ ledger**: `python3 .claude/skills/gather/run_ledger.py init --id <run-id> --budg
     approval → approved rows go straight to Step 5. With `--expand ≥ 1`, approved rows enter
     Steps 2–4 as seeds AND are captured at Step 5.
 ### 2 — Fetch the seed(s)
-Capture each seed with the type-routed chain; save the seed Markdown to a temp file OUTSIDE the
-vault (e.g. `/tmp` — not a vault write) for Step 3. Run the **host inventory probe** (per the
+Capture each seed with the type-routed chain (a web page through
+`capture_probe.py capture`, its `capture.md` the seed Markdown); save the seed
+Markdown to a temp file OUTSIDE the vault (e.g. `/tmp` — not a vault write) for Step 3. Run the **host inventory probe** (per the
 rationale). Base pages (seeds, or search-mode approved rows) are themselves captures: written at
 Step 5, counted against the caps. Seed `--expand 0` skips Steps 3–4 — the given URLs are the
 whole capture set (batch-capture shorthand), previewed ONCE with the cost estimate BEFORE
-anything is fetched (unless `--yes`); the inventory probe STILL RUNS under `--expand 0` (a
+anything is fetched (unless `--yes`), the de-dup's verdicts on the rows (a likely duplicate marked
+and still approvable, as at 1.3); the inventory probe STILL RUNS under `--expand 0` (a
 discovery read, not a capture) and its counts join that one batch preview, its sitemap pages
 promotable like any `maybe`.
 ### 3 — Plan (deterministic)
@@ -334,21 +410,27 @@ classifier: each `expand`/`maybe` link annotated for topical fit, demotions prop
 verdicts shown side by side at the preview.
 ### 4 — Preview & confirm (expansion hops — skip only with `--yes`; the `--expand 0` paths carry
 their own approval)
-Show the plan + cost estimate, headed by the run-spec. The owner approves / prunes / adjusts
+Show the plan + cost estimate, headed by the run-spec, a row the de-dup marks as a likely duplicate
+carrying that mark and its raw path. The owner approves / prunes / adjusts
 caps / reclassifies the `maybe`s and any focus demotions; promotions count against `--max-pages`
 — the run never exceeds it. Under `--yes`: the conservative disposition — `maybe`s skipped,
 demotions applied.
 ### 5 — Capture (into raw/)
 Fetch each APPROVED link (routed chain → Jina fallback; whole-chain failures and engine rot per
 the envelope and rationale). Write every page through `capture_write.py write` — the sole write
-path. Then score every capture where it is written, the same line as ingest Step 0 3c:
+path; a web page with `--probe-result <work>/result.json` and the engine its result names (a
+fallback's body with the same `--probe-result`), its stamp reported as the Writes envelope says. Then score every capture where it is written, the same line as ingest Step 0 3c:
 `python3 -B .claude/skills/ingest/conversion_score.py "raw/<path>.md"` — a capture carries
 `converted_by:`, so it is a conversion whatever its extension and is scored like one. One verdict
 line per capture with five measures (four text arms and recovery) and a `scope`; a web capture reads `scope: other` (a PDF, or an arXiv-HTML page taken through markitdown, reads `scope: pdf`), so a
 `suspect` here is carried into the run report under `Suspect conversions:` with its scope and
 measures (read the line: identifiers and product names fire it, real damage — lost tables, lost
 inter-word spaces — does too) and raises no `flagged:` line by itself; the page that later compiles
-the capture takes ingest 3c's decision. The verdict is reported, not written back into the capture:
+the capture takes ingest 3c's decision. A capture of a TED talk page (`ted.com/talks/…`) also takes
+`python3 .claude/skills/ingest/ted_cue_check.py <the probe's page.html> <capture>` before it is
+written: exit 3 writes only with `--allow-degraded 'TED check: <n> transcript lines missing'` or
+re-takes the capture by the TED route, and any result but a pass goes into the run report under
+`Suspect conversions:` (exit 2 as `undecidable`, with its reason). The verdict is reported, not written back into the capture:
 `capture_write.py` stays the sole write path. For `--expand > 1`, repeat Steps 3–5 on the newly
 captured pages, re-previewing each hop (unless `--yes`).
 ### 6 — Rounds (search mode, `--rounds > 1`)

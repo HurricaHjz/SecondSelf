@@ -1,0 +1,16 @@
+# The core: what this framework ships as its working pattern, kept equal to the release.
+# One git pathspec a line, comments after a hash sign. A path ending in a slash is a folder.
+# A line added or removed widens or narrows the lock (setup.sh), the session check
+# (core-check.py) and the deny rules the export writes into
+# .claude/settings.json, all together, with no change to any of them.
+# Everything else is the user's layer, or a shipped file that is not core (README, examples/).
+CLAUDE.md
+MANUAL.md
+setup.sh
+.gitignore
+.gitattributes
+.claude/settings.json
+.claude/core-paths
+.claude/hooks/
+.claude/agents/
+.claude/skills/

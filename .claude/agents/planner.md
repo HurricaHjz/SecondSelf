@@ -1,6 +1,6 @@
 ---
 name: planner
-description: Strong-plan decomposition lane — the three-phase pilot's Phase-1 role (№31, hosted by №103). Spawn to decompose a parallel batch (an ingest inbox or similar) into disjoint lane assignments and write the per-lane briefs; its output is a PROPOSAL the head agent adopts only after its own disjointness assert and brief review. Skims sources by default (title, type signals, first lines) — full reads stay with compile lanes. Routing range (admitted 2026-08-27): model opus, effort high–max (fable only on the owner's word: opus 5.5 is the default for every Claude seat; owner rulings 2026-09-22 and 2026-09-29); the active throttle writes the current values (the anchors under `auto`, picked around per call and recorded on lane-open; delegate skill §2); hard decomposition or framework-critical planning is open work and takes the Codex half, gpt-6-astra through codex-lane.py at max; the planner skims by default and returns a full-read need in its report.
+description: Strong-plan decomposition lane — the three-phase pilot's Phase-1 role (№31, hosted by №103). Spawn to decompose a parallel batch (an ingest inbox or similar) into disjoint lane assignments and write the per-lane briefs; its output is a PROPOSAL the head agent adopts only after its own disjointness assert and brief review. Skims sources by default (title, type signals, first lines) — full reads stay with compile lanes. Routing range and anchor: `.claude/skills/delegate/routing.json`, rendered in the delegate skill's §2, whose values the active throttle writes; the planner skims by default and returns a full-read need in its report.
 model: opus
 effort: xhigh
 disallowedTools: Agent, SendMessage, Skill
@@ -26,7 +26,7 @@ Conduct:
 - **Skim, never fully read** (default): title, length, type signals, first lines — decomposition
   needs shape, not content. If you genuinely need a full verbatim read, return the need in your
   report and the head agent decides who reads it (no belief-based routing away from any model,
-  CLAUDE.md §11, owner ruling 2026-09-02).
+  CUSTOMISATION.md "Safety-FP posture", owner ruling 2026-09-02).
 - Writes are confined to your brief's file whitelist (the run's brief files and, where granted, the
   run ledger); everything else is propose-don't-write. No registry writes, ever.
 - §11 controls on any zero-claim you report (an "empty inbox" or "no shared entities" is a claim —

@@ -3,6 +3,15 @@
 
 Usage: raw_slices.py --raw FILE --page FILE --lane ID --ledger JSONL [--ledger JSONL ...]
        raw_slices.py --trace OUTPUT --item /absolute/raw.md:FIRST[-LAST] [--item ...]
+       raw_slices.py --check-claims --raw FILE --page FILE --lane ID --ledger JSONL [--event JSON]
+The claims-locator check runs this slicer's own attribution (attributed(), which lane_claims()
+also calls) and locator resolution (Raw.resolve()) over one lane's claims for one raw and source
+page. With --event it reads the checkpoint a lane is about to append, as though appended to the
+ledger; without it, every checkpoint of the lane for that raw already in the ledger. A claim the
+slicer would not attribute to that page and raw is UNATTRIBUTED, a fact with no `locator` key is
+MISSING (its `loc`-like key named), a locator the slicer cannot resolve is UNRESOLVED. It prints
+one `locators:` summary line naming its lane, raw and page (the resolved absolute paths), and a
+`controls:` line; exit 1 on any finding, 0 on none, 2 on a broken premise. It never writes.
 The head persists stdout. The skeleton is independent of claims. Missing claims,
 ambiguous source attribution, partial claims, conversion flags, hash drift or absent
 structure take the whole-read fallback. Empty claim objects exit 2; partial claims
@@ -215,13 +224,15 @@ def own_page(value, page):
     return any(path_matches(t if t.endswith('.md') else t + '.md', str(page)) for t in targets)
 
 
-def lane_claims(events, lane, raw, page, source=None):
+def attributed(events, lane, raw, page, source=None):
+    """Yield (checkpoint, claim, problems) for each claim of the lane that the slicer attributes
+    to this raw and source page. The slicer (through lane_claims) and the claims-locator check both
+    select claims here, so the two cannot disagree on which claims a page owns."""
     known = [str(e['source']) for e in events if e.get('source')]
     for e in events:
         if e.get('event') == 'run_open':
             known += [str(x['file']) for x in e.get('inbox', []) if isinstance(x, dict) and x.get('file')]
     known.append(str(raw))
-    out = []
     for e in events:
         if e.get('event') != 'checkpoint' or e.get('stage') != 'claims_emitted' or e.get('lane') != lane:
             continue
@@ -244,8 +255,11 @@ def lane_claims(events, lane, raw, page, source=None):
                     continue
             elif not origin and not problems:
                 continue
-            out.append(dict(c, _problems=problems))
-    return out
+            yield e, c, problems
+
+
+def lane_claims(events, lane, raw, page, source=None):
+    return [dict(c, _problems=problems) for _e, c, problems in attributed(events, lane, raw, page, source)]
 
 
 def read_events(paths):
@@ -460,15 +474,147 @@ def trace(path, items):
     return 1 if loss else 0
 
 
+def lane_checkpoints(events, lane):
+    return [e for e in events if e.get('event') == 'checkpoint' and e.get('stage') == 'claims_emitted' and e.get('lane') == lane]
+
+
+def locator_findings(raw, checked, chosen):
+    """(finding lines, counts) for the checked (checkpoint, claim) pairs. `chosen` holds the ids of
+    the claims attributed() selects for this raw and page; every other checked claim is
+    UNATTRIBUTED. Facts are resolved with Raw.resolve(), as the slicer resolves them."""
+    lines, counts = [], dict(claims=len(checked), facts=0, resolved=0, unresolved=0, missing=0, unattributed=0)
+    for n, (e, c) in enumerate(checked, 1):
+        name = c.get('name') if isinstance(c.get('name'), str) and c['name'].strip() else 'unnamed'
+        label = f'claim {n} {name}'
+        src, origin = c.get('source', e.get('source')), c.get('from', e.get('from'))
+        problems = claim_problems(c, src, origin)
+        if id(c) not in chosen:
+            counts['unattributed'] += 1
+            lines.append(f'UNATTRIBUTED {label}: the slicer attributes it to no claim of this raw and page '
+                         f'(from {origin or "absent"}, source {src or "absent"})')
+        for problem in problems:
+            if not problem.startswith('missing locator for fact '):  # reported per fact below
+                counts['missing'] += 1
+                lines.append(f'MISSING {label}: {problem}')
+        for i, fact in enumerate(c.get('facts', []), 1):
+            counts['facts'] += 1
+            locator = fact.get('locator') if isinstance(fact, dict) else None
+            if not isinstance(locator, str) or not locator.strip():
+                counts['missing'] += 1
+                near = sorted(k for k in fact if k != 'locator' and str(k).casefold().startswith('loc')) if isinstance(fact, dict) else []
+                lines.append(f'MISSING {label} fact {i}: no locator key' + (f' (found {", ".join(near)})' if near else ''))
+                continue
+            missing = raw.resolve(locator)[1]
+            if missing:
+                counts['unresolved'] += 1
+                lines.append(f'UNRESOLVED {label} fact {i} {locator}: ' + ', '.join(missing))
+            else:
+                counts['resolved'] += 1
+    return lines, counts
+
+
+def check_controls():
+    """Same-run controls through the functions that judge the claims: a fact keyed `loc` reads
+    missing, a quotation resolves, and a claim naming another page reads unattributed."""
+    raw = Raw('# Title\n\n## Aim\nA known phrase.\n\n## Data\nRow A 12\n\nTable 1: data\n')
+    one, page = '/locator-control/one/paper.md', '/locator-control/pages/paper.md'
+    good = {'name': 'Good', 'source': one, 'from': '[' * 2 + 'paper' + ']' * 2, 'facts': [{'locator': '"A known phrase."'}]}
+    keyed = {'name': 'Keyed', 'source': one, 'from': '[' * 2 + 'paper' + ']' * 2, 'facts': [{'loc': '"A known phrase."'}]}
+    foreign = {'name': 'Foreign', 'source': one, 'from': '[' * 2 + 'other' + ']' * 2, 'facts': [{'locator': '"A known phrase."'}]}
+    event = {'event': 'checkpoint', 'stage': 'claims_emitted', 'lane': 'LC', 'source': one, 'claims': [good, keyed, foreign]}
+    events = [{'event': 'run_open', 'inbox': [{'file': one}]}, event]
+    chosen = {id(c) for _e, c, _p in attributed(events, 'LC', one, page)}
+    lines, counts = locator_findings(raw, [(event, c) for c in event['claims']], chosen)
+    if (chosen != {id(good), id(keyed)} or (counts['resolved'], counts['missing'], counts['unattributed'], counts['unresolved']) != (2, 1, 1, 0)
+            or not any('(found loc)' in line for line in lines)):
+        raise ProbeError('claims-locator controls failed')
+
+
+def check_claims(args):
+    if not all((args.raw, args.page, args.lane)) or not args.ledger:
+        raise ProbeError('--check-claims needs --raw, --page, --lane and --ledger')
+    if not re.fullmatch(r'[^\s·]+', args.lane):
+        raise ProbeError('--lane must be one token without spaces or "·": the summary line names it for the verifier')
+    raw_path, page_path = Path(args.raw).resolve(), Path(args.page).resolve()
+    data = raw_path.read_bytes()
+    if not data.strip():
+        raise ProbeError('empty raw')
+    if not page_path.is_file():
+        raise ProbeError('source page missing: ' + str(page_path))
+    if args.source and not path_matches(args.source, raw_path):
+        raise ProbeError('--source does not name --raw')
+    raw = Raw(data.decode('utf-8'))
+    check_controls()
+    events, malformed = read_events(args.ledger)
+    if malformed:
+        raise ProbeError('malformed ledger line ' + malformed[0] + ': the slicer would take the whole read')
+
+    def names_raw(value):
+        return isinstance(value, str) and bool(value.strip()) and (path_matches(value, raw_path) or bool(args.source and path_matches(value, args.source)))
+
+    for e in lane_checkpoints(events, args.lane):
+        if not isinstance(e.get('claims'), list) or any(not isinstance(c, dict) for c in e['claims']):
+            raise ProbeError('claims must be a list of objects')
+    if args.event is not None:
+        try:
+            event = json.loads(args.event)
+        except ValueError as error:
+            raise ProbeError('--event is not JSON: ' + str(error))
+        if not isinstance(event, dict) or event.get('event') != 'checkpoint' or event.get('stage') != 'claims_emitted':
+            raise ProbeError('--event is not a claims_emitted checkpoint')
+        if event.get('lane') != args.lane:
+            raise ProbeError(f'--event names lane {event.get("lane")}, not --lane {args.lane}')
+        if not isinstance(event.get('claims'), list) or any(not isinstance(c, dict) for c in event['claims']):
+            raise ProbeError('claims must be a list of objects')
+        if event.get('source') is not None and not names_raw(event['source']):
+            raise ProbeError('the checkpoint source does not name --raw')
+        events = events + [event]
+        own = [event]
+        checked = [(event, c) for c in event['claims']]
+        mode = 'event (the checkpoint to append, read as though appended)'
+    else:
+        own = [e for e in lane_checkpoints(events, args.lane) if names_raw(e.get('source'))]
+        checked = [(e, c) for e in own for c in e['claims']]
+        mode = 'ledger (every checkpoint of the lane for this raw)'
+    selected = list(attributed(events, args.lane, raw_path, page_path, args.source))
+    chosen = {id(c) for _e, c, _p in selected}
+    if args.event is None:
+        seen = {id(c) for _e, c in checked}
+        checked += [(e, c) for e, c, _p in selected if id(c) not in seen]
+    checkpoints = {id(e) for e in own} | {id(e) for e, _c in checked}
+    if not checkpoints:
+        raise ProbeError('no claims_emitted checkpoint for this lane and raw')
+    lines, counts = locator_findings(raw, checked, chosen)
+    print(f'claims-locator · lane {args.lane} · raw {raw_path} · page {page_path} · mode {mode}')
+    for line in lines:
+        print(line)
+    # The summary names its lane, raw and page: the verifier matches each raw of a lane on exactly
+    # these three, so one raw's clean line can never stand in for another raw's.
+    print(f'locators: lane {args.lane} · raw {raw_path} · page {page_path} · '
+          f'checkpoints {len(checkpoints)} · claims {counts["claims"]} · facts {counts["facts"]} · '
+          f'resolved {counts["resolved"]} · unresolved {counts["unresolved"]} · missing {counts["missing"]} · '
+          f'unattributed {counts["unattributed"]}')
+    print('controls: slicer controls passed · a fact keyed loc read missing · a quotation resolved · '
+          'a claim naming another page read unattributed')
+    return 1 if counts['unresolved'] or counts['missing'] or counts['unattributed'] else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
-    for name in ('raw', 'page', 'lane', 'source', 'trace'):
+    for name in ('raw', 'page', 'lane', 'source', 'trace', 'event'):
         ap.add_argument('--' + name)
     ap.add_argument('--ledger', action='append', default=[])
     ap.add_argument('--item', action='append', default=[])
+    ap.add_argument('--check-claims', action='store_true')
     args = ap.parse_args(argv)
     try:
         planted()
+        if args.check_claims:
+            if args.trace:
+                raise ProbeError('--check-claims and --trace are separate modes')
+            return check_claims(args)
+        if args.event is not None:
+            raise ProbeError('--event belongs to --check-claims')
         return trace(args.trace, args.item) if args.trace else slices(args)
     except (OSError, ValueError, TypeError, KeyError) as e:
         print('PROBE FAILED: ' + str(e))

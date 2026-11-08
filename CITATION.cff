@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use SecondSelf in your work, please cite it as below."
+type: software
+title: "SecondSelf"
+authors:
+  - family-names: "Zhang"
+    given-names: "Mingjun"
+    alias: "Jerry"
+version: "0.10.0"
+date-released: "2026-11-08"
+license: MIT
+repository-code: "https://github.com/HurricaHjz/SecondSelf"

@@ -24,7 +24,10 @@ A brief fails on any of:
   (d) fence   for a headless lane, any answer but the pinned allow from lane-fence.py's check() for
               the lane's own append command at that path, under the grants and writes its
               `lane.py spawn --dry-run` output prints (no lane is spawned). Checked, like (c), only
-              once (a) and (b) pass; a lane named by --in-session runs under no lane fence.
+              once (a) and (b) pass; a lane named by --in-session runs under no lane fence. A verify
+              brief (`You are verifier ...`) is exempt and its fence is not asked: the head appends
+              the verifier's lane_open and lane_close, since the verifier definition forbids the
+              lane's own append; its brief line says `(d) exempt`.
   (e) index   one of the index's `## ` sections named anywhere in the brief (on the index's own line
               or any other), or every entry line of one section carried (part 3's slice file
               replaces the section read).
@@ -68,6 +71,9 @@ FENCE_DEFAULT = os.path.join(os.path.dirname(HERE), "delegate", "lane-fence.py")
 # ("deny", ...); the head role answers a cleared command with ("silent", ""). The same-run control
 # re-observes both lane-role answers before any brief is judged, so a changed check() stops the run.
 PINNED_ALLOW = "allow"
+# A verify brief's definition: its lane never appends to the ledger (the head writes the verifier's
+# lane_open and lane_close), so (d) does not apply to it.
+VERIFY_DEFINITION = "verifier"
 CONTROL_ROOT = "/brief-preflight-control-root"      # never created: check() compares paths, not files
 CONTROL_OTHER = "/brief-preflight-control-other"
 ABSENT_PARENT = "/brief-preflight-control-absent"   # the (a) control's premise: it must not exist
@@ -511,7 +517,7 @@ def main(argv=None):
         fail("a same-run control did not behave: " + "; ".join(bad))
 
     counts = dict.fromkeys("abcde", 0)
-    failed = only_c = queried = headless_n = 0
+    failed = only_c = queried = headless_n = exempt_n = 0
     append_at = None
     cache = {ledger_path: events}
     for path, text, definition, lane, tokens in briefs:
@@ -528,13 +534,15 @@ def main(argv=None):
             fails.setdefault("b", []).append("ledger path %s differs from the run's ledger %s"
                                              % (", ".join(sorted({t for _n, t, _k in ledger_toks})), ledger_path))
         headless = lane in roots
+        exempt = headless and definition == VERIFY_DEFINITION
         headless_n += headless
+        exempt_n += exempt
         if ledger_toks:
             _n, token, kind = ledger_toks[0]
             if "a" in fails or "b" in fails:
                 fails.setdefault("c", []).append("not proven: (a) or (b) failed first, so nothing is read "
                                                  "or appended at %s" % token)
-                if headless:
+                if headless and not exempt:
                     fails.setdefault("d", []).append("not proven: (a) or (b) failed first")
             else:
                 key = os.path.realpath(expand(token, kind, vault))
@@ -544,7 +552,7 @@ def main(argv=None):
                 if not found:
                     fails.setdefault("c", []).append("%s at %s" % (why, token))
                     append_at = token
-                if headless:
+                if headless and not exempt:
                     queried += 1
                     answer, why = fence_answer(check, lane, token, *roots[lane])
                     if answer is None:
@@ -554,9 +562,11 @@ def main(argv=None):
                                                          % (answer[0], token, answer[1]))
         for hit in index_hits(text, sections):
             fails.setdefault("e", []).append(hit)
-        print("brief %s · lane %s · %s · %s · path tokens %d · ledger %s"
+        print("brief %s · lane %s · %s · %s · path tokens %d · ledger %s%s"
               % (os.path.basename(path), lane, definition, "headless" if headless else "in-session",
-                 len(tokens), ledger_toks[0][1] if ledger_toks else "none"))
+                 len(tokens), ledger_toks[0][1] if ledger_toks else "none",
+                 " · (d) exempt: a verify brief, the head appends the verifier's ledger events"
+                 if exempt else ""))
         for check_id in "abcde":
             for line in fails.get(check_id, []):
                 print("FAIL (%s) %s %s" % (check_id, lane, line))
@@ -569,9 +579,9 @@ def main(argv=None):
         print("NEXT: (a), (b), (d) and (e) pass for every brief; append the preflight event at %s, the "
               "path copied from the brief text, then run this check again" % append_at)
     print("summary: briefs %d · failed %d · (a) %d · (b) %d · (c) %d · (d) %d · (e) %d · fence queried %d"
-          " · headless %d · in-session %d · ledger %s"
+          " · headless %d · in-session %d · (d) exempt %d · ledger %s"
           % (len(briefs), failed, counts["a"], counts["b"], counts["c"], counts["d"], counts["e"], queried,
-             headless_n, len(briefs) - headless_n, ledger_path))
+             headless_n, len(briefs) - headless_n, exempt_n, ledger_path))
     print("controls: (a) absent parent caught, the run ledger's path passed, unfilled slot caught, quoted spaced and ampersand paths tested whole, quoted -draft paths tested whole, command spans split, prose apostrophes ignored, bare backtick paths kept whole · (b) "
           "differing ledger paths told apart · (c) run_open/preflight order folded both ways · (e) named "
           "(on the index's line and the next) and whole sections caught, clean line passed · (d) %s"

@@ -62,8 +62,12 @@ repository:
 
 ### `link <url> [--name n] [--kind overleaf|code] [--overleaf <project-id>]` · `link --path <dir> [--name n] [--kind …]`
 1. **Resolve.** Name = `--name`, else the repository's basename (an Overleaf project id alone is not a
-   name: ask). Refuse a name already on the registry; refuse a `--path` under the vault root; refuse a
-   URL whose user part carries a password (`user:secret@host`).
+   name: ask). Refuse a name already on the registry, with one exception, the recovery the failure
+   table names: a store row whose recorded path is missing on disk may be re-linked once the owner
+   confirms the clone was lost rather than moved; the clone is then re-created from the row (its URL,
+   name and kind) and the row updated in place, never a second row (an in-place row is reported
+   absent instead). Refuse a `--path` under the vault root; refuse a URL whose user part carries a
+   password (`user:secret@host`).
 2. **Channel check (URL only).** `git ls-remote <clean url>` with the helper environment; record the
    branch list; take the default branch that `ls-remote` reports. A failure here is reported, never
    worked around (a missing Overleaf git integration means the `github-bridge` channel instead).
@@ -94,12 +98,12 @@ it: `git -C <path> ls-remote origin <branch>` equals `git -C <path> rev-parse HE
 output directory) and report the result; with no engine, say the build is unchecked.
 
 ### `brief <name>`
-`open` (a pull first), then `snapshot <name> --brief`: the file tree (depth 3), the main document's
-head (the `.tex` that holds `\documentclass`, its first 200 lines), and a README, abstract or outline
-skeleton where one exists — at most 8 files and 32 KiB (caps set by judgement, unmeasured). A single-file
-document (one `main.tex` larger than the per-file cap) has no useful head: its brief is the document itself,
-packed whole under `--allow-large '<why>'` with its bibliography, within the 300 KiB safety bound
-(set by judgement, unmeasured for a new workload).
+`open` (a pull first), then `snapshot <name> --brief`: select the file tree, main document and any
+README, abstract or outline needed for the brief, the minimum that does the job with no fixed size
+limit. A single-file
+document (one `main.tex` larger than 64 KiB) has no useful head: its brief is the document itself,
+packed whole with its bibliography (`repo_pack.py` never cuts or refuses a pack for size; it warns
+above 120 KiB, and above ingest's helper ceiling, which ingest cannot compile whole until it is split).
 
 ### `snapshot <name> [paths…] [--brief]`
 The only way repository content reaches the wiki.
@@ -170,7 +174,7 @@ file's `OVERLEAF_GIT_TOKEN` line.
 | A branch requested on an `overleaf` row | refused with the reason |
 | Two rows with one name | `link` refuses without `--name` |
 | `--path` inside the vault | refused |
-| A clone missing on a fresh machine | `link` re-creates a store clone from its row; an in-place copy is reported absent |
+| A clone missing on a fresh machine | `link` re-creates a store clone from its row once the owner confirms it was lost (step 1's exception); an in-place copy is reported absent |
 | No TeX engine | the compile check is skipped and the reply says the build is unchecked |
 | The registry drifts from disk | `status` names the rows; fixes on the owner's word |
 

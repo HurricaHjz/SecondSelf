@@ -25,12 +25,16 @@ check("1 facet -> band floor 3",  f.derive(10, 1)["queries"] == 3)
 check("floor clamp reported",     f.derive(10, 1)["clamps"] != [])
 check("7 facets -> band cap 12",  f.derive(10, 7)["queries"] == 12)
 check("cap clamp reported",       any("band cap" in c for c in f.derive(10, 7)["clamps"]))
-check("--queries 15 -> 12",       f.derive(10, 3, queries=15)["queries"] == 12)
+k = f.derive(10, 3, queries=15)
+check("A3 explicit queries stand", k["queries"] == 15 and k["pool"] == 30 and
+      k["clamps"] == [] and k["explicit"] == ["--queries 15"])
 check("--queries 2 allowed",      f.derive(10, 3, queries=2)["queries"] == 2)
 check("--queries 0 -> 1",         f.derive(10, 3, queries=0)["queries"] == 1)
 
 print("== shortlist ==")
-check("--shortlist 25 -> 20",     f.derive(40, 4, shortlist=25)["shortlist"] == 20)
+k = f.derive(40, 4, shortlist=25)
+check("A2 explicit shortlist stands", k["shortlist"] == 25 and k["pool"] == 75 and
+      k["clamps"] == [] and k["explicit"] == ["--shortlist 25"])
 check("--shortlist 0 -> 1",       f.derive(40, 4, shortlist=0)["shortlist"] == 1)
 check("small budget shrinks it",  f.derive(5, 3)["shortlist"] == 5)
 check("override kept in range",   f.derive(40, 4, shortlist=8)["shortlist"] == 8)

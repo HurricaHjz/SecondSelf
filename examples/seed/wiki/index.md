@@ -39,6 +39,12 @@ updated: 2025-01-01
 ## Syntheses
 <!-- cross-source reports filed back from queries -->
 
+## Experience
+<!-- each feature's owner rules and lessons, read at its deciding step -->
+
+## Developments
+<!-- this vault's own self-upgrade docs: design, plans, rollouts -->
+
 ## Maps
 <!-- curated topic-overview hubs (navigation) -->
 - [[home]] — top-level Map of Content.

@@ -9,7 +9,8 @@ error stub served as a page, an HTML-dominant body from a crashed converter, a
 near-empty fetch), so the write path refuses those bodies; retry with the next
 engine, and a body you deliberately accept needs --allow-degraded '<why>' (the
 acceptance is stamped into the frontmatter and ledger, and declared in the run
-report). PLATFORM LANE (tier-3 CLIs):
+report; a body the gate passes but the capturer knows is damaged takes the same
+flag and is stamped "declared"). PLATFORM LANE (tier-3 CLIs):
 platform output (JSON/YAML/subtitles) is wrapped VERBATIM in closed fenced
 blocks at capture — the gate and sanitiser honour that convention (fence-aware),
 and bare unfenced whole-body JSON is refused so the convention is mechanical. Fetching stays with the engines (defuddle/curl/markitdown/Jina, and the attended chrome-burner tab); this
@@ -26,10 +27,20 @@ and their derivations sit beside ARTICLE_MIN_WORDS below), whatever
 --allow-degraded says; the URL is printed for the hand-fetch list
 (oa_resolve.py --hand-fetch). Verbs:
     write --url U --engine E --ledger-id ID [--title T] [--slug S] [--vault-root PATH]
-          [--resolved-url R] [--allow-degraded REASON]
+          [--resolved-url R] [--probe-result P] [--allow-degraded REASON]
         reads Markdown on stdin; writes raw/<slug>.md; appends to the ledger.
         --resolved-url R records the open copy the body came from (oa_resolve.py)
-        as `resolved_url:` beside `source_url:`, which stays the row's own URL
+        as `resolved_url:` beside `source_url:`, which stays the row's own URL.
+        --probe-result P is capture_probe.py's result.json for the page. Every
+        write records the capture check's stamp, in frontmatter (capture_check:)
+        and in its ledger entry: with P, the body on stdin is checked against the
+        page the probe fetched, whichever engine produced the body ("suspected
+        loss — <findings>", "no loss found by the unit check (<counts>); not
+        compared: <what the check does not compare>", or "not run — <why>");
+        without P, "not run — no probe result given". The check only warns: no
+        result, an unreadable, malformed or failed one, a missing capture_probe.py
+        and a check that fails to run are stamped not run, never as no loss, and
+        none of them, nor anything the check finds, refuses the write
     check [--engine E] [--url U]
         reads Markdown on stdin; runs the quality gate only (no write, no
         ledger), the abstract-page rule included when E names the burner tab:
@@ -41,17 +52,33 @@ and their derivations sit beside ARTICLE_MIN_WORDS below), whatever
         wiki/sources/ + raw/ frontmatter keys (key code loaded from
         ../ingest/dedup_probe.py, never copied — missing, or failing its self-test, exits 2).
         A match prints "ALREADY IN VAULT: <paths> (matched on: <keys>)"; the --control URL
-        MUST hit (proof the scan ran — CLAUDE.md §11)
+        MUST hit (proof the scan ran — CLAUDE.md §11). A likely-duplicate key runs beside
+        the definitive ones and never changes them: the same host (case-folded, a leading
+        www. dropped) and the same final path segment (case-folded; a trailing slash,
+        .html and .htm dropped; query and fragment ignored) as a raw capture's
+        source_url, converted_from or resolved_url prints a second line,
+        "<url> ~> likely duplicate of <paths> (same host and final slug ...)": advisory,
+        shown at the gate for the owner, never an exclusion (versioned docs, generic
+        index pages and query-selected items share such keys). A title naming a review site
+        (`... | OpenReview`), on either side of a hit resting on a stripped key alone, prints
+        'title "T" ~> paper or its review: <paths> (...)' in place of a match: the same
+        kind of advisory line, since a review is never a duplicate and the site's name cannot
+        say which the page is
 
 --vault-root defaults to this script's OWN vault (three parents above
 .claude/skills/gather/), never the cwd; default or explicit, the root must
 contain raw/ + wiki/ or write/dedup refuse to run, so a scan never reads
 whatever tree the caller stands in.
 """
-import argparse, datetime, json, os, re, sys
+import argparse, collections, datetime, json, os, re, sys
+from urllib.parse import unquote, urlsplit
 import run_ledger
 
 CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+# Beyond those, in a frontmatter value only: C0 line ends and tabs, C1 controls (NEL among them), the
+# Unicode line and paragraph separators, surrogates and non-characters. A YAML reader refuses or
+# breaks a line at these, and the lookup's reader refuses a page carrying one.
+FRONT_UNSAFE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029\ud800-\udfff\ufeff\ufffe\uffff]")
 BARE_LINK = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
 HTML_TAG = re.compile(r"<[A-Za-z][^>\n]*>")
 # A CLOSED fenced block: column-0 opener, same-string closer alone on its line.
@@ -349,6 +376,66 @@ def abstract_only_reason(body, engine):
     return None
 
 
+# THE CAPTURE CHECK (capture_probe.py): a web page is fetched once and routed on its HTML (a collapsed or
+# tabbed block sends it through markitdown, anything else through defuddle on the same copy), and a
+# capture is compared with the page the probe fetched. The comparison only warns: every write records
+# its stamp (capture_check: in frontmatter and in the ledger entry), and nothing the check finds, no
+# missing, unreadable, malformed or failed result and no missing capture_probe.py refuses a write. The
+# engine that produced the body plays no part in it.
+STAMP_MAX = 900            # characters of a stamp, as capture_probe.STAMP_MAX; set by judgement
+CHECK_VERDICTS = ("no loss found", "suspected loss", "not run")   # capture_probe.VERDICTS
+# A provenance field name followed by its colon, which a frontmatter reader looking for an engine field
+# anywhere on a line would read inside a stamp (as capture_probe.ENGINE_FIELD_LIKE).
+ENGINE_FIELD_LIKE = re.compile(r"(?i)(?<![a-z0-9_])(['\"]?)(converted_by|conversion_engine|converter)(['\"]?)[ \t]*:")
+
+
+def _probe_module():
+    """capture_probe.py from this script's own folder, loaded only when a result is to be read (a copy
+    of this script without it still writes, its stamp not run); no cache file is written."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "capture_probe.py")
+    if not os.path.isfile(path):
+        raise ValueError(f"capture_probe.py is missing beside capture_write.py ({path})")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("capture_probe", path)
+    mod = importlib.util.module_from_spec(spec)
+    keep, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.dont_write_bytecode = keep
+    return mod
+
+
+def _one_line(text, limit=300, keep_fields=False):
+    """A stamp, reason or title fit for a double-quoted frontmatter value that every YAML reader takes
+    the same way: one line, none of the characters a YAML reader refuses or breaks a line at, a double
+    quote written as a single one and a backslash as a slash, and bounded (the bound set by judgement;
+    None for a title, whose words key it). A stamp or reason never carries a provenance field name
+    followed by its colon; a title keeps its colon (keep_fields), since that colon decides its de-dup
+    keys."""
+    text = re.sub(r"\s+", " ", FRONT_UNSAFE.sub(" ", str(text))).strip().replace('"', "'").replace("\\", "/")
+    text = text if limit is None or len(text) <= limit else text[: limit - 1] + "…"
+    return text if keep_fields else ENGINE_FIELD_LIKE.sub(lambda m: m.group(1) + m.group(2) + m.group(3) + " -", text)
+
+
+def capture_check_stamp(a, body):
+    """(verdict, stamp): the capture check's warning for this body, recorded and never a reason to
+    refuse it. Without --probe-result there is nothing to compare against; with one, capture_probe.py's
+    check_stamp compares the body with the page the probe fetched. Any failure on the way is not run,
+    never no loss."""
+    if not a.probe_result:
+        return "not run", "not run — no probe result given"
+    if not os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), "capture_probe.py")):
+        return "not run", "not run — capture_probe.py is missing beside capture_write.py"
+    try:
+        verdict, stamp, _info = _probe_module().check_stamp(a.probe_result, body, a.url, also_url=a.resolved_url)
+    except Exception as exc:                  # check_stamp never raises; a probe that cannot load or run is not run
+        return "not run", _one_line(f"not run — the check could not run: {type(exc).__name__}: {exc}", STAMP_MAX)
+    if verdict not in CHECK_VERDICTS or not isinstance(stamp, str) or not stamp.startswith(verdict):
+        return "not run", _one_line(f"not run — the check gave no stamp it can record ({verdict!r})", STAMP_MAX)
+    return verdict, _one_line(stamp, STAMP_MAX)
+
+
 def write(a):
     body = sys.stdin.read()
     if not body.strip():
@@ -373,7 +460,8 @@ def write(a):
     dest = os.path.join(a.vault_root, "raw", f"{slug}.md")
     if os.path.exists(dest):
         raise ValueError(f"{dest} exists — raw files are immutable; pick another --slug")
-    title = (a.title or slug).replace('"', "'")
+    verdict, stamp = capture_check_stamp(a, body)   # a warning recorded with the capture, never a refusal
+    title = _one_line(a.title or slug, limit=None, keep_fields=True)
     front_lines = ["---",
                    f'title: "{title}"',
                    f"source_url: {a.url}"]
@@ -382,9 +470,12 @@ def write(a):
     front_lines += [f"converted_from: {a.url}",
                     f"converted_by: {a.engine}",
                     f"converted_on: {datetime.date.today().isoformat()}"]
+    note = _one_line(a.allow_degraded or "", limit=None)
     if reason:  # only reachable with --allow-degraded — stamp the acceptance
-        note = a.allow_degraded.replace('"', "'")
-        front_lines.append(f'capture_quality: "degraded — {reason}; accepted: {note}"')
+        front_lines.append(f'capture_quality: "degraded — {_one_line(reason, limit=None)}; accepted: {note}"')
+    elif a.allow_degraded:  # the gate passed; the capturer declares damage the gate cannot see
+        front_lines.append(f'capture_quality: "declared — {note}"')
+    front_lines.append(f'capture_check: "{stamp}"')
     front = "\n".join(front_lines) + "\n---\n\n"
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, "w", encoding="utf-8") as fh:
@@ -395,10 +486,13 @@ def write(a):
         entry["resolved_url"] = a.resolved_url
     if reason:
         entry["degraded"] = reason
+    elif a.allow_degraded:
+        entry["degraded"] = f"declared — {a.allow_degraded}"
+    entry["capture_check"] = stamp
     data["captures"].append(entry)
     run_ledger.save(ledger_path, data)
-    tag = " · DEGRADED (accepted)" if reason else ""
-    print(f"wrote raw/{slug}.md · ledger {len(data['captures'])}/{data['budget']}{tag}")
+    tag = " · DEGRADED (accepted)" if reason else (" · DEGRADED (declared)" if a.allow_degraded else "")
+    print(f"wrote raw/{slug}.md · ledger {len(data['captures'])}/{data['budget']} · capture check: {verdict}{tag}")
 
 
 def check_verb(a):
@@ -443,6 +537,28 @@ def _report(label, found):
         print(f"{label} -> new")
 
 
+def slug_key(url):
+    """(host, final slug) of an http(s) URL for the likely-duplicate key, else None: the host
+    case-folded with a leading www. dropped; the last path segment percent-decoded and case-folded,
+    a trailing slash and a .html or .htm ending dropped; query and fragment ignored. A URL with no
+    path segment (a site's root) gives no key."""
+    try:
+        parts = urlsplit(url.strip().strip("\"'"))
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ("http", "https") or not host:
+        return None
+    if host.startswith("www."):
+        host = host[4:]
+    seg = unquote(parts.path.rstrip("/").rsplit("/", 1)[-1]).casefold()
+    for ending in (".html", ".htm"):
+        if seg.endswith(ending):
+            seg = seg[: -len(ending)]
+            break
+    return (host, seg) if seg else None
+
+
 def dedup(a):
     # accept comma-joined, space-separated (nargs), or mixed: a single accepted form fails as soon
     # as its restatement drifts
@@ -456,6 +572,7 @@ def dedup(a):
     dp = _dedup_keys()
     targets = urls + ([a.control] if a.control else [])
     hits = {u: [] for u in targets}
+    slugs = collections.defaultdict(set)   # (host, final slug) -> {(raw path, field)}: the advisory key
     key = re.compile(r"^(source_url|converted_from|resolved_url):", re.I)  # resolved_url: the open copy a capture came from
     for root in ("raw", "wiki"):
         top = os.path.join(a.vault_root, root)
@@ -474,11 +591,18 @@ def dedup(a):
                             head += fh.read(61440)
                 except OSError:
                     continue
+                rel = os.path.relpath(fp, a.vault_root)
                 for line in head.splitlines():
-                    if key.match(line):
-                        for u in targets:
-                            if u and u in line:
-                                hits[u].append(os.path.relpath(fp, a.vault_root))
+                    m = key.match(line)
+                    if not m:
+                        continue
+                    for u in targets:
+                        if u and u in line:
+                            hits[u].append(rel)
+                    if root == "raw":   # the advisory key reads raw captures' own provenance fields
+                        k = slug_key(line[m.end():])
+                        if k:
+                            slugs[k].add((rel, m.group(1).lower()))
     if a.control and not hits[a.control]:
         raise ValueError(f"control URL {a.control} not found — the scan cannot be trusted; "
                          "fix the control or the scan before claiming clean")
@@ -497,16 +621,33 @@ def dedup(a):
         for p, labels in dp.lookup(idx, arx=dp.arxiv_ids(u), doi=dp.dois(u)).items():
             found.setdefault(p, []).extend(labels)
         _report(u, found)
+        k = slug_key(u)
+        likely = sorted({p for p, _f in slugs.get(k, ())} - set(found)) if k else []
+        if likely:   # a second line, never the verdict: the line above stays the definitive answer
+            fields = sorted({f for p, f in slugs[k] if p in likely})
+            print(f"{u} ~> likely duplicate of {'; '.join(likely)} (same host and final slug: {k[0]} · {k[1]}; "
+                  f"from {', '.join(fields)}; advisory, never definitive: show it at the gate for the owner, "
+                  "never exclude it)")
     for t in titles:
         key = dp.title_key(t)
         if key is None:
             print(f'title "{t}" -> not keyed (under {dp.TITLE_MIN_TOKENS} tokens once normalised); '
                   "check it by eye")
             continue
-        _report(f'title "{t}"', dp.lookup(idx, titles=[key]))
+        found = dp.lookup(idx, titles=[key])
+        # A review site's name cannot say whether a page is the paper or its reviews, and a review is never
+        # a duplicate (CLAUDE.md section 3): a hit resting on a stripped key alone is shown, never settled.
+        stripped_only = found and not any("title" in labels for labels in found.values())
+        if stripped_only and (dp.names_review_site(t) or set(found) & idx["review_site"]):
+            on = sorted({x for labels in found.values() for x in labels})
+            print(f'title "{t}" ~> paper or its review: {"; ".join(sorted(found))} (matched on: {", ".join(on)}; '
+                  "a review site's name cannot say which; advisory, never definitive: show it at the gate for "
+                  "the owner, never exclude it)")
+        else:
+            _report(f'title "{t}"', found)
     n = len(dp.SELF_TEST)
     print(f"keys indexed: {idx['files']} files · {len(idx['arxiv'])} arXiv ids · {len(idx['doi'])} DOIs"
-          f" · {len(idx['title'])} titles · key self-test {n}/{n}")
+          f" · {len(idx['title'])} titles · key self-test {n}/{n} · {len(slugs)} host-and-slug keys over raw/ (advisory)")
 
 
 def main():
@@ -523,12 +664,19 @@ def main():
                          "normalised titles against wiki/sources/ and raw/ frontmatter")
     ap.add_argument("--allow-no-control", action="store_true")
     ap.add_argument("--allow-degraded", dest="allow_degraded", metavar="REASON",
-                    help="write despite a quality-gate rejection; REASON is stamped into "
-                         "frontmatter + ledger and must be declared in the run report "
-                         "(never lifts the abstract-page rule)")
+                    help="write despite a quality-gate rejection, or declare damage the gate "
+                         "passed; REASON is stamped into frontmatter + ledger either way "
+                         "('degraded — ...' or 'declared — ...') and must be declared in the "
+                         "run report (never lifts the abstract-page rule)")
     ap.add_argument("--resolved-url", dest="resolved_url", metavar="URL",
                     help="write: the open copy the body came from (oa_resolve.py), recorded as "
                          "resolved_url: beside source_url:")
+    ap.add_argument("--probe-result", dest="probe_result", metavar="PATH",
+                    help="write: capture_probe.py's result.json for this page; the body is checked "
+                         "against the page the probe fetched and the check's stamp recorded as "
+                         "capture_check: in frontmatter and ledger, a warning that never refuses the "
+                         "write (without it, or with a result that cannot be read, the stamp is "
+                         "'not run — <why>')")
     ap.add_argument("--vault-root", default=None,
                     help="vault to scan/write (default: this script's own vault; "
                          "must contain raw/ + wiki/)")
@@ -541,6 +689,9 @@ def main():
                 raise ValueError("write needs --url and --ledger-id")
             if a.allow_degraded is not None and not a.allow_degraded.strip():
                 raise ValueError("--allow-degraded needs a non-empty reason")
+            if a.allow_degraded is not None and re.search(r"[\r\n]", a.allow_degraded):
+                raise ValueError("--allow-degraded needs a one-line reason "
+                                 "(a line break would inject frontmatter)")
             if a.resolved_url is not None and not re.fullmatch(r"https?://\S+", a.resolved_url):
                 raise ValueError("--resolved-url needs one http(s) URL with no whitespace "
                                  "(a newline would inject frontmatter)")

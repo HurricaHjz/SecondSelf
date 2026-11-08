@@ -1,18 +1,13 @@
-# /adopt — owner report (step 2)
+# Capability proposal
 
-Fill every cell from the fingerprint and the assessment; one row per add-on (a skill collection gets one row per picked skill, the parent pinned once). The owner approves, amends the level, or stops here (`--assess-only`).
+| Job and route | Capability and level | Candidate pin/date | Actual model/release | Evidence and controls | Resource/run needs | Output judge | Configuration changes | State and holds |
+|---|---|---|---|---|---|---|---|---|
+| Explicit job; one current route | Full conditional use ruling | Exact identity; unknowns explicit | Exact release identity | Row/resource subjects; task criterion; human judgement where needed | Immutable inputs, workspace identity/access, session surfaces | Named person or objective criterion | Complete prior declaration and measured comparison | Planned/prepared/active/retired or legacy; reservation identity |
 
-| What | Channel | Level (reason) | Always-on cost | Risks | What changes in the system | Acceptance probe |
-|---|---|---|---|---|---|---|
-| {{what}} | {{channel}} | {{level}} — {{reason}} | {{cost}} | {{risks}} | {{changes}} | {{probe}} |
+The preview includes expected revision/data hash, proposal digest, semantic changes, complete page diff, all affected shared rows, invalidated proofs, held legacy findings and unresolved prerequisites. Both execution-policy extensions remain off unless separately implemented, reviewed and selected.
 
-**Columns.**
-- **What** — the add-on concisely: name, publisher, pin (commit or tag), licence.
-- **Channel** — `user-level skill` (symlink or wrapper under `~/.claude/skills`), `plugin` (floating; a `hooks.json` reaches every session), `CLI tool` (pin-by-class), `connector` (rows only), or `knowledge only` (the README is ingested, nothing installed).
-- **Level (reason)** — `auto` · `propose-first` · `by-name`, the most restrictive clause winning: the fingerprint's mechanical floor (a hook or a network primitive in code → at least `propose-first`), then the assignment rule (`by-name` when it substitutes for a vault workflow's job or runs arbitrary user code; `propose-first` when a run has an external effect, or the owner wants it offered; `auto` when it serves inside a vault workflow). Token cost never decides a level.
-- **Always-on cost** — the description bytes the listing carries per request (`auto`: the upstream description; `propose-first`: the wrapper's short description; `by-name`: 0 B).
-- **Risks** — exec and network primitives by file class, hooks, licence terms (a non-commercial licence is referenced in place, never copied), an upstream working-directory or write habit, prompt-shaped files that must stay data.
-- **What changes in the system** — any of: a **tool row** (the register, a tool page, a source page) · an **instinct** (a standing behaviour worth adopting → a proposed CUSTOMISATION or role delta, gated as today) · an **upgrade hint** (a framework idea → a `wiki/developments/` note; IDEAS.md only on "queue it") · **knowledge** (ingest the README; the residual when nothing else applies).
-- **Acceptance probe** — the scripted legs (`adopt_acceptance.py`) plus the head's headless probes: listing present for `auto` and `propose-first`, absent for `by-name`; `/name` answers a fact only the upstream file holds.
+| Row / resource / exact model | Current → proposed tier | Date basis | Proof route and evidence gap | Outcome / judgement | Advice / exception |
+|---|---|---|---|---|---|
+| Full dependency closure; name every weaker member | Unproven / claimed / proven, separate from lifecycle and use level | Candidate date ≥ model release; otherwise name old or unknown date | Captured author claim; comparison pending, or checked runs count / policy threshold with distinct run IDs | Frozen task digest and inputs; both outcomes and comparison judgement; last drop and reason | Ordinary claimed use; important work testing suggestion; exact owner decisions for every unproven resource and delivery route |
 
-**Decision asked of the owner:** approve as proposed · amend the level (say which) · stop after the assessment.
+The how-to threshold defaults to two checked runs, set by judgement, unmeasured. Its displayed count derives from distinct successful run IDs. Taste judgement and exceptions use the explicitly configured owner identity. `take-pattern` delivery requires stored `internalise`; direct use requires stored `use-directly`. A poor-use event retains prior evidence and names the invalidated activation and other users of the resource. Approval of this record does not activate or install anything.

@@ -1,0 +1,107 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "set +e; set +u; command set +o pipefail 2>/dev/null || :; ask() { printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"Destructive-git guard: %s, so this command could not be checked; asking instead of allowing.\"}}' \"$1\"; exit 0; }; why() { case \"$2\" in 127) printf '%s was not found' \"$1\";; 126) printf '%s could not be run' \"$1\";; *) printf '%s failed (exit %s)' \"$1\" \"$2\";; esac; }; R=0; P=$(cat) || R=$?; [ \"$R\" -eq 0 ] || ask \"reading the hook input failed: $(why cat \"$R\")\"; case \"$P\" in *[![:space:]]*) ;; *) ask \"the hook input was empty\";; esac; J=0; C=$(printf '%s' \"$P\" | jq -r '.tool_input.command // empty' 2>/dev/null) || J=$?; if [ \"$J\" -ne 0 ] || [ -z \"$C\" ]; then if [ \"$J\" -eq 0 ]; then W='jq found no command in the hook input'; else W=$(why jq \"$J\"); fi; case \"$P\" in *git*) case \"$P\" in *checkout*|*restore*|*clean*|*reset*) ask \"$W, and the raw input holds git with checkout, restore, clean or reset\";; esac;; esac; case \"$P\" in *'\\u'*) ask \"$W, and the raw input holds a JSON unicode escape, which could spell a git verb\";; esac; exit 0; fi; [ -n \"${GREP_OPTIONS-}\" ] || case \"$C\" in *git*) ;; *) exit 0;; esac; G='(^|[^A-Za-z0-9_-])git([[:space:]]+-C[[:space:]]+[^[:space:]]+)*[[:space:]]+'; BAD=; E=; R=0; printf '%s' \"$C\" | grep -qE \"$G(checkout|restore|clean)([^A-Za-z0-9_-]|\\$)\" || R=$?; [ \"$R\" -eq 0 ] && BAD=1; [ \"$R\" -gt 1 ] && E=$R; R=0; printf '%s' \"$C\" | grep -qE \"$G\"'reset[[:space:]].*--hard' || R=$?; [ \"$R\" -eq 0 ] && BAD=1; [ \"$R\" -gt 1 ] && E=$R; [ -z \"$E\" ] || ask \"$(why grep \"$E\") while looking for destructive git verbs\"; [ -n \"$BAD\" ] || exit 0; R=0; printf '%s' \"$C\" | grep -qE 'checkout[[:space:]]+-b([^A-Za-z0-9_-]|$)' || R=$?; [ \"$R\" -eq 0 ] && exit 0; [ \"$R\" -gt 1 ] && ask \"$(why grep \"$R\") while checking the checkout -b exemption\"; printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"Destructive git verb on the vault working tree, which routinely holds uncommitted knowledge writes that these verbs discard silently (known-issues 2026-08-23). Prefer a precise inverse edit, test artefacts in /tmp, or another repo via -C.\"}}'; exit 0"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 -B \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/context-watermark.py\" || true"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 -B \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/core-check.py\" || true"
+          },
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 -B \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/precompact-checkpoint.py\" || true"
+          },
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "python3 -B \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/calendar-digest.py\" || true"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 30,
+            "command": "python3 -B \"${CLAUDE_PROJECT_DIR:-$PWD}/.claude/hooks/precompact-checkpoint.py\" || true"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Edit(/CLAUDE.md)",
+      "Edit(/MANUAL.md)",
+      "Edit(/setup.sh)",
+      "Edit(/.gitignore)",
+      "Edit(/.gitattributes)",
+      "Edit(/.claude/settings.json)",
+      "Edit(/.claude/core-paths)",
+      "Edit(/.claude/hooks/README.md)",
+      "Edit(/.claude/hooks/calendar-digest.py)",
+      "Edit(/.claude/hooks/context-watermark.py)",
+      "Edit(/.claude/hooks/core-check.py)",
+      "Edit(/.claude/hooks/handsoff-gate.py)",
+      "Edit(/.claude/hooks/head-fence.py)",
+      "Edit(/.claude/hooks/ingest-ledger-check.sh)",
+      "Edit(/.claude/hooks/optional-hooks.json)",
+      "Edit(/.claude/hooks/precompact-checkpoint.py)",
+      "Edit(/.claude/hooks/test_calendar_digest.sh)",
+      "Edit(/.claude/hooks/test_context_hooks.sh)",
+      "Edit(/.claude/hooks/test_core_check.sh)",
+      "Edit(/.claude/hooks/test_git_guard.sh)",
+      "Edit(/.claude/agents/builder.md)",
+      "Edit(/.claude/agents/critic.md)",
+      "Edit(/.claude/agents/gate-judge.md)",
+      "Edit(/.claude/agents/memory-hunter.md)",
+      "Edit(/.claude/agents/planner.md)",
+      "Edit(/.claude/agents/reflector.md)",
+      "Edit(/.claude/agents/verifier.md)",
+      "Edit(/.claude/agents/wiki-compile.md)",
+      "Edit(/.claude/agents/writer.md)",
+      "Edit(/.claude/skills/adopt/**)",
+      "Edit(/.claude/skills/attic/**)",
+      "Edit(/.claude/skills/deep-lint/**)",
+      "Edit(/.claude/skills/delegate/**)",
+      "Edit(/.claude/skills/export-template/**)",
+      "Edit(/.claude/skills/gather/**)",
+      "Edit(/.claude/skills/ingest/**)",
+      "Edit(/.claude/skills/lint/**)",
+      "Edit(/.claude/skills/output/**)",
+      "Edit(/.claude/skills/project/**)",
+      "Edit(/.claude/skills/qmd-search/**)",
+      "Edit(/.claude/skills/query/**)",
+      "Edit(/.claude/skills/reflect/**)",
+      "Edit(/.claude/skills/suggest/**)",
+      "Edit(/.claude/skills/weekly-audit/**)"
+    ]
+  }
+}

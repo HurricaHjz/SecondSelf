@@ -1,0 +1,42 @@
+name: Core suggestion
+description: Suggest a change to the framework's core. The suggest skill drafts this and shows you what it shares.
+title: "Suggestion: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        An issue is public. Share the change and the reason in general terms. Leave out home paths,
+        text from your wiki or your preferences, and transcripts.
+  - type: textarea
+    id: change
+    attributes:
+      label: What should change
+      description: The core file or behaviour, and what you would have it do.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What this would do for any user of the framework.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-text
+    attributes:
+      label: Proposed text
+      description: The exact new text, if you have it.
+    validations:
+      required: false
+  - type: input
+    id: core-check
+    attributes:
+      label: Core check
+      description: >-
+        The `core:` line from the start of a session, or what
+        `python3 .claude/hooks/core-check.py --report` prints. Where no check runs in your copy,
+        write: no check ran.
+      placeholder: "core: v1.2.3, unchanged (240 files)"
+    validations:
+      required: true

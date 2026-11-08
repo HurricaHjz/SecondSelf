@@ -1,0 +1,13 @@
+README.md
+calendar-digest.py
+context-watermark.py
+core-check.py
+handsoff-gate.py
+head-fence.py
+ingest-ledger-check.sh
+optional-hooks.json
+precompact-checkpoint.py
+test_calendar_digest.sh
+test_context_hooks.sh
+test_core_check.sh
+test_git_guard.sh

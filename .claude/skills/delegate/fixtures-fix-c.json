@@ -1,0 +1,9 @@
+{
+  "provenance": "ENOTFOUND text is recorded evidence; refused/reset/timeout variants are synthetic fixtures for the specification's requested classes.",
+  "stops": [
+    "API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)",
+    "API Error: connection refused (ECONNREFUSED)",
+    "API Error: connection reset (ECONNRESET)",
+    "API Error: request timed out (ETIMEDOUT)"
+  ]
+}

@@ -16,12 +16,19 @@ Subcommands
                section holding prose and no table (the ledger's header seeded under the heading,
                the prose kept below; register entry 2026-09-14 19:35), and opens the console
                window unless --viewer none (the console window below)
-  run-resume   a later head (a successor, or a pasted resume prompt) records itself likewise,
-               and writes the same two files (a list it is not given is carried from the file);
+  run-resume   a later head records itself likewise: every head the starter starts (the fixed
+               resume instruction sends each one here before any item work, the run's first
+               after a seeded launch included) or a head on a pasted resume prompt; the session
+               meter counts the helpers spawned after it as that head's. It writes the same two
+               files (a list it is not given is carried from the file);
                refused with exit 9 while another live head holds the run (two heads, below)
   boundary     meter, compute the five waste fields, measure the head's context, append the
-               phase-boundary event, add the trace row, refresh the morning report's figures,
-               checkpoint-commit (--commit MSG)
+               phase-boundary event, add the trace row, re-derive `## In flight` from the record,
+               refresh the morning report's figures, list the vault root's untracked entries and
+               checkpoint-commit (--commit MSG); the disposition's HD-<n> references are checked
+               against the record's decision events (the fixes of 2026-10-10 below)
+  item-done    an explicit completion record for each item named, with no meter, for items worked
+               side by side, which one boundary's from and to fit badly; refused on a closed run
   ledger       one row in the hand-off's findings ledger plus an observation event; a
                `## Findings ledger` section that holds prose and no table gets the table
                created directly under its heading first, the prose kept below it, and one line
@@ -30,9 +37,11 @@ Subcommands
                (whether or not the first holds a table; both lines named), or pipe-led lines
                that make no table is refused as before (exit 2, nothing written);
                `--observation "<what>"` instead appends the observation alone, with no ledger
-               row, to any record that exists (the plain-lane-run shape below)
+               row, to any record, creating it for a run that has none yet (the plain-lane-run
+               shape below, before its first spawn)
   decision     an owner-behalf decision before the act: the `decision` event (phase, what,
-               grant) and one findings-ledger row in one call (the decision subcommand below)
+               grant) and one findings-ledger row in one call, the decision's identifier HD-<n>
+               printed for the disposition that acts on it to name (the decision subcommand below)
   gate         fit and envelope check before an item: a gate event; exit 4 when armed and the
                next item does not fit under the belt (memory + its estimated cost + the pack allowance; the 80 % mark only where no figure exists); exit 5 on the envelope
                `which: envelope` when the run's spend has reached the run's envelope (the latest
@@ -45,6 +54,14 @@ Subcommands
                holds the item while the decisions channel carries an unread AUTHOR observation
                or a changed --decisions-file (below), and exit 9 refuses the caller while another
                live head holds the run (two heads, below)
+  decisions-read
+               read-only: the decisions file's lines no accepted ack has covered (all of it when
+               no ack on the record carries a digest) and the file's sha256, which the next --ack
+               passes as --ack-digest (the decisions channel below); on a head with no ack of its
+               own it prints the whole file, and it takes the file from the record once bound
+  decisions-ack
+               the acknowledgement between gates, which a held spawn asks for; shares decisions_hold
+               (the decisions channel below)
   raise-envelope
                the owner's top-up: an `envelope` event with the new figure, which the gate, the
                successor and the supervisor read as the run's envelope (the envelope policy
@@ -57,7 +74,9 @@ Subcommands
                a repair's) it writes none and prints `head-exit already recorded`, the check
                repeated under a lock on the record just before the append. --inflight and
                --inflight-file stamp the pack with its age; --inflight-from-record re-derives
-               `## In flight` from the run record (the pack-age guard below)
+               `## In flight` from the run record (the pack-age guard below). With no
+               successor left on the run's cap, --final writes the pack it was given and NO
+               head-exit, and exits 10 (the hand-over checks below)
   successor    called BY the exiting head: sizes the cap from the envelope minus recorded spend
                when the record's last head-exit is a seed exit (`budget_src: envelope (seed)`,
                register entry 2026-09-07, since a seed session has no transcript to meter);
@@ -67,21 +86,31 @@ Subcommands
                the missing head-exit and the repair `handoff --final --band limit`), then
                starts a
                DETACHED starter that waits for the predecessor to die, starts the successor
-               head (claude -p, the resume prompt on standard input) and stays as its
+               head (claude -p, the fixed resume instruction on standard input, never the
+               hand-off's `## Resume prompt`, which is the owner's) and stays as its
                supervisor (D30); returns at once. A launcher-supplied pid that is the caller's
                own long-lived ancestor is refused, and a seed predecessor with no pid is not
                waited on (the seed pid below); --pack-fresh records the launcher's word that
-               the hand-off is current (the pack-age guard below)
+               the hand-off is current (the pack-age guard below). Otherwise the cap is the
+               envelope minus the run's spend, the gate's and the close's figure; --seed-pid hands
+               the starter a seed process that exits SEED_PID_S after the call, for an attended
+               head whose own process does not exit at the end of a reply; the head runs on
+               --model, else the newest head start's model on the record, and a record that names
+               none is refused (the fixes of 2026-10-10 below). With no successor left on the
+               run's cap it refuses before the model, the meter and any head-exit (exit 10), and
+               it names each background task the calling head's own process still runs beside
+               the call, the call going on (the hand-over checks below)
   supervise    attach the same supervisor to a head already running (the head calls it about
                itself); detaches at once and returns one line
   resume-head  after a limit the run stood down on (D42): resume the record's last head in
                place, armed, evented and supervised (the owner's command after the reset);
-               detaches at once; --pack-fresh as for successor
+               detaches at once; --pack-fresh, the model and its refusal as for successor
   watch        the read-only console for a run: header, items, lanes, timeline, feed; `q` quits
                and `r` resumes a stopped head. Writes only the timeline report, at the close
   heartbeat    an attended head's idle-cache beat (D32): a background call that returns after
                --minutes with one line, so the harness's re-invocation refreshes the cache;
-               never for a -p head, which has no idle state
+               never for a -p head, which has no idle state, and refused (exit 2, nothing
+               armed) under AIMYTH_HANDSOFF=1, which every head the starter starts carries
   wait-reset   the supervisor's reset wait as a command, kept for --dry-run parser checks and
                for a hand-run wait; no longer a head-side blocking call (D28). It sleeps to the
                reset time the stop text names and sends no probe unless --probe is passed
@@ -89,7 +118,14 @@ Subcommands
                plain record (below) the run-close is written from the lane events alone;
                decisions_on_owner_behalf counts the `decision` events and the ledger
                observations whose what opens with the word decision; held with exit 6 by the
-               decisions channel as gate is (below)
+               decisions channel as gate is, the file read once more just before the first write
+               (below); --items is required unless --dry-run, and an absent --register, --log or
+               --lint is noted on stderr; it lists each started item with no completion record
+               before it writes and carries them as `items_unresolved`, converting none; once
+               run-close is written the run's arming markers are removed (disarm)
+  disarm       after the close: remove the arming marker armed-<sid> of every head session the
+               run names whose pointer run-<sid> still names this run, a marker another run owns
+               or whose pointer cannot be read left in place; refused on a run with no run-close
   run-is-closed
                exit 0 when the record carries a run-close, 1 when it does not, 2 with no record
                (for a wrapper that warns before it spawns into a closed run)
@@ -106,18 +142,28 @@ Subcommands
                unverifiable pid, a malformed pid named), 2 on a premise (no record, no run-open,
                or run from inside the run's own head without --detach-safe: a head that called
                successor about itself must never wait on its own replacement, since the starter
-               waits for that head to exit)
+               waits for that head to exit); --lanes A,B,… also requires every planned
+               first-batch helper to have opened and to show activity after its open, or to have
+               closed completed: exit 0 STARTED CLEAN, 1 NOT CLEAN (the first batch below); the
+               wait keeps the start's terminal states (a run-close, a head-exit, an exited head)
+               and holds to one head process: a newer start by its pid moves the anchor, and one
+               by another pid or none is verified afresh, certifying nothing until it is; every
+               certification reads the clock after its last read or probe, so a start or a first
+               batch first seen ready past the deadline is late, never certified
   open-console the run's console window on demand: one when none is alive (the one-window rule
                below); --check opens nothing and prints the live console's pid, or NO CONSOLE
                with exit 1
   run-spend    the run's spend BY RUN (the run figure below): one line per head and per lane
                and a summary line; exit 1 when the figure is a floor, 2 on a premise failure
-  waste-table  Step 2b's usage-and-waste table rendered from the run record alone (D36)
+  waste-table  Step 2b's usage-and-waste table rendered from the run record alone (D36); for
+               a closed run with no --out it prints to stdout and leaves the stored table alone
   extract-transcript
                the head's own transcript extracted for a reflector lane (D36)
   reflect-inputs
                that reflector lane's whole input set in one directory: the extraction, the
-               waste table and a filtered copy of the run record (D36)
+               waste table and a filtered copy of the run record (D36); a record with no run-open
+               is read in its attended form (--session's transcript, or --transcript), and --out
+               may be the run's own <store>/stages/<run>/reflect (the fixes of 2026-10-10 below)
   hold         keep a finished lane warm (the held lanes below): a `hold` event naming the lane,
                its wrapper, the cap and the lane's last call; --renew extends an open hold with
                a fresh count; --beat-after-s sets the interval (the rehearsal of a fresh run
@@ -229,9 +275,9 @@ hook's measure() skips it.
 nothing else: `turns.md` and `counts.json` (the extraction above, same options), `waste-table.md`
 (the table above) and `record-filtered.jsonl`, the run record with every observation whose phase
 starts `controls` dropped and the keys `controls_checked`, `brief_copy`, `brief` and `plant`
-stripped from every event kept. The convention behind the drop is the spawner's control
-pre-registration, `handsoff.py ledger --phase controls-<LANE> …`: the reflector is blind to what
-the head expected of it, and the filtered copy is written before the `reflect-inputs` event that
+stripped from every event kept. The drop is legacy: it serves records written before the reflection
+controls were retired, when a spawner registered them with `handsoff.py ledger --phase controls-<LANE> …`;
+no run records one now. The reflector stays blind to what the head expected of it, and the filtered copy is written before the `reflect-inputs` event that
 records the run, the session, the directory and the counts, so the copy never carries its own
 line. An --out inside the run store or the projects root is a premise failure (exit 2), since the
 lane is granted DIR alone, and --dry-run prints the same counts, writes nothing and records
@@ -256,7 +302,9 @@ added to them, null when the log is absent. The boundary line adds `head fence d
 when any, `limit-cut resumed $X`. The waste table labels the lanes' field `lane tool denials`,
 renders rows for the two new fields on boundaries that carry them, bills a lane closed with no
 cost from its transcript unless --no-meter, and reads a billed line carried by hand as `session
-≈ <n>` or `session USD <n>` into the run total (2026-09-09 15:43). The extraction (2026-09-07,
+≈ <n>` or `session USD <n>` into the heads' total (2026-09-09 15:43; the row was the run total
+until 2026-10-10, when the run total became the run spend the last boundary or close recorded:
+register entry 2026-09-20 01:09). The extraction (2026-09-07,
 2026-09-13 03:53) puts every record in exactly one bucket: `excluded` gains `interrupt` and
 `other`, `other_types` names each record type `other` holds, and `notes` (`replay_trimmed`,
 `injections_cut`, `tool_result_with_text`) are never buckets; turns.md and the command's line
@@ -319,12 +367,47 @@ same fork with no wait when the remainder (the envelope minus the meter's sessio
 positive, else successor-aborted reason budget (the owner tops up). `error` and a `completed`
 head that neither handed over nor closed get one successor from the hand-off under the loop
 guards (repeat-exit, successor-cap, unmetered-loop); an error exit's head-exit carries band
-`error`. A resume runs only after the process has exited, refuses (duplicate-resume) when a
+`error`. The same loop guards run before every fresh start, the starter's and the supervisor's
+alike. `repeat-exit` has two rules. The attempt comparison stops a start when the last two
+head-exits, both at band 80 or 90, name the same unfinished item. Each exit's window begins at
+its latest head start: allowed items less completed boundaries must leave exactly one item,
+and every refused item must have an allowed gate in that window. A completed boundary reached
+before any allowed gate, reading backwards, names no item. The no-progress rule stops it
+when two heads in turn each exited at band 80 or 90 after a refused gate on the same item, with
+no allowed gate and no completed boundary between the two refusals, since a third head would
+only be refused again. Accepted residual: heads that repeatedly allow multiple unfinished
+items, or re-allow work and refuse an item never allowed in their window, can loop past both
+repeat-exit rules; the successor cap and the run's envelope are their only bound. Packed
+hand-overs without boundaries also escape repeat-stop; repeat-exit bounds such a chain where
+its exits name one item at band 80 or 90, otherwise only the cap and envelope bound it.
+`successor-cap` (the run's grants file, then AIMYTH_MAX_SUCCESSORS, then the default of 20) is
+the backstop, applied by `handoff --final` and `successor` at call time as well (the hand-over
+checks below). A
+resume runs only after the process has exited, refuses (duplicate-resume) when a
 head-resumed or head-successor already follows this head's start, and is capped at two per
-session (RESUME_CAP: a third would-be resume takes the successor path); two consecutive
-error or budget stops, in any mix, and two consecutive completed stops (a head that exits
-completed with neither a head-exit nor a run-close, whose successor does the same) end in
-successor-aborted reason repeat-stop, the successor cap being only the backstop. A head-exit
+session (RESUME_CAP: a third would-be resume takes the successor path). Two consecutive
+stops whose heads each made no progress end in successor-aborted reason repeat-stop, the
+successor cap being only the backstop (the repeat-stop design of 2026-10-11, Revision 2, after
+its design review). A stop pairs when the supervisor would follow it with an automatic start:
+error, budget, completed (a head that exits with neither a head-exit nor a run-close),
+unsucceeded without its head's own packed head-exit after its latest start, and any other class
+that falls through to the successor path; never limit,
+closed, handed-over, classifier-missing, a waiting exit, or a stop the stop marker stood down.
+Progress is a phase-boundary written by the stopped head's own process: `boundary` records
+caller_pid from the foreground shell command, allowing one session-leading shell directly
+below the harness; caller_pid_src is head-command, or null and none for uncertain authorship. A head invocation is
+one process: its window opens at the first start event naming its pid after the stop recorded
+before its start (a later run-resume by the same process stays inside it; a head-resumed is a
+new process and a new window) and closes at its stop. The verdict is computed once, at the
+stop, and recorded on the supervisor's `head exited` observation as pid, progress (yes, no or
+unknown) and progress_note: yes for a boundary in the window whose caller_pid is that pid;
+otherwise unknown when no start event names the pid, a boundary in the window carries no
+caller_pid, an unparseable record line lies inside the window (each placed among the events as
+they are read, so one written between the start and an attach counts too), or the record's
+malformed lines rose while the head was watched; otherwise no. The
+guard fires when this stop and the previous recorded stop both pair and both read no; an
+observation written without the field reads unknown, unknown never fires, and an abort followed
+by a restart resets nothing. A head-exit
 recording a session that left no transcript (`unmetered (transcript missing …)` with no metered
 spend: a seeded record whose head never ran) is not a stop the guard counts (register
 2026-09-06), and the waste table leaves that session out of its head count. Without lane.py the supervisor cannot classify: successor-aborted, reason
@@ -360,10 +443,12 @@ and a lane closed on its deadline with a null cost is left out of a plain sum): 
 session the record names on a head start
 (head-successor, head-resumed, run-resume, run-open; a seed is skipped and named), each metered
 alone by its whole transcript (the current head's `head $` taken from a `--meter-line` in
-hand), plus every lane on the record — the sum of its lane-closed costs, and where any close of
+hand), plus every lane on the record — what its lane-closed costs come to, session by session
+(a running total's last figure, never its sum: lane_recorded, the weekly reader's reading), and
+where any close of
 a Claude lane lacks a cost, the lane is still open, or an open pass follows its last close (a
 lane-resumed or a respawn as its latest event), its transcript metered and the LARGER of the
-recorded sum and the transcript's figure taken; a lane with two session ids is metered per
+recorded figure and the transcript's figure taken; a lane with two session ids is metered per
 transcript and always listed under the floor; a lane with no priced close and no meterable
 transcript prints `unmeasured`, never $0.00 (a recorded zero prints `$0.00` beside `recorded`);
 and a Codex lane runs on
@@ -448,17 +533,30 @@ line when the session is armed and the grants file is missing: the head fence is
 A list is never reset by a flag that does not name it. Flag-specific updates preserve all other
 grants and writes: `grants` and a rewriting `run-resume` take the
 file's `grants` list when no --grant is given and its `writes` list when no --write is given, so
---on-limit or --viewer alone changes that key alone; a named list replaces the file's, as
-before, and a flag-less `run-resume` still leaves the file untouched. run-open, grants and a
-rewriting run-resume record both lists on their event. The shrink guard's baseline is the
+--on-limit, --viewer or --max-successors alone changes that key alone; a named list replaces the
+file's, as before, and a flag-less `run-resume` still leaves the file untouched. run-open, grants
+and a rewriting run-resume record both lists on their event. The shrink guard's baseline is the
 record's lists whenever the record holds them (the last run-open, grants or rewriting
 run-resume event that recorded both), with any path the file adds, whatever the file holds
 now: a file already narrowed, by hand or by an older primitive, is never the contract a rewrite
-is checked against. With no recorded lists the file's lists are the baseline. A call naming
-neither --grant nor --write that would lose a write path prints the delta and refuses (exit 2,
-nothing written), whether the file is present, narrowed, missing or unreadable; a lost read
-path alone, or any loss by a call that names a list, is written with the delta on one stderr
-line.
+is checked against. With no recorded lists the file's lists are the baseline. Any rewrite that
+would lose a path from either list, the read list or the write list, by a call that names a
+list or not, prints the delta and refuses (exit 2, nothing written), whether the file is
+present, narrowed, missing or unreadable, unless the call passes --replace, the explicit word
+that the lists it names replace the run's; that rewrite is written with each list's delta on
+stderr (register entry 2026-09-29 20:49: a call naming one extra path replaced a run's whole
+write list). --add-grant and --add-write add paths to the baseline's list instead; with no
+trustworthy baseline (no recorded lists and a grants file missing or unreadable) an addition
+is refused rather than added to the defaults. --grant with --add-grant, --write with
+--add-write, --replace with an add form or with no list are refused, and run-open, which writes
+the first file, takes neither an add form nor --replace. The file also carries
+`max_successors`, the run's successor cap (`run-open --max-successors N`, `grants
+--max-successors N` and `run-resume --max-successors N`, a rewrite of that key alone, write
+it, refusing a value below 1; every other rewrite carries it; register entry 2026-09-24
+07:3x: the cap lived only in a wrapper's environment), which the starter reads before
+AIMYTH_MAX_SUCCESSORS and MAX_SUCCESSORS_DEFAULT, naming its source in a refusal; `handoff
+--final`, `successor`, `gate`, `run-resume` and the hard-band hook read the same count through
+successors_left; a key this script does not manage is carried through every rewrite.
 
 The network key. The grants file carries `network`, the host names the head fence's network
 check lets a command address; an empty list means none, and a file written before the key
@@ -547,10 +645,15 @@ hand-off's mtime is at least REWRITE_SLACK_S past it. `successor --pack-fresh` a
 current: a pack whose anchor that observation follows is fresh by it, while a later anchor (the
 new head has acted since) is judged as usual. On a stale pack the starter rewrites
 `## In flight` from the record
-before the successor starts (a `Next:` line that says it is a copy of the last boundary's `next`
-field, which carries the run's shape as it stood then, the lanes still open since it with
-their spawn lines, the `decision` events since it, one line each, under `- pack re-derived from
-the record at <ts> (the head's pack was stale)`) and records an observation `what: stale-pack`;
+before the successor starts (derive_inflight; register entry 2026-09-25 17:4x: a `Next:` line
+from the head's own pack where that pack is newer than the last boundary — carried with that
+pack's stamp through every later re-derivation until a newer boundary — else a copy of that
+boundary's `next` field, which carries the run's shape as it stood then; every lane still open
+on the WHOLE record with its spawn line and its liveness; the `decision` events since the
+boundary; every relayed AUTHOR line since the run-open; the replaced pack's hand-written lines
+verbatim under their own header — under `- pack re-derived from the record at <ts> (the head's
+pack was stale)` and the heading `## In flight (re-derived from the record at <ts>)`, which a
+head's own pack resets) and records an observation `what: stale-pack`;
 `run-resume` prints one warning line and records the same observation. No boundary in the record
 means the pack is fresh by definition; a pack with no stamp at all (a hand-off written by hand,
 or before this guard) is reported `unstamped` and left alone, since re-deriving over it would
@@ -582,15 +685,33 @@ The decisions channel (register entry 2026-09-13 03:53).
 while the record carries an `observation` whose `what` opens with the whole word `AUTHOR` (a
 non-letter or the end follows it: `AUTHOR ruling`, `AUTHOR-side note` and `AUTHOR: …` count,
 `AUTHORED the page` does not) after the reference
-point — the later of the record's last `gate` event and its last `ack: …` observation, else its
-last run-open or run-resume, else its first line — or while `--decisions-file PATH` (no
-default) has an mtime later than that reference's timestamp: the held call prints one line per
-such observation and one naming the file, and writes nothing. `--ack "<one line naming what was
-read>"` records an observation `what: ack: <line>` and the call proceeds; an empty ack is
-refused. A named decisions file that does not exist is a premise failure (exit 2), since a
-mistyped path would never hold. `run-is-closed --run R` exits 0 on a record with a run-close
-and 1 on one without (2 with no record), for a wrapper that warns before it spawns into a
-closed run.
+point — the furthest the record reached when a call that wrote a `gate` event or an `ack: …`
+observation read it, which each records as `decisions_seen` (a relay appended between that read
+and the call's own write stays pending, so an ack recorded by a close its recheck then holds
+covers nothing it never showed; an event without the field, written before it existed, reaches
+its own place, and one whose value is not a whole number from 0 to the count of the events
+before it covers nothing, so a relay it would have hidden stays pending until a valid ack), else
+its last run-open or run-resume, else its first line — or while `--decisions-file PATH` (no
+default) holds content other than what the last accepted ack read (its sha256 and size, on the
+ack: keyed on the content, never on an mtime): the held call prints one line per such
+observation and the file's unacknowledged lines, and writes nothing. `--ack "<one line naming
+what was read>"` with `--ack-digest <sha256>`, the digest `decisions-read` prints, records an
+observation `what: ack: <line>` carrying the digest, and the call proceeds; an empty ack, a
+digest with no ack or with no decisions file, and a digest that is not a whole sha256 are
+refused (exit 2), while an ack with no digest, or with one the file has grown past since its
+read, holds again (exit 6), printing the lines appended since. `close` reads the file once more
+just before its first write (the owner's provisional choice of 2026-10-10): content changed
+since the ack holds that same close, as does an AUTHOR observation anywhere after the record
+the call checked (its own ack alone left out), and a close that goes through records
+`decisions_file`, `decisions_digest`, `decisions_size`, `decisions_cutoff` and its note on the
+run-close: nothing
+written to the file after that cutoff is covered. A named decisions file that does not exist is
+a premise failure (exit 2), since a mistyped path would never hold. A run's file is bound on its
+record, by `run-open --decisions-file` or else by the first gate or accepted ack that names it:
+`gate`, `close`, `decisions-read` and both launchers then find it there, and another path that
+exists is refused (exit 2). `run-is-closed --run R`
+exits 0 on a record with a run-close and 1 on one without (2 with no record), for a wrapper
+that warns before it spawns into a closed run.
 
 The decision subcommand (register entry 2026-09-06): the primitive that writes the `decision`
 events the close counts, so an owner-behalf decision is never left as a ledger row alone.
@@ -599,7 +720,12 @@ the design's trace schema) and one findings-ledger row — What `decision: <what
 `grant: <grant>`, Routing --routing (default `no action`) — in one call, before the act. It
 records no observation beside them, and `close` counts the `decision` events plus the
 observations whose `what` opens with the word decision (the ledger form heads used before), so
-each decision is counted once.
+each decision is counted once. Since 2026-10-10 the call assigns the event `decision_id` HD-<n>,
+the next free number on the record, under the record's lock, and prints it; `boundary` reads the
+HD-<n> identifiers its --disposition names (explicit references, never prose matching: the
+owner's provisional choice of 2026-10-10) and warns, its exit unchanged, for one the record
+holds no decision for, or two, recording `decision_refs` on its event; an owner decision (D<n>)
+is never checked, and a decision described in words and not named is not seen.
 
 Exit codes: 0 done · 2 premise failure (PROBE FAILED, nothing written) · 3 event written but
 the hand-off not refreshed (a section is missing: fix the document) · 4 gate refused on the
@@ -607,9 +733,12 @@ band (armed) · 7 gate refused on the second unmetered miss (armed), or wait-res
 --max-wait-s, or wait-reset ended limit-unparsed or limit-model (no reset time and no --probe, or a limit scoped to one model: the hand-off is
 the recovery) · 8 wait-reset still running (re-issue the call) · 1 from an internal supervisor
 whose run ended in successor-aborted (a stand-down, supervisor-stood-down, exits 0: the
-designed default, never an abort) · 5 gate refused on the envelope · 6 gate or close held by the
-decisions channel (re-run with --ack) · 9 run-resume or gate refused while another live head
-holds the run · 1 also from run-is-closed on an open run.
+designed default, never an abort) · 5 gate refused on the envelope · 6 gate, close or decisions-ack
+held by the decisions channel (re-run with --ack and --ack-digest) · 9 run-resume, gate or
+decisions-ack refused while another live head holds the run · 10 handoff --final or successor
+refused: no successor left on
+the run's cap; nothing started, and handoff --final still wrote the pack · 1 also from
+run-is-closed on an open run.
 
 Numbers: REPORT_CAP_WORDS decodes legacy records only; starter wait 600 s and silence
 proxy 120 s (design, context bands; set by judgement, unmeasured); --max-block-s 540 s (the
@@ -634,14 +763,87 @@ REWRITE_SLACK_S 1 s (the record's whole-second timestamps and `ps -o etime=`'s w
 exit codes 6 and 9 (the run design's, both unused here before); PID_MAX 2**31 - 1 (a signed
 32-bit pid: os.kill overflows past it, measured); a host name's labels at most 63 characters and
 253 in all (the DNS name limits).
+The numbers of 2026-10-10: CONSOLE_CONFIRM_HOLD_S 3 s, SEED_PID_S 2 s, NEEDLE_MIN 8 and
+NEEDLE_HEAD 40 characters (derived, or named as judgement, beside the constants).
+The numbers of 2026-10-30: MAX_SUCCESSORS_DEFAULT 20 (a night run's measured lead length; it
+was 6), EXIT_NO_SUCCESSOR 10 (the lowest unused code), STARTER_GONE_TICKS 3 (a pid-waiting
+starter's measured 0 to 2 s; unmeasured below the default tick) and SILENCE_POLL_S 5 s
+(wait_silent's existing poll), each derived beside the constant.
+
+The hand-over checks (2026-10-30; register entries 2026-10-30 16:11 and 2026-10-25 16:28). The
+successor count is one reading, successors_left: the head-successor events on the record against
+the run's cap, as the starter's successor-cap guard reads it. `gate` and `run-resume` print it on
+every line ("successors: k of N started, M left"), and the gate event records it. `handoff
+--final` and `successor` apply the starter's own test before either writes a head-exit, and
+again under the record's lock just before the append: with none left each exits 10 and records
+one observation (`handoff --final refused: no successor left`, `successor refused: no successor
+left`), `handoff --final` still writing the pack, so the run's last lead stays the lead and
+closes the run with its morning report; a gate refusal with none left says close the run rather
+than hand over. A cap that falls back past a grants file whose own cap cannot be read
+(unreadable, not a JSON object, an unusable value) is named as that fault, with how to recover
+the cap, and whether the run's last lead has come is then undecided; a readable grants file with
+no cap key is a run that set none, and its fallback is the decided cap. `successor` reads the
+process table once and names each session-leading shell child of the calling head's own process
+other than its own shell: a background task, which keeps a print-mode head alive after its last
+reply; the call goes on, and "none" is printed only when the same read showed the call's own
+shell there (the control); a process chain it cannot walk whole is undecided, never none. The
+supervisor's wait on an `unsucceeded` stop shrinks to STARTER_GONE_TICKS ticks once the head's
+own starter has aborted and a re-called starter would wait on a pid (SILENCE_PROXY_S +
+SILENCE_POLL_S + a tick when it would wait for silence), and the starter's timeout note names the
+head's own process and its shell children. At the hard band the hook `handsoff-gate.py` admits
+TaskStop and `handsoff.py close` for the run's last lead alone (no successor left on a decided
+cap, and the calling session the record's current head), through last_lead_state; when that
+cannot be read its deny stands (the owner's decision of 2026-10-30).
+
+The fixes of 2026-10-10 (the register entries each names). The run figure (run_spend) is a floor
+while any lane still runs — no close yet, or an open pass after its last close — and a closed lane
+whose every close is priced is still metered from its transcript, the larger figure taken, so the
+figure never falls while a lane spends (2026-09-30 03:21). `successor` and the supervisor size the
+next head on the envelope minus that same figure, as the gate and the close read it (2026-09-26
+02:2x). The head's model is structured on every head start (`model`, `model_src`): `run-open
+--model` records the launch's, `successor` and `resume-head` take --model or the newest start's,
+the supervisor's own successor start passes its head's, and a start with none is refused before
+any process (2026-09-23 12:5x); `launch-check` refuses to certify a head start with no readable
+model, reading a run-resume's from the start naming its session. The starter's
+first line names every lane open on the record and its liveness (2026-09-24 00:4x). The first
+batch (owner decision D21 (c) of 2026-10-10): `launch-check --lanes` reads each planned helper's
+latest attempt since the confirmed head start — `missing`, `opening`, `silent`, `progressing`,
+`done`, `failed` or `unverified` — and progress is observable activity after the open, a
+LAUNCH_LANE_ACTIVITY record event or a transcript or session-file record stamped after it, never a
+live process alone. The console probe reads pgrep's exit status (a sighting is exit 0 with a pid;
+any other status confirms nothing) and its pattern counts `--run R` anywhere after watch.py or
+`handsoff.py watch` (2026-09-22 19:03); a console first seen is confirmed only if a successful
+probe still finds it CONSOLE_CONFIRM_HOLD_S later, and one gone by then is reported
+started-then-exited with the by-hand line and not retried (2026-09-20 01:48); every command handed
+on names the absolute interpreter (interpreter(), 2026-09-30 17:36). A console lock that cannot be
+worked (any errno but EWOULDBLOCK or EAGAIN) is named and not taken, never read as contention
+(2026-09-18 20:0x). The extraction counts compaction summaries and cross-session lines out of the
+human turns, keeps a mid-turn owner message the harness queued as an attachment, names every
+tool's main field and shows a newline in a call as ` ⏎ ` (2026-09-13 03:53, 2026-10-02 06:19);
+reflect-inputs reads an attended record (no run-open) from --session's transcript or --transcript
+(2026-09-26 03:5x), writes into the run's own <store>/stages/<run>/reflect when asked (2026-09-17
+21:08), and withholds any extraction line that names a control a legacy record holds, matched before a
+tool line is cut and across a turn's line breaks, so a wrapped control goes with every line it
+touches (2026-10-11). The waste table's
+limit waits end at the first head start after the stop (2026-09-24 13:1x), its run total is the
+run spend the last boundary or close recorded (2026-09-20 01:09), and a closed run's table is
+printed rather than rewritten (2026-10-03 07:48); the boundary records the lanes' fence and
+sandbox denials beside the head fence's (2026-10-02 16:42). `ledger --observation` creates a
+missing record (2026-09-19 02:55); `close` requires --items (2026-09-20 02:12) and removes the
+run's arming markers after its run-close, which `disarm` repeats (2026-09-30 18:48); `heartbeat`
+refuses a head under AIMYTH_HANDSOFF=1 (2026-09-25 18:2x).
 Every --dry-run prints what would be written and writes nothing.
 """
 import sys
 sys.dont_write_bytecode = True   # the hook import must never leave bytecode in the vault
 import argparse
 import calendar
+import collections
 import contextlib
+import functools
+import errno
 import glob as globmod
+import hashlib
 import importlib.util
 import json
 import math
@@ -651,6 +853,8 @@ import shlex
 import subprocess
 import time
 import uuid
+import http.client
+import urllib.parse
 
 try:
     import fcntl   # record_lock's advisory lock; absent off POSIX, where no lock is taken
@@ -660,6 +864,19 @@ except ImportError:
 HEAD_EVENTS = ("run-open", "run-resume", "head-exit", "head-successor")
 SESSION_EVENTS = ("run-open", "run-resume", "head-successor")   # each names the head's session
 START_EVENTS = SESSION_EVENTS + ("head-resumed",)   # each starts a head process the supervisor owns
+HEAD_EFFORT_DEFAULT = "max"   # the owner's head rule of 2026-09-04, where nothing else names one
+# A head at work on an item.
+ITEM_WORK_EVENTS = ("decision", "lane-open", "lane-resumed", "phase-boundary")
+BOUNDARY_LINE_RE = re.compile(r"handsoff\.py\s+boundary\b|`boundary`")   # the command, never the word
+# A typed clock placeholder (register entry 2026-10-15 01:33 d): an hour, a colon, one minute digit
+# and x, standing alone; a bracketed register stamp is a heading's name, and is cut out first.
+CLOCK_PLACEHOLDER_RE = re.compile(r"(?<![\d:.\-])(?:[01]\d|2[0-3]):[0-5][xX](?![A-Za-z0-9])")
+REGISTER_STAMP_RE = re.compile(r"\[\d{4}-\d{2}-\d{2} \d{2}:\d[xX](?: [a-z])?\]")
+STAGE_SCAN_FILES = 40           # stage documents read at a boundary: set by judgement, unmeasured
+STAGE_SCAN_BYTES = 1000000      # the largest one read: set by judgement, unmeasured
+ITEM_DONE_RE = re.compile(r"\b(?:done|passed|closed|complete|completed|finished)\b", re.I)
+ITEM_UNDONE_RE = re.compile(r"\b(?:not|never|nearly|almost)\b[^.;]{0,20}\b(?:done|passed|closed|"
+                            r"complete|completed|finished)\b", re.I)
 WRAPPER_EVENTS = ("lane-closed", "stall")   # written while the head waits, never by the head
 SESSION_KINDS = ("seed", "head")   # run-open --session-kind: a launcher's placeholder, or a head
 # The cut tail of a requested report preview, priced in the waste table (T8):
@@ -680,6 +897,9 @@ DEFAULT_WINDOW = 1000000
 REPORT_CAP_WORDS = 800   # Legacy format: the default shown count before report_cut/report_shown fields.
 STARTER_WAIT_S = 600
 SILENCE_PROXY_S = 120
+# wait_silent's poll of the transcript's last write: its existing literal, hoisted unchanged so the
+# supervisor's bound on a re-called silence-waiting starter (starter_gone) can name it.
+SILENCE_POLL_S = 5
 MAX_BLOCK_S = 540
 MAX_WAIT_S = 8 * 3600          # the reset wait's bound (design D30: the existing waiter's bound)
 PROBE_INTERVAL_S = 900
@@ -795,6 +1015,10 @@ EXIT_ENVELOPE = 5
 # envelope's 5 and the unmetered 7, and 9 is the first code past still-running's 8.
 EXIT_HOLD = 6
 EXIT_TWO_HEADS = 9
+# The hand-over refused at the successor cap (register entry 2026-10-30 16:11): `handoff --final`
+# and `successor` exit 10 when no successor is left. 10 is the lowest code no subcommand uses:
+# 0 to 9 are taken (the docstring's exit codes), and no subcommand exits 10 or above.
+EXIT_NO_SUCCESSOR = 10
 # A launcher-supplied pid that is the caller's own ancestor and has run longer than this is
 # refused by `successor` and the starter, which would otherwise wait on the caller itself
 # (register entries 2026-09-10 10:51 and 2026-09-12 20:0x). A seed pid's process exits within
@@ -812,9 +1036,49 @@ REWRITE_SLACK_S = 1
 # following it (`AUTHOR ruling`, `AUTHOR-side note`, `AUTHOR: …`); `AUTHORED the page` is not one.
 AUTHOR_RE = re.compile(r"AUTHOR(?![^\W\d_])")
 ACK_PREFIX = "ack: "             # the head's acknowledgement observation's `what`
+# The record length a call's decisions check read, kept on the ack observation and the gate event
+# it writes: what that check covered, which the next call's reference point is (decisions_covered,
+# the one reader of it: absent is the legacy reading, a malformed value covers nothing).
+DECISIONS_SEEN = "decisions_seen"
+# The file a run is bound to, a canonical path on its run-open, a gate or an accepted ack
+# (decisions_binding, the one reader): how a launcher, which takes no --decisions-file, finds it.
+DECISIONS_FILE = "decisions_file"
+# What a held spawn prints of the unread lines, the newest first kept; decisions-read prints them
+# all. A burst repeats it once per refused call. Sized from a two-day run's decisions file (median
+# line 89 bytes, longest 1,004): 12 median lines take about 1,100 bytes and 4,000 holds about four
+# of the longest. The rest is set by judgement, unmeasured.
+HOLD_SHOWN_LINES = 12
+HOLD_SHOWN_BYTES = 4000
+HOLD_REREAD_S = 0.25   # lane.py's ACK_POLL_S: one more look at a torn line; set by judgement, unmeasured
+HOLD_TRIAL_PREFIX = "decisions-hold trial: "   # lane.py's trial line, read back to log once a head
 PACK_FRESH_WHAT = "pack-fresh"   # the launcher's word that the hand-off is current
 TWO_HEADS_WHAT = "two heads"     # the observation a two-heads refusal records
 DECISION_WHAT_RE = re.compile(r"^\s*decision\b", re.I)   # a ledger row recording a decision
+# The ack digest (IDEAS 171 (b); register entry 2026-09-20 14:29): the decisions file's whole
+# sha256, as `decisions-read` prints it and --ack-digest repeats it — 64 hexadecimal characters,
+# never a prefix, since a prefix is a weaker claim about the same bytes.
+DIGEST_RE = re.compile(r"[0-9a-f]{64}")
+# A head decision's stable identifier, which `decision` assigns and a boundary's disposition
+# names to say which decision it rests on (register entry 2026-10-05 20:18: decisions recorded
+# after the close went unnoticed). `HD-` keeps a head decision apart from an owner decision,
+# which the decisions file numbers `D<n>`; only these references are checked, never prose.
+HEAD_DECISION_PREFIX = "HD-"
+HEAD_DECISION_RE = re.compile(r"(?<![A-Za-z0-9])HD-(\d{1,6})(?![0-9])")
+# The successor cap's default when neither the grants file nor AIMYTH_MAX_SUCCESSORS sets one (the
+# owner's amendment of 2026-10-30: 6 was too few for a night run). Derived from the night run of
+# 29 to 30 October 2026 (register entry 2026-10-30 16:11): its eight leads that handed over ran 36
+# to 148 minutes from head start to their own head-exit, 86.8 minutes (1.45 h) on average, so a
+# 20-hour run takes about 14 leads (20 / 1.45 = 13.8) and 20 leaves six of headroom; the ninth lead
+# closed the run. It stays a backstop: the repeat-exit and repeat-stop guards and
+# the envelope are the real bounds, and the call-time check (successors_left) makes the run's last
+# lead close the run rather than hand over into nothing. A pre-flight sizes the run's own cap
+# (run-open --max-successors N), which the grants file carries and which wins over this default.
+MAX_SUCCESSORS_DEFAULT = 20
+# `successor --seed-pid` (register entry 2026-09-23 00:5x): an attended head's own process does
+# not exit at the end of a reply, so the starter is handed a seed process that exits this many
+# seconds after the call instead. Two seconds outlast the call's own return; set by judgement,
+# unmeasured. The starter polls a pid once a second (wait_dead), so it starts within ~3 s.
+SEED_PID_S = 2
 # A recorded pid above this names no process: the platform's pid is a signed 32-bit integer and
 # os.kill raises OverflowError past it (measured), so a larger figure is a corrupt record.
 PID_MAX = 2 ** 31 - 1
@@ -823,6 +1087,15 @@ PID_MAX = 2 ** 31 - 1
 # budget left of its deadline (probe_bound), so a 60 s deadline still hands a `ps` call 10 s and
 # a 1 s deadline hands it 1 s (critic review pass 2 finding 3).
 PS_TIMEOUT_S = 10
+# The shells a harness runs a head's shell calls in (head_event_caller's set, hoisted so the
+# background-task check of `successor` reads the same one).
+SHELLS = ("sh", "bash", "zsh", "dash", "ksh", "fish")
+# The supervisor's wait after the head's own starter has already aborted (register entry
+# 2026-10-25 16:28): only a starter the head called again could still start a successor, and one
+# that waits on a pid wrote its head-successor 0 to 2 s after the predecessor's exit in the four
+# clean hand-overs of 29 to 30 October 2026 (polling once a second, wait_dead). Three ticks are
+# 180 s at the default 60 s tick, over two minutes of margin; unmeasured below the default tick.
+STARTER_GONE_TICKS = 3
 NETWORK_NONE = "none"   # --network's word for no network; the grants file holds it as []
 # A host --network accepts: dot-separated labels of lower-case letters, digits and inner hyphens,
 # each at most 63 characters and 253 in all (the DNS name limits).
@@ -840,6 +1113,9 @@ LEDGER_HEADER = ("| Time | Item | Finding | Evidence | Routing |", "|---|---|---
 HEAD_ACTS = START_EVENTS + ("gate", "phase-boundary", "decision")
 PACK_LABELS = ("Next:", "Needs:", "Decided:")   # the next-task pack (design D41)
 PACK_LINE_RE = re.compile(r"^\s*(?:[-*]\s+)?(Next|Needs|Decided):", re.M)
+PACK_REMAINING_RE = re.compile(
+    r"^[ \t]*(?:[-*][ \t]+)?Remaining:[ \t]*(\d+|\d{1,3}(?:,\d{3})+)"
+    r"[ \t]*(k?)(?:[ \t]+tokens)?[ \t]*$", re.M | re.I)
 PACK_STAMP = "- pack written: "                 # the pack's age stamp (the pack-age guard)
 PACK_DERIVED = "- pack re-derived from the record at %s (the head's pack was stale)"
 PACK_STAMP_RE = re.compile(r"^\s*[-*]\s+pack (?:written:|re-derived from the record at)\s*"
@@ -955,12 +1231,20 @@ def refuse_grants_file(a):
             % grants_path(a.run))
 
 
+# The grants file's keys this script writes itself; any other key a file carries (a setting a
+# newer tool wrote) is carried through every rewrite unchanged, never dropped by a rebuild.
+MANAGED_GRANT_KEYS = ("run", "grants", "writes", "on_limit", "viewer", "network",
+                      "max_successors", "written", "source")
+
+
 def grants_payload(run, source, grants, writes, on_limit=ON_LIMIT_DEFAULT,
-                   viewer=VIEWER_DEFAULT, network=None):
+                   viewer=VIEWER_DEFAULT, network=None, max_successors=None, carry=None):
     """The defaults first (critic C1 F2: the head's own primitives are never denied), then the
     paths given, every one in both spellings, de-duplicated in order; `on_limit` is the limit
-    gate (D42), `viewer` the console window's key and `network` the hosts the head fence's
-    network check allows (an empty list: none), each carried by this file alone."""
+    gate (D42), `viewer` the console window's key, `network` the hosts the head fence's network
+    check allows (an empty list: none) and `max_successors` the run's successor cap (written only
+    when set), each carried by this file alone. `carry` is the file's current payload: every key
+    of it that this script does not manage is kept as it stands."""
     def merge(paths):
         out = []
         for p in paths:
@@ -968,12 +1252,18 @@ def grants_payload(run, source, grants, writes, on_limit=ON_LIMIT_DEFAULT,
                 if s not in out:
                     out.append(s)
         return out
-    return {"run": run,
-            "grants": merge([vault_given(), store_given(), state_dir(), projects_given(),
-                             lane_home_given(), "/tmp"] + list(grants or [])),
-            "writes": merge([store_given(), state_dir()] + list(writes or [])),
-            "on_limit": on_limit, "viewer": viewer, "network": list(network or []),
-            "written": now(), "source": source}
+    payload = {}
+    if isinstance(carry, dict):
+        payload.update((k, v) for k, v in carry.items() if k not in MANAGED_GRANT_KEYS)
+    payload.update({"run": run,
+                    "grants": merge([vault_given(), store_given(), state_dir(), projects_given(),
+                                     lane_home_given(), "/tmp"] + list(grants or [])),
+                    "writes": merge([store_given(), state_dir()] + list(writes or [])),
+                    "on_limit": on_limit, "viewer": viewer, "network": list(network or [])})
+    if max_successors is not None:
+        payload["max_successors"] = max_successors
+    payload.update({"written": now(), "source": source})
+    return payload
 
 
 def read_grants(path):
@@ -1000,14 +1290,15 @@ def on_limit_of(payload):
     return ON_LIMIT_DEFAULT, "default (unknown value %r)" % (value,)
 
 
-def on_limit_choice(a, path):
+def on_limit_choice(a, path, current=None):
     """(value, source) the next write of the grants file carries: --on-limit when given, else
     the file's own value carried forward (D42; critic C1 M5: a rebuild must not reset it), else
-    the default."""
+    the default. `current` is the file's payload where the caller has read it already, so one
+    read feeds every key of a plan (grants_plan); absent, the file is read here."""
     chosen = getattr(a, "on_limit", None)
     if chosen in ON_LIMIT_VALUES:
         return chosen, "--on-limit"
-    return on_limit_of(read_grants(path))
+    return on_limit_of(read_grants(path) if current is None else current)
 
 
 def viewer_of(payload):
@@ -1024,15 +1315,15 @@ def viewer_of(payload):
     return VIEWER_DEFAULT, "default (unknown value %r)" % (value,)
 
 
-def viewer_choice(a, path):
+def viewer_choice(a, path, current=None):
     """(value, source) the next write of the grants file carries: --viewer when given, else the
     file's own value carried forward (a rebuild must not reset it, as for the limit gate), else
     the default. The grants file is this key's only home (D42's rule for on_limit): no second
-    file and no environment fallback for the key itself."""
+    file and no environment fallback for the key itself. `current` as for on_limit_choice."""
     chosen = getattr(a, "viewer", None)
     if chosen in VIEWER_VALUES:
         return chosen, "arg"
-    return viewer_of(read_grants(path))
+    return viewer_of(read_grants(path) if current is None else current)
 
 
 def parse_network(text):
@@ -1077,19 +1368,242 @@ def network_of(payload):
     return [], "default (unreadable value %s)" % ("%r" % (value,))[:60]
 
 
-def network_choice(a, path):
+def network_choice(a, path, current=None):
     """(hosts, source) the next write of the grants file carries: --network when given, else the
     file's own value carried forward (a rebuild never resets it, as for on_limit and viewer), else
-    none."""
+    none. `current` as for on_limit_choice."""
     chosen = getattr(a, "network", None)
     if chosen is not None:
         return parse_network(chosen), "arg"
-    return network_of(read_grants(path))
+    return network_of(read_grants(path) if current is None else current)
 
 
 def network_shown(hosts):
     """The network value on an output line: none, or the hosts comma-separated."""
     return ",".join(hosts) if hosts else NETWORK_NONE
+
+
+def grants_file_state(path):
+    """How the grants file reads, in words, for a refusal that names it: `missing`, `unreadable
+    (<why>)`, `not a JSON object` or `readable`."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except FileNotFoundError:
+        return "missing"
+    except (OSError, ValueError) as exc:
+        return "unreadable (%s)" % one_line(str(exc))[:80]
+    return "readable" if isinstance(payload, dict) else "not a JSON object"
+
+
+def max_successors_of(payload):
+    """(cap, source) from a grants payload: the `max_successors` key when it is a whole number of
+    at least 1, else (None, why). A file without the key is no cap of its own (register entry
+    2026-09-24 07:3x: the cap lived only in a wrapper's environment, so a direct call of this
+    script ran under the default and refused a run past its sixth successor)."""
+    value = payload.get("max_successors") if isinstance(payload, dict) else None
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value, "grants"
+    if not payload:
+        return None, "no grants file"
+    if value is None:
+        return None, "key absent"
+    return None, "unusable value %s" % ("%r" % (value,))[:40]
+
+
+def max_successors_choice(a, path, current=None):
+    """(cap, source) the next write of the grants file carries: --max-successors when given (a
+    whole number of at least 1, else a premise failure), else the file's own value carried
+    forward, as on_limit and viewer are, else none. `current` as for on_limit_choice."""
+    chosen = getattr(a, "max_successors", None)
+    if chosen is not None:
+        if isinstance(chosen, bool) or not isinstance(chosen, int) or chosen < 1:
+            die("--max-successors must be a whole number of at least 1, got %r" % (chosen,))
+        return chosen, "arg"
+    return max_successors_of(read_grants(path) if current is None else current)
+
+
+def grants_cap_read(path):
+    """(payload, state) from ONE read of the grants file, for the successor cap: the payload ({}
+    unless the file holds a JSON object) and the file's state in words — `missing`, `unreadable
+    (<why>)`, `not a JSON object`, `readable, no max_successors key`, `readable, unusable
+    max_successors value …`, or `readable` when the key holds a usable cap. read_grants returns
+    {} for a readable `{}` and for an unreadable file alike; this names each as it is."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except FileNotFoundError:
+        return {}, "missing"
+    except (OSError, ValueError) as exc:
+        return {}, "unreadable (%s)" % one_line(str(exc))[:80]
+    if not isinstance(payload, dict):
+        return {}, "not a JSON object"
+    return payload, cap_state_of(payload)
+
+
+def cap_state_of(payload):
+    """A grants payload's cap state in grants_cap_read's words — `readable, no max_successors
+    key`, `readable, unusable max_successors value …` or `readable` — for a payload in hand: the
+    file as read, or the payload a dry run would write (successor_cap_read's `planned`)."""
+    if "max_successors" not in payload:
+        return "readable, no max_successors key"
+    if max_successors_of(payload)[0] is None:
+        return "readable, unusable max_successors value %s" % (
+            "%r" % (payload["max_successors"],))[:40]
+    return "readable"
+
+
+# The grants file states in which its own cap cannot be read although the file is there: the file
+# unreadable, not a JSON object (no grants payload is ever written so), or its max_successors value
+# unusable. A cap that falls back past such a file is not the run's decided cap
+# (successor_cap_read's `fault`), so whether the run's last lead has come is undecided. A readable
+# file with NO max_successors key is not among them: grants_payload writes the key only when a cap
+# is set, so a keyless file is a run that set no cap, and the fallback (AIMYTH_MAX_SUCCESSORS, else
+# MAX_SUCCESSORS_DEFAULT) is its decided cap (build review RV-CAP finding F5).
+CAP_FAULT_STATES = ("unreadable", "not a JSON object", "readable, unusable")
+CAP_OWN_SRC = "the grants file %s"   # the cap's source when the run's grants file carries it
+
+
+def successor_cap_read(run, planned=None):
+    """(cap, source, fault) for the run's successor cap: the run's grants file first (the key
+    `run-open --max-successors` and `grants --max-successors` write), then AIMYTH_MAX_SUCCESSORS,
+    then MAX_SUCCESSORS_DEFAULT; the source names which, and a fallback names the grants file's
+    real state (grants_cap_read). `fault` is that state when the file is present but its cap
+    cannot be read — unreadable, not a JSON object, or an unusable max_successors value — else
+    None: the number is the starter's either way, but a fallback past a faulty file is not the
+    run's decided cap, so the call-time checks name the fault, say the last-lead question is
+    undecided, and the hard-band hook denies (review CR-CAP2 finding 6). A missing file and a
+    readable file with no key are no fault: grants_payload writes the key only when a cap is set,
+    so such a run set no cap and the fallback is its decided cap (build review RV-CAP finding F5).
+    `planned`, a grants payload in hand, is read in the file's place: the count a dry run's
+    rewrite would leave, nothing being written. An unusable environment value is named on stderr
+    and passed over."""
+    path = grants_path(run)
+    payload, state = (grants_cap_read(path) if planned is None
+                      else (planned, cap_state_of(planned)))
+    value, _ = max_successors_of(payload)
+    if value is not None:
+        return value, CAP_OWN_SRC % path, None
+    fault = state if state.startswith(CAP_FAULT_STATES) else None
+    raw = os.environ.get("AIMYTH_MAX_SUCCESSORS")
+    if raw:
+        try:
+            n = int(raw)
+        except ValueError:
+            n = 0
+        if n >= 1:
+            return n, "AIMYTH_MAX_SUCCESSORS=%d (the grants file: %s)" % (n, state), fault
+        note("AIMYTH_MAX_SUCCESSORS=%r is not a whole number of at least 1: passed over" % raw)
+    return (MAX_SUCCESSORS_DEFAULT,
+            "the default (the grants file: %s; no AIMYTH_MAX_SUCCESSORS)" % state, fault)
+
+
+def successor_cap(run):
+    """(cap, source) for the successor-cap guard (successor_cap_read without its fault)."""
+    cap, src, _ = successor_cap_read(run)
+    return cap, src
+
+
+def successors_left(events, run, planned=None):
+    """The run's successor count, ONE reading for every caller (register entry 2026-10-30 16:11):
+    `handoff --final` and `successor` at call time, `gate` and `run-resume` on every line, the
+    starter's and the supervisor's successor-cap guard (start_guards) and the hard-band hook
+    (last_lead_state). A dict: `used`, the record's head-successor events (every head start, the
+    seeded first lead's included); `cap` and `src`, the run's cap and where it came from
+    (successor_cap_read, or the default where no run id names a grants file); `own`, whether the
+    run's grants file carries it; `fault`, as successor_cap_read gives it; `left`, cap less used;
+    and `run`. `planned` is a grants payload read in the file's place (a dry run's rewrite)."""
+    used = sum(1 for e in events if e.get("event") == "head-successor")
+    if TOKEN_RE.fullmatch(run or ""):
+        cap, src, fault = successor_cap_read(run, planned)
+    else:
+        cap, src, fault = (MAX_SUCCESSORS_DEFAULT,
+                           "the default (no run id to read a grants file)", None)
+    return {"used": used, "cap": cap, "src": src, "left": cap - used, "fault": fault,
+            "own": src.startswith(CAP_OWN_SRC % ""), "run": run}
+
+
+def successors_clause(s):
+    """The count as every gate, run-resume and hand-over refusal prints it: the short form when
+    the run's grants file carries the cap (`successors: 8 of 14 started, 6 left`), the source in
+    full for a fallback, the run's-last-lead guidance when none is left, and the file's fault
+    instead of that guidance when the cap fell back past a faulty grants file."""
+    src = "" if s["own"] else " (%s)" % s["src"]
+    head = "successors: %d of %d started" % (s["used"], s["cap"])
+    fix = "`handsoff.py grants --run %s --max-successors N` writes the run's cap" % s["run"]
+    if s["fault"] and s["left"] <= 0:
+        return ("%s, none left on a fallback cap%s — the run's own cap cannot be read from its "
+                "grants file, so whether this is the run's last lead is undecided: %s"
+                % (head, src, fix))
+    if s["left"] <= 0:
+        return ("%s, none left%s — this is the run's last lead: work within your band and close "
+                "the run with its morning report; a hand-over would start no successor"
+                % (head, src))
+    if s["fault"]:
+        return ("%s, %d left%s — warn: the run's own cap cannot be read from its grants file: %s"
+                % (head, s["left"], src, fix))
+    return "%s, %d left%s" % (head, s["left"], src)
+
+
+def last_lead_state(sid):
+    """("last" | "not-last" | "undecided", text) for the hard-band hook (handsoff-gate.py; the
+    owner's decision of 2026-10-30 that the run's last lead may still stop its background tasks
+    and close the run at the 90 % edge). `last` only when the run has no successor left on a
+    decided cap AND `sid` is the record's current head session (head_session), so another armed
+    session of the run is never let through (review CR-CAP2 finding 1). The run is found as the
+    head fence finds it: AIMYTH_HANDSOFF_RUN, else the state directory's `run-<sid>` pointer (one
+    line). It never raises and never prints to stdout: a premise failure, die()'s SystemExit
+    included, is `undecided` with the premise named, and the hook then keeps its deny. A record
+    with any unreadable line (read_record's count: a torn or malformed row) is such a premise,
+    whatever its readable rows show, since that line may be a newer head start or resume, which
+    would change the count or the current lead (build review RV-CAP4 finding F1)."""
+    try:
+        run = (os.environ.get("AIMYTH_HANDSOFF_RUN") or "").strip()
+        if run:
+            if not TOKEN_RE.fullmatch(run):
+                return "undecided", "AIMYTH_HANDSOFF_RUN %r is not a run id" % run[:60]
+        else:
+            if not isinstance(sid, str) or not TOKEN_RE.fullmatch(sid):
+                return "undecided", ("no run: no AIMYTH_HANDSOFF_RUN, and session id %r cannot "
+                                     "name a run pointer" % (str(sid)[:60],))
+            pointer = os.path.join(state_dir(), "run-" + sid)
+            try:
+                with open(pointer, encoding="utf-8") as handle:
+                    run = handle.readline().strip()
+            except FileNotFoundError:
+                return "undecided", ("no run: no AIMYTH_HANDSOFF_RUN and no run pointer at %s"
+                                     % pointer)
+            except (OSError, ValueError) as exc:
+                return "undecided", "the run pointer %s is unreadable (%s)" % (
+                    pointer, one_line(str(exc))[:80])
+            if not TOKEN_RE.fullmatch(run):
+                return "undecided", "the run pointer %s holds %r, which is not a run id" % (
+                    pointer, run[:60])
+        path = record_path(run)
+        if not os.path.isfile(path):
+            return "undecided", "the run record %s is missing" % path
+        events, bad = read_record(path)
+        if bad:
+            return "undecided", ("the run record %s has %d unreadable line(s), any of which may "
+                                 "be a newer head start or resume" % (path, bad))
+        if last_index(events, ("run-open",)) < 0:
+            return "undecided", "the run record %s carries no run-open" % path
+        s = successors_left(events, run)
+        clause = successors_clause(s)
+        if s["fault"]:
+            return "undecided", "%s: the grants file is %s" % (clause, s["fault"])
+        if s["left"] > 0:
+            return "not-last", clause
+        lead, _ = head_session(events)
+        if lead is None:
+            return "undecided", "%s, but the record names no current head session" % clause
+        if sid != lead:
+            return "not-last", ("successors: %d of %d started, none left; this session (%s) is "
+                                "not the run's current lead: the record's current head session "
+                                "is %s" % (s["used"], s["cap"], str(sid)[:60], lead))
+        return "last", clause
+    except BaseException as exc:   # die() raises SystemExit; nothing may escape to the hook
+        return "undecided", "%s: %s" % (type(exc).__name__, one_line(str(exc))[:160])
 
 
 def path_list(payload, key):
@@ -1120,22 +1634,19 @@ def grants_plan(a, path, events, source):
     the network key is carried the same way unless --network names it. Returns (payload,
     sources, dropped, against): `dropped` maps a list to the paths it would lose against the
     baseline, which is the record's last recorded lists whenever the record holds them (with any
-    path the file adds), else the file's lists, and `against` names what was compared."""
-    on_limit, _ = on_limit_choice(a, path)
-    viewer, _ = viewer_choice(a, path)
-    network, _ = network_choice(a, path)
+    path the file adds), else the file's lists, and `against` names what was compared. `sources`
+    names where each list came from (`grants`, `writes`) and where each key's value did
+    (`on_limit`, `viewer`, `network`, `max_successors`). The file is read ONCE and every key
+    and list is taken from that read, so a caller that records its event from the payload and
+    these sources reports exactly what it writes (critic finding F3 of the second review of
+    2026-10-11: run-resume read the cap for its event apart from the plan, before its lock, and a
+    cap written between the two reads went to the file while the event and stdout named the
+    older one)."""
     current = read_grants(path)
-    lists, sources = {}, {}
-    for key, flag, given in (("grants", "--grant", a.grant), ("writes", "--write", a.write)):
-        carried = path_list(current, key)
-        if given:
-            lists[key], sources[key] = list(given), flag
-        elif carried is not None:
-            lists[key], sources[key] = carried, "carried (file)"
-        else:
-            lists[key], sources[key] = [], "defaults (nothing to carry)"
-    payload = grants_payload(a.run, source, lists["grants"], lists["writes"], on_limit, viewer,
-                             network)
+    on_limit, on_limit_src = on_limit_choice(a, path, current)
+    viewer, viewer_src = viewer_choice(a, path, current)
+    network, network_src = network_choice(a, path, current)
+    cap, cap_src = max_successors_choice(a, path, current)
     # The baseline is the record's lists whenever it holds them, with any path the file adds: a
     # file already narrowed (by hand, or by a primitive older than this guard) is never the
     # contract it is checked against. With no recorded lists, the file's lists are the baseline.
@@ -1148,6 +1659,34 @@ def grants_plan(a, path, events, source):
                    else "%s and the grants file %s" % (label, path))
     else:
         old, against = {"grants": fg, "writes": fw}, "the grants file %s" % path
+    lists, sources = {}, {}
+    for key, flag, given, addflag, added in (
+            ("grants", "--grant", a.grant, "--add-grant", getattr(a, "add_grant", None) or []),
+            ("writes", "--write", a.write, "--add-write", getattr(a, "add_write", None) or [])):
+        carried = path_list(current, key)
+        if given:
+            lists[key], sources[key] = list(given), flag
+        elif added:
+            # An addition merges into the baseline (register entry 2026-09-29 20:49: a call
+            # naming one extra path replaced the whole list). With no trustworthy baseline — no
+            # recorded lists and a grants file that is missing or unreadable — it refuses rather
+            # than adding to the defaults, which would pass a narrowing off as preservation.
+            if old[key] is None:
+                die("%s adds to the run's %s list, but there is no trustworthy baseline to add to: "
+                    "the record holds no recorded lists and the grants file %s is %s; pass the "
+                    "whole list with %s and --replace; nothing written"
+                    % (addflag, "write" if key == "writes" else "read", path,
+                       grants_file_state(path), flag))
+            lists[key] = list(old[key]) + [p for p in added if p not in old[key]]
+            sources[key] = "%s (%d path(s) added to %s)" % (addflag, len(added), against)
+        elif carried is not None:
+            lists[key], sources[key] = carried, "carried (file)"
+        else:
+            lists[key], sources[key] = [], "defaults (nothing to carry)"
+    payload = grants_payload(a.run, source, lists["grants"], lists["writes"], on_limit, viewer,
+                             network, cap, carry=current)
+    sources.update(on_limit=on_limit_src, viewer=viewer_src, network=network_src,
+                   max_successors=cap_src)
     dropped = {}
     for key in ("grants", "writes"):
         lost = [p for p in (old[key] or []) if p not in payload[key]]
@@ -1157,24 +1696,50 @@ def grants_plan(a, path, events, source):
 
 
 def guard_shrink(a, what, dropped, against):
-    """The shrink guard (register entry 2026-09-11 04:17): a rewrite that would lose a path from
-    the write list prints the delta and refuses (exit 2, nothing written) unless the call passes
-    --grant or --write explicitly; an explicit call is written, each list's delta on stderr."""
+    """The shrink guard (register entries 2026-09-11 04:17 and 2026-09-29 20:49): a rewrite that
+    would lose a path from either list — the read list or the write list — prints the delta and
+    refuses (exit 2, nothing written) unless the call passes --replace, the explicit word that the
+    lists it names replace the run's; a replacement is written, each list's delta on stderr, and
+    becomes the baseline of the next call. A call that only adds (--add-grant, --add-write) never
+    loses a path from the list it names."""
     deltas = ["the %s list loses %d path(s) against %s: %s"
               % ("write" if key == "writes" else "read", len(dropped[key]), against,
                  ", ".join(dropped[key]))
               for key in ("writes", "grants") if key in dropped]
     if not deltas:
         return
-    if a.grant or a.write:
-        note("%s: %s (the call passes --grant/--write, so it is written)"
+    if getattr(a, "replace", False):
+        note("%s: %s (--replace: the lists named replace the run's, so it is written)"
              % (what, " · ".join(deltas)))
         return
-    if "writes" in dropped:
-        die("%s would shrink the run's write list and passes no --grant or --write: %s; pass the "
-            "paths with --write (and --grant) to rewrite explicitly; nothing written"
-            % (what, " · ".join(deltas)))
-    note("%s: %s (the write list is whole, so it is written)" % (what, " · ".join(deltas)))
+    die("%s would shrink the run's grants and passes no --replace: %s; to add a path pass "
+        "--add-grant or --add-write, to narrow the lists on purpose pass them whole with --grant "
+        "and --write and --replace; nothing written" % (what, " · ".join(deltas)))
+
+
+def check_grant_forms(a, what, opening=False):
+    """The grant flags' parser rules, before anything is read or written: --grant and --add-grant
+    are two forms for one list (pass one), as are --write and --add-write; --replace rewrites the
+    lists it names, so it takes --grant or --write and never an add form; and run-open, which
+    writes the run's first grants file, takes neither an add form nor --replace."""
+    add_g = getattr(a, "add_grant", None) or []
+    add_w = getattr(a, "add_write", None) or []
+    replace = getattr(a, "replace", False)
+    if opening and (add_g or add_w or replace):
+        die("%s writes the run's first grants file: name its lists with --grant and --write "
+            "(there is nothing to add to or replace yet); nothing written" % what)
+    if a.grant and add_g:
+        die("%s: --grant replaces the run's read list and --add-grant adds to it: pass one form "
+            "for the read list; nothing written" % what)
+    if a.write and add_w:
+        die("%s: --write replaces the run's write list and --add-write adds to it: pass one form "
+            "for the write list; nothing written" % what)
+    if replace and (add_g or add_w):
+        die("%s: --replace rewrites the lists it names and --add-grant/--add-write add to the "
+            "current ones: pass one form; nothing written" % what)
+    if replace and not (a.grant or a.write):
+        die("%s: --replace names no list: pass the whole list(s) the run keeps with --grant and "
+            "--write; nothing written" % what)
 
 
 def write_grants(path, payload):
@@ -1280,9 +1845,12 @@ def write_atomic(path, text):
 
 # ------------------------------------------------------------------------ the record -------
 
-def read_record(path):
+def read_record(path, marks=None):
     """(events, unparseable lines): a torn last line — a wrapper writing concurrently — is
-    counted, never guessed at."""
+    counted, never guessed at. `marks`, a list when given, receives one placeholder per skipped
+    line: the number of parsed events before it, so a reader can place each unreadable line
+    among the events (the repeat-stop guard alone passes one: critic finding 3 of the review of
+    2026-10-11). Every other reader's call and result are unchanged."""
     events, bad = [], 0
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as handle:
@@ -1293,13 +1861,22 @@ def read_record(path):
                     rec = json.loads(line)
                 except ValueError:
                     bad += 1
+                    if marks is not None:
+                        marks.append(len(events))
                     continue
                 if isinstance(rec, dict):
                     events.append(rec)
                 else:
                     bad += 1
+                    if marks is not None:
+                        marks.append(len(events))
     except OSError as exc:
         die("cannot read the run record %s: %s" % (path, exc))
+    try:
+        events = [row for row in events if row.get("event") != "lane-closed" or
+                  a3_shared().a3_close_valid(row)]
+    except (a3_shared().A3Premise, OSError) as exc:
+        die("authoritative close unavailable: %s" % exc)
     return events, bad
 
 
@@ -1335,15 +1912,173 @@ def require_record(path, hint=""):
     return events
 
 
+def a3_shared():
+    """Use the very same module instance and lock transaction in embedded callers. The lane
+    wrapper is the one lane_module() reads: AIMYTH_LANE_PY, else lane.py beside this script, so a
+    copy under test runs its record transaction through the wrapper its suite names."""
+    path = os.environ.get("AIMYTH_LANE_PY") or os.path.join(HERE, "lane.py")
+    path = os.path.realpath(os.path.expanduser(path))
+    for module in list(sys.modules.values()):
+        if getattr(module, "__file__", None) and os.path.realpath(module.__file__) == path \
+                and hasattr(module, "a3_record_lock"):
+            return module
+    spec = importlib.util.spec_from_file_location("_delegate_a3", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def append_record(path, payload):
     try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-    except OSError as exc:
-        die("run record is not writable (%s): %s" % (path, exc))
+        a3_shared().append_record(path, payload)
+    except (OSError, a3_shared().A3Premise) as exc:
+        die("run record transaction failed (%s): %s" % (path, exc))
+
+
+def a3_find_notice(path, run, identifier, version, digest):
+    module = a3_shared()
+    for journal in module.a3_journals(path, run):
+        for notice in journal.get("notices") or []:
+            if notice["notice_id"] == identifier and notice["version"] == version:
+                if notice["payload_sha256"] != digest:
+                    die("notice payload digest does not match the saved version")
+                return journal, notice
+    die("notice identifier/version is not in the retained journal namespace")
+
+
+def a3_receipt(a, path):
+    """Only the explicit head ledger command writes a receipt; publishing never calls this."""
+    module = a3_shared()
+    fields = (a.notice_id, a.notice_version, a.notice_sha256)
+    if not all(value is not None for value in fields) or not a.observation:
+        die("notice receipt requires --observation and the exact id/version/sha256 triple")
+    caller = head_event_caller()
+    with module.a3_record_lock(path):
+        journal, notice = a3_find_notice(path, a.run, *fields)
+        rows, _ = module.a3_record_rows(path)
+        identity = module.a3_digest(module.a3_json(list(fields)))
+        existing = [row for row in rows if row.get("event") == "observation"
+                    and row.get("notice_receipt") == identity]
+        row = {"ts": now(), "event": "observation", "run": a.run, "phase": a.phase or "",
+               "what": a.observation, "notice_id": fields[0], "notice_version": fields[1],
+               "notice_sha256": fields[2], "notice_payload": notice["payload"],
+               "notice_receipt": identity, "author": "head", "route": "hands-off"}
+        row["caller_pid"], row["caller_pid_src"] = caller
+        if existing and (len(existing) != 1 or any(existing[0].get(key) != row[key] for key in
+                ("notice_id", "notice_version", "notice_sha256", "notice_payload", "author", "route"))):
+            die("conflicting notice delivery receipt")
+        if not existing and not a.dry_run:
+            append_record(path, row)
+        if a.dry_run:
+            say("notice receipt: dry run; no acknowledgement")
+        else:
+            say("notice receipt: record:%s · no hand-off row" % identity)
+    return 0
+
+
+def a3_open_notices(path, run):
+    """The notices still owed a receipt: a3_pending less every version below one already
+    acknowledged for the same notice id (register entry 2026-10-30 21:40 f). A receipt for
+    version n settles the older versions, whose facts version n replaced, so they are not printed
+    again with recovery commands; a newer version stays owed, as a receipt is for what it read."""
+    module = a3_shared()
+    settled = {}
+    for journal in module.a3_journals(path, run):
+        for ack in journal.get("acknowledgements") or []:
+            settled[ack["notice_id"]] = max(settled.get(ack["notice_id"], 0), ack["version"])
+    return [notice for notice in module.a3_pending(path, run)
+            if notice["version"] > settled.get(notice["notice_id"], 0)]
+
+
+def cmd_notices(a):
+    module = a3_shared()
+    path = getattr(a, "record", None) or record_path(a.run)
+    try:
+        if not a.ack:
+            notices = a3_open_notices(path, a.run)
+            if a.format == "json":
+                print(module.a3_json({"pending": notices, "count": len(notices)}))
+            else:
+                print("pending notices: %d" % len(notices))
+                for notice in notices:
+                    print(module.a3_notice_text(notice))
+            return 0
+        if not all(getattr(a, key, None) is not None for key in
+                   ("notice_id", "notice_version", "notice_sha256", "receipt", "route")):
+            die("acknowledgement requires the notice triple, route and durable receipt locator")
+        with module.a3_record_lock(path):
+            journal, notice = a3_find_notice(path, a.run, a.notice_id, a.notice_version, a.notice_sha256)
+            if a.route == "hands-off":
+                rows, _ = module.a3_record_rows(path)
+                expected = module.a3_digest(module.a3_json(
+                    [a.notice_id, a.notice_version, a.notice_sha256]))
+                receipts = [row for row in rows if row.get("notice_receipt") == expected
+                            and row.get("event") == "observation" and row.get("author") == "head"
+                            and row.get("notice_payload") == notice["payload"]
+                            and row.get("notice_id") == a.notice_id
+                            and row.get("notice_version") == a.notice_version
+                            and row.get("notice_sha256") == a.notice_sha256]
+                if a.receipt != "record:" + expected or len(receipts) != 1:
+                    die("acknowledgement has no matching durable head observation receipt")
+                receipt_digest = module.a3_digest(module.a3_json(receipts[0]))
+            else:
+                # An attended receiver supplies its durable emitted-reply artefact. Mere stdout
+                # or a poll is no receipt. A missing/unverifiable artefact remains pending.
+                data = module.read_bytes(a.receipt)
+                if data is None or not a.receipt_sha256 or module.a3_digest(data) != a.receipt_sha256:
+                    die("attended reply receipt is unreadable or its digest is unverified")
+                text = data.decode("utf-8")
+                if module.a3_notice_text(notice) not in text:
+                    die("attended reply receipt does not contain this factual notice version")
+                receipt_digest = a.receipt_sha256
+            ack = {"notice_id": a.notice_id, "version": a.notice_version,
+                   "payload_sha256": a.notice_sha256, "route": a.route,
+                   "receipt": a.receipt, "receipt_sha256": receipt_digest}
+            keys = ("notice_id", "version", "payload_sha256")
+            if not any(all(old[key] == ack[key] for key in keys)
+                       for old in journal.get("acknowledgements") or []):
+                journal.setdefault("acknowledgements", []).append(ack)
+                module.a3_save_journal(journal)
+        print("notice acknowledged: %s v%d" % (a.notice_id, a.notice_version))
+        return 0
+    except (module.A3Premise, OSError, UnicodeError) as exc:
+        die(str(exc))
+
+
+def a3_expose_notices(function):
+    @functools.wraps(function)
+    def wrapped(a, *args, **kwargs):
+        path = getattr(a, "record", None) or record_path(a.run)
+        try:
+            notices = a3_open_notices(path, a.run)
+        except (a3_shared().A3Premise, OSError) as exc:
+            die("notice census failed: %s" % exc)
+        for notice in notices:
+            say(a3_shared().a3_notice_text(notice))
+        return function(a, *args, **kwargs)
+    return wrapped
+
+
+def a3_observe_helpers(path, run):
+    module = a3_shared()
+    journals = module.a3_journals(path, run)
+    lanes = sorted({journal["lane"] for journal in journals})
+    for lane_id in lanes:
+        result = module.a3_observe(path, run, lane_id)
+        if result and result["state"] == "orphan":
+            say(module.a3_notice_text(result["journal"]["notices"][-1]))
+
+
+def a3_can_beat(path, run, lane_id):
+    module = a3_shared()
+    journal = module.a3_latest(path, run, lane_id)
+    current = module.a3_latest(path, run, lane_id, include_beats=True)
+    if current and not module.a3_committed(current):
+        return False
+    if journal and journal["disposition"].get("decision") == "held":
+        return False
+    return True
 
 
 def event(run, kind, **fields):
@@ -1546,6 +2281,48 @@ def one_line(text):
     return re.sub(r"\s*\n\s*", " ", str(text)).strip()
 
 
+def clock_placeholders(text):
+    """The typed clock placeholders in a text, a bracketed register stamp apart."""
+    return CLOCK_PLACEHOLDER_RE.findall(REGISTER_STAMP_RE.sub("", str(text or "")))
+
+
+def refuse_placeholder(who, texts):
+    """A premise failure when the head's own text carries a typed clock placeholder: a time label
+    comes from a command or the record, never a rounded guess, and the owner reads these records
+    (the clock-label rule of 2 October). `texts` maps each flag to its text; nothing is written."""
+    for flag, text in texts.items():
+        hits = clock_placeholders(text)
+        if hits:
+            die("%s: --%s carries the typed clock placeholder %s: read the time from a command or "
+                "the record and write it whole, or name a register heading in its brackets; "
+                "nothing written" % (who, flag, ", ".join(hits)))
+
+
+def stage_placeholders(run, since):
+    """[(document, placeholders)] for the top-level `.md` files of the run's stage changed at or
+    after `since`, capped by STAGE_SCAN_FILES and STAGE_SCAN_BYTES. A head writes these with its
+    own tools, so the check can only name them after the fact, and refuses nothing."""
+    folder = os.path.join(store_root(), "stages", token(run, "run id"))
+    try:
+        names = sorted(name for name in os.listdir(folder) if name.endswith(".md"))
+    except OSError:
+        return []
+    found = []
+    for name in names[:STAGE_SCAN_FILES]:
+        document = os.path.join(folder, name)
+        try:
+            st = os.stat(document)
+            if st.st_mtime < since or st.st_size > STAGE_SCAN_BYTES:
+                continue
+            with open(document, encoding="utf-8", errors="replace") as handle:
+                hits = clock_placeholders(handle.read())
+        except OSError:
+            continue
+        if hits:
+            found.append((document, hits))
+    return found
+
+
 def cell(text):
     return one_line(text).replace("|", "\\|")
 
@@ -1579,10 +2356,23 @@ def set_bullet(lines, key, value, number_only=False):
     return True
 
 
-def set_section(lines, key, value):
+DERIVED_HEADING_MARK = "(re-derived from the record at "
+
+
+def set_section(lines, key, value, derived=False):
+    """Replace a named section's body. For `## In flight`, a pack derived from the record is
+    written under its OWN heading, `## In flight (re-derived from the record at <ts>)`, never
+    under a heading that names another pack (register entry 2026-09-25 17:4x: a re-derived
+    section sat under an earlier head's FINAL-pack heading); a head's own pack written later
+    restores the plain `## In flight` over a derived heading, and leaves any other heading as
+    it is."""
     i = heading_index(lines, SECTIONS[key])
     if i < 0:
         return False
+    if key == "inflight" and derived:
+        lines[i] = INFLIGHT_DERIVED_HEADING % now()
+    elif key == "inflight" and DERIVED_HEADING_MARK in lines[i]:
+        lines[i] = "## %s" % SECTIONS[key]
     lines[i + 1:section_end(lines, i)] = value.rstrip("\n").split("\n") + [""]
     return True
 
@@ -1617,6 +2407,8 @@ def watermark():
 
 
 _LANE = None
+_WEEKLY = None
+SpendSource = collections.namedtuple("SpendSource", "obj n")   # a record line, as the reader names it
 
 
 def lane_module():
@@ -1774,6 +2566,40 @@ def head_pid(arg):
         if ppid <= 1 or ppid == pid:
             break
         pid = ppid
+    return None, "none"
+
+
+def head_event_caller():
+    """Attribute a foreground shell command, allowing the harness's session-leading shell.
+
+    One session transition is allowed only from that shell to its direct harness parent.
+    Arbitrary workers, extra transitions and other process-group changes remain unattributed.
+    """
+    pid = os.getppid()
+    shells = set(SHELLS)
+    try:
+        session = os.getsid(0)
+        command_group = os.getpgid(0)
+        # Same 32-link ceiling as head_pid; set by judgement, unmeasured.
+        for _ in range(32):
+            row = ps_row(pid)
+            if row is None or os.getsid(pid) != session or os.getpgid(pid) != command_group:
+                return None, "none"
+            _, parent, command = row
+            name = os.path.basename(command)
+            if name == HARNESS:
+                return pid, "head-command"
+            if name not in shells or parent <= 1 or parent == pid:
+                return None, "none"
+            if os.getsid(parent) != session:
+                parent_row = ps_row(parent)
+                if (pid == session and parent_row is not None
+                        and os.path.basename(parent_row[2]) == HARNESS):
+                    return parent, "head-command"
+                return None, "none"
+            pid = parent
+    except (OSError, ValueError):
+        pass
     return None, "none"
 
 
@@ -2003,23 +2829,39 @@ def write_console_command(run):
     return path
 
 
-def console_alive(run, timeout=None):
-    """The pids of the processes already showing this run's console. Two spellings count: the
-    command as it is launched (`handsoff.py watch --run R`) and the command as it RUNS, since
-    `watch` execs watch.py in place and its process reads `… /watch.py --run R`.
-    A pattern on the first spelling alone misses that process.
-    The run id is escaped and the pattern is passed as an argv item to `pgrep`, never through a
-    shell, so this probe never matches its own command line. `timeout` bounds the pgrep call
-    (VIEWER_TIMEOUT_S by default; wait_console passes the time left of its bound); a probe that
-    runs past it is no console, with one stderr note."""
+def console_pattern(run):
+    """The `pgrep -f` pattern for this run's console: the script — `handsoff.py watch` as it is
+    launched, `watch.py` as it runs — at a word or path boundary on its left, so `lanewatch.py`
+    never counts, then `--run R` or `--run=R` ANYWHERE after it, the run id followed by a space or
+    the end, so a longer run id never counts for its prefix (register entry 2026-09-22 19:03: a
+    console started with `--vault` before `--run` was invisible, and the run opened extra
+    windows). The run id is escaped."""
     rid = re.escape(token(run, "run id"))
-    pattern = r"(handsoff\.py watch|watch\.py) --run %s([[:space:]]|$)" % rid
+    return (r"(^|[[:space:]/])(handsoff\.py[[:space:]]+watch|watch\.py)([[:space:]].*)?"
+            r"[[:space:]]--run(=|[[:space:]]+)%s([[:space:]]|$)" % rid)
+
+
+def console_probe(run, timeout=None):
+    """(status, pids, detail): one `pgrep -f` for this run's console (console_pattern), its exit
+    status read as the premise it is (critic finding 8 of the batch's design review: output from
+    a failed probe was taken for a sighting). `found`: exit 0 with at least one pid that is not
+    this process; `none`: exit 1, no match; `unverified`: any other exit, a timeout, a probe that
+    cannot run, or exit 0 with no readable pid — the probe said nothing that can be trusted, so
+    nothing may be confirmed on it. The pattern is passed as an argv item, never through a shell,
+    so the probe never matches its own command line. `timeout` bounds the call (VIEWER_TIMEOUT_S
+    by default; wait_console passes the time left of its bound)."""
     try:
-        proc = subprocess.run(["pgrep", "-f", pattern], capture_output=True, text=True,
+        proc = subprocess.run(["pgrep", "-f", console_pattern(run)], capture_output=True,
+                              text=True,
                               timeout=VIEWER_TIMEOUT_S if timeout is None else max(0.0, timeout))
     except (OSError, subprocess.SubprocessError) as exc:
-        note("viewer: cannot probe for a live console (%s: %s)" % (type(exc).__name__, exc))
-        return []
+        return "unverified", [], "the probe could not run (%s: %s)" % (type(exc).__name__, exc)
+    if proc.returncode == 1:
+        return "none", [], "pgrep exit 1: no match"
+    if proc.returncode != 0:
+        tail = one_line((proc.stderr or "").strip())[:120]
+        return "unverified", [], "pgrep exit %d%s" % (proc.returncode,
+                                                       ": " + tail if tail else "")
     pids = []
     for field in proc.stdout.split():
         try:
@@ -2028,6 +2870,23 @@ def console_alive(run, timeout=None):
             continue
         if pid != os.getpid():
             pids.append(pid)
+    if not pids:
+        return "unverified", [], "pgrep exit 0 with no readable pid other than this process's"
+    return "found", pids, "pgrep exit 0"
+
+
+def console_alive(run, timeout=None):
+    """The pids of the processes already showing this run's console. Two spellings count: the
+    command as it is launched (`handsoff.py watch --run R`) and the command as it RUNS, since
+    `watch` execs watch.py in place and its process reads `… /watch.py --run R`.
+    A pattern on the first spelling alone misses that process.
+    The pattern (console_pattern) counts `--run R` anywhere after the script, and the probe's
+    status is read (console_probe): only a probe that succeeded names pids. A probe that could
+    not tell is no console here, with one stderr note — the caller that must CONFIRM a console
+    reads console_probe's status itself. `timeout` bounds the pgrep call."""
+    status, pids, detail = console_probe(run, timeout)
+    if status == "unverified":
+        note("viewer: cannot probe for a live console (%s)" % detail)
     return pids
 
 
@@ -2139,9 +2998,22 @@ def run_viewer_key(run):
     return viewer_of(read_grants(grants_path(run)))
 
 
+def interpreter():
+    """The absolute path of the interpreter running this script, for every command handed to the
+    owner or to a head: a bare `python3` resolves through the reader's own shell, which may map it
+    to another program (register entry 2026-09-30 17:36: an interactive shell ran ipython3, which
+    took --run as its own option). sys.executable is absolute whenever Python could find itself;
+    the bare word is the fallback only when it could not."""
+    exe = sys.executable
+    return exe if exe and os.path.isabs(exe) else "python3"
+
+
 def by_hand_line(run):
-    """The line the owner runs when no window could be opened; the same derived paths."""
-    return "python3 -B %s watch --run %s" % (os.path.abspath(__file__), token(run, "run id"))
+    """The line the owner runs when no window could be opened; the same derived paths, the
+    interpreter named by its absolute path (interpreter())."""
+    return "%s -B %s watch --run %s" % (shlex.quote(interpreter()),
+                                        shlex.quote(os.path.abspath(__file__)),
+                                        token(run, "run id"))
 
 
 def open_console(run, viewer=None, dry_run=False, why="", log=None):
@@ -2205,17 +3077,43 @@ def open_console(run, viewer=None, dry_run=False, why="", log=None):
         # shows in the table. A clean opener exit alone does not prove a console exists.
         # A custom viewer command is not confirmed: it is
         # the caller's own, and the suites' stubs start no process.
-        pids, waited, _ = wait_console(run)
+        pids, waited, _, detail = wait_console(run)
         if not pids:
             mark_console_failed(path)
             line = ("viewer: no Terminal window (command file %s; %s exited 0 but no console "
-                    "process for the run appeared within %d s); run by hand: %s"
-                    % (path, opener, CONSOLE_START_GRACE_S, by_hand_line(run)))
+                    "process for the run appeared within %d s; the last probe: %s); run by "
+                    "hand: %s" % (path, opener, CONSOLE_START_GRACE_S, detail,
+                                  by_hand_line(run)))
             note(line)
             viewer_log(log, line)
             return False
-        confirmed = " · console pid %s confirmed after %.1f s" % (
-            ", ".join(str(p) for p in pids), waited)
+        # The hold after the first sighting (IDEAS 170 (1)): gone within the hold is a failure
+        # with no retry — the console ended itself, so a second open would end the same way — and
+        # a probe that cannot tell after the hold claims nothing (critic finding 8).
+        state, alive, held, hdetail = hold_console(run, pids)
+        if state == "exited":
+            mark_console_failed(path)
+            line = ("viewer: console started (pid %s at %.1f s) but exited within %.1f s · no "
+                    "Terminal window stays on the run (command file %s via %s; not retried: the "
+                    "console ended itself, so a second open would end the same way); run by "
+                    "hand: %s" % (", ".join(str(p) for p in pids), waited, held, path, opener,
+                                  by_hand_line(run)))
+            note(line)
+            viewer_log(log, line)
+            return False
+        if state == "unverified":
+            line = ("viewer: console pid %s seen at %.1f s, but the probe after the %.0f s hold "
+                    "could not tell (%s): the window is not confirmed (command file %s via %s); "
+                    "check with `open-console --check`, or run by hand: %s"
+                    % (", ".join(str(p) for p in pids), waited, CONSOLE_CONFIRM_HOLD_S, hdetail,
+                       path, opener, by_hand_line(run)))
+            note(line)
+            viewer_log(log, line)
+            return False
+        confirmed = (" · console pid %s confirmed after %.1f s (first seen at %.1f s, still "
+                     "alive after the %.0f s hold)" % (", ".join(str(p) for p in alive),
+                                                        waited + held, waited,
+                                                        CONSOLE_CONFIRM_HOLD_S))
     line = "viewer: Terminal window opened on %s via %s (%s)%s%s" % (
         path, opener, "first attempt" if not failures else "retry, after %s" % failures[0],
         confirmed, " · " + why if why else "")
@@ -2225,9 +3123,12 @@ def open_console(run, viewer=None, dry_run=False, why="", log=None):
 
 
 def wait_console(run, bound=None, step=None):
-    """(pids, seconds waited, probes made): the run's console pids once console_alive finds any
-    inside `bound`, polled every `step` (the confirmation constants by default); ([], waited,
-    probes) when none showed inside it. The bound is checked before a result is accepted and
+    """(pids, seconds waited, probes made, the detail of the last probe that answered, else of the
+    first that could not tell): the run's console pids once
+    a probe that succeeded (console_probe) finds any inside `bound`, polled every `step` (the
+    confirmation constants by default); ([], waited, probes, detail) when none showed inside it,
+    a probe that could not tell counting as no sighting. The bound is checked before a result is
+    accepted and
     each probe's own timeout is the lower of its cap and the time left of it (probe_bound), so
     the wait never runs past the bound and a pid that shows only after it is a timeout, never a
     window; the probes are capped at
@@ -2237,18 +3138,51 @@ def wait_console(run, bound=None, step=None):
     cap = max(1, int(math.ceil(bound / step))) if step > 0 else 1
     t0 = time.monotonic()
     probes = 0
+    detail = "no probe ran"
     while True:
         left = bound - (time.monotonic() - t0)
         if left <= 0 or probes >= cap:
-            return [], time.monotonic() - t0, probes
+            return [], time.monotonic() - t0, probes, detail
         probes += 1
-        pids = console_alive(run, timeout=probe_bound(VIEWER_TIMEOUT_S, left))
+        # A sighting is a probe that SUCCEEDED (critic finding 8 of the batch's design review):
+        # output from a pgrep that failed is never a pid, so an unverified probe waits on.
+        status, pids, said = console_probe(run, timeout=probe_bound(VIEWER_TIMEOUT_S, left))
+        # The detail handed back is the last probe that ran to an answer (found or none), else
+        # the first that could not tell: a final probe the bound cut short says less than the
+        # one before it.
+        if status != "unverified" or detail == "no probe ran":
+            detail = said
         waited = time.monotonic() - t0
-        if pids and waited <= bound:
-            return pids, waited, probes
+        if status == "found" and waited <= bound:
+            return pids, waited, probes, detail
         if waited >= bound or probes >= cap:
-            return [], waited, probes
+            return [], waited, probes, detail
         time.sleep(max(0.0, min(step, bound - waited)))
+
+
+# The hold after the first sighting (IDEAS 170 (1); register entry 2026-09-20 01:48): the window
+# counts as open only when a console first seen is still there this long after, since a watcher
+# that exited at its own start-up probe was reported `console pid N confirmed after 1.6 s`. 3 s
+# is longer than the 0.5 to 2 s the two dead windows of that night lived; set by judgement from
+# those two observations, unmeasured beyond them. It adds 3 s to an open that confirms.
+CONSOLE_CONFIRM_HOLD_S = 3
+
+
+def hold_console(run, first, hold=None):
+    """(state, pids, seconds held, detail) one probe after the hold: `confirmed` with the pids
+    first seen that a SUCCESSFUL probe still finds; `exited` when a successful probe finds none of
+    them — the console that was seen is gone, and a replacement pid confirms nothing; `unverified`
+    when that probe failed (critic finding 8: a pgrep exit other than 0 or 1, a timeout, or
+    unusable output), so nothing is claimed either way."""
+    hold = CONSOLE_CONFIRM_HOLD_S if hold is None else hold
+    t0 = time.monotonic()
+    time.sleep(max(0.0, hold))
+    status, again, detail = console_probe(run)
+    held = time.monotonic() - t0
+    if status == "unverified":
+        return "unverified", [], held, detail
+    alive = [pid for pid in first if pid in again]
+    return ("confirmed" if alive else "exited"), alive, held, detail
 
 
 def console_lock_path(run):
@@ -2318,11 +3252,21 @@ def take_console_lock(run):
         return None, None, "cannot open the console claim %s (%s)" % (lock, exc)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        pid, phase = read_console_claim(fd)
+    except OSError as exc:
+        if exc.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+            pid, phase = read_console_claim(fd)
+            os.close(fd)
+            return False, None, ("another opener (%s) holds this run's console claim (%s)"
+                                 % (console_holder_text(pid, phase), lock))
+        # Any other errno says the lock cannot be worked at all on this file system (register
+        # entry 2026-09-18 20:0x: an ENOLCK read as contention left the run with no window and no
+        # by-hand line). That is the tri-state's None: the caller says so and opens anyway, as it
+        # does with no fcntl, since a viewer failure never fails a launch. lane.py's session claim
+        # keeps refusing on the same errno: a session claim that cannot be worked must not let a
+        # second call into one session.
         os.close(fd)
-        return False, None, ("another opener (%s) holds this run's console claim (%s)"
-                             % (console_holder_text(pid, phase), lock))
+        return None, None, ("the console claim %s cannot be locked (%s: %s), so it is not taken"
+                            % (lock, errno.errorcode.get(exc.errno, exc.errno), exc.strerror))
     return True, fd, ""
 
 
@@ -2486,6 +3430,19 @@ def probe_budget(wait, start=None):
     return lambda: max(0.0, wait - (time.monotonic() - t0))
 
 
+def past_deadline(t0, wait):
+    """(elapsed, late): the launch check's clock read again at the moment a start would be
+    certified or bound, after the last read or probe that result rests on, and whether that is
+    past the deadline. It is the one deadline check before every path that certifies a start —
+    the head path's STARTED, a replacement head start's binding during the first batch's wait,
+    and the first batch's STARTED CLEAN — and each refuses when `late` (critic finding N2 of the
+    third review of 2026-10-11: helper readiness first seen past the deadline, through a delayed
+    re-read or a slow helper probe, still certified, since the time was read before them).
+    `--wait 0`, the single read, has no deadline and is never late."""
+    elapsed = time.monotonic() - t0
+    return elapsed, bool(wait) and elapsed > wait
+
+
 def head_start_verdict(events, budget=None):
     """The launch check's reading of one record: (state, detail) with state `started` (a head
     start whose pid is alive and whose process started when the event says — both read),
@@ -2563,9 +3520,327 @@ def head_start_verdict(events, budget=None):
                                                            int(round(time.time() - age - ts))))
     # The second probe of this read draws on what the first left, never on the whole remainder.
     row = ps_row(pid, timeout=probe_bound(PS_TIMEOUT_S, budget() if budget is not None else None))
+    model, effort = start_model(events, hi)
     return "started", "%s · pid %d alive (%s, running %d s) · model %s effort %s" % (
-        label, pid, row[2] if row else "command unread", age,
-        ev.get("model") or "none", ev.get("effort") or "none")
+        label, pid, row[2] if row else "command unread", age, model or "none", effort or "none")
+
+
+# The first batch (owner decision D21 (c) of 2026-10-10, register entry 2026-10-04 01:02): the
+# launch check certifies a clean start only when every planned first-batch helper has opened and
+# is making progress. "Making progress" is observable activity of the helper's latest attempt
+# after its open (the owner's provisional choice of 2026-10-10 under his D19): a record event the
+# helper's wrapper writes only once its model call has begun (LAUNCH_LANE_ACTIVITY), or a
+# transcript or session-file record stamped after the open. A process that is merely alive is
+# not progress.
+LAUNCH_LANE_STARTS = ("lane-open", "lane-resumed")         # an attempt of a helper begins here
+LAUNCH_LANE_SPAWNS = ("lane-spawned", "lane-respawned")    # its process started
+LAUNCH_LANE_ACTIVITY = ("lane-session",)                   # the Codex CLI's thread began: a model call
+
+
+def parse_lane_list(text):
+    """The --lanes ids, in order: each a plain token, none twice, at least one — an empty list
+    would certify a start that has no helper at all, so it is a premise failure (exit 2)."""
+    names = [part.strip() for part in str(text or "").split(",")]
+    names = [n for n in names if n]
+    if not names:
+        die("--lanes names no helper: pass the planned first batch's lane ids, comma-separated "
+            "(an empty list would certify a start with no helper)")
+    seen = []
+    for name in names:
+        token(name, "lane id")
+        if name in seen:
+            die("--lanes names %s twice: each planned helper once" % name)
+        seen.append(name)
+    return seen
+
+
+def launch_anchor(events):
+    """The index of the head start the check confirmed (the record's last head start, when no
+    head-exit follows it), else -1. A helper attempt counts for this launch only after it: an
+    attempt a previous head made is not this launch's."""
+    i = last_index(events, LAUNCH_HEAD_EVENTS)
+    return i if i >= 0 and events[i].get("event") != "head-exit" else -1
+
+
+def lane_activity_stamp(events, start, lane, opened, spawned):
+    """(epoch, how) of the helper's latest activity in its transcript or session file, else
+    (None, why). A Claude helper: the last stamped record of the transcript its session id names
+    under the projects root. A Codex helper: the last stamped record of its session file under the
+    Codex home (the thread id from its lane-session line), else the mtime of the wrapper's events
+    log, which its stream writes."""
+    if (opened or {}).get("harness") == "codex" or (spawned or {}).get("harness") == "codex":
+        thread = None
+        for ev in events[start + 1:]:
+            if ev.get("lane") == lane and ev.get("event") == "lane-session" and ev.get("session_id"):
+                thread = ev.get("session_id")
+        path = codex_session_file(thread) if thread else None
+        if path:
+            t, how = file_last_stamp(path)
+            if t is not None:
+                return t, "Codex session file (%s)" % how
+        log = (opened or {}).get("events")
+        if isinstance(log, str) and os.path.isfile(log):
+            try:
+                return os.path.getmtime(log), "the wrapper's events log mtime"
+            except OSError:
+                pass
+        return None, "no Codex session file and no events log"
+    sid = (spawned or {}).get("session_id") or (opened or {}).get("session_id")
+    if not isinstance(sid, str) or not TOKEN_RE.fullmatch(sid):
+        return None, "no session id on the record"
+    path, why = lane_transcript_path(sid)
+    if path is None:
+        return None, why
+    t, how = file_last_stamp(path)
+    if t is None:
+        return None, "the transcript %s is unreadable" % path
+    return t, "transcript (%s)" % how
+
+
+def lane_attempt_verdict(events, anchor, lane):
+    """(state, detail) for one planned helper of the first batch, read from its LATEST attempt
+    after the anchor (launch_anchor). `missing` (no attempt since the head started), `opening`
+    (opened, no process yet), `silent` (its process is alive and no activity followed its open),
+    `progressing` (activity after its open: a LAUNCH_LANE_ACTIVITY record event, or a transcript
+    or session-file record stamped after it), `done` (closed `completed`, its report on disk where
+    the close names one), `failed` (closed any other way, or its wrapper and lane pids both gone
+    with no close) or `unverified` (an open with no readable timestamp, a completed close whose
+    report is missing, or no usable pid and no activity). Timestamps are compared as epochs,
+    whatever their offsets, never as text."""
+    start = None
+    for i in range(len(events) - 1, anchor, -1):
+        if events[i].get("lane") == lane and events[i].get("event") in LAUNCH_LANE_STARTS:
+            start = i
+            break
+    if start is None:
+        earlier = any(e.get("lane") == lane and e.get("event") in LAUNCH_LANE_STARTS
+                      for e in events[:anchor + 1])
+        return "missing", ("no attempt since the head started%s"
+                           % ("; an attempt before that head is not this launch's"
+                              if earlier else ""))
+    opened, later = events[start], events[start + 1:]
+    close = next((e for e in later if e.get("lane") == lane and e.get("event") == "lane-closed"),
+                 None)
+    if close is not None:
+        cls = close.get("exit_class")
+        if cls == "completed":
+            report = close.get("report")
+            if isinstance(report, str) and report and not os.path.isfile(report):
+                return "unverified", ("closed completed at %s, but the report it names (%s) is "
+                                      "not on disk" % (close.get("ts", "no ts"), report))
+            return "done", "closed completed at %s" % close.get("ts", "no ts")
+        return "failed", "closed %s at %s" % (cls or "with no exit class", close.get("ts", "no ts"))
+    t_open = parse_ts(opened.get("ts"))
+    if t_open is None:
+        return "unverified", ("its %s carries no readable timestamp (%r), so no activity can be "
+                              "placed after it" % (opened.get("event"), opened.get("ts")))
+    spawned = next((e for e in later if e.get("lane") == lane
+                    and e.get("event") in LAUNCH_LANE_SPAWNS), None)
+    activity = None
+    for ev in later:
+        t = parse_ts(ev.get("ts"))
+        if ev.get("lane") == lane and ev.get("event") in LAUNCH_LANE_ACTIVITY \
+                and t is not None and t >= t_open:
+            activity = "record %s at %s" % (ev.get("event"), ev.get("ts"))
+            break
+    if activity is None:
+        t, how = lane_activity_stamp(events, start, lane, opened, spawned)
+        if t is not None and t > t_open:
+            activity = "%s at %s" % (how, fmt_ts(t))
+    if spawned is None:
+        return "opening", "%s at %s, and no process started yet (no %s)" % (
+            opened.get("event"), opened.get("ts"), " or ".join(LAUNCH_LANE_SPAWNS))
+    pids = [usable_pid(spawned.get(key)) for key in ("wrapper_pid", "pid")]
+    pids = [p for p in pids if p is not None]
+    if not pids:
+        alive, live = None, ("no usable pid on its %s (wrapper_pid %r, pid %r): liveness "
+                             "unverifiable" % (spawned.get("event"), spawned.get("wrapper_pid"),
+                                               spawned.get("pid")))
+    else:
+        alive = any(pid_alive(p) for p in pids)
+        live = "pid %s %s" % ("/".join(str(p) for p in pids), "alive" if alive else "gone")
+    if alive is False:
+        return "failed", "no close, and its %s" % live
+    if activity:
+        return "progressing", "%s · %s" % (activity, live)
+    if alive is None:
+        return "unverified", "no activity since its open at %s, and %s" % (opened.get("ts"), live)
+    return "silent", ("opened at %s, %s, and no record or transcript event since its open"
+                      % (opened.get("ts"), live))
+
+
+def lanes_text(verdicts):
+    return ", ".join("%s %s (%s)" % (lane, state, detail) for lane, (state, detail) in verdicts)
+
+
+def start_model(events, i):
+    """(model, effort) the head start at index i runs under: its own fields, else, for a
+    run-resume, those of the newest earlier start naming its session. A head's first act is a
+    run-resume whose model sits in its free-text --head, never parsed; the head-successor that
+    started it carries the fields (register entry 2026-10-15 01:33 c, the status of 28 October)."""
+    ev = events[i]
+    model, effort = ev.get("model") or None, ev.get("effort") or None
+    if ev.get("event") == "run-resume":
+        sid = start_session(ev)
+        for prior in reversed(events[:i]):
+            if prior.get("event") in START_EVENTS and start_session(prior) == sid:
+                model, effort = model or prior.get("model"), effort or prior.get("effort")
+    return model or None, effort or None
+
+
+def model_unreadable(events, anchor):
+    """Why the confirmed head start can be certified on no model, else None (register entries
+    2026-09-23 12:5x and 2026-10-15 01:33 c): a start that names none, or a run-resume whose
+    session no start names one for, may be running on the harness default, and a certificate that
+    printed `model none` would pass a head on the wrong model alike."""
+    if anchor < 0 or start_model(events, anchor)[0]:
+        return None
+    ev = events[anchor]
+    return ("the %s at %s carries no readable model (model_src %s), so it may run on the harness "
+            "default: stop it and start it again with --model unless the default was meant, or "
+            "name it with `run-resume --model`"
+            % (ev.get("event"), ev.get("ts", "no ts"), ev.get("model_src") or "unrecorded"))
+
+
+def launch_ended(events, anchor):
+    """The terminal states head_start_verdict reads, kept through the first batch's wait without
+    its probes (critic finding 2 of the review of 2026-10-11): the reason the check ends on at
+    once, else None — a run-close anywhere on the record, a head-exit as the newest head event
+    (`anchor` -1; a successor-aborted after it named), or a `head exited` observation naming the
+    session of the start at `anchor`."""
+    ci = last_index(events, ("run-close",))
+    if ci >= 0:
+        return "the run closed (run-close at %s)" % events[ci].get("ts", "no ts")
+    if anchor < 0:
+        hx = last_index(events, ("head-exit",))
+        if hx < 0:
+            return "the record names no head start any more"
+        aborted = next((e for e in events[hx + 1:] if e.get("event") == "successor-aborted"),
+                       None)
+        return "the head-exit at %s followed it%s" % (
+            events[hx].get("ts", "no ts"),
+            "" if aborted is None else " and the starter aborted (successor-aborted %s at %s)"
+            % (aborted.get("reason", "?"), aborted.get("ts", "no ts")))
+    ev = events[anchor]
+    sid = start_session(ev)
+    exited = next((e for e in events[anchor + 1:] if e.get("event") == "observation"
+                   and e.get("what") == "head exited"
+                   and sid != "?" and sid in str(e.get("note", ""))), None)
+    if exited is not None:
+        return "the head of the %s at %s exited (head exited at %s)" % (
+            ev.get("event"), ev.get("ts", "no ts"), exited.get("ts", "no ts"))
+    return None
+
+
+def launch_lanes(a, path, events, bad, lanes, detail, t0, wait, step, reads, budget=None):
+    """The first batch (D21 (c)), once the head start is confirmed: every planned helper's
+    latest attempt since that start must have opened and show activity, or have closed
+    completed. One helper that failed ends the check at once; anything else short of that is
+    re-read inside the same deadline, and at it the line names each helper's state. The
+    confirmation is bound to ONE head invocation, the process head_start_verdict confirmed, which
+    is never re-verified against the shrinking deadline (a probe with no time left would read
+    the confirmed head as unverifiable). Every re-read keeps head_start_verdict's terminal states
+    (launch_ended: a run-close, a head-exit, a `head exited` naming the start's session) and the
+    pid's liveness (critic finding 2 of the review of 2026-10-11: only liveness was kept, so a
+    close during the wait still certified). Each re-read takes the record's newest head start as
+    the anchor: one naming the same pid — the head's own run-resume, its first act — moves the
+    anchor and keeps the confirmation; one naming another pid, or none, is a replacement whose
+    identity head_start_verdict verifies afresh on the shared `budget`: it binds the confirmation
+    once `started` inside the deadline — the time is read again after the verification's probes,
+    and a replacement confirmed past the deadline ends the check NOT CLEAN, as the head path
+    refuses a late start — ends the check at once when `failed`, and while unverified certifies
+    nothing, being NOT CLEAN at the deadline. A record with an unparseable line never certifies
+    (a torn tail is retried meanwhile). STARTED CLEAN, like every certification, is decided on
+    the clock read after the last re-read and the helper probes (past_deadline): a first batch
+    first seen ready past the deadline, through a delayed re-read or a slow probe, is NOT CLEAN,
+    while `--wait 0`, the single read, keeps no deadline (critic finding N2 of the third review
+    of 2026-10-11)."""
+    first = launch_anchor(events)
+    bound = event_pid(events[first]) if first >= 0 else None   # the confirmed invocation's pid
+    while True:
+        elapsed = time.monotonic() - t0
+        skipped = " · %d unparseable line(s) skipped" % bad if bad else ""
+        anchor = launch_anchor(events)
+        ended = launch_ended(events, anchor)
+        pending = None
+        if ended is None:
+            pid = event_pid(events[anchor])
+            if pid is None or pid != bound:
+                state, why = head_start_verdict(events, budget=budget)
+                # The verification's probes draw on the shared budget and can run to the deadline
+                # or past it, so the time is read again after them, and a replacement confirmed
+                # past the deadline is refused as the head path refuses a late start (critic
+                # finding F2 of the second review of 2026-10-11: the time read before the probes
+                # let a late replacement certify) — the one check, past_deadline.
+                elapsed, late = past_deadline(t0, wait)
+                if state == "started" and late:
+                    ended = ("a newer head start replaced it, and %sthe replacement was confirmed "
+                             "only %.1f s after the check began, past the %d s deadline (%s)"
+                             % (UNVERIFIABLE, elapsed, wait, why))
+                elif state == "started":
+                    bound, detail = pid, "%s (a replacement start, its identity verified)" % why
+                elif state == "failed":
+                    ended = "a newer head start replaced it and could not be confirmed: %s" % why
+                else:
+                    pending = why   # unverified: it certifies nothing while it stands
+            elif not pid_alive(pid):
+                ended = "its pid %d no longer answers" % pid
+        if ended is not None:
+            say("launch-check: %s NOT CLEAN · the head started (%s), but %s before the first batch "
+                "was confirmed · %.0f s after the check began (%d read(s))%s"
+                % (a.run, detail, ended, elapsed, reads, skipped))
+            return 1
+        if pending is not None:
+            if elapsed >= wait:
+                say("launch-check: %s NOT CLEAN · the head started (%s), but a newer head start "
+                    "replaced it and its identity was not verified within the %d s deadline: %s "
+                    "(%d read(s))%s" % (a.run, detail, wait, pending, reads, skipped))
+                return 1
+            time.sleep(max(0.0, min(step, wait - elapsed)))
+            events, bad = read_record(path)
+            reads += 1
+            continue
+        verdicts = [(lane, lane_attempt_verdict(events, anchor, lane)) for lane in lanes]
+        # The clock again, after the last re-read and the helper probes the verdicts made (each
+        # transcript or session-file read): a readiness first seen past the deadline is a late
+        # start, never a clean one (critic finding N2 of the third review of 2026-10-11).
+        elapsed, late = past_deadline(t0, wait)
+        failed = [lane for lane, (st, _) in verdicts if st == "failed"]
+        progressing = all(st in ("progressing", "done") for _, (st, _) in verdicts)
+        if failed:
+            say("launch-check: %s NOT CLEAN · the head started (%s) · first batch: %s · %s "
+                "failed · %.0f s after the check began (%d read(s))%s"
+                % (a.run, detail, lanes_text(verdicts), ", ".join(failed), elapsed, reads,
+                   skipped))
+            return 1
+        if progressing and not bad and late:
+            say("launch-check: %s NOT CLEAN · the head started (%s) · first batch: %s · the first "
+                "batch was confirmed only %.1f s after the check began, past the %d s deadline, "
+                "and a start is certified only inside it; run the check again with a longer "
+                "--wait (%d read(s))%s"
+                % (a.run, detail, lanes_text(verdicts), elapsed, wait, reads, skipped))
+            return 1
+        if progressing and not bad:
+            why = model_unreadable(events, anchor)
+            if why:
+                say("launch-check: %s NOT CLEAN · the head started (%s) · first batch: %s · %s "
+                    "(%d read(s))" % (a.run, detail, lanes_text(verdicts), why, reads))
+                return 1
+            say("launch-check: %s STARTED CLEAN · %s · first batch (%d): %s · seen %.0f s "
+                "after the check began (%d read(s))"
+                % (a.run, detail, len(lanes), lanes_text(verdicts), elapsed, reads))
+            return 0
+        if elapsed >= wait:
+            why = ("the record has %d unparseable line(s), and a malformed record never certifies "
+                   "a clean start" % bad if bad and progressing
+                   else "not every planned helper is open and making progress within the %d s "
+                        "deadline" % wait)
+            say("launch-check: %s NOT CLEAN · the head started (%s) · first batch: %s · %s "
+                "(%d read(s))%s" % (a.run, detail, lanes_text(verdicts), why, reads, skipped))
+            return 1
+        time.sleep(max(0.0, min(step, wait - elapsed)))
+        events, bad = read_record(path)
+        reads += 1
 
 
 def inside_head(events):
@@ -2597,13 +3872,21 @@ def cmd_launch_check(a):
     """`launch-check --run R [--wait S] [--poll-s S] [--detach-safe]`: the launch kit's start
     confirmation. Read-only: it polls the record to the deadline for a head start
     whose pid is alive and started when the event says, prints one line per outcome and exits 0
-    started, 1 not started, 2 on a premise. `--wait 0` performs a single read. The deadline is computed
+    started, 1 not started or with no readable model to certify (model_unreadable), 2 on a premise.
+    `--wait 0` performs a single read. The deadline is computed
     ONCE, at the start, and governs every read and every probe inside a read: each `ps` probe is
     bounded by the lower of its own cap and what is left of that one budget (probe_budget and
     probe_bound; a single read keeps the probe's own cap, having no deadline to run past), a
-    start is accepted only inside it, and a start whose identity could not be verified by the
-    deadline is a named non-success; probes share one remaining-time budget."""
+    start is accepted only inside it — STARTED, a replacement's binding and STARTED CLEAN each on
+    the clock read after the last read or probe it rests on (past_deadline) — and a start whose
+    identity could not be verified by the deadline is a named non-success; probes share one
+    remaining-time budget."""
+    wait, step = max(0, int(a.wait)), max(0.05, float(a.poll_s))
+    t0, reads = time.monotonic(), 1
+    # Include the initial record read and its preceding probes in the one shared deadline.
+    budget = probe_budget(wait, t0)
     path = record_path(a.run)
+    lanes = parse_lane_list(a.lanes) if getattr(a, "lanes", None) is not None else None
     if not os.path.isfile(path):
         die("no run record at %s: run-open never ran, so there is no launch to confirm" % path)
     events, bad = read_record(path)
@@ -2616,19 +3899,24 @@ def cmd_launch_check(a):
                 "successor about itself must never wait on its own replacement, since the "
                 "starter waits for that head to exit; run the check from the launcher's shell, "
                 "or pass --detach-safe when this shell is not that head" % how)
-    wait, step = max(0, int(a.wait)), max(0.05, float(a.poll_s))
-    t0, reads = time.monotonic(), 1
-    budget = probe_budget(wait, t0)   # one deadline for the whole check; every probe draws on it
     while True:
         state, detail = head_start_verdict(events, budget=budget)
-        elapsed = time.monotonic() - t0
+        elapsed, late = past_deadline(t0, wait)   # after this read's probes: the one check
         skipped = " · %d unparseable line(s) skipped" % bad if bad else ""
-        if state == "started" and wait and elapsed > wait:
+        if state == "started" and late:
             say("launch-check: %s NOT STARTED · %sthe start was confirmed only %.1f s after the "
                 "check began, past the %d s deadline (%s); run the check again with a longer "
                 "--wait (%d read(s))%s" % (a.run, UNVERIFIABLE, elapsed, wait, detail, reads, skipped))
             return 1
+        if state == "started" and lanes is not None:
+            return launch_lanes(a, path, events, bad, lanes, detail, t0, wait, step, reads,
+                                budget=budget)
         if state == "started":
+            why = model_unreadable(events, launch_anchor(events))
+            if why:
+                say("launch-check: %s NOT CERTIFIED · the head started (%s), but %s · %.0f s after "
+                    "the check began (%d read(s))%s" % (a.run, detail, why, elapsed, reads, skipped))
+                return 1
             say("launch-check: %s STARTED · %s · seen %.0f s after the check began (%d read(s))%s"
                 % (a.run, detail, elapsed, reads, skipped))
             return 0
@@ -2682,7 +3970,10 @@ def run_window(events):
     session stops a session shared with attended work from being counted whole against one run.
     (None, None, reason) where the record carries no usable timestamp."""
     stamps = [ev.get("ts") for ev in events if isinstance(ev.get("ts"), str) and ev.get("ts")]
-    ro = run_open(events)
+    oi = last_index(events, ("run-open",))
+    # An attended record carries no run-open (the plain-lane-run shape, reflect-inputs' attended
+    # form): its window opens at the record's first stamped event, and the source says so.
+    ro = events[oi] if oi >= 0 else {}
     start = ro.get("ts") if isinstance(ro.get("ts"), str) else (stamps[0] if stamps else None)
     close = next((ev for ev in reversed(events) if ev.get("event") == "run-close"), None)
     if close is not None and isinstance(close.get("ts"), str):
@@ -2693,7 +3984,9 @@ def run_window(events):
         end, how = None, "no timestamped event"
     if not start or not end:
         return None, None, "the record carries no usable window (%s)" % how
-    return start, end, "run-open %s → %s %s" % (start, how, end)
+    return start, end, "%s %s → %s %s" % (
+        "run-open" if oi >= 0 else "the record's first event (no run-open: an attended record)",
+        start, how, end)
 
 
 def meter_cmd(meter, run, sid, ro, lanes, start=None, end=None):
@@ -2833,6 +4126,32 @@ def head_calls(path):
     return sorted(stamps) or None
 
 
+def head_records(path):
+    """[(epoch, True when the record is the head's own)] for every record of its transcript that
+    is not a sidechain and carries a parseable timestamp, in time order, a tie keeping the file's
+    order. None when the transcript is missing, unreadable or holds no head call, so the caller
+    falls back to the record and says so, as head_calls does."""
+    if not path or not os.path.isfile(path):
+        return None
+    found = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(rec, dict) or rec.get("isSidechain"):
+                    continue
+                t = parse_ts(rec.get("timestamp"))
+                if t is not None:
+                    found.append((t, rec.get("type") == "assistant"))
+    except OSError:
+        return None
+    found.sort(key=lambda record: record[0])
+    return found if any(own for _, own in found) else None
+
+
 def merge_intervals(intervals):
     out = []
     for a, b in sorted(intervals):
@@ -2866,13 +4185,16 @@ def lane_intervals(events, t0, t1):
     return merge_intervals(clipped)
 
 
-def head_idle_s(calls, running, t0, t1):
-    """Seconds of [t0, t1] inside a head gap above IDLE_GAP_S and outside every lane interval:
-    the span's edges are the head's own acts (the previous boundary, this one)."""
-    points = [t0] + [t for t in calls if t0 < t < t1] + [t1]
+def head_idle_s(records, running, t0, t1):
+    """Seconds of [t0, t1] inside a transcript gap above IDLE_GAP_S and outside every lane
+    interval, where the gap ends in something other than the head's own record: a gap the head's
+    record ends is its own generation, thinking or writing, and never idleness (register entry
+    2026-10-15 01:33 e). The span's edges are the head's own acts (the previous boundary, this
+    one), so a gap to the last edge counts as a wait."""
+    points = [(t0, False)] + [r for r in records if t0 < r[0] < t1] + [(t1, False)]
     idle = 0.0
-    for a, b in zip(points, points[1:]):
-        if b - a <= IDLE_GAP_S:
+    for (a, _), (b, ends_in_head) in zip(points, points[1:]):
+        if b - a <= IDLE_GAP_S or ends_in_head:
             continue
         busy = sum(max(0.0, min(b, y) - max(a, x)) for x, y in running)
         idle += (b - a) - busy
@@ -3085,8 +4407,10 @@ def head_fence_denials(events, since, now_ts):
 
 
 def cut_words(ev, words):
-    """Count omitted preview words; complete reports contribute zero. Legacy records
-    without the display fields use their historical format's shown count."""
+    """Count omitted preview words; complete reports contribute zero, and so does a preview the
+    head asked to be empty (`--report-words 0`, shown as 0), since it reads the report itself and
+    the wrapper cut nothing. Legacy records without the display fields use their historical
+    format's shown count."""
     if not isinstance(words, int) or isinstance(words, bool):
         return 0
     if "report_cut" not in ev:
@@ -3095,7 +4419,7 @@ def cut_words(ev, words):
         return 0
     shown = ev.get("report_shown")
     if isinstance(shown, int) and not isinstance(shown, bool) and 0 <= shown <= words:
-        return words - shown
+        return words - shown if shown else 0
     return max(0, words - REPORT_CAP_WORDS)
 
 
@@ -3103,16 +4427,20 @@ def waste_fields(events, since, transcript=None, now_ts=None, meter_lanes=True):
     """The waste classes over the events after index `since` (the previous boundary, else
     run-open), each with its derivation (register entries of 2026-09-05):
       - idle_min: head idleness — the time in the span (that event's timestamp to now) when
-        no lane was running and the head made no call, a head gap counting only above
-        IDLE_GAP_S. Lane running time comes from the record (lane-open or lane-resumed to the
-        lane's next lane-closed); the head's calls from its transcript (`transcript`, the path
-        measure_head found), labelled idle_src `transcript`. When the transcript is missing or
+        no lane was running and the head was waiting, a transcript gap counting only above
+        IDLE_GAP_S and only when it ends in something other than the head's own record
+        (head_idle_s). Lane running time comes from the record (lane-open or lane-resumed to the
+        lane's next lane-closed); the transcript is `transcript`, the path measure_head found,
+        labelled idle_src `transcript`, idle_rule `waits`. When the transcript is missing or
         carries no timestamped call, the record alone measures it as the rule before this one
         did — silence after each lane close until the head's next recorded act, summed per
         close — labelled idle_src `record`, which under parallel lanes overstates.
       - denials: the LANES' tool denials, summed from the wrappers' counts; head_denials,
         beside it and never added to it, is the head fence's own denies in the span
-        (head_fence_denials, head_denials_src; register entry 2026-09-06).
+        (head_fence_denials, head_denials_src; register entry 2026-09-06). fence_denials and
+        sandbox_denials, each in its own labelled field and never added to `denials`, sum the
+        lanes' own fence and sandbox counts from their closes (register entry 2026-10-02
+        16:42: a Codex lane's sandbox denials sat on its close while every boundary read 0).
       - over_cap_reports: reports with omitted preview words; complete reports contribute zero.
       - respawn_cost_usd: the cost of lanes that closed other than `completed` and were NOT
         resumed afterwards (a lane-resumed for the same lane later in the record): a lane
@@ -3130,6 +4458,7 @@ def waste_fields(events, since, transcript=None, now_ts=None, meter_lanes=True):
     window_events = events[since + 1:]
     now_ts = time.time() if now_ts is None else now_ts
     silence, denials, over, unmeasured, excluded = 0.0, 0, 0, 0, 0
+    fence_denials, sandbox_denials = 0, 0
     lost, cut, cut_count = new_bucket(), new_bucket(), 0
     for k, ev in enumerate(window_events):
         if ev.get("event") != "lane-closed":
@@ -3147,7 +4476,12 @@ def waste_fields(events, since, transcript=None, now_ts=None, meter_lanes=True):
             silence += ((t1 if t1 is not None else now_ts) - t0) / 60.0
         d = ev.get("denials")
         if isinstance(d, dict):
-            denials += int(d.get("tool") or 0)
+            denials += denial_count(d.get("tool"))
+            # The lanes' own fence and sandbox denials, each in its own labelled field beside the
+            # tool denials and never added to them (register entry 2026-10-02 16:42: a Codex
+            # lane's sandbox denials sat on its close while every boundary reported denials 0).
+            fence_denials += denial_count(d.get("fence"))
+            sandbox_denials += denial_count(d.get("sandbox"))
         elif isinstance(d, int):
             denials += d
         else:
@@ -3169,20 +4503,35 @@ def waste_fields(events, since, transcript=None, now_ts=None, meter_lanes=True):
                 continue
             price_close(events, index, ev, lost, meter_lanes)
     span_start = parse_ts(events[since].get("ts")) if 0 <= since < len(events) else None
-    calls = head_calls(transcript)
-    if calls is not None and span_start is not None and now_ts > span_start:
-        idle = head_idle_s(calls, lane_intervals(events, span_start, now_ts),
+    records = head_records(transcript)
+    if records is not None and span_start is not None and now_ts > span_start:
+        idle = head_idle_s(records, lane_intervals(events, span_start, now_ts),
                            span_start, now_ts) / 60.0
         src = "transcript"
     else:
         idle, src = silence, "record"
     head_denials, head_denials_src = head_fence_denials(events, since, now_ts)
-    return {"idle_min": round(idle, 1), "idle_src": src, "denials": denials,
+    return {"idle_min": round(idle, 1), "idle_src": src,
+            "idle_rule": "waits" if src == "transcript" else None, "denials": denials,
+            "fence_denials": fence_denials, "sandbox_denials": sandbox_denials,
             "head_denials": head_denials, "head_denials_src": head_denials_src,
             "over_cap_reports": over, "respawn_cost_usd": bucket_figure(lost),
             "respawn_src": bucket_src(lost), "respawn_excluded": excluded,
             "limit_cut_resumed": cut_count, "limit_cut_resumed_usd": bucket_figure(cut),
             "limit_cut_src": bucket_src(cut)}, unmeasured
+
+
+def denial_count(value):
+    """One denial counter from a lane close as a whole number: an int (never a bool) at or above
+    zero, a numeric string, else 0 — a counter a wrapper did not write is no denial."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    try:
+        return max(0, int(str(value)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def rewrites_delta(events, sid, meter):
@@ -3276,6 +4625,28 @@ def push(vault):
     return "failed %s" % (tail_of(out, err) or "exit %d" % rc)
 
 
+def root_untracked(vault):
+    """(entries, line): the untracked, unignored entries at the vault's top level that a
+    checkpoint commit's `git add -A` is about to take — files, and directories as `<name>/` —
+    listed before the commit, advisory: the commit is not stopped (register entry 2026-10-02
+    06:19: a head's stray downloads sat in the vault root, and the boundary commit takes the whole
+    work tree). The listing is NUL-delimited, so any file name reads as it is; an entry below the
+    top level is not listed. A listing git could not give is `unverified (<why>)`, never an empty
+    list."""
+    rc, out, err = git(vault, ["ls-files", "--others", "--exclude-standard", "--directory", "-z"])
+    if rc != 0:
+        why = "unverified (git ls-files exit %d%s)" % (rc, ": " + tail_of(out, err)
+                                                       if tail_of(out, err) else "")
+        return why, "untracked at the vault root: %s; the commit goes ahead" % why
+    entries = [e for e in out.split("\0") if e]
+    top = [e for e in entries if "/" not in e.rstrip("/")]
+    if not top:
+        return [], ("untracked at the vault root: none (%d untracked entr%s below it)"
+                    % (len(entries), "y" if len(entries) == 1 else "ies"))
+    return top, ("untracked at the vault root (advisory: the commit takes them with the rest): "
+                 "%s" % ", ".join(top))
+
+
 # ---------------------------------------------------------------------- reset times --------
 
 AMPM_RE = re.compile(r"resets?\s*(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.I)
@@ -3320,10 +4691,25 @@ def account_word(word):
 
 
 def next_clock(hour, minute, now_ts):
+    """The next moment after now_ts at which the local clock reads hour:minute, as an epoch. Each
+    day's candidate is built from that day's date (mktime normalises the day), never as the day
+    before plus 86,400 s, which is an hour out across a clock change (25 October 2026 has 25 hours
+    in Europe/London). A time the clock shows twice (the repeated hour when clocks go back) takes
+    the later instant, so a wait never ends early; a time it skips (clocks going forward) takes
+    mktime's normalised reading."""
     lt = time.localtime(now_ts)
-    candidate = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hour, minute, 0, 0, 0, -1))
-    if candidate <= now_ts:
-        candidate += 86400
+    candidate = now_ts
+    for days in (0, 1, 2):
+        fields = (lt.tm_year, lt.tm_mon, lt.tm_mday + days, hour, minute, 0, 0, 0)
+        exact = []
+        for dst in (0, 1):
+            t = time.mktime(fields + (dst,))
+            r = time.localtime(t)
+            if (r.tm_hour, r.tm_min, r.tm_isdst) == (hour, minute, dst):
+                exact.append(t)
+        candidate = max(exact) if exact else time.mktime(fields + (-1,))
+        if candidate > now_ts:
+            return candidate
     return candidate
 
 
@@ -3441,25 +4827,45 @@ def envelope_of(events):
     return None, "run-open carries no envelope_usd"
 
 
-def envelope_left(events, run, meter_override, start):
-    """(remainder, source): the envelope — its latest figure, `envelope_of` — minus every
-    head-exit's spent_usd minus this session's billed total — taken from its own head-exit when
-    that carries spent_usd, else metered now. (None, reason) when the envelope is absent or the
-    meter gives no session total."""
+def nothing_ran(events):
+    """True when the record names no head that ran (every head session it names is a seed, or it
+    names none) and no lane: the run's spend is then zero by construction, and a meter that finds
+    nothing to read is no premise failure (a launcher's first successor on a seeded record)."""
+    ids, seeds = run_heads(events)
+    return not [sid for sid in ids if sid not in seeds] and not run_lanes(events)
+
+
+def envelope_left(events, run, meter_override, start, path=None, spend_out=None,
+                  write_cache=True):
+    """(remainder, source): the envelope — its latest figure, `envelope_of` — minus the RUN's
+    spend as the gate, the boundary and the close read it (run_spend: every head session metered
+    alone plus every lane on the record), so the successor and the supervisor size the next head
+    on the figure that refuses an item (register entry 2026-09-26 02:2x: the successor summed every
+    head-exit's session total, a resumed or repaired head counted twice and each head's lanes with
+    it, and aborted a run the close still metered USD 333 under its envelope). Where part of the
+    figure is a floor the remainder is `at most` and the source says so. (None, reason) when the
+    envelope is absent or nothing on the record could be metered or read — except a record on
+    which nothing has run yet (nothing_ran), whose spend is zero. `start` is kept for the callers'
+    signature; `meter_override` is the current head's billed line in hand. lane.py's spawn cap
+    reads this same remainder: `spend_out`, a dict when given, receives the run_spend figure read,
+    so a caller can print `at most` where its `floor` is set (register entry 2026-09-30 03:21), and
+    `write_cache=False` leaves the meter cache unwritten, as a dry-run gate does."""
     envelope, esrc = envelope_of(events)
     if envelope is None:
         return None, esrc
     shown = envelope if esrc == "run-open" else "%s (%s)" % (envelope, esrc)
-    spent, own = spent_sum(events, start)
-    if own is not None and isinstance(own.get("spent_usd"), (int, float)):
-        return round(float(envelope) - spent, 2), (
-            "envelope $%s minus $%.2f spent over every head-exit" % (shown, spent))
-    total = session_spent(meter_line(events, run, meter_override))
-    if total is None:
-        return None, "the meter gave no session total"
-    return round(float(envelope) - spent - total, 2), (
-        "envelope $%s minus $%.2f spent by earlier heads minus session $%.2f"
-        % (shown, spent, total))
+    spend = run_spend(events, run, path if path is not None else record_path(run),
+                      session_line=meter_override, write_cache=write_cache)
+    if isinstance(spend_out, dict):
+        spend_out.update(spend)
+    if not spend["measured"]:
+        if nothing_ran(events):
+            return round(float(envelope), 2), (
+                "envelope $%s minus $0.00: nothing has run yet (%s)" % (shown, spend["src"]))
+        return None, "the run's spend could not be metered: %s" % spend["src"]
+    return round(float(envelope) - spend["usd"], 2), (
+        "envelope $%s minus the run's spend %s%s (run_spend: %s)"
+        % (shown, "at least " if spend["floor"] else "", usd(spend["usd"]), spend["src"]))
 
 
 # ------------------------------------------------------------ the run's spend, by run -------
@@ -3512,7 +4918,9 @@ def run_lanes(events):
         if not name or ev.get("event") not in LANE_SPEND_EVENTS:
             continue
         lane = lanes.setdefault(str(name), {"sids": [], "plan": False, "closes": [], "beats": [],
-                                            "last": None})
+                                            "last": None, "lines": []})
+        if ev.get("event") in ("lane-closed", "hold-beat"):
+            lane["lines"].append(("close" if ev.get("event") == "lane-closed" else "beat", ev))
         if ev.get("event") == "hold-beat":
             # A beat is one more call inside the pass the lane already closed (the held lanes,
             # D47): its cost counts, but it is no pass of its own — it adds no session to meter
@@ -3531,6 +4939,84 @@ def run_lanes(events):
             lane["closes"].append((money(ev.get("total_cost_usd")), ev.get("exit_class")))
         lane["last"] = ev.get("event")   # a last event other than lane-closed is an open pass
     return lanes
+
+
+def weekly_reader():
+    """(module, why): the weekly waste reader imported by file path for its reading of a session's
+    costs, never copied (`classify` and `spend_line`, its Priced spend rule of 27 October); (None,
+    why) when it is missing or does not import. AIMYTH_WEEKLY_WASTE names it for a staged copy."""
+    global _WEEKLY
+    if _WEEKLY is not None:
+        return _WEEKLY
+    path = os.environ.get("AIMYTH_WEEKLY_WASTE") or os.path.join(
+        HERE, os.pardir, "weekly-audit", "weekly-waste.py")
+    path = os.path.realpath(os.path.expanduser(path))
+    if not os.path.isfile(path):
+        _WEEKLY = (None, "no weekly reader at %s" % path)
+        return _WEEKLY
+    try:
+        spec = importlib.util.spec_from_file_location("weekly_waste", path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+    except Exception as exc:   # a torn or broken file: report it and keep the sum
+        _WEEKLY = (None, "the weekly reader at %s does not import: %s" % (path, exc))
+        return _WEEKLY
+    if not all(callable(getattr(module, name, None)) for name in ("classify", "spend_line")):
+        _WEEKLY = (None, "the weekly reader at %s has no classify() or spend_line()" % path)
+        return _WEEKLY
+    _WEEKLY = (module, None)
+    return _WEEKLY
+
+
+def lane_recorded(name, lines, damaged):
+    """(dollars, note) for one lane's recorded closes and beats, `lines` being (kind, event) in
+    record order (register entry 2026-10-16 10:04). A Claude helper's total_cost_usd is a running
+    total of its session, so each later close repeats the earlier passes, while records before 19
+    September carry per-pass costs: each session is read from its own lines by the weekly reader's
+    rule. Read as running totals it counts its last total, never the sum; read as per-pass costs,
+    or as one line, its costs. What cannot be read stays the sum, an overstatement and the safe
+    direction, and the note says why: a session that reads as neither, a line naming no session
+    (which could be one of any session's), a damaged record line (likewise) and a missing reader.
+    A session begun before this record counts its earlier passes too: the same direction."""
+    costs = [money(ev.get("total_cost_usd")) for _, ev in lines]
+    summed = sum(cost for cost in costs if cost is not None)
+    if len(lines) < 2:
+        return summed, ""
+    if damaged:
+        return summed, "summed: a damaged record line could be one of its sessions'"
+    groups = {}
+    for kind, ev in lines:
+        sid = ev.get("session_id")
+        if not isinstance(sid, str) or not sid.strip():
+            return summed, "summed: a line names no session, so none can be read alone"
+        groups.setdefault(sid, []).append((kind, ev))
+    reader, why = weekly_reader()
+    if reader is None:
+        return summed, "summed: %s" % why
+    total, notes = 0.0, []
+    for sid, group in groups.items():
+        priced = [money(ev.get("total_cost_usd")) for _, ev in group]
+        priced = [cost for cost in priced if cost is not None]
+        try:
+            # The reader reads a price as JSON wrote it, an exact Decimal, never a float.
+            seq = [reader.spend_line(SpendSource(json.loads(json.dumps(ev),
+                                                            parse_float=reader.Decimal), n),
+                                     kind, name) for n, (kind, ev) in enumerate(group, 1)]
+            usable = all(line.basis == "priced" for line in seq)
+            reading, evidence = reader.classify(seq) if usable else ("unclassified", None)
+        except (ArithmeticError, AttributeError, KeyError, TypeError, ValueError) as exc:
+            reading, evidence = "unclassified", "the reader failed on it: %s" % exc
+        if reading == "running":
+            total += priced[-1]
+            notes.append("session %s reads as running totals: its last $%.2f, not the sum $%.2f"
+                         % (sid[:8], priced[-1], sum(priced)))
+        else:
+            total += sum(priced)
+            if reading == "unclassified" and len(group) > 1:
+                notes.append("session %s summed: it reads neither as running totals nor as "
+                             "per-pass costs" % sid[:8])
+    return total, "; ".join(notes)
 
 
 def spend_cache_path(run):
@@ -3565,16 +5051,17 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
     transcript, as the gate's session figure always was) and its `head $` taken; the current
     head's figure is read off `session_line` — the billed line in hand (--meter-line, or the
     boundary's and the close's own meter) — when that carries one; a seed is skipped and says
-    so. Lanes: per lane, the sum of its lane-closed costs AND of its `hold-beat` costs (a held
-    lane's beats are billable calls: the fold of 2026-09-17); a beat that recorded no cost is a
+    so. Lanes: per lane, what its lane-closed costs AND its `hold-beat` costs come to, session by
+    session (lane_recorded: a running total's last figure, never its sum; a held lane's beats are
+    billable calls: the fold of 2026-09-17); a beat that recorded no cost is a
     gap like an unpriced close, so the lane reads as a floor and is named among the unmeasured,
     and the transcript fallback covers a lane's beats along with its passes, since a beat
-    re-enters the session the transcript already holds — the larger of the recorded sum and the
+    re-enters the session the transcript already holds — the larger of the recorded figure and the
     transcript is taken, so nothing is counted twice and a beat adds no pass. Where any close of a Claude lane
     lacks a cost, the lane has no close yet, or an open pass follows its last close (a
     lane-resumed or a respawn as its latest event: the fold of 2026-09-17), its transcript is
-    metered and the LARGER of the recorded sum and the transcript's whole figure taken (the
-    recorded costs are per pass; the transcript covers every pass, so the two are never
+    metered and the LARGER of the recorded figure and the transcript's whole figure taken (the
+    transcript covers every pass, so the two are never
     summed); a lane whose events name two session ids is metered per transcript, the larger of
     the recorded sum and the transcripts' sum taken, and always listed under the floor (the
     passes across ids cannot be reconciled exactly); a lane with no priced close and no
@@ -3588,8 +5075,12 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
     kind one of recorded, metered, plan, unmeasured — metered_heads, lanes_n, plan, skipped,
     unmetered, malformed (the record's unparseable lines), measured (any head or lane gave a
     figure: when False nothing is printed as a number, the `unbilled` premise standing), floor
-    (something could not be metered or a line was malformed: the figure is `at least`), src
-    (the derivation in words) and meter_calls (how many meter runs this call made)."""
+    (something could not be metered, a line was malformed, or a lane is still running — no close
+    yet, or an open pass after its last close — so it still spends: the figure is `at least`;
+    register entry 2026-09-30 03:21), still_open (those lanes), src (the derivation in words) and
+    meter_calls (how many meter runs this call made). A lane whose every close is priced is
+    still metered from its transcript and the larger figure taken, so the figure never falls
+    when a lane's source changes from its transcript to a lower recorded cost."""
     bad = read_record(path)[1] if path and os.path.isfile(path) else 0
     ids, seeds = run_heads(events)
     current = head_session(events)[0]
@@ -3618,7 +5109,7 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
             state["changed"] = True
         return usd, how
 
-    heads, skipped, unmetered = [], [], []
+    heads, skipped, unmetered, still_open = [], [], [], []
     for sid in ids:
         short = sid[:8]
         if sid in seeds:
@@ -3646,15 +5137,14 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
             lanes_out.append((name, None, "plan usage (a Codex lane): counted, never priced "
                                           "(%d close(s))" % len(lane["closes"]), "plan"))
             continue
-        recorded = sum(cost for cost, _ in lane["closes"] if cost is not None)
         priced = sum(1 for cost, _ in lane["closes"] if cost is not None)
-        # The lane's beats (critic finding 3 of review): a beat that recorded a cost is added to
+        # The lane's beats (critic finding 3 of review): a beat that recorded a cost counts in
         # the lane's figure, and a beat that recorded none is a gap, so the figure reads as a
         # floor and the lane is named among the unmeasured rather than silently understated.
         beats_recorded = sum(cost for cost, _ in lane["beats"] if cost is not None)
         beats_priced = sum(1 for cost, _ in lane["beats"] if cost is not None)
         beats_free = sum(1 for cost, _ in lane["beats"] if cost is None)
-        recorded += beats_recorded
+        recorded, reading = lane_recorded(name, lane["lines"], bad)
         missing = [str(cls) for cost, cls in lane["closes"] if cost is None]
         open_pass = bool(lane["closes"]) and lane["last"] != "lane-closed"
         several = len(lane["sids"]) > 1
@@ -3678,6 +5168,10 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
         if several:
             gaps.append("%d session ids: the passes across ids cannot be reconciled exactly"
                         % len(lane["sids"]))
+        # A lane still running (no close yet, or an open pass after its last close) is still
+        # spending: the run figure is a floor while any is (register entry 2026-09-30 03:21).
+        if not lane["closes"] or open_pass:
+            still_open.append(name)
         if gaps:
             gap = "; ".join(gaps)
             metered_sum, metered_n, hows = 0.0, 0, []
@@ -3705,7 +5199,20 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
                     name, gap, "; ".join(hows),
                     "recorded $%.2f" % recorded if (priced or beats_priced)
                     else "no priced close"))
-        lanes_out.append((name, fig, src, kind))
+        elif lane["sids"]:
+            # Every close priced: the transcript is still metered and the LARGER of the two taken
+            # (register entry 2026-09-30 03:21: a lane's figure changed source at its close, from
+            # its transcript to a lower recorded cost, and the run figure fell while lanes still
+            # spent). A lane whose transcript cannot be found or metered keeps its recorded figure.
+            transcript, why = lane_transcript_path(lane["sids"][0])
+            usd, how = (None, why) if transcript is None else meter(lane["sids"][0], transcript)
+            if usd is not None and usd > recorded:
+                fig, kind = usd, "metered"
+                src = ("the larger of the transcript's $%.2f (%s) and the recorded $%.2f (%s)"
+                       % (usd, how, recorded, src))
+            elif usd is not None:
+                src += " · its transcript's $%.2f is not larger" % usd
+        lanes_out.append((name, fig, "%s · %s" % (src, reading) if reading else src, kind))
         if fig is not None:
             lanes_usd += fig
     if state["changed"] and use_cache and write_cache:
@@ -3735,13 +5242,17 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
                  else "heads: none metered%s" % seeds_part, lane_part]
     if unmetered:
         parts.append("unmetered: %s" % "; ".join(unmetered))
+    if still_open:
+        parts.append("still running: %s (the figure is a floor while a lane spends)"
+                     % ", ".join(still_open))
     if bad:
         parts.append("%d malformed record line(s) skipped" % bad)
     return {"usd": round(heads_usd + lanes_usd, 2), "heads_usd": round(heads_usd, 2),
             "lanes_usd": round(lanes_usd, 2), "heads": heads, "lanes": lanes_out,
             "metered_heads": metered_n, "lanes_n": len(lanes_out), "plan": plan,
             "skipped": skipped, "unmetered": unmetered, "malformed": bad,
-            "measured": measured, "floor": bool(unmetered or bad),
+            "still_open": still_open, "measured": measured,
+            "floor": bool(unmetered or bad or still_open),
             "src": " · ".join(parts), "meter_calls": state["calls"]}
 
 
@@ -3766,8 +5277,10 @@ def run_spend_line(spend, envelope=None):
     return "%s · %s" % (head, spend["src"])
 
 
+@a3_expose_notices
 def cmd_run_open(a):
     refuse_grants_file(a)
+    check_grant_forms(a, "run-open", opening=True)
     path = record_path(a.run)
     events = read_record(path)[0] if os.path.isfile(path) else []
     if last_index(events, ("run-open",)) >= 0:
@@ -3776,6 +5289,7 @@ def cmd_run_open(a):
     handoff = os.path.realpath(os.path.expanduser(a.handoff))
     if not os.path.isfile(handoff):
         die("hand-off document not found: %s" % handoff)
+    runbook_note = check_runbook(a)
     if a.session_kind == "seed" and a.pid is None:
         # A seed never runs, and a parent walk from here reaches the launcher's own long-lived
         # process, which the first starter would then wait on (register entry 2026-09-12 20:0x).
@@ -3788,6 +5302,12 @@ def cmd_run_open(a):
                session_kind=a.session_kind)
     if pid is not None:
         ev["pid"] = pid
+    if getattr(a, "model", None):
+        # The run's head model as a structured field (never parsed out of the free-text --head):
+        # the model a successor or a resume inherits when it names none (resolve_head_model).
+        ev["model"], ev["model_src"] = a.model, "arg"
+    if getattr(a, "effort", None):
+        ev["effort"], ev["effort_src"] = a.effort, "arg"      # read by resolve_head_effort
     if a.envelope_usd is not None:
         ev["envelope_usd"] = a.envelope_usd
     if a.expect_items:
@@ -3796,16 +5316,22 @@ def cmd_run_open(a):
     ev["on_limit"], ev["on_limit_src"] = on_limit_choice(a, ev["grants_file"])
     ev["viewer"], ev["viewer_src"] = viewer_choice(a, ev["grants_file"])
     ev["network"], ev["network_src"] = network_choice(a, ev["grants_file"])
+    cap, cap_src = max_successors_choice(a, ev["grants_file"])
+    if cap is not None:
+        ev["max_successors"], ev["max_successors_src"] = cap, cap_src
     payload = grants_payload(a.run, "run-open", a.grant, a.write, ev["on_limit"], ev["viewer"],
-                             ev["network"])
+                             ev["network"], cap, carry=read_grants(ev["grants_file"]))
     # The lists on the event are the contract the shrink guard reads when the file is gone.
     ev["grants"], ev["writes"] = payload["grants"], payload["writes"]
+    if a.decisions_file:
+        ev[DECISIONS_FILE] = decisions_digest_of(a.decisions_file)[0]   # a missing file refuses here
     trace, seeded = seed_trace(read_text(handoff, "hand-off").split("\n"))
     ev["trace_table"] = trace
     # The findings ledger, the same check once at the open (register entry 2026-09-14 19:35): a
     # seed whose section holds prose and no table is repaired before the first head starts.
     ledger, seeded = seed_ledger(seeded)
     ev["ledger_table"] = ledger
+    say(runbook_note)
     if a.dry_run:
         say("run-open: dry run · %s" % json.dumps(ev, ensure_ascii=False))
         if trace_warning(trace, True):
@@ -3834,8 +5360,47 @@ def cmd_run_open(a):
     return 0
 
 
+def check_runbook(a):
+    """A premise failure when the run's runbook never names the boundary command (register entry
+    2026-09-20 20:0x): the console draws an item's end from `phase-boundary` and `item-done` records
+    alone, so a head that follows such a runbook reads as idle and its finished items as pending.
+    The runbook is --runbook, else `<store>/stages/<run>/RUNBOOK.md`; with neither there, nothing is checked
+    and the returned line says so. The check is on the command, never the bare word `boundary`,
+    which a runbook can use of a hand-off row; it cannot tell that each item carries the line."""
+    named = getattr(a, "runbook", None)
+    path = (os.path.expanduser(named) if named else
+            os.path.join(store_root(), "stages", token(a.run, "run id"), "RUNBOOK.md"))
+    if not os.path.isfile(path):
+        if named:
+            die("--runbook %s is not a file; nothing written" % named)
+        return "run-open: no runbook at %s, so no boundary line was checked" % path
+    if not BOUNDARY_LINE_RE.search(read_text(path, "runbook")):
+        die("the runbook %s never names `handsoff.py boundary`: the console draws an item's end "
+            "from boundary and item-done records alone, so its items would read as pending though "
+            "done; add the line for each item's end and open again; nothing written" % path)
+    return "run-open: the runbook %s names the boundary command" % path
+
+
+def resume_grant_fields(ev, payload, sources):
+    """The grants keys and lists a rewriting run-resume records, each taken from the payload it
+    writes and from the sources of the same plan (grants_plan), in the order the event has always
+    carried them: the cap (where the payload sets one), on_limit, viewer, network, then the two
+    lists — a rewrite records the lists it writes, as run-open and grants do, so the shrink
+    guard's baseline follows an explicit narrowing and never a file narrowed by hand."""
+    if "max_successors" in payload:
+        ev["max_successors"] = payload["max_successors"]
+        ev["max_successors_src"] = sources["max_successors"]
+    ev["on_limit"], ev["on_limit_src"] = payload["on_limit"], sources["on_limit"]
+    ev["viewer"], ev["viewer_src"] = payload["viewer"], sources["viewer"]
+    ev["network"], ev["network_src"] = payload["network"], sources["network"]
+    ev["grants"], ev["writes"] = payload["grants"], payload["writes"]
+    ev["grants_src"], ev["writes_src"] = sources["grants"], sources["writes"]
+
+
+@a3_expose_notices
 def cmd_run_resume(a):
     refuse_grants_file(a)
+    check_grant_forms(a, "run-resume")
     path = record_path(a.run)
     events = require_record(path)
     refused = refuse_two_heads(a, path, events, "run-resume")
@@ -3860,44 +5425,83 @@ def cmd_run_resume(a):
     ev = event(a.run, "run-resume", session=sid, head=a.head, detail=a.detail, pid_src=src)
     if pid is not None:
         ev["pid"] = pid
+    if getattr(a, "effort", None):
+        ev["effort"], ev["effort_src"] = a.effort, "arg"      # read by resolve_head_effort
+    if getattr(a, "model", None):
+        ev["model"], ev["model_src"] = a.model, "arg"         # read by resolve_head_model
     ev["grants_file"] = grants_path(a.run)
     # Carry the run's configured write grants into its successor; a default-only rewrite
     # would silently narrow the successor's authorised scope.
-    # --on-limit or --viewer alone rewrites that key alone: a list the call does not name is
-    # carried from the file, under the shrink guard (register entry 2026-09-11 04:17).
+    # --on-limit, --viewer or --max-successors alone rewrites that key alone: a list the call does
+    # not name is carried from the file, under the shrink guard (register entry 2026-09-11 04:17).
+    # The cap is one of the keys a resume rewrites (critic finding 7 of the review of 2026-10-11:
+    # a cap-only resume kept the file and dropped the cap unread, a zero included); its value is
+    # checked before anything is written (max_successors_choice: a whole number of at least 1).
     keep = (not a.grant and not a.write and getattr(a, "on_limit", None) is None
             and getattr(a, "viewer", None) is None
+            and getattr(a, "max_successors", None) is None
+            and not getattr(a, "add_grant", None) and not getattr(a, "add_write", None)
             and os.path.isfile(ev["grants_file"]))
-    ev["on_limit"], ev["on_limit_src"] = on_limit_choice(a, ev["grants_file"])
-    ev["viewer"], ev["viewer_src"] = viewer_choice(a, ev["grants_file"])
-    ev["network"], ev["network_src"] = network_choice(a, ev["grants_file"])
-    payload = None
+    if getattr(a, "max_successors", None) is not None:
+        max_successors_choice(a, ev["grants_file"])   # a given cap is checked first; no read
     if keep:
+        # A kept file is read once for what the event reports; nothing is written to it.
+        current = read_grants(ev["grants_file"])
+        ev["on_limit"], ev["on_limit_src"] = on_limit_choice(a, ev["grants_file"], current)
+        ev["viewer"], ev["viewer_src"] = viewer_choice(a, ev["grants_file"], current)
+        ev["network"], ev["network_src"] = network_choice(a, ev["grants_file"], current)
         ev["grants"] = "kept"
-    else:
+        if a.dry_run:
+            # The count on the dry run's line too (build review RV-CAP finding F6): a kept file is
+            # the cap the real call would leave.
+            say("run-resume: dry run · %s · %s"
+                % (json.dumps(ev, ensure_ascii=False),
+                   successors_clause(successors_left(events, a.run))))
+            return 0
+        write_pointer(a.run, sid)
+        append_record(path, ev)
+    elif a.dry_run:
         payload, sources, dropped, against = grants_plan(a, ev["grants_file"], events,
                                                          "run-resume")
         guard_shrink(a, "run-resume", dropped, against)
-        # A rewrite records the lists it writes, as run-open and grants do, so the shrink guard's
-        # baseline follows an explicit narrowing and never a file narrowed by hand.
-        ev["grants"], ev["writes"] = payload["grants"], payload["writes"]
-        ev["grants_src"], ev["writes_src"] = sources["grants"], sources["writes"]
-    if a.dry_run:
-        say("run-resume: dry run · %s" % json.dumps(ev, ensure_ascii=False))
+        resume_grant_fields(ev, payload, sources)
+        # The count the rewrite would leave, read from the payload it plans (nothing is written),
+        # as the real call's line reads it after its write (build review RV-CAP finding F6).
+        say("run-resume: dry run · %s · %s"
+            % (json.dumps(ev, ensure_ascii=False),
+               successors_clause(successors_left(events, a.run, planned=payload))))
         return 0
-    if payload is not None:
-        write_grants(ev["grants_file"], payload)
-    write_pointer(a.run, sid)
-    append_record(path, ev)
+    else:
+        # A rewrite plans, writes the file and records its lists under the record's lock, the
+        # record re-read inside it, so two calls adding a path each cannot lose either addition
+        # (critic finding 4 of the batch's design review: concurrent lost additions). The event
+        # takes every grants key from that one plan, never from a read before the lock (critic
+        # finding F3 of the second review of 2026-10-11).
+        with record_lock(path):
+            events, _ = read_record(path)
+            payload, sources, dropped, against = grants_plan(a, ev["grants_file"], events,
+                                                             "run-resume")
+            guard_shrink(a, "run-resume", dropped, against)
+            resume_grant_fields(ev, payload, sources)
+            write_grants(ev["grants_file"], payload)
+            write_pointer(a.run, sid)
+            append_record(path, ev)
     if stale is not None:
         append_record(path, event(a.run, "observation", phase="", what="stale-pack",
                                   note="run-resume: " + stale))
-    carried = not keep and not a.grant and not a.write
+    added = bool(getattr(a, "add_grant", None) or getattr(a, "add_write", None))
+    carried = not keep and not a.grant and not a.write and not added
     say("run-resume: %s · session %s (%s) · pid %s (%s) · grants %s%s · on_limit %s · viewer %s · "
-        "network %s"
+        "network %s%s · %s"
         % (a.run, sid[:8], how, "none" if pid is None else pid, src, ev["grants_file"],
-           " (kept)" if keep else (" (lists carried)" if carried else ""),
-           ev["on_limit"], ev["viewer"], network_shown(ev["network"])))
+           " (kept)" if keep else (" (lists carried)" if carried
+                                   else " (paths added)" if added else ""),
+           ev["on_limit"], ev["viewer"], network_shown(ev["network"]),
+           " · max_successors %d (%s)" % (ev["max_successors"], ev["max_successors_src"])
+           if "max_successors" in ev else "",
+           # the count every head sees at its first act (register entry 2026-10-30 16:11),
+           # read after any cap this call wrote
+           successors_clause(successors_left(events, a.run))))
     return 0
 
 
@@ -3909,10 +5513,22 @@ def ledger_observation(a, path):
     """`ledger --observation`: ONE observation event on any record that exists, and no hand-off
     row. On a plain record (no `run-open`) it is the only ledger form there is; on a record with
     a `run-open` it is the head's aside that is not a finding, so the findings ledger keeps only
-    findings. `--phase` is optional and the phase is empty without it."""
-    events = read_existing_record(path)
-    shape = "plain lane run (no run-open)" if is_plain_run(events) else "run-open present"
+    findings. `--phase` is optional and the phase is empty without it. A run with no record yet
+    gets one, holding this observation alone (register entry 2026-09-19 02:55: a plain lane run
+    has no record until its first spawn, and the skill records the peer name before any spawn);
+    the line says the record was created, so a mistyped run id is visible at once. An ack-shaped
+    observation covers only this call's snapshot, including zero events for a new record;
+    a relay appended after the read must stay pending, as with an explicit --ack."""
+    events = []
+    if not os.path.isfile(path):
+        shape = "new record (created by this observation: a run with no record yet)"
+    else:
+        events = read_existing_record(path)
+        shape = "plain lane run (no run-open)" if is_plain_run(events) else "run-open present"
     ev = event(a.run, "observation", phase=a.phase or "", what=a.observation)
+    ev["caller_pid"], ev["caller_pid_src"] = head_event_caller()
+    if str(ev.get("what") or "").startswith(ACK_PREFIX):
+        ev[DECISIONS_SEEN] = len(events)
     if a.dry_run:
         say("ledger --observation: dry run · %s · %s"
             % (shape, json.dumps(ev, ensure_ascii=False)))
@@ -3924,7 +5540,15 @@ def ledger_observation(a, path):
 
 
 def cmd_ledger(a):
-    path = record_path(a.run)
+    path = getattr(a, "record", None) or record_path(a.run)
+    if any(getattr(a, key, None) is not None for key in
+           ("notice_id", "notice_version", "notice_sha256")):
+        try:
+            return a3_receipt(a, path)
+        except (a3_shared().A3Premise, OSError) as exc:
+            die(str(exc))
+    refuse_placeholder("ledger", {key: getattr(a, key, None) for key in
+                                  ("observation", "phase", "what", "evidence", "routing")})
     if a.observation is not None:
         return ledger_observation(a, path)
     missing = [f for f in ("phase", "what", "evidence", "routing") if getattr(a, f) is None]
@@ -3939,6 +5563,10 @@ def cmd_ledger(a):
                                          cell(a.evidence), cell(a.routing))
     ev = event(a.run, "observation", phase=a.phase, what=a.what,
                note="evidence: %s · routing: %s" % (one_line(a.evidence), one_line(a.routing)))
+    # The row form can acknowledge too; its coverage is the checked snapshot, never a later
+    # read or the event's eventual place behind a relay that raced this call.
+    if str(ev.get("what") or "").startswith(ACK_PREFIX):
+        ev[DECISIONS_SEEN] = len(events)
     n = span[1] - span[0]
     if a.dry_run:
         say("ledger: dry run · row %d would be %s%s" % (
@@ -3967,97 +5595,242 @@ def decision_count(events):
 def cmd_decision(a):
     """`decision --run R --phase P --what … --grant …` (register entry 2026-09-06): the `decision`
     event the design's trace schema fixes (phase, what, grant) and one findings-ledger row, in
-    one call and before the act; no observation beside them."""
+    one call and before the act; no observation beside them. The event carries `decision_id`
+    HD-<n>, the next free number on the record, assigned under the record's lock and printed, so
+    the disposition of the boundary that acts on it can name it (register entry 2026-10-05
+    20:18; decision_refs)."""
     path = record_path(a.run)
     events = require_record(path, " — a plain lane run has no hand-off for the ledger row; "
                                   "`ledger --observation \"decision: …\"` records it there")
     what, grant = one_line(a.what or ""), one_line(a.grant or "")
     if not what or not grant:
         die("decision needs a non-empty --what and --grant")
+    refuse_placeholder("decision", {"what": what, "grant": grant, "routing": a.routing})
     ho = handoff_of(events, a.handoff)
     lines = read_text(ho, "hand-off").split("\n")
     span, lines, seeded = ledger_table(lines, ho, "decision")
     row = "| %s | %s | %s | %s | %s |" % (hhmm(), cell(a.phase), cell("decision: " + what),
                                          cell("grant: " + grant), cell(a.routing))
-    ev = event(a.run, "decision", phase=a.phase, what=what, grant=grant)
     n = span[1] - span[0]
     if a.dry_run:
+        ev = event(a.run, "decision", phase=a.phase, what=what, grant=grant,
+                   decision_id=next_decision_id(events))
         say("decision: dry run · %s · ledger row %d would be %s%s"
             % (json.dumps(ev, ensure_ascii=False), n, row,
                " · the table would be created under the heading first" if seeded else ""))
         return 0
-    lines.insert(span[1] + 1, row)
-    write_atomic(ho, "\n".join(lines))
-    append_record(path, ev)
+    # The identifier is assigned under the record's lock from the record re-read there, so two
+    # decisions written at once never share one (critic finding 9 of the batch's design review:
+    # a disposition names the decision it rests on by this identifier, never by prose).
+    with record_lock(path):
+        ev = event(a.run, "decision", phase=a.phase, what=what, grant=grant,
+                   decision_id=next_decision_id(read_record(path)[0]))
+        lines.insert(span[1] + 1, row)
+        write_atomic(ho, "\n".join(lines))
+        append_record(path, ev)
     if seeded:
         say(LEDGER_SEEDED_LINE % "decision")
-    say("decision: recorded (%s · grant %s) · ledger row %d appended" % (what[:60], grant[:40], n))
+    say("decision: recorded %s (%s · grant %s) · ledger row %d appended · a boundary's "
+        "disposition names it as %s" % (ev["decision_id"], what[:60], grant[:40], n,
+                                         ev["decision_id"]))
     return 0
 
 
+def decision_warning(refs):
+    """The boundary's warning lines for decision_refs: the missing identifiers, then the
+    ambiguous ones; nothing when every named identifier has exactly one decision event."""
+    if refs["missing"]:
+        say("boundary: warn: the disposition names head decision(s) with no decision event on the "
+            "record: %s — record each with `handsoff.py decision` before its act; the boundary is "
+            "written as asked%s" % (", ".join(refs["missing"]),
+                                    " (unverifiable: %s)" % refs["unverifiable"]
+                                    if refs["unverifiable"] else ""))
+    if refs["ambiguous"]:
+        say("boundary: warn: unverifiable: %s each carried by more than one decision event, so the "
+            "reference does not name one decision" % ", ".join(refs["ambiguous"]))
+
+
+def next_decision_id(events):
+    """The next head-decision identifier, `HD-<n>`: one above both the highest identifier the
+    record's decision events carry and their count, so an older decision written without one
+    never shares a number with a new one."""
+    top = sum(1 for e in events if e.get("event") == "decision")
+    for e in events:
+        if e.get("event") != "decision":
+            continue
+        m = HEAD_DECISION_RE.fullmatch(str(e.get("decision_id") or ""))
+        if m:
+            top = max(top, int(m.group(1)))
+    return "%s%d" % (HEAD_DECISION_PREFIX, top + 1)
+
+
+def decision_refs(events, disposition, bad=0):
+    """The head decisions a boundary's disposition names, checked against the record (owner's
+    provisional choice of 2026-10-10: explicit references, never prose matching). Returns a dict:
+    `named` (each HD-<n> the text carries, in order), `missing` (no decision event carries it),
+    `ambiguous` (two or more do) and `unverifiable` (a reason, when the record has unparseable
+    lines and an absent identifier may sit in one). An owner decision (`D<n>`) is not a head
+    decision and is never checked; a disposition naming no HD- identifier is checked for nothing.
+    Coverage limit, stated: a decision the text describes in words and does not name by its
+    identifier is not seen, and the check reads whether a record exists, not whether it was
+    written before the act."""
+    named = []
+    for m in HEAD_DECISION_RE.finditer(disposition or ""):
+        ref = "%s%s" % (HEAD_DECISION_PREFIX, int(m.group(1)))
+        if ref not in named:
+            named.append(ref)
+    ids = [str(e.get("decision_id")) for e in events
+           if e.get("event") == "decision" and e.get("decision_id")]
+    missing = [r for r in named if ids.count(r) == 0]
+    ambiguous = [r for r in named if ids.count(r) > 1]
+    return {"named": named, "missing": missing, "ambiguous": ambiguous,
+            "unverifiable": ("%d unparseable record line(s): an identifier may sit in one" % bad
+                             if bad and missing else None)}
+
+
+def decisions_covered(events, i):
+    """(count, flaw) for the gate event or ack observation at index `i`: how many of the record's
+    leading events the decisions check behind it covered, and why a present DECISIONS_SEEN was
+    refused (None when it was not). It is the one reading of the field: the gate's hold, the
+    close's hold and the pending list all reach it through decisions_reference, so no two readers
+    can disagree. Coverage fails closed (the head's provisional replacement, under the owner's
+    rule on stopped designs, of the reading three critic reviews of 2026-10-11 found faulty; the
+    third review's finding N1: a malformed value fell back to full coverage and hid the relay it
+    stood behind):
+    - the field ABSENT, an event written before it existed: the legacy reading, through the
+      event's own place (i + 1), as every event covered before;
+    - the field a whole number (never a boolean) from 0 to `i`, the count of the events before
+      this one and so the most a check that read the record before this event was appended can
+      have read: that many (critic finding F1 of the second review: a close held by its final
+      recheck had already recorded its ack, behind the owner's relay that raced its read);
+    - the field present with any other value (a string, a boolean, null, a float, a negative
+      number, or a number above `i`): 0, covering nothing, so a relay it would have hidden stays
+      pending until a fresh, valid acknowledgement."""
+    ev = events[i]
+    if DECISIONS_SEEN not in ev:
+        return i + 1, None
+    seen = ev[DECISIONS_SEEN]
+    if isinstance(seen, int) and not isinstance(seen, bool) and 0 <= seen <= i:
+        return seen, None
+    try:
+        shown = json.dumps(seen, ensure_ascii=False)
+    except (TypeError, ValueError):
+        shown = repr(seen)
+    return 0, ("%s %s, not a whole number from 0 to %d (the events before it)"
+               % (DECISIONS_SEEN, shown[:40], i))
+
+
 def decisions_reference(events):
-    """(index, label) of the decisions channel's reference point: the later of the record's last
-    `gate` event and its last `ack: …` observation, else its last run-open or run-resume, else
-    the record's start (-1)."""
-    gi = last_index(events, ("gate",))
-    ai = next((i for i in range(len(events) - 1, -1, -1)
-               if events[i].get("event") == "observation"
-               and str(events[i].get("what") or "").startswith(ACK_PREFIX)), -1)
-    i = max(gi, ai)
-    if i < 0:
+    """(index, label) of the decisions channel's reference point: the last record event covered
+    by the furthest-reaching decisions check behind a `gate` event or an `ack: …` observation
+    (decisions_covered — the record as that check read it, so what was appended between a call's
+    read and its own write stays pending), else the record's last run-open or run-resume, else
+    the record's start (-1). An AUTHOR observation after the index is pending. Where no AUTHOR
+    observation sits between that read and the event's own place — every call no relay raced,
+    and every event written before DECISIONS_SEEN existed — the index and the label are the
+    event's own, the later of the last gate and the last ack, exactly as before. A gate or ack
+    whose DECISIONS_SEEN is refused takes part with a coverage of 0 rather than being passed over:
+    passed over, it could leave a later run-resume as the reference and so hide the relays before
+    that resume. Where no other gate or ack covers anything, the reference is the record's start,
+    every AUTHOR observation is pending, and the label names the refused value."""
+    best, at, flaw = 0, -1, None
+    for i, ev in enumerate(events):
+        if ev.get("event") == "gate" or (ev.get("event") == "observation"
+                                         and str(ev.get("what") or "").startswith(ACK_PREFIX)):
+            covered, why = decisions_covered(events, i)
+            if covered >= best:   # a tie names the later event
+                best, at, flaw = covered, i, why
+    if at < 0:
         i = last_index(events, ("run-open", "run-resume"))
-    if i < 0:
-        return -1, "the record's start"
-    kind = "ack observation" if i == ai else events[i].get("event")
-    return i, "the %s at %s" % (kind, events[i].get("ts", "no ts"))
+        if i < 0:
+            return -1, "the record's start"
+        return i, "the %s at %s" % (events[i].get("event"), events[i].get("ts", "no ts"))
+    kind = "gate" if events[at].get("event") == "gate" else "ack observation"
+    stamp = events[at].get("ts", "no ts")
+    if flaw is not None:
+        return -1, ("the record's start, since the %s at %s carries %s and so covers nothing"
+                    % (kind, stamp, flaw))
+    if any(e.get("event") == "observation" and AUTHOR_RE.match(str(e.get("what") or ""))
+           for e in events[best:at]):
+        return best - 1, "the record's first %d event(s), as the %s at %s read it" % (
+            best, kind, stamp)
+    return at, "the %s at %s" % (kind, stamp)
 
 
-def decisions_pending(events, dfile):
+def decisions_pending(events, dfile, content=None):
     """(the AUTHOR observations after the reference, the decisions file's line or None, the
-    reference's label). A named file that does not exist is a premise failure: a mistyped path
-    would never hold."""
+    reference's label). A named file is pending unless its whole content matches the digest and
+    size the last accepted ack recorded, whatever any timestamp says (IDEAS 171 (b): the hold is
+    keyed on the content, never on an mtime). A missing or unreadable file is a premise failure:
+    a mistyped path would never hold. `content` is the (path, bytes, digest) the caller already
+    read, so the hold and the ack check read the file once."""
     ref, label = decisions_reference(events)
     authored = [e for e in events[ref + 1:] if e.get("event") == "observation"
                 and AUTHOR_RE.match(str(e.get("what") or ""))]
     changed = None
     if dfile is not None:
-        fpath = os.path.realpath(os.path.expanduser(dfile))
-        if not os.path.isfile(fpath):
-            die("--decisions-file %s is not a file: create it (empty is fine) or pass the path the "
-                "run's decisions are written to" % dfile)
-        mtime = os.path.getmtime(fpath)
-        ref_ts = parse_ts(events[ref].get("ts")) if ref >= 0 else None
-        if ref_ts is None or mtime > ref_ts:
-            changed = ("the decisions file %s changed at %s, after %s: read it"
-                       % (fpath, fmt_ts(mtime), label))
+        fpath, data, digest = content if content is not None else decisions_digest_of(dfile)
+        ack = last_digest_ack(events)
+        if ack is None or ack["digest"] != digest or ack["size"] != len(data):
+            changed = ("the decisions file %s has content no accepted ack covers (%d byte(s), "
+                       "sha256 %s): read it" % (fpath, len(data), digest))
     return authored, changed, label
 
 
 def decisions_hold(a, path, events, what):
     """The decisions channel before a gate or a close (register entry 2026-09-13 03:53): exit 6
     with the pending lines, writing nothing; None to proceed — when nothing is pending, or once
-    --ack's observation is recorded."""
+    --ack's observation is recorded. With --decisions-file the ack also carries --ack-digest, the
+    file's whole sha256 as decisions-read printed it (IDEAS 171 (b); register entry 2026-09-20
+    14:29: a close cleared its hold on an ack composed from memory and dropped two owner lines;
+    register entry 2026-09-24 12:3x: a gate's ack cited an older line than the file held): a
+    missing digest, or one that is not the file's at the call, holds (exit 6) with the unread
+    lines and nothing recorded, and an accepted ack records the digest and the size it covered.
+    A run with no decisions file acks with --ack alone, as before. Returns (code or None, the
+    (path, bytes, digest) the call read or None) — the close keeps the content it acknowledged
+    for its final recheck. The ack observation this call appends is kept on `a.own_ack`, so the
+    close's recheck can leave out that one event and no other (close_recheck). It carries
+    DECISIONS_SEEN, the length of the record this call checked, and covers that much and no
+    more: a relay appended after the read stays pending for the next call even where the ack
+    lands after it, so a close its recheck holds leaves nothing acknowledged that it never showed
+    (decisions_covered)."""
     ack = getattr(a, "ack", None)
     if ack is not None and not one_line(ack):
         die("--ack is empty: name what was read, in one line")
-    authored, changed, label = decisions_pending(events, getattr(a, "decisions_file", None))
+    dfile = a.decisions_file = bound_file(a, events)
+    given = ack_digest_given(ack, dfile, getattr(a, "ack_digest", None))
+    content = decisions_digest_of(dfile) if dfile is not None else None
+    authored, changed, label = decisions_pending(events, dfile, content)
     if ack is not None:
         line = one_line(ack)
+        proof, shown = {}, ""
+        if dfile is not None:
+            fpath, data, digest = content
+            if given != digest:
+                return ack_digest_hold(a, events, what, fpath, data, digest, given), content
+            proof = {"digest": digest, "size": len(data), DECISIONS_FILE: fpath}
+            shown = " · digest %s… is the decisions file's at the call (%s, %d byte(s))" % (
+                digest[:12], fpath, len(data))
         if not a.dry_run:
-            append_record(path, event(
-                a.run, "observation", phase="", what=ACK_PREFIX + line,
-                note="%s: %d AUTHOR observation(s) after %s%s" % (
-                    what, len(authored), label, "; " + changed if changed else "")))
-        say("%s: ack %s (%s) · %d AUTHOR observation(s)%s pending at the call"
+            own = event(a.run, "observation", phase="", what=ACK_PREFIX + line,
+                        note="%s: %d AUTHOR observation(s) after %s%s" % (
+                            what, len(authored), label, "; " + changed if changed else ""),
+                        **proof)
+            # What this ack covers is the record this call read, never its own place: a relay
+            # appended between the read and this append stays pending (decisions_covered).
+            own[DECISIONS_SEEN] = len(events)
+            append_record(path, own)
+            a.own_ack = own
+        say("%s: ack %s (%s) · %d AUTHOR observation(s)%s pending at the call%s"
             % (what, "would be recorded" if a.dry_run else "recorded", line[:80], len(authored),
-               " and a changed decisions file" if changed else ""))
-        return None
+               " and a changed decisions file" if changed else "", shown))
+        return None, content
     if not authored and not changed:
-        return None
+        return None, content
     say("%s: HOLD (decisions channel, exit %d) — %d AUTHOR observation(s)%s after %s: read them, "
-        "then re-run with --ack \"<one line naming what was read>\""
+        "then re-run with --ack \"<one line naming what was read>\"%s"
         % (what, EXIT_HOLD, len(authored), " and a changed decisions file" if changed else "",
-           label))
+           label, " --ack-digest <the sha256 decisions-read prints>" if dfile is not None else ""))
     for e in authored:
         text = "%s · %s" % (e.get("ts", "no ts"), one_line(e.get("what") or ""))
         if e.get("note"):
@@ -4065,7 +5838,364 @@ def decisions_hold(a, path, events, what):
         say("  " + text[:NOTE_CUT])
     if changed:
         say("  " + changed)
+        start, which = decisions_unread(events, content[1])
+        unread = text_lines(content[1][start:])
+        say("  %d unread line(s), %s:" % (len(unread), which))
+        for line in unread:
+            say("  | " + line)
+    if dfile is not None:
+        say("  " + decisions_read_hint(a.run, dfile))
+    return EXIT_HOLD, content
+
+
+def decisions_binding(events):
+    """The run's decisions file as its record binds it: the newest DECISIONS_FILE on a run-open, a
+    gate or an accepted ack, else None. A close's own field and a lane's line never bind."""
+    for ev in reversed(events):
+        value = ev.get(DECISIONS_FILE)
+        if isinstance(value, str) and value and (
+                ev.get("event") in ("run-open", "gate")
+                or (ev.get("event") == "observation"
+                    and str(ev.get("what") or "").startswith(ACK_PREFIX))):
+            return value
+    return None
+
+
+def bound_file(a, events):
+    """The file this call acts on: --decisions-file, else the record's binding, else None. A path
+    other than the binding is refused (exit 2): the one way a binding could silently move to a copy
+    nobody writes, such as a helper's staged reference copy."""
+    given = getattr(a, "decisions_file", None)
+    bound = decisions_binding(events)
+    if given is None:
+        return bound
+    real = os.path.realpath(os.path.expanduser(given))
+    if bound is not None and real != bound and os.path.isfile(real):
+        die("--decisions-file %s is not this run's decisions file (%s, bound on its record): a run "
+            "keeps one file, so read that one; if it has moved, put it back at that path" % (
+                real, bound))
+    return given
+
+
+def decisions_read_hint(run, dfile):
+    """The one instruction every digest hold ends with: read the file with decisions-read, then
+    ack with the digest it printed."""
+    return ("read it with `handsoff.py decisions-read --run %s --decisions-file %s`, then re-run "
+            "with --ack \"<one line naming what was read>\" --ack-digest <the digest it prints>"
+            % (run, shlex.quote(os.path.realpath(os.path.expanduser(dfile)))))
+
+
+def ack_digest_given(ack, dfile, raw):
+    """--ack-digest normalised to lower case, or None when it was not given. Refused before
+    anything is read (exit 2): a digest with no --ack (it proves an ack's read and travels with
+    one), a digest with no --decisions-file (nothing names the content it would be checked
+    against), and any value that is not a whole sha256."""
+    if raw is None:
+        return None
+    if ack is None:
+        die("--ack-digest was given without --ack: the digest proves the read an ack names, so it "
+            "travels with one; pass --ack \"<one line naming what was read>\" beside it")
+    if dfile is None:
+        die("--ack-digest was given without --decisions-file: the digest names a decisions "
+            "file's content and no file was named to check it against; pass --decisions-file "
+            "<the file decisions-read read>, or drop the digest on a run with no decisions file")
+    value = raw.strip().lower()
+    if not DIGEST_RE.fullmatch(value):
+        die("--ack-digest %r is not a whole sha256 (64 hexadecimal characters, %d given): pass the "
+            "full `digest:` value decisions-read printed; a prefix is refused"
+            % (raw[:80], len(value)))
+    return value
+
+
+def decisions_digest_of(dfile):
+    """(real path, bytes, sha256) of the decisions file at this call — the content an ack's
+    digest is checked against and decisions-read prints. A file missing or unreadable at the call
+    is a premise failure naming the path (exit 2), never a pass."""
+    fpath = os.path.realpath(os.path.expanduser(dfile))
+    if not os.path.isfile(fpath):
+        die("--decisions-file %s is not a file at this call (%s): create it (empty is fine) or "
+            "pass the path the run's decisions are written to; nothing is acknowledged against a "
+            "file that is not there" % (dfile, fpath))
+    try:
+        with open(fpath, "rb") as handle:
+            data = handle.read()
+    except OSError as exc:
+        die("cannot read the decisions file %s (%s): a file this call cannot read is never "
+            "acknowledged" % (fpath, exc))
+    return fpath, data, hashlib.sha256(data).hexdigest()
+
+
+def last_digest_ack(events):
+    """The record's last `ack: …` observation carrying a digest and a size — an ack accepted
+    against the decisions file's content — else None. An ack without them (a run with no
+    decisions file, or one recorded before the digest) says nothing about the file, so it is
+    passed over rather than read as covering none of it."""
+    for ev in reversed(events):
+        if ev.get("event") != "observation" or \
+                not str(ev.get("what") or "").startswith(ACK_PREFIX):
+            continue
+        digest, size = ev.get("digest"), ev.get("size")
+        if isinstance(digest, str) and DIGEST_RE.fullmatch(digest) and isinstance(size, int) \
+                and not isinstance(size, bool) and size >= 0:
+            return ev
+    return None
+
+
+def decisions_unread(events, data):
+    """(offset, which) for the part of the decisions file the run has not acknowledged: the bytes
+    after the size the last accepted ack covered, when the file's first that-many bytes still
+    hash to that ack's digest (the file was only appended to since); else the whole file — no
+    accepted ack, or its prefix no longer matches (edited or cut since). `which` says which."""
+    ack = last_digest_ack(events)
+    if ack is None:
+        return 0, "the whole file: the record carries no accepted ack with a digest"
+    size, stamp = ack["size"], ack.get("ts", "no ts")
+    if size > len(data) or hashlib.sha256(data[:size]).hexdigest() != ack["digest"]:
+        return 0, ("the whole file: the %d-byte prefix the last accepted ack (%s) covered no "
+                   "longer hashes to its digest, so the file was edited or cut since, not only "
+                   "appended to" % (size, stamp))
+    which = ("the lines after byte %d, the size the last accepted ack (%s) covered (that prefix "
+             "is unchanged)" % (size, stamp))
+    if 0 < size < len(data) and data[size - 1:size] != b"\n":
+        which += ("; byte %d falls inside line %d, so the first line below continues it"
+                  % (size, data[:size].count(b"\n") + 1))
+    return size, which
+
+
+def text_lines(data):
+    """Bytes as text lines split at newlines alone — a final newline ends the last line and opens
+    no empty one — undecodable bytes replaced, never dropped."""
+    text = data.decode("utf-8", "replace")
+    lines = text.split("\n") if text else []
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def digest_prefix(data, given):
+    """The length of the prefix of `data`, ending at a line end or at the end of the file, whose
+    sha256 is `given` — the file as the read that digest names saw it, when the file has only
+    grown since — else None. One incremental pass: hexdigest() leaves the hash open to update."""
+    h = hashlib.sha256()
+    if h.hexdigest() == given:
+        return 0
+    start = 0
+    while start < len(data):
+        end = data.find(b"\n", start)
+        end = len(data) if end < 0 else end + 1
+        h.update(data[start:end])
+        if h.hexdigest() == given:
+            return end
+        start = end
+    return None
+
+
+def ack_digest_hold(a, events, what, fpath, data, digest, given):
+    """The hold on an ack whose digest is missing or is not the decisions file's at the call
+    (exit 6, nothing recorded): why, the unread lines — those appended after the read the given
+    digest names, when it names a prefix of the file as it stands, else those after the last
+    accepted ack — and the instruction to read the file with decisions-read."""
+    if given is None:
+        why = ("the ack carries no --ack-digest: with --decisions-file an ack repeats the sha256 "
+               "decisions-read printed for the file, so it names a read, never one composed from "
+               "memory")
+        start, which = decisions_unread(events, data)
+    else:
+        why = ("the ack's digest %s… is not the decisions file's at the call (%s…): the file is "
+               "not what the read it names saw" % (given[:12], digest[:12]))
+        grown = digest_prefix(data, given)
+        if grown is not None:
+            start = grown
+            which = ("the lines appended since that read (the digest is the file's first %d "
+                     "byte(s)%s)" % (grown, ", through line %d" % data[:grown].count(b"\n")
+                                    if grown else ": the file was empty at that read"))
+        else:
+            start, which = decisions_unread(events, data)
+            which = "the digest names no line-end prefix of the file, so " + which
+    lines = text_lines(data[start:])
+    say("%s: HOLD (decisions channel, exit %d) — %s; nothing recorded"
+        % (what, EXIT_HOLD, why))
+    say("  %s · %d byte(s) at the call · %d unread line(s), %s:"
+        % (fpath, len(data), len(lines), which))
+    for line in lines:
+        say("  | " + line)
+    say("  " + decisions_read_hint(a.run, fpath))
     return EXIT_HOLD
+
+
+def head_unacknowledged(events):
+    """True when the record's last digest ack is an earlier head's: it stands before this head's
+    run-open or run-resume. A fresh head inherits that ack and has read nothing."""
+    ack = last_digest_ack(events)
+    at = max((n for n, ev in enumerate(events) if ev is ack), default=-1)
+    return ack is not None and at < last_index(events, ("run-open", "run-resume"))
+
+
+def cmd_decisions_read(a):
+    """`decisions-read --run R [--decisions-file F]` (IDEAS 171 (b)): the lines of F the run has not
+    acknowledged — after the size the last accepted ack covered, or the whole file when there is
+    none, its prefix no longer matches or the ack is an earlier head's, the first line saying which
+    — then one line `digest: <sha256 of the whole file at this read>`, the value --ack-digest
+    takes. F defaults to the file the record binds. It reads the record and the file and writes
+    nothing; exit 2 on a missing record, on no file named or bound, or on a file missing or
+    unreadable at the read."""
+    events = read_existing_record(getattr(a, "record", None) or record_path(a.run))
+    dfile = bound_file(a, events)
+    if dfile is None:
+        die("no decisions file: this record binds none and --decisions-file was not given")
+    fpath, data, digest = decisions_digest_of(dfile)
+    start, which = decisions_unread(events, data)
+    if head_unacknowledged(events):
+        start, which = 0, "the whole file: this head has acknowledged nothing yet"
+    lines = text_lines(data[start:])
+    say("decisions-read: %s · %d byte(s) · %d unread line(s), %s"
+        % (fpath, len(data), len(lines), which))
+    for line in lines:
+        say(line)
+    say("digest: %s" % digest)
+    return 0
+
+
+def cmd_decisions_ack(a):
+    """`decisions-ack --run R --ack LINE --ack-digest SHA256`: the acknowledgement between gates,
+    which a spawn hold asks for. It is decisions_hold's own ack: one `ack:` observation carrying
+    the digest and decisions_seen, or a hold (exit 6) on a stale digest, nothing recorded. A
+    spawn never acknowledges for the head, and a peer session cannot acknowledge for it (exit 9)."""
+    if a.ack is None:
+        die("decisions-ack needs --ack \"<one line naming what was read>\"")
+    path = getattr(a, "record", None) or record_path(a.run)
+    events = require_record(path)
+    refused = refuse_two_heads(a, path, events, "decisions-ack")
+    if refused is not None:
+        return refused
+    held, _ = decisions_hold(a, path, events, "decisions-ack")
+    return held if held is not None else 0
+
+
+def record_admits_damage(path):
+    """True when the strict reader accepts the record's damaged lines: a `record-tail-repaired`
+    repair keeps the line in place, so read_record still counts it as unparseable."""
+    shared = a3_shared()
+    try:
+        shared.a3_record_rows(path)
+    except (shared.A3Premise, OSError):
+        return False
+    return True
+
+
+def hold_logged(state, events):
+    """`state` with `logged` set when this head's trial line already stands for this digest and
+    reason, so a burst or a long run logs a state once and every line can be read against the file."""
+    start = max(0, last_index(events, ("run-open", "run-resume")))
+    state["logged"] = any(ev.get("event") == "observation"
+                          and str(ev.get("what") or "").startswith(HOLD_TRIAL_PREFIX)
+                          and ev.get("digest") == state["digest"] and ev.get("note") == state["why"]
+                          for ev in events[start:])
+    return state
+
+
+def decisions_spawn_state(path):
+    """What a launcher reads before it starts a helper: a dict with `state` clear, hold or unknown,
+    `why`, `lines` (the unread text), `file`, `digest`, `size`, `route` (what clears an unknown) and
+    `logged` (hold_logged). Reads only. Clear: no record yet; a plain lane run, which has no head to
+    acknowledge; a closed run, which has none either; nothing pending. Hold: an unread AUTHOR
+    observation, a file no accepted ack covers, or a file this head has not acknowledged itself
+    (a fresh head inherits its predecessor's ack, and has read nothing). Unknown: the record or the
+    bound file cannot be read, or a record line cannot be parsed, where a relay may sit."""
+    state = {"state": "clear", "why": "", "lines": [], "file": None, "digest": None, "size": None,
+             "route": "", "logged": False}
+    if not os.path.lexists(path):
+        state["why"] = "no record yet"
+        return state
+    try:
+        events, bad = read_record(path)
+        if bad:   # a torn last line can be a wrapper writing now (read_record): one more look
+            time.sleep(HOLD_REREAD_S)
+            events, bad = read_record(path)
+        if bad and record_admits_damage(path):
+            bad = 0
+    except SystemExit:
+        state.update(state="unknown", why="the run record %s cannot be read" % path)
+        return state
+    if bad:
+        state.update(state="unknown", why="%d unparseable line(s) in %s: a relay may sit in one"
+                                          % (bad, path),
+                     route="a line a writer tore clears by itself once it completes; a damaged one "
+                           "stays until `lane.py recover --run R --lane L --pass P "
+                           "--repair-projection` on the pass that tore it admits it")
+        return hold_logged(state, events)
+    if is_plain_run(events):
+        state["why"] = "a plain lane run: no head to acknowledge"
+        return state
+    if last_index(events, ("run-close",)) > last_index(events, ("run-open", "run-resume")):
+        state["why"] = "a closed run: no head to acknowledge"
+        return state
+    dfile = decisions_binding(events)
+    content = None
+    if dfile is not None:
+        state["file"] = dfile
+        try:
+            with open(dfile, "rb") as handle:
+                data = handle.read()
+            content = (dfile, data, hashlib.sha256(data).hexdigest())
+        except (OSError, ValueError) as exc:
+            state.update(state="unknown", why="the decisions file %s cannot be read (%s)"
+                                              % (dfile, exc),
+                         route="a run keeps one file: put it back at that path")
+            return hold_logged(state, events)
+        state["digest"], state["size"] = content[2], len(data)
+    authored, changed, label = decisions_pending(events, dfile, content)
+    lines = ["%s · %s" % (e.get("ts", "no ts"), one_line(e.get("what") or "")) for e in authored]
+    why = []
+    if authored:
+        why.append("%d unread AUTHOR observation(s) after %s" % (len(authored), label))
+    if changed:
+        start, which = decisions_unread(events, content[1])
+        lines += text_lines(content[1][start:])
+        why.append("content no accepted ack covers (%s)" % which)
+    elif dfile is not None and head_unacknowledged(events):
+        lines += text_lines(content[1])
+        why.append("this head has acknowledged nothing yet: the ack on the record is an earlier "
+                   "head's")
+    if why:
+        state.update(state="hold", why="; ".join(why), lines=lines)
+        hold_logged(state, events)
+    return state
+
+
+def decisions_spawn_lines(state, verb, lane, run, path=None, trial=False):
+    """The text of a held or undecided spawn: what stopped it, a bounded view of the unread lines,
+    the newest kept since the hold is about the newest decision, and the commands that clear it (a
+    launcher takes no --ack). A record other than the run's default rides on each command. Under a
+    trial the call goes on, so the text asks for no second spawn."""
+    held = state["state"] == "hold"
+    out = ["%s of lane %s: %s (decisions channel) — %s" % (
+        verb, lane, "HOLD" if held else "CANNOT DECIDE", state["why"])]
+    shown, size = [], 0
+    for line in reversed(state["lines"]):
+        if len(shown) >= HOLD_SHOWN_LINES or size + len(line) > HOLD_SHOWN_BYTES:
+            break
+        shown.insert(0, line)
+        size += len(line)
+    if state["lines"] and not shown:
+        shown = [state["lines"][-1][:HOLD_SHOWN_BYTES]]
+    if len(state["lines"]) > len(shown):
+        out.append("  … %d earlier line(s) cut: decisions-read prints them all"
+                   % (len(state["lines"]) - len(shown)))
+    out += ["  | " + line for line in shown]
+    named = ""
+    if path and os.path.realpath(path) != os.path.realpath(record_path(run)):
+        named = " --record %s" % shlex.quote(path)
+    if held:
+        if state["file"]:
+            out.append("  read: handsoff.py decisions-read --run %s%s" % (run, named))
+        out.append("  then: handsoff.py decisions-ack --run %s%s --ack \"<one line naming what was "
+                   "read>\"%s%s" % (run, named, " --ack-digest <the digest it prints>"
+                                    if state["file"] else "",
+                                    "" if trial else ", and %s again" % verb))
+    elif state.get("route"):
+        out.append("  " + state["route"])
+    return out
 
 
 def cmd_run_spend(a):
@@ -4092,14 +6222,40 @@ def cmd_run_spend(a):
 
 
 def cmd_run_is_closed(a):
-    """`run-is-closed --run R`: exit 0 when the record carries a run-close, 1 when it does not,
-    2 with no record — for a wrapper that warns before it spawns into a closed run."""
-    events = read_existing_record(record_path(a.run))
+    """`run-is-closed --run R`: exit 0 when closed by event order, 1 when open,
+    2 when the record cannot establish either answer; this does not establish liveness."""
+    # A skipped line could be the resume that invalidates an earlier close. Read strictly,
+    # once, without changing the tolerant reader used by the other commands.
+    events = []
+    try:
+        with open(record_path(a.run), encoding="utf-8") as record:
+            for number, line in enumerate(record, 1):
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                    if (not isinstance(row, dict) or not isinstance(row.get("event"), str)
+                            or not row["event"]):
+                        raise ValueError("expected an object with a non-empty event name")
+                except ValueError as exc:
+                    die("run-is-closed: %s unresolved (invalid record line %d: %s)"
+                        % (a.run, number, exc))
+                events.append(row)
+    except (OSError, UnicodeError) as exc:
+        die("run-is-closed: %s unresolved (cannot read run record: %s)" % (a.run, exc))
+    if not events:
+        die("run-is-closed: %s unresolved (empty run record)" % a.run)
     i = last_index(events, ("run-close",))
-    if i >= 0:
-        say("run-is-closed: %s closed (run-close at %s)" % (a.run, events[i].get("ts", "no ts")))
+    if run_is_closed(events):
+        say("run-is-closed: %s closed (run-close at %s after last run-open/run-resume)"
+            % (a.run, events[i].get("ts", "no ts")))
         return 0
-    say("run-is-closed: %s open (no run-close in %d event(s))" % (a.run, len(events)))
+    if i >= 0:
+        opened = events[last_index(events, ("run-open", "run-resume"))]
+        say("run-is-closed: %s open (%s at %s after last run-close)"
+            % (a.run, opened["event"], opened.get("ts", "no ts")))
+    else:
+        say("run-is-closed: %s open (no run-close in %d event(s))" % (a.run, len(events)))
     return 1
 
 
@@ -4121,9 +6277,144 @@ def refresh_figures(lines, ro, meter, a=None, run_text=None):
     return True
 
 
+def item_token(value):
+    """A record's item string as the console keys it: its leading `item<id>` token, else itself."""
+    text = str(value if value is not None else "").strip()
+    found = re.match(r"item[A-Za-z0-9]*\b", text)
+    return found.group(0) if found else text
+
+
+def unbounded_items(events, lines):
+    """The items the hand-off's `## In flight` names done with no phase-boundary from them on the
+    record (register entry 2026-11-05 12:41: the console reads an item's end from boundary events
+    alone, so a run that kept its item status in the hand-off read as idle, and its close as
+    skipped). A line counts when it opens on an item the run declared or gated and a done word
+    follows, unnegated: the status lines a lead writes, such as `item2 build · done, all tests`."""
+    names, closed = set(), set()
+    for ev in events:
+        kind = ev.get("event")
+        if kind == "gate":
+            names.add(item_token(ev.get("item")))
+        elif kind == "expect-items":
+            names.update(item_token(name) for name in ev.get("items") or {})
+        elif kind == "run-open":
+            names.update(item_token(name) for name in ev.get("expect_items") or {})
+        elif kind == "phase-boundary":
+            closed.add(item_token(ev.get("from")))
+        elif kind == "item-done":
+            closed.update(item_token(name) for name in ev.get("items") or [])
+    found = []
+    for line in (section_text(lines, SECTIONS["inflight"]) or "").split("\n"):
+        text = re.sub(r"^\s*(?:[-*]\s+)?\**", "", line)
+        token = item_token(text.split(" ", 1)[0].rstrip(":·"))
+        rest = text[len(token):]
+        if (token in names and token not in closed and token not in found
+                and ITEM_DONE_RE.search(rest) and not ITEM_UNDONE_RE.search(rest)):
+            found.append(token)
+    return found
+
+
+def item_warning(who, events, lines):
+    """One warning line for unbounded_items; the writer goes on as asked."""
+    items = unbounded_items(events, lines)
+    if items:
+        say("%s: warn: the hand-off names %s done with no completion on the record, so the console "
+            "reads %s as unfinished and the close as unresolved: record each with `item-done <item>`"
+            ", late if need be" % (who, ", ".join(items), "it" if len(items) == 1 else "them"))
+
+
+def items_unresolved(events):
+    """[(item, its first start's time)] for the items the record started and shows no explicit
+    completion of, in the order they started (register entry 2026-11-05 12:41). A gate, a lane's
+    --item or an event whose `phase` names a declared item is activity and never completion; a
+    phase-boundary from an item or an item-done ends it. A boundary's `to` alone is no start, but
+    a lane with no --item starts the item in hand, as the console reads it. item0, the orientation
+    row, is the one exception and follows watch.py's rule word for word: measured orientation, or
+    work on phase item0, then the first allowed gate, on item1, settles it."""
+    started, ended = {}, set()
+    declared = {item_token(name) for name in declared_items(events)}
+    current, oriented, first_work = "", False, True
+    for ev in events:
+        kind = ev.get("event")
+        if first_work and item_token(ev.get("phase")) == "item0":
+            oriented = True
+        if ev.get("phase") and item_token(ev["phase"]) in declared:
+            started.setdefault(item_token(ev["phase"]), ev.get("ts", "no ts"))
+        if kind == "gate" and ev.get("item"):
+            current = item_token(ev["item"])
+            started.setdefault(current, ev.get("ts", "no ts"))
+            if first_work:
+                if isinstance(ev.get("orientation_tokens"), (int, float)):
+                    oriented = True
+                if ev.get("decision") == "allow" and current != "item0":
+                    if current == "item1" and oriented:
+                        ended.add("item0")
+                    first_work = False
+        elif kind == "lane-open":
+            item = item_token(ev.get("item")) or current
+            if item:
+                started.setdefault(item, ev.get("ts", "no ts"))
+        elif kind == "phase-boundary":
+            if ev.get("from"):
+                ended.add(item_token(ev["from"]))
+            current = item_token(ev.get("to")) or current
+        elif kind == "item-done":
+            ended.update(item_token(name) for name in ev.get("items") or [])
+    return [(item, at) for item, at in started.items() if item not in ended]
+
+
+def items_on_record(events):
+    """Every item the record names: declared, gated, a boundary's two ends or a lane's --item."""
+    names = {item_token(name) for name in declared_items(events)}
+    for ev in events:
+        kind = ev.get("event")
+        if kind in ("gate", "lane-open"):
+            names.add(item_token(ev.get("item")))
+        elif kind == "phase-boundary":
+            names.update((item_token(ev.get("from")), item_token(ev.get("to"))))
+    return names - {""}
+
+
+def cmd_item_done(a):
+    """`item-done --run R ITEM...`: an explicit completion record for each item, with no meter: what
+    the console reads as done beside a boundary's `from`, for items worked side by side (register
+    entry 2026-11-05 12:41). A name the record does not hold is written with a warning, since a pack
+    can list an item no gate has reached. A closed run takes none: the board is the close's. Exit 9
+    refuses a peer session, as gate does."""
+    path = getattr(a, "record", None) or record_path(a.run)
+    events = require_record(path)
+    refused = refuse_two_heads(a, path, events, "item-done")
+    if refused is not None:
+        return refused
+    if last_index(events, ("run-close",)) > last_index(events, ("run-open", "run-resume")):
+        die("run %s is closed: a completion recorded after its close changes no verdict; nothing "
+            "written" % a.run)
+    refuse_placeholder("item-done", {"note": a.note})
+    items = [item_token(name) for name in a.items]
+    if not all(items):
+        die("item-done: an empty item name; nothing written")
+    known = items_on_record(events)
+    for item in items:
+        if item not in known:
+            say("item-done: warn: %s is not on this record: check its spelling, since the console "
+                "adds a row for it" % item)
+    ev = event(a.run, "item-done", items=items)
+    if a.note:
+        ev["note"] = one_line(a.note)
+    if a.dry_run:
+        say("item-done: dry run · %s" % json.dumps(ev, ensure_ascii=False))
+        return 0
+    append_record(path, ev)
+    say("item-done: %s recorded on %s" % (", ".join(items), a.run))
+    return 0
+
+
+@a3_expose_notices
 def cmd_boundary(a):
     path = record_path(a.run)
     events = require_record(path)
+    refuse_placeholder("boundary", {key: getattr(a, key, None) for key in
+                                    ("disposition", "next", "waste", "shipped", "waits", "saving")})
     ro = run_open(events)
     ho = handoff_of(events, a.handoff)
     prev = last_index(events, ("phase-boundary",))
@@ -4137,6 +6428,10 @@ def cmd_boundary(a):
     m = measure_head(sid)
     fields, unmeasured = waste_fields(events, prev, transcript=m.get("transcript"))
     ev = event(a.run, "phase-boundary", **{"from": a.from_, "to": a.to})
+    # Credit only the head's foreground shell command, including its session-leading shell
+    # directly below the harness. Workers and other session/group changes record null with
+    # caller_pid_src none; the supervisor reads uncertain authorship as unknown.
+    ev["caller_pid"], ev["caller_pid_src"] = head_event_caller()
     ev.update(disposition=a.disposition, meter=meter, waste=a.waste, context=context_text(m),
               next=a.next)
     ev.update(fields)
@@ -4158,21 +6453,45 @@ def cmd_boundary(a):
             hhmm(), cell(a.from_), cell(a.to), cell(a.disposition), cell(meter), cell(a.waste)))
     if not refresh_figures(lines, ro, meter, a, run_spend_short(spend, envelope)):
         problems.append("no '## Morning report' section")
+    # The head decisions the disposition names (register entry 2026-10-05 20:18; the owner's
+    # provisional choice of 2026-10-10: explicit HD-<n> references): a warning, never a refusal —
+    # the exit status is the boundary's own and no event is invented for a missing decision.
+    refs = decision_refs(events, a.disposition, read_record(path)[1])
+    if refs["named"]:
+        ev["decision_refs"] = refs
+    # In flight re-derived at every boundary (register entry 2026-09-14 00:06: a hand-off named
+    # item2 as next after five boundaries), keeping the relayed owner lines and the hand-written
+    # lines of the pack it replaces; a hand-off with no In flight section is said, never a problem.
+    current = section_text(lines, SECTIONS["inflight"])
+    inflight = None
+    if current is not None:
+        inflight = derive_inflight(events + [ev], current=current, boundary=ev)
+        set_section(lines, "inflight", inflight, derived=True)
     if a.dry_run:
         say("boundary: dry run · %s" % json.dumps(ev, ensure_ascii=False))
         if not a.meter_line:
             say("boundary: dry run · meter invoked as %s" % meter_command_text(events, a.run))
         if problems:
             say("hand-off: would NOT refresh — %s" % "; ".join(problems))
+        say("in flight: %s" % ("would be re-derived (%d lines)" % len(inflight.split("\n"))
+                               if inflight is not None
+                               else "the hand-off has no '## In flight' section: nothing to "
+                                    "re-derive"))
+        decision_warning(refs)
         return 0
     write_atomic(ho, "\n".join(lines))
     if a.commit is not None:
+        # What a checkpoint commit will take from the vault root (register entry 2026-10-02
+        # 06:19: a head's stray downloads sat in the vault root, and `git add -A` takes them).
+        ev["root_untracked"], root_line = root_untracked(vault_root())
+        say("boundary: %s" % root_line)
         ev["commit"] = checkpoint_commit(vault_root(), a.commit)
     append_record(path, ev)
     respawn = fields["respawn_cost_usd"]
     cut_usd = fields["limit_cut_resumed_usd"]
     say("boundary: %s → %s · idle %s min · denials %d · over-cap %d · %s · "
         "rewrites %s · context %s%s%s · idle src %s · rewrites since %s%s%s · head fence denials %s"
+        " · lane fence denials %d · lane sandbox denials %d"
         % (a.from_, a.to, fields["idle_min"], fields["denials"], fields["over_cap_reports"],
            "re-spawn unmeasured" if respawn is None else "re-spawn $%.2f" % respawn,
            "n/a" if ev["rewrites"] is None else ev["rewrites"],
@@ -4184,7 +6503,13 @@ def cmd_boundary(a):
            " · limit-cut resumed %s (%d lane(s): first attempts, excluded from re-spawn)"
            % ("unmeasured" if cut_usd is None else "$%.2f" % cut_usd, fields["limit_cut_resumed"])
            if fields["limit_cut_resumed"] else "",
-           "unmeasured" if fields["head_denials"] is None else fields["head_denials"]))
+           "unmeasured" if fields["head_denials"] is None else fields["head_denials"],
+           fields["fence_denials"], fields["sandbox_denials"]))
+    say("in flight: %s" % ("re-derived from the record (%d lines; the relayed owner lines and "
+                           "the pack's hand-written lines kept)" % len(inflight.split("\n"))
+                           if inflight is not None
+                           else "the hand-off has no '## In flight' section: nothing re-derived"))
+    decision_warning(refs)
     # bucket_src joins its parts with " · ": a source of one part is recorded costs alone, and
     # anything more (a transcript bill, a plan-usage lane, an unmeasured lane) is printed.
     if " · " in fields["respawn_src"]:
@@ -4196,6 +6521,10 @@ def cmd_boundary(a):
     if problems:
         say("hand-off: NOT refreshed — %s" % "; ".join(problems))
         return 3
+    item_warning("boundary", events + [ev], read_text(ho, "hand-off").split("\n"))
+    for document, hits in stage_placeholders(a.run, parse_ts(events[prev].get("ts")) or 0):
+        say("boundary: warn: the stage document %s carries the typed clock placeholder %s: read "
+            "the time from a command or the record and correct it" % (document, ", ".join(hits)))
     return 0
 
 
@@ -4263,15 +6592,28 @@ def same_session_resume(events, scope):
     return any(e.get("event") == "gate" for e in events[start + 1:i])
 
 
+def resumed_item_work(events, scope):
+    """The first item action (a decision, a lane spawned or resumed, a boundary) of a successor's
+    session before its first gate, or None (register entry 2026-10-16 03:30): the head went on with
+    the item in flight first, so the gate's context carries that work as well as its reading. The
+    opening head of a run has no item in flight, so its own first gate is left measured."""
+    if scope < 1 or events[scope - 1].get("event") not in ("run-resume", "head-successor"):
+        return None
+    return next((e["event"] for e in events[scope:] if e.get("event") in ITEM_WORK_EVENTS), None)
+
+
 def orientation(events, scope, m):
     """(tokens, note) for a session's first gate (D41): the context now minus the transcript's
     first-call context; None with the reason when either is absent, and always None after a
     head-resumed event or a same-session run-resume, whose first call carries the whole
-    session."""
+    session, or after resumed item work (resumed_item_work), which is not start-up reading."""
     if any(e.get("event") == "head-resumed" for e in events[scope:]):
         return None, "unmeasured after a resume"
     if same_session_resume(events, scope):
         return None, "unmeasured after a same-session resume"
+    work = resumed_item_work(events, scope)
+    if work:
+        return None, "unmeasured: resumed item work (%s) before the first gate" % work
     if m.get("context") is None:
         return None, "unmetered gate: %s" % m.get("reason", "unknown")
     first = first_usage(m.get("transcript"))
@@ -4311,9 +6653,11 @@ def envelope_status(events, run, meter_override, path=None, write_cache=True):
     return "%s · run: %s" % (text, spend["src"]), left, "the run's spend: %s" % spend["src"], spend
 
 
-def envelope_stop(path, a, env_text, env_why, figure):
+def envelope_stop(path, a, env_text, env_why, figure, clause=""):
     """The envelope stop: the stop-condition event (which envelope, lane head, the figures in
-    its note) and the gate's exit 5. The run ends here; a successor refuses on the same figure."""
+    its note) and the gate's exit 5. The run ends here; a successor refuses on the same figure.
+    `clause` is the gate's successor count (successors_clause), appended so the line names both
+    bounds the owner may have to lift."""
     figures = env_text[len("envelope: "):]
     append_record(path, event(
         a.run, "stop-condition", which="envelope", lane="head",
@@ -4321,9 +6665,25 @@ def envelope_stop(path, a, env_text, env_why, figure):
         note="%s (%s)" % (figures, env_why)))
     say("gate: %s · %s · %s · REFUSED (stop-condition envelope: the remainder is at or below "
         "zero) → the run stops here; the owner tops the envelope up before any successor: "
-        "handsoff.py raise-envelope --run %s --to USD --reason \"…\""
-        % (a.to, figure, env_text, a.run))
+        "handsoff.py raise-envelope --run %s --to USD --reason \"…\"%s"
+        % (a.to, figure, env_text, a.run, " · " + clause if clause else ""))
     return EXIT_ENVELOPE
+
+
+def gate_arrow(s, usual):
+    """A gate refusal's instruction: `usual` (the hand-over) while a successor is left; with none
+    left, close the run instead (register entry 2026-10-30 16:11); with none left on a fallback
+    past a faulty grants file, the fault to repair first (review CR-CAP2 finding 6)."""
+    if s["left"] > 0:
+        return usual
+    if s["fault"]:
+        return ("→ no successor is left on a fallback cap, and the run's own cap cannot be read "
+                "(the grants file is %s), so whether this head is the run's last lead is undecided: "
+                "`handsoff.py grants --run %s --max-successors N` writes it (the cap the run "
+                "set, which its record names) before %s" % (s["fault"], s["run"], usual[2:]))
+    return ("→ no successor is left (successors: %d of %d started): watch in-flight lanes to "
+            "their close while the room lasts, then close the run with its morning report "
+            "(handoff --set bullets, then close)" % (s["used"], s["cap"]))
 
 
 def cmd_raise_envelope(a):
@@ -4347,18 +6707,21 @@ def cmd_raise_envelope(a):
     if current is not None and a.to <= float(current):
         die("--to $%.2f is not above the current envelope $%.2f (%s): raise-envelope only raises"
             % (a.to, float(current), csrc))
-    start = last_index(events, SESSION_EVENTS)
-    recorded, own = spent_sum(events, start)
-    if own is not None and isinstance(own.get("spent_usd"), (int, float)):
-        spent, ssrc = recorded, "every head-exit's spent_usd (this session has exited)"
+    # The top-up is checked against the RUN's spend, the figure the gate refuses on (register
+    # entry 2026-09-17 21:08: the head-only figure let a top-up through that the gate would read
+    # as already spent). A floor is compared as the floor it is; a run nothing could be metered
+    # of falls back to the recorded head-exits, which the source says. A dry run leaves the
+    # meter cache unwritten (critic finding 9 of the review of 2026-10-11).
+    spend = run_spend(events, a.run, path, session_line=a.meter_line, write_cache=not a.dry_run)
+    if spend["measured"]:
+        spent = spend["usd"]
+        ssrc = "the run's spend%s (run_spend: %s)" % (" at least" if spend["floor"] else "",
+                                                       spend["src"])
     else:
-        total = session_spent(meter_line(events, a.run, a.meter_line))
-        if total is None:
-            spent, ssrc = recorded, ("every head-exit's spent_usd; this session unmeasured (the "
-                                     "meter gave no session total)")
-        else:
-            spent = round(recorded + total, 2)
-            ssrc = "every head-exit's spent_usd plus this session's $%.2f" % total
+        recorded, _ = spent_sum(events, last_index(events, SESSION_EVENTS))
+        spent = recorded
+        ssrc = ("every head-exit's spent_usd, since the run's spend could not be metered (%s)"
+                % spend["src"])
     if a.to <= spent:
         die("--to $%.2f is at or below the run's spend $%.2f (%s): the gate refuses a remainder at "
             "or below zero, so the run would stay stopped" % (a.to, spent, ssrc))
@@ -4477,10 +6840,42 @@ def fits(context, cost, w, belt):
     return context + cost + int(w * PACK_ALLOWANCE_SHARE) <= (belt * w) // 100
 
 
-def resume_guard(events, m, start):
+def pack_remaining(events, ho):
+    """Tokens left of the item in flight, from the optional `Remaining:` line of the hand-off's
+    in-flight pack (`- Remaining: 120k`), or None (register entry 2026-09-23 20:3x). The line is
+    read only from a pack written at or after the last gate, where the fit estimate's own figures
+    stop, so a stale pack never replaces a fresher estimate."""
+    if not ho:
+        return None
+    try:
+        with open(ho, encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().split("\n")
+    except OSError:
+        return None
+    written, _ = pack_stamp(lines)
+    gi = last_index(events, ("gate",))
+    gated = parse_ts(events[gi].get("ts")) if gi >= 0 else None
+    if written is None or (gated is not None and written < gated):
+        return None
+    found = PACK_REMAINING_RE.search(section_text(lines, SECTIONS["inflight"]) or "")
+    if not found:
+        return None
+    return int(found.group(1).replace(",", "")) * (1000 if found.group(2) else 1)
+
+
+def remaining_of(a, events):
+    """The pack's figure for a supervisor or a hand-run resume, or None: the caller's hand-off,
+    else the run-open's. Nothing here may stop a supervisor, so a missing one is simply no figure."""
+    i = last_index(events, ("run-open",))
+    return pack_remaining(events, getattr(a, "handoff", None)
+                          or (events[i].get("handoff") if i >= 0 else None))
+
+
+def resume_guard(events, m, start, remaining=None):
     """The hand-run resume's guard: (verdict, why, stop_class, stopped_at). `ok` only for a sound
     stop (never a refusal or an error) whose resume fits and is cheap; else `resume-refused` or
-    `resume-unfit` with the reason the successor path is the answer."""
+    `resume-unfit` with the reason the successor path is the answer. `remaining` is the pack's
+    figure (pack_remaining), which sizes the resume in place of the estimate."""
     stop = next((e for e in reversed(events[start:]) if e.get("event") == "observation"
                  and e.get("what") == "head exited"), None)
     stop_cls = str((stop or {}).get("exit_class") or "limit")
@@ -4489,24 +6884,25 @@ def resume_guard(events, m, start):
         return ("resume-refused", "the head's last stop was a %s: never resumed by hand (a refusal "
                 "re-flags; an error's state is not trusted); start the successor from the hand-off"
                 % stop_cls, stop_cls, stopped_at)
-    if not resume_in_place(events, m, stopped_at):
+    if not resume_in_place(events, m, stopped_at, remaining):
         return ("resume-unfit", "the rest of the item does not fit under the belt, or the resume is "
                 "not cheap (cache cold, memory over a fresh start's orientation): start the "
                 "successor from the hand-off", stop_cls, stopped_at)
     return ("ok", "", stop_cls, stopped_at)
 
 
-def resume_in_place(events, m, stopped_at):
+def resume_in_place(events, m, stopped_at, remaining=None):
     """After a sound stop (limit, budget, a hand repair): resume the head in place only when the
-    rest of its item fits under the belt (a whole item, conservatively) AND the resume is cheap:
-    the cache is still warm, or the memory is under a fresh head's orientation cost. No memory
+    rest of its item fits under the belt AND the resume is cheap: the cache is still warm, or the
+    memory is under a fresh head's orientation cost. The rest of the item is `remaining`, the
+    hand-off's own figure (pack_remaining), and with none a whole item, conservatively. No memory
     figure: never; no estimate is impossible once a figure exists. The old 60 % rule stays as the
     fallback for an empty record shape (no gate ever metered and nothing declared: the prior
     then decides, which at 1M lands near the old mark)."""
     if m.get("context") is None:
         return False
     w, e = window(), edges()
-    cost, _ = fit_estimate(events, None, m["context"])
+    cost = remaining if remaining is not None else fit_estimate(events, None, m["context"])[0]
     warm = stopped_at is not None and (time.time() - stopped_at) <= CACHE_LIFE_S
     small = m["context"] <= int(w * ORIENTATION_SHARE)
     return fits(m["context"], cost, w, belt_of(e)) and (warm or small)
@@ -4514,8 +6910,9 @@ def resume_in_place(events, m, stopped_at):
 
 def report_hardstops_text(events):
     """The warnings bullet beside the limit stops: every head stop-condition whose `which` is not
-    a limit, and every lane closed other than completed or limit, each count stated (owner ruling
-    2026-09-14: a hard stop is reported clearly, never searched-and-empty)."""
+    a limit, every lane closed other than completed or limit, and apart from those every completed
+    lane that met denials, each count stated (owner ruling 2026-09-14: a hard stop is reported
+    clearly, never searched-and-empty; register entry 2026-10-31 01:57: a denial stops nothing)."""
     heads = ["%s at %s (%s)" % (ev.get("which"), ev.get("ts", "no ts"),
                                 one_line(str(ev.get("action") or ""))[:80])
              for ev in events if ev.get("event") == "stop-condition"
@@ -4528,7 +6925,7 @@ def report_hardstops_text(events):
                                 ev.get("exit_class"))
              for ev in events if ev.get("event") == "lane-closed"
              and ev.get("exit_class") not in ("completed", "limit")]
-    lanes += ["%s at %s (completed with denials %s)" % (
+    denied = ["%s at %s (%s)" % (
                   ev.get("lane") or "unnamed lane", ev.get("ts", "no ts"),
                   ",".join("%s %s" % (k, v) for k, v in sorted(ev["denials"].items())
                            if k in DENIAL_KEYS and v))
@@ -4536,9 +6933,11 @@ def report_hardstops_text(events):
               and ev.get("exit_class") == "completed" and isinstance(ev.get("denials"), dict)
               and any(ev["denials"].get(k) for k in DENIAL_KEYS)]
     return ("%d hard stop(s) on the head other than a limit%s · %d lane(s) closed other than "
-            "completed or limit%s · read from the record at the close" % (
+            "completed or limit%s · %d completed lane(s) met denials, none a stop%s · read from "
+            "the record at the close" % (
                 len(heads), ": " + "; ".join(heads) if heads else "",
-                len(lanes), ": " + "; ".join(lanes) if lanes else ""))
+                len(lanes), ": " + "; ".join(lanes) if lanes else "",
+                len(denied), ": " + "; ".join(denied) if denied else ""))
 
 
 def cmd_expect(a):
@@ -4556,25 +6955,70 @@ def cmd_expect(a):
     return 0
 
 
+def stale_references(run, decisions_file=None):
+    """[(copy, source)] for each file of `<store>/stages/<run>/refs/` whose bytes differ from its
+    source (register entry 2026-10-30 21:40 b): helpers read those copies so that none needs a
+    grant on the vault root, and the gate's own digest reads only the live decisions file. The
+    source of a copy is --decisions-file where the names agree, then the run's own
+    `<store>/stages/<run>/decisions.md`, else the file of that name at the vault root; a copy
+    with none has no source to compare, so it is left out. A warning alone, never a hold: most
+    differences touch no helper's task, and the head can tell."""
+    folder = os.path.join(store_root(), "stages", token(run, "run id"), "refs")
+    decisions_file = decisions_file or os.path.join(os.path.dirname(folder), "decisions.md")
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return []
+    found = []
+    for name in names:
+        copy = os.path.join(folder, name)
+        named = (decisions_file and os.path.basename(decisions_file) == name
+                 and os.path.expanduser(decisions_file))
+        source = named or os.path.join(vault_root(), name)
+        if not os.path.isfile(copy) or not os.path.isfile(source):
+            continue
+        try:
+            with open(copy, "rb") as one, open(source, "rb") as other:
+                if one.read() != other.read():
+                    found.append((copy, source))
+        except OSError as exc:
+            note("gate: the reference copy %s could not be compared (%s)" % (copy, exc))
+    return found
+
+
+@a3_expose_notices
 def cmd_gate(a):
     path = record_path(a.run)
     events = require_record(path)
     # Two heads first (register entry 2026-09-03): a peer's gate reaches neither the hold nor the
-    # meter. Then the decisions channel (register entry 2026-09-13 03:53).
+    # meter. Then the decisions channel (register entry 2026-09-13 03:53). A gate has no final
+    # recheck, so an owner's relay arriving while it meters is the next call's to hold: its event
+    # and its ack therefore cover only `events`, the record this check read (DECISIONS_SEEN), and
+    # never their own later place (critic finding F1 of the second review of 2026-10-11).
     refused = refuse_two_heads(a, path, events, "gate")
     if refused is not None:
         return refused
-    held = decisions_hold(a, path, events, "gate")
+    held, content = decisions_hold(a, path, events, "gate")
     if held is not None:
         return held
+    bound = {DECISIONS_FILE: content[0]} if content else {}
     sid, sev = head_session(events)
     scope = last_index(events, SESSION_EVENTS) + 1
     prior = [e for e in events[scope:] if e.get("event") == "gate"]
+    # The successor count on every line and event (register entry 2026-10-30 16:11), so a head
+    # knows before any hand-over whether it is the run's last lead.
+    count = successors_left(events, a.run)
+    clause = successors_clause(count)
+    count_fields = {"successors_used": count["used"], "successors_cap": count["cap"],
+                    "successors_left": count["left"], "successors_src": count["src"]}
     m = measure_head(sid)
     is_armed, how = armed(sid)
     warning = grants_warning(events, a.run, sid)
     if warning:
         say(warning)
+    for copy, source in stale_references(a.run, getattr(a, "decisions_file", None)):
+        say("gate: warn: the staged reference copy %s differs from its source %s: a helper spawned "
+            "now reads the older text; refresh the copy before the next spawn" % (copy, source))
     w, e = window(), edges()
     threshold = e[1]
     belt = belt_of(e)
@@ -4597,31 +7041,38 @@ def cmd_gate(a):
     if m.get("context") is None:
         decision = "refuse" if ((second and is_armed) or spent_out) else "allow"
         ev = event(a.run, "gate", item=a.to, context=None, percent=None, band="unmetered",
-                   armed=is_armed, decision=decision, metered=False, **spend_fields)
+                   armed=is_armed, decision=decision, metered=False, **spend_fields,
+                   **count_fields)
+        ev[DECISIONS_SEEN] = len(events)   # what this gate's decisions check covered
+        ev.update(bound)
         if orient is not None:
             ev["orientation_tokens"], ev["orientation_note"] = orient
         obs = event(a.run, "observation", phase=a.phase, what="gate unmetered",
                     note="item %s: %s%s" % (a.to, m["reason"],
                                             "; second consecutive" if second else ""))
         if a.dry_run:
-            say("gate: dry run · unmetered (%s) · %s · %s" % (m["reason"], decision, env_text))
+            say("gate: dry run · unmetered (%s) · %s · %s · %s" % (m["reason"], decision, env_text,
+                                                                clause))
             return 0
         append_record(path, ev)
         append_record(path, obs)
         if spent_out:
-            return envelope_stop(path, a, env_text, env_why, "unmetered (%s)" % m["reason"])
+            return envelope_stop(path, a, env_text, env_why, "unmetered (%s)" % m["reason"],
+                                 clause)
         if decision == "refuse":
             append_record(path, event(
                 a.run, "stop-condition", which="unmetered", lane="head",
                 action="gate refused item %s: second consecutive unmetered gate (armed by %s)"
                        % (a.to, how), note=m["reason"]))
-            say("gate: unmetered (%s) · second consecutive · armed (%s) · REFUSED item %s → "
-                "handoff --final --band unmetered, then successor · %s"
-                % (m["reason"], how, a.to, env_text))
+            say("gate: unmetered (%s) · second consecutive · armed (%s) · REFUSED item %s %s · "
+                "%s · %s"
+                % (m["reason"], how, a.to,
+                   gate_arrow(count, "→ handoff --final --band unmetered, then successor"),
+                   env_text, clause))
             return 7
-        say("gate: unmetered (%s) · %s · item %s allowed%s · %s" % (
+        say("gate: unmetered (%s) · %s · item %s allowed%s · %s · %s" % (
             m["reason"], "second consecutive" if second else "first miss", a.to,
-            " · soft: fix the metering" if second else "", env_text))
+            " · soft: fix the metering" if second else "", env_text, clause))
         return 0
     fit = fits(m["context"], cost_next, w, belt)
     over = not fit
@@ -4630,7 +7081,10 @@ def cmd_gate(a):
     decision = "refuse" if (band_refusal or spent_out or spend_refusal) else "allow"
     ev = event(a.run, "gate", item=a.to, context=m["context"], percent=m["percent"],
                band=m["band"], armed=is_armed, decision=decision, metered=True,
-               fit=fit, cost_next=cost_next, cost_src=cost_src, belt=belt, **spend_fields)
+               fit=fit, cost_next=cost_next, cost_src=cost_src, belt=belt, **spend_fields,
+               **count_fields)
+    ev[DECISIONS_SEEN] = len(events)   # what this gate's decisions check covered
+    ev.update(bound)
     figure = "context %s (%d %%) · band %d · armed %s" % (
         format(m["context"], ","), m["percent"], m["band"], how if is_armed else "no")
     figure += " · fit %s (next %s, %s; belt %d %%)" % (
@@ -4644,8 +7098,8 @@ def cmd_gate(a):
     miss = ("unmetered spend (%s)" % ("second consecutive" if second else "first miss")
             if spend_miss else "")
     if a.dry_run:
-        say("gate: dry run · %s · %s · %s · %s%s" % (a.to, figure, decision, env_text,
-                                                    " · " + miss if miss else ""))
+        say("gate: dry run · %s · %s · %s · %s%s · %s" % (a.to, figure, decision, env_text,
+                                                         " · " + miss if miss else "", clause))
         return 0
     append_record(path, ev)
     if spend_miss:
@@ -4654,30 +7108,35 @@ def cmd_gate(a):
             note="item %s: the run's spend could not be metered: %s%s"
                  % (a.to, spend["src"], "; second consecutive" if second else "")))
     if spent_out:
-        return envelope_stop(path, a, env_text, env_why, figure)
+        return envelope_stop(path, a, env_text, env_why, figure, clause)
     if band_refusal:
         append_record(path, event(
             a.run, "stop-condition", which="band", lane="head",
             action="gate refused item %s at %d %% (fit: next %s, %s, over the belt %d %%; armed by %s)"
                    % (a.to, m["percent"], format(cost_next, ","), cost_src, belt, how),
-            note="handoff --final --band %d, watch in-flight lanes, then successor" % threshold))
-        say("gate: %s · %s · REFUSED (stop-condition band) → handoff --final --band %d, watch "
-            "in-flight lanes, then successor · %s" % (a.to, figure, threshold, env_text))
+            note=gate_arrow(count, "→ handoff --final --band %d, watch in-flight lanes, then "
+                                   "successor" % threshold)[2:]))
+        say("gate: %s · %s · REFUSED (stop-condition band) %s · %s · %s"
+            % (a.to, figure, gate_arrow(count, "→ handoff --final --band %d, watch in-flight "
+                                               "lanes, then successor" % threshold),
+               env_text, clause))
         return 4
     if spend_refusal:
         append_record(path, event(
             a.run, "stop-condition", which="unmetered", lane="head",
             action="gate refused item %s: second consecutive unmetered gate (the run's spend "
                    "unmetered; armed by %s)" % (a.to, how), note=spend["src"]))
-        say("gate: %s · %s · %s · armed (%s) · REFUSED item %s → handoff --final --band "
-            "unmetered, then successor · %s" % (a.to, figure, miss, how, a.to, env_text))
+        say("gate: %s · %s · %s · armed (%s) · REFUSED item %s %s · %s · %s"
+            % (a.to, figure, miss, how, a.to,
+               gate_arrow(count, "→ handoff --final --band unmetered, then successor"),
+               env_text, clause))
         return 7
     warn = (" · warn: at or above the second edge (%d %%), soft — finish what is in flight, "
             "start nothing new" % threshold) if over else ""
     if spend_miss:
         warn += " · %s · item %s allowed%s" % (miss, a.to,
                                                 " · soft: fix the metering" if second else "")
-    say("gate: %s · %s · allow%s · %s" % (a.to, figure, warn, env_text))
+    say("gate: %s · %s · allow%s · %s · %s" % (a.to, figure, warn, env_text, clause))
     return 0
 
 
@@ -4840,45 +7299,187 @@ def spawn_line(ev):
     return " · ".join(parts) or "the lane-open event carries no class, model, reason or brief"
 
 
-def derive_inflight(events):
-    """`## In flight` derived from the run record: the last boundary's `next`, the lanes still
-    open since that boundary with their spawn lines, and the decisions since it, one line each,
-    under the header the guard writes. The D41 labels are kept, so a derived pack passes the
-    same label check a head's own pack must pass; an empty class says so rather than going
-    silent, since a missing line and nothing to report are different claims."""
-    i = boundary_index(events)
-    since = events[i + 1:] if i >= 0 else list(events)
-    lines = [PACK_DERIVED % now()]
-    j = last_index(events, ("phase-boundary",))
-    if j >= 0 and events[j].get("next"):
-        lines.append("- Next: %s (a copy of the `next` field of the phase-boundary at %s: the "
-                     "run's shape as it stood at that boundary, which any later instruction "
-                     "supersedes)" % (one_line(events[j]["next"]), events[j].get("ts", "no ts")))
-    elif j >= 0:
-        lines.append("- Next: unstated — the phase-boundary at %s carries no `next` field"
-                     % events[j].get("ts", "no ts"))
-    else:
-        lines.append("- Next: unstated — the record carries no phase-boundary event")
-    open_lanes = []
-    for ev in since:
-        if not ev.get("lane"):
+PACK_DERIVED_PREFIX = "- pack re-derived from the record at "
+# The Next a derivation takes from a head-written pack newer than the last phase-boundary. Its
+# own words carry the pack's stamp, so a later derivation reads both back (HEAD_NEXT_RE) and
+# keeps that Next until a genuinely newer boundary supersedes it (critic finding 4 of the review
+# of 2026-10-11: a second derivation fell back to the older boundary's next).
+HEAD_NEXT_LINE = "- Next: %s (from the head's own pack written %s, newer than %s)"
+HEAD_NEXT_RE = re.compile(r"^- Next: (.*) \(from the head's own pack written ([^\s,]+), "
+                          r"newer than .*\)$")
+KEPT_HEADER = "- Kept from the pack this rewrite replaced (its hand-written lines, verbatim):"
+OWNER_LINE = "- Owner (an AUTHOR observation on the record at %s): %s"
+INFLIGHT_DERIVED_HEADING = "## In flight (re-derived from the record at %s)"
+NEXT_LINE_RE = re.compile(r"^\s*(?:[-*]\s+)?Next:\s*(.*)$")
+
+
+def open_lane_attempts(events):
+    """[(lane, its latest lane-open or lane-resumed, the lane-spawned or lane-respawned after it
+    or None)] for every lane whose latest attempt has no lane-closed after it, read over the WHOLE
+    record (register entry 2026-09-25 17:4x: a scan from the last boundary missed a lane opened
+    before it whose process died with no close), in the order the attempts began."""
+    latest = {}
+    for i, ev in enumerate(events):
+        lane, kind = ev.get("lane"), ev.get("event")
+        if not lane:
             continue
-        if ev.get("event") == "lane-open":
-            open_lanes.append(ev)
-        elif ev.get("event") == "lane-closed":
-            open_lanes = [e for e in open_lanes if e.get("lane") != ev.get("lane")]
-    for ev in open_lanes:
-        lines.append("- Needs: lane %s open since %s · %s"
-                     % (ev.get("lane"), ev.get("ts", "no ts"), spawn_line(ev)))
+        if kind in LAUNCH_LANE_STARTS:
+            latest[lane] = [i, ev, None]
+        elif kind in LAUNCH_LANE_SPAWNS and latest.get(lane) is not None:
+            latest[lane][2] = ev
+        elif kind == "lane-closed":
+            latest[lane] = None
+    found = sorted((v for v in latest.values() if v is not None), key=lambda v: v[0])
+    return [(v[1].get("lane"), v[1], v[2]) for v in found]
+
+
+def lane_liveness(spawned):
+    """How an open lane's processes stand, read from its spawn line and never acted on: each
+    recorded pid alive or gone, an unusable pid named, and no spawn line or no pid at all said as
+    unknown. Nothing here restarts or signals a process."""
+    if spawned is None:
+        return "no process on the record yet (no lane-spawned): liveness unknown"
+    parts = []
+    for key, label in (("wrapper_pid", "wrapper"), ("pid", "lane")):
+        raw = spawned.get(key)
+        if raw is None:
+            continue
+        pid = usable_pid(raw)
+        if pid is None:
+            parts.append("%s pid %r unusable: unknown" % (label, raw))
+        else:
+            parts.append("%s pid %d %s" % (label, pid, "alive" if pid_alive(pid) else "gone"))
+    return ", ".join(parts) if parts else "no pid on the record: liveness unknown"
+
+
+def pack_parts(current):
+    """(the pack's stamp as an epoch or None, the stamp as written or None, its Next texts, the
+    lines a rewrite keeps) from an In flight body. A head-written pack (its first line `- pack
+    written: <ts>`) keeps every line but its stamp and its Next lines, which the rewrite
+    supersedes; a derived pack keeps only the lines under its own KEPT_HEADER, since every line
+    above that header is the record's and is derived again — except a Next it took from a
+    head-written pack (HEAD_NEXT_LINE), returned with that pack's stamp, so the derivation that
+    replaces it applies the same rule again: the head's Next stands while the pack is newer than
+    the last phase-boundary, and a newer boundary's next supersedes it."""
+    body = [line for line in str(current or "").split("\n")]
+    while body and not body[0].strip():
+        body.pop(0)
+    if body and body[0].startswith(PACK_DERIVED_PREFIX):
+        kept = []
+        top = body
+        if KEPT_HEADER in body:
+            kept = body[body.index(KEPT_HEADER) + 1:]
+            top = body[:body.index(KEPT_HEADER)]
+        stamp, stamp_text, nexts = None, None, []
+        for line in top:
+            m = HEAD_NEXT_RE.match(line)
+            if m and (stamp_text is None or m.group(2) == stamp_text):
+                stamp_text = m.group(2)
+                nexts.append(m.group(1))
+        if stamp_text is not None:
+            stamp = parse_ts(stamp_text)
+            if stamp is None:
+                stamp_text, nexts = None, []
+        return stamp, stamp_text, nexts, [line for line in kept if line.strip()]
+    stamp, stamp_text, nexts, kept = None, None, [], []
+    for line in body:
+        m = PACK_STAMP_RE.match(line)
+        if m:
+            if stamp_text is None:
+                stamp_text, stamp = m.group(1), parse_ts(m.group(1))
+            continue
+        n = NEXT_LINE_RE.match(line)
+        if n:
+            nexts.append(n.group(1).strip())
+            continue
+        if line.strip():
+            kept.append(line)
+    return stamp, stamp_text, nexts, kept
+
+
+def derive_inflight(events, current=None, boundary=None):
+    """`## In flight` derived from the run record, under the header the guard writes; the D41
+    labels are kept, so a derived pack passes the same label check a head's own pack must pass,
+    and an empty class says so rather than going silent.
+    - Next: at a boundary (`boundary`, its event), that boundary's own `next`; else the newest
+      head-written pack's Next where the pack is newer than the last phase-boundary (register
+      entry 2026-09-25 17:4x: a day-old boundary's `next` stood in for the dead head's current
+      pack), else the last phase-boundary's `next`. A derived pack that carries a head pack's
+      Next hands it on with that pack's own stamp (pack_parts), so re-deriving again keeps it
+      until a newer boundary.
+    - Needs: every lane open on the WHOLE record (open_lane_attempts) with its spawn line and its
+      liveness as the record names it.
+    - Decided: the decision events since the anchor (the previous boundary at a boundary).
+    - Acknowledged: each `ack:` observation since that anchor, so a message's receipt is in the
+      hand-off a successor reads.
+    - Owner: every relayed owner instruction on the record since the run's last run-open (an
+      observation whose `what` opens with AUTHOR), so a rewrite never drops one (register entry
+      2026-09-14 00:06, the R-REF status: a re-derivation dropped a relayed owner line).
+    - Kept: the hand-written lines of the pack it replaces (pack_parts), verbatim, under their own
+      header — every line but its stamp and its Next."""
+    stamp, stamp_text, nexts, kept = pack_parts(current)
+    if boundary is not None:
+        lines = [PACK_DERIVED_PREFIX + "%s (at the boundary %s → %s)"
+                 % (now(), boundary.get("from", "?"), boundary.get("to", "?"))]
+        lines.append("- Next: %s (the `next` of this boundary, %s → %s)"
+                     % (one_line(boundary.get("next") or "unstated"), boundary.get("from", "?"),
+                        boundary.get("to", "?")))
+        prev = last_index(events[:-1], ("phase-boundary",))
+        if prev < 0:
+            prev = last_index(events, ("run-open",))
+        since = events[prev + 1:]
+    else:
+        lines = [PACK_DERIVED % now()]
+        j = last_index(events, ("phase-boundary",))
+        bts = parse_ts(events[j].get("ts")) if j >= 0 else None
+        if nexts and stamp is not None and (j < 0 or (bts is not None and stamp > bts)):
+            for text in nexts:
+                lines.append(HEAD_NEXT_LINE
+                             % (one_line(text), stamp_text,
+                                "the last phase-boundary at %s" % events[j].get("ts", "no ts")
+                                if j >= 0 else "any phase-boundary (the record carries none)"))
+        elif j >= 0 and events[j].get("next"):
+            lines.append("- Next: %s (a copy of the `next` field of the phase-boundary at %s: the "
+                         "run's shape as it stood at that boundary, which any later instruction "
+                         "supersedes)" % (one_line(events[j]["next"]), events[j].get("ts", "no ts")))
+        elif j >= 0:
+            lines.append("- Next: unstated — the phase-boundary at %s carries no `next` field"
+                         % events[j].get("ts", "no ts"))
+        else:
+            lines.append("- Next: unstated — the record carries no phase-boundary event")
+        i = boundary_index(events)
+        since = events[i + 1:] if i >= 0 else list(events)
+    open_lanes = open_lane_attempts(events)
+    for lane, opened, spawned in open_lanes:
+        lines.append("- Needs: lane %s open since %s · %s · %s"
+                     % (lane, opened.get("ts", "no ts"), spawn_line(opened),
+                        lane_liveness(spawned)))
     if not open_lanes:
-        lines.append("- Needs: no lane is open in the record since the boundary")
+        lines.append("- Needs: no lane is open on the record (every lane-open and lane-resumed "
+                     "has its lane-closed)")
     decisions = [ev for ev in since if ev.get("event") == "decision"]
     for ev in decisions:
-        lines.append("- Decided: %s (%s, at %s)"
+        lines.append("- Decided: %s (%s, at %s%s)"
                      % (one_line(ev.get("what") or "unstated"),
-                        one_line(ev.get("grant") or "grant unstated"), ev.get("ts", "no ts")))
+                        one_line(ev.get("grant") or "grant unstated"), ev.get("ts", "no ts"),
+                        ", %s" % ev["decision_id"] if ev.get("decision_id") else ""))
     if not decisions:
-        lines.append("- Decided: no decision event since the boundary")
+        lines.append("- Decided: no decision event since the %s"
+                     % ("previous boundary" if boundary is not None else "boundary"))
+    for ev in since:
+        if ev.get("event") == "observation" and str(ev.get("what") or "").startswith(ACK_PREFIX):
+            lines.append("- Acknowledged: %s (at %s)" % (
+                one_line(str(ev["what"])[len(ACK_PREFIX):]), ev.get("ts", "no ts")))
+    oi = last_index(events, ("run-open",))
+    for ev in events[max(0, oi):]:
+        if ev.get("event") == "observation" and AUTHOR_RE.match(str(ev.get("what") or "")):
+            text = one_line(ev.get("what") or "")
+            if ev.get("note"):
+                text += " · " + one_line(ev["note"])
+            lines.append(OWNER_LINE % (ev.get("ts", "no ts"), text))
+    if kept:
+        lines.append(KEPT_HEADER)
+        lines.extend(kept)
     return "\n".join(lines)
 
 
@@ -4892,7 +7493,9 @@ def guard_pack(a, path, ho):
         say("pack: %s — %s" % (state, why))
         return state
     lines = read_text(ho, "hand-off").split("\n")
-    if not set_section(lines, "inflight", derive_inflight(events)):
+    current = section_text(lines, SECTIONS["inflight"])
+    if current is None or not set_section(lines, "inflight",
+                                          derive_inflight(events, current=current), derived=True):
         append_record(path, event(a.run, "observation", phase="", what="stale-pack",
                                   note="not re-derived (no '## In flight' section): " + why))
         say("pack: STALE — %s · the hand-off carries no '## In flight' section, so nothing was "
@@ -4915,12 +7518,12 @@ def record_pack_fresh(path, run, who):
                                    "'## In flight' is current at %s" % (who, now())))
 
 
-def apply_set(lines, key, value):
+def apply_set(lines, key, value, derived=False):
     if key in BULLETS:
         if not set_bullet(lines, key, value):
             die("no '## Morning report' section")
     elif key in SECTIONS:
-        if not set_section(lines, key, value):
+        if not set_section(lines, key, value, derived=derived):
             die("no '## %s' section" % SECTIONS[key])
     elif key in APPEND_ONLY:
         die("the ledger and the trace are append-only: use `ledger` and `boundary`")
@@ -4930,6 +7533,73 @@ def apply_set(lines, key, value):
     return key
 
 
+NO_SUCCESSOR_WHAT = "%s refused: no successor left"   # the refusal's observation `what`
+
+
+def newer_successor(fresh, count):
+    """The newest head-successor on `fresh` when the record now holds more of them than `count`
+    (successors_left's reading before the lock) saw, else None: another head started while the
+    call ran, the case the starter's duplicate guard refuses (review CR-CAP2 finding 9)."""
+    if count is None or successors_left(fresh, count["run"])["used"] <= count["used"]:
+        return None
+    i = last_index(fresh, ("head-successor",))
+    return fresh[i] if i >= 0 else None
+
+
+def no_successor_refusal(cmd, s, kept, raced=None):
+    """The REFUSED (exit 10) text `handoff --final` and `successor` print when no successor is
+    left (register entry 2026-10-30 16:11). `kept` says what the call wrote; `raced` is a
+    head-successor that landed while the call ran (then another head has started, and this head
+    is no longer the run's lead). No text tells the head to run `--final` again."""
+    count = "%d of %d head starts on its cap (%s)" % (s["used"], s["cap"], s["src"])
+    if raced is not None:
+        return ("%s: REFUSED (exit %d): a head-successor (session %s, at %s) landed on the record "
+                "while this call ran, leaving no successor on the cap (%s): another head has "
+                "started, the duplicate the starter's own guard refuses, so this head is no longer "
+                "the run's lead. %s; this head starts nothing, and its next gate or run-resume "
+                "names the head that holds the run."
+                % (cmd, EXIT_NO_SUCCESSOR, raced.get("session_id"), raced.get("ts", "no ts"),
+                   count, kept))
+    if s["fault"]:
+        # A fallback past a faulty grants file is no decided cap (CAP_FAULT_STATES): whether this
+        # head is the run's last lead is undecided, so the text names the fault and how to recover
+        # the cap, and never the close a last lead makes (build review RV-CAP finding F4).
+        return ("%s: REFUSED (exit %d): run %s's own successor cap cannot be read — its grants "
+                "file is %s — and the fallback gives %s, at which the starter would refuse a "
+                "successor, so whether this head is the run's last lead is undecided. %s, so "
+                "this head stays the run's lead. Recover the cap: `handsoff.py grants --run %s "
+                "--max-successors N` writes it, N being the cap the run set, which its record "
+                "names (the last run-open, run-resume or grants event carrying max_successors), or "
+                "one the owner gives; meanwhile work on within your band, and the next gate prints "
+                "the count the recovered cap gives."
+                % (cmd, EXIT_NO_SUCCESSOR, s["run"], s["fault"], count, kept, s["run"]))
+    return ("%s: REFUSED (exit %d): no successor left for run %s — %s, the test the starter "
+            "applies. %s, so this head stays the run's lead (register 2026-10-30 16:11). Work on "
+            "within your band; when the work cannot finish within it, close the run with its "
+            "morning report (handoff --set bullets, then close --items …); from 90 %% the hook "
+            "still lets handoff, ledger, TaskStop and close through for the run's last lead. The "
+            "owner can raise the cap instead (grants --run %s --max-successors N)."
+            % (cmd, EXIT_NO_SUCCESSOR, s["run"], count, kept, s["run"]))
+
+
+def refuse_no_successor(path, a, cmd, s, kept, raced=None):
+    """Record the refusal's one observation (never on --dry-run), print its text and return
+    EXIT_NO_SUCCESSOR. Nothing else is written: no head-exit, pack-fresh, seed, console or
+    starter."""
+    if not a.dry_run:
+        note_text = successors_clause(s)
+        if raced is not None:
+            note_text += "; a head-successor (session %s) landed while the call ran" % (
+                raced.get("session_id"),)
+        append_record(path, event(a.run, "observation", phase="",
+                                  what=NO_SUCCESSOR_WHAT % ("handoff --final" if cmd == "handoff"
+                                                            else cmd),
+                                  note=note_text))
+    say(no_successor_refusal(cmd, s, kept, raced))
+    return EXIT_NO_SUCCESSOR
+
+
+@a3_expose_notices
 def cmd_handoff(a):
     path = record_path(a.run)
     events = require_record(path)
@@ -4943,7 +7613,8 @@ def cmd_handoff(a):
         if a.inflight is not None:
             die("--inflight-from-record and --inflight/--inflight-file are two sources for one "
                 "section: pass one")
-        a.inflight, derived = derive_inflight(events), True
+        a.inflight = derive_inflight(events, current=section_text(lines, SECTIONS["inflight"]))
+        derived = True
         say("handoff: '## In flight' derived from the record · %d lines"
             % len(a.inflight.split("\n")))
         if a.dry_run:
@@ -4953,6 +7624,8 @@ def cmd_handoff(a):
         die("--final needs the next-task pack: --inflight-file PATH (or --inflight TEXT) "
             "carrying Next:, Needs: and Decided: (D41)")
     if a.inflight is not None:
+        if not derived:
+            refuse_placeholder("handoff", {"inflight": a.inflight})
         missing = pack_missing(a.inflight)
         if missing and a.final:
             die("the next-task pack lacks %s (each label at the start of a line; an optional "
@@ -4961,25 +7634,36 @@ def cmd_handoff(a):
             say("handoff: warn: the in-flight pack lacks %s (a --final pack would be refused)"
                 % ", ".join(missing))
         changes.append(apply_set(lines, "inflight",
-                                 a.inflight if derived else stamp_pack(a.inflight)))
+                                 a.inflight if derived else stamp_pack(a.inflight),
+                                 derived=derived))
     for spec in a.set or []:
         key, sep, value = spec.partition("=")
         if not sep:
             die("--set needs key=value, got %r" % spec)
+        refuse_placeholder("handoff", {"set " + key.strip(): value})
         changes.append(apply_set(lines, key.strip(), value))
     for spec in a.set_file or []:
         key, sep, fpath = spec.partition("=")
         if not sep:
             die("--set-file needs key=path, got %r" % spec)
-        changes.append(apply_set(lines, key.strip(), read_text(fpath, "--set-file " + key)))
-    exit_ev, have_exit = None, None
+        value = read_text(fpath, "--set-file " + key)
+        refuse_placeholder("handoff", {"set-file " + key.strip(): value})
+        changes.append(apply_set(lines, key.strip(), value))
+    exit_ev, have_exit, refused, raced, count = None, None, None, None, None
     if a.final:
         xi = stop_exit(events)
+        count = successors_left(events, a.run) if xi < 0 else None
         if xi >= 0:
             # This stop's head-exit is already recorded, by the supervisor or an earlier repair,
             # and no head has started since (register entry 2026-09-14 05:13; review finding
             # 2): a second one would count the stop twice.
             have_exit = events[xi]
+        elif count["left"] <= 0:
+            # The cap at call time, before any head-exit (register entry 2026-10-30 16:11): with
+            # no successor left the starter would refuse one, so this head stays the run's lead,
+            # its pack still written below, and no head-exit is left behind for repeat-exit or
+            # stop_class to read.
+            refused = count
         else:
             sid, _ = head_session(events)
             m = measure_head(sid)
@@ -4990,9 +7674,13 @@ def cmd_handoff(a):
                             spent_usd=session_spent(meter_line(events, a.run, a.meter_line)))
             if pid is not None:
                 exit_ev["pid"] = pid
-    if not changes and exit_ev is None:
+    if not changes and exit_ev is None and refused is None:
         say("handoff: nothing to do (no --inflight, --set, --set-file or --final)")
         return 0
+    if a.dry_run and refused is not None:
+        say("handoff: dry run · would rewrite %s · REFUSED (exit %d): %s; nothing written"
+            % (", ".join(changes) or "nothing", EXIT_NO_SUCCESSOR, successors_clause(refused)))
+        return EXIT_NO_SUCCESSOR
     if a.dry_run:
         say("handoff: dry run · would rewrite %s%s%s" % (
             ", ".join(changes) or "nothing",
@@ -5007,20 +7695,95 @@ def cmd_handoff(a):
             xi = stop_exit(fresh)
             if xi >= 0:
                 exit_ev, have_exit = None, fresh[xi]
+            elif successors_left(fresh, a.run)["left"] <= 0:
+                # A head-successor or a lowered cap landed while this call measured: the same
+                # refusal, decided on the record as it stands under the lock.
+                refused, exit_ev = successors_left(fresh, a.run), None
+                raced = newer_successor(fresh, count)
             else:
                 append_record(path, exit_ev)
+    if refused is not None:
+        return refuse_no_successor(
+            path, a, "handoff", refused,
+            "The pack is written to '## In flight' (%s rewritten) and no head-exit was recorded"
+            % (", ".join(changes) or "nothing"), raced)
     say("handoff: %s rewritten%s%s" % (
         ", ".join(changes) if changes else "nothing",
         " · head-exit recorded (band %s, %s)" % (exit_ev["band"], exit_ev["context"])
         if exit_ev else "", exit_recorded_text(have_exit)))
+    item_warning("handoff", events, lines)
     return 0
 
 
-def resume_prompt(ho):
-    text = section_text(read_text(ho, "hand-off").split("\n"), "Resume prompt")
-    if not text:
-        die("the hand-off's '## Resume prompt' section is missing or empty: %s" % ho)
-    return text
+def resume_instruction(run, ho):
+    """The first message of every head started fresh from the hand-off (the starter `successor`
+    detaches and the supervisor's own successor start, both through start_head): fixed text
+    naming the run and the hand-off's absolute path, composed here and never read from the
+    hand-off. The hand-off's `## Resume prompt` (the `resume-prompt` key of `handoff --set`) is
+    the owner's prompt for the next attended session and reaches no head (register entry
+    2026-10-08 23:12: a launched head received the owner's morning prompt as its first message).
+    The path is the real path run-open records; the hand-off must still be readable, and no
+    section of it is required here.
+
+    The message also carries the bootstrap (the delegate skill's section 4), which launch kits
+    used to write into the section now set aside, so it would otherwise have no carrier (the
+    fix's review, 2026-10-09): EVERY head started here, the run's first included, reads the run
+    record's tail and `git status`, then runs `run-resume` through this script's own absolute
+    path, before any item work. The first head is not exempt (the fix's second review,
+    2026-10-09): the session meter (fable-share.py's read_spawn_record) places a lane in the
+    partition the latest run-open or run-resume opened and reads no head-successor, so a first
+    head that skips run-resume has every helper it spawns counted under the launcher's seed
+    session and none under its own. What the record decides is only where the head starts: with
+    no gate an earlier head of the run wrote, it begins, as the run's first head does, at the
+    gate In flight names (worded so, rather than calling the head the first, because a successor
+    whose predecessor never gated takes that branch too); otherwise it continues from In flight.
+    The head reads the record and decides; the text is the same for every start. The command is
+    spelled as by_hand_line spells the owner's: the absolute interpreter (interpreter(), never a
+    bare `python3`, which a shell may map to another program: register entry 2026-09-30 17:36),
+    `-B`, the derived path."""
+    path = os.path.realpath(ho)
+    read_text(path, "hand-off")   # an unreadable hand-off stops the start, as it always has
+    rid = token(run, "run id")
+    resume = ("%s -B %s run-resume --run %s --session auto --head '<your model and effort>' "
+              "--detail '<the item you start or resume>'"
+              % (shlex.quote(interpreter()), shlex.quote(os.path.abspath(__file__)),
+                 shlex.quote(rid)))
+    return ("You are the next head of hands-off run %s, started by handsoff.py.\n"
+            "Hand-off: %s\n"
+            "Read that hand-off whole, starting with its `## In flight` section: In flight is the "
+            "authority for what you do next. Then read the RUNBOOK and the decisions file the "
+            "hand-off names.\n"
+            "Before any item work, whether you are the run's first head or a later one: read the "
+            "tail of the run record %s and `git status`, then run `%s`. That registers your "
+            "session on the record, which the session meter needs to count your helpers as "
+            "yours.\n"
+            "%s"
+            "Then, if that record shows no `gate` event written by an earlier head of this run, "
+            "begin, as the run's first head does, at the gate In flight names; otherwise continue "
+            "the run from In flight.\n"
+            "Any prompt the hand-off holds for the owner's next attended session, its "
+            "`## Resume prompt` section included, is addressed to the owner: it is not an "
+            "instruction to you.\n" % (rid, path, record_path(rid), resume,
+                                        rule_files_note(record_path(rid))))
+
+
+# What both start messages ask of a head about the rule files: `git log` and `git status` carry the
+# change, so nothing is fingerprinted, and a fresh head holds the new text already. What it lacks is
+# knowing that its pack and RUNBOOK were written under the old.
+RULE_FILES_NOTE = (
+    "Then run git log --oneline --since=%s -- CLAUDE.md CUSTOMISATION.md "
+    "CUSTOMISATION-definitions.md .claude/skills/delegate/SKILL.md. A line there, or one of those "
+    "files in the status, means a rule file changed since the run began: read what changed, as far "
+    "as your pack and RUNBOOK rest on it, before your next item.\n")
+
+
+def rule_files_note(path):
+    """RULE_FILES_NOTE with the run-open's time, from the record at `path`; empty on a record with
+    no run-open or no time on it."""
+    events = read_record(path)[0] if os.path.isfile(path) else []
+    at = last_index(events, ("run-open",))
+    ts = events[at].get("ts") if at >= 0 else None
+    return RULE_FILES_NOTE % shlex.quote(ts) if ts else ""
 
 
 def next_out(run):
@@ -5044,7 +7807,190 @@ def head_command(binary, sid, budget, model, effort=None, resume=False):
     return cmd
 
 
+def process_table(timeout=None):
+    """(table, why): one read of `ps -A -o pid=,ppid=,stat=,etime=,args=`, bounded by
+    PS_TIMEOUT_S, as {pid: (ppid, stat, etime, args)}; (None, what could not be read) on a
+    failure, a timeout, a non-zero exit or a read with no parseable row. One function, so a leg
+    can plant a table."""
+    bound = PS_TIMEOUT_S if timeout is None else max(0.0, timeout)
+    try:
+        proc = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,stat=,etime=,args="],
+                              capture_output=True, text=True, timeout=bound)
+    except subprocess.TimeoutExpired:
+        return None, "the process table read timed out after %s s" % bound
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, "the process table could not be read (%s)" % one_line(str(exc))[:80]
+    if proc.returncode != 0:
+        return None, "ps exited %d reading the process table" % proc.returncode
+    table = {}
+    for line in proc.stdout.splitlines():
+        parts = line.split(None, 4)
+        if len(parts) < 4:
+            continue
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        table[pid] = (ppid, parts[2], parts[3], parts[4] if len(parts) > 4 else "")
+    if not table:
+        return None, "the process table read gave no parseable row"
+    return table, ""
+
+
+def shell_name(args):
+    """The program name a process table's args column starts with (a login shell's `-` dropped)."""
+    first = (args.split(None, 1) or [""])[0]
+    return os.path.basename(first).lstrip("-")
+
+
+def harness_command(command):
+    """True when a command names the harness: head_pid's test."""
+    return command == HARNESS or command.endswith(os.sep + HARNESS)
+
+
+def task_command(table, pid):
+    """What a shell child runs: its first child's args, else its own, cut at 160 characters."""
+    kids = sorted(p for p, row in table.items() if row[0] == pid)
+    return one_line(table[kids[0]][3] if kids else table[pid][3])[:160]
+
+
+BACKGROUND_TASKS_ADVICE = (
+    "A task still running keeps this process alive, and the starter then waits up to %d s with "
+    "the run unled (register 2026-10-25 16:28), or it dies with the session. Stop each now with "
+    "TaskStop and note in the pack which steps the next lead re-runs; work that must outlive you "
+    "runs detached, its pid in the pack. The successor starts the moment this process exits. At "
+    "the hard band TaskStop is denied to a lead with a successor left: the successor then starts "
+    "only when the tasks end, and the run has no acting lead meanwhile.")
+
+
+def background_tasks(seed, pred, wait_s):
+    """(kind, lines) for `successor`'s background-task check (register entry 2026-10-25 16:28):
+    each session-leading shell child of the head's own process `pred` other than this call's own
+    shell is a task the harness still runs, and a print-mode head whose task still runs does not
+    exit. `kind` is `found`, `none`, `undecided` or `not-checked`. `none` needs the same read's
+    control: this call's own shell, the member of its process chain whose parent is `pred`, is
+    in the table as a session-leading shell. A failed read, a table missing `pred`, a failed
+    control or a chain walk that is not whole is `undecided`, never `none`. Not checked, with no
+    table read: a seed process, no pid, a pid outside this call's chain, or a pid that is not
+    the harness. Read-only: nothing is signalled."""
+    def not_checked(what):
+        return "not-checked", ["successor: background tasks: not checked — the starter waits on %s"
+                               % what]
+
+    def undecided(what):
+        return "undecided", ["successor: warn: the background-task check could not run (%s): no "
+                             "task is counted — stop each task you started with TaskStop before "
+                             "your last reply" % what]
+    if seed:
+        return not_checked("the seed process")
+    if pred is None:
+        return not_checked("no pid")
+    chain, whole = process_chain_read()
+    if not whole:
+        # Any walk that is not whole is undecided, a pid found in the part read included: the
+        # check stands only on a chain read to its top (build review RV-CAP finding F7).
+        return undecided("this call's process chain could not be walked whole, %s"
+                         % ("pid %d is in the part read" % pred if pred in chain[1:] else
+                            "so whether pid %d is in it is unknown" % pred))
+    if pred not in chain[1:]:
+        return not_checked("pid %d, outside this call's process chain" % pred)
+    row = ps_row(pred)
+    if row is None:
+        return undecided("pid %d's command could not be read" % pred)
+    if not harness_command(row[2]):
+        return not_checked("pid %d, which is not the harness (%s)" % (pred, row[2]))
+    own = chain[chain.index(pred, 1) - 1]
+    table, why = process_table()
+    if table is None:
+        return undecided(why)
+    if pred not in table:
+        return undecided("pid %d is not in the process table" % pred)
+    mine = table.get(own)
+    if (mine is None or mine[0] != pred or shell_name(mine[3]) not in SHELLS
+            or "s" not in mine[1]):
+        return undecided("the control failed: this call's own process under pid %d (pid %d) is "
+                         "not a session-leading shell in the table" % (pred, own))
+    tasks = [p for p, r in sorted(table.items())
+             if r[0] == pred and p != own and "s" in r[1] and "Z" not in r[1]
+             and shell_name(r[3]) in SHELLS]
+    if not tasks:
+        return "none", ["successor: background tasks: none seen beside this call under head pid "
+                        "%d (control: this call's own shell, pid %d, is a session-leading shell "
+                        "under it; a task the process table cannot show is not counted)"
+                        % (pred, own)]
+    lines = ["successor: warn: head pid %d still runs %d background task(s) beside this call:"
+             % (pred, len(tasks))]
+    lines += ["  pid %d (running %s): %s" % (p, table[p][2], task_command(table, p))
+              for p in tasks]
+    lines.append(BACKGROUND_TASKS_ADVICE % wait_s)
+    return "found", lines
+
+
+def recorded_predecessor(events, exit_ev):
+    """(pid, source, kind) of the process a starter waits on by the record alone — `successor`'s
+    own rule with no --seed-pid or --predecessor-pid: the head-exit's pid, else no wait for a seed
+    predecessor, else the session event's pid, else transcript silence. `kind` is `pid`, `seed`
+    or `silence`; the supervisor's wait after the head's own starter aborted reads it
+    (starter_gone), so the two cannot disagree."""
+    _, sev = head_session(events)
+    if exit_ev is not None and exit_ev.get("pid") is not None:
+        return int(exit_ev["pid"]), "head-exit", "pid"
+    if seed_predecessor(events):
+        return None, "none: the predecessor is a seed session with no pid, so no wait", "seed"
+    if sev is not None and sev.get("pid") is not None:
+        return int(sev["pid"]), sev["event"], "pid"
+    return None, "none: %d s of transcript silence is the proxy" % SILENCE_PROXY_S, "silence"
+
+
+def starter_gone(events, start, tick_s, wait_s):
+    """(bound in seconds, the line naming it) for the supervisor's wait on an `unsucceeded` stop
+    once the head's own starter has gone, else (None, ""). The head's last head-exit after its
+    start is the one stop_class read; a successor-aborted after it with no head-successor means
+    the starter it called has already aborted (register entry 2026-10-25 16:28), so only a
+    starter the head called again could still start a successor. One that would wait on a pid,
+    or on nothing (a seed), starts within a second of the exit (wait_dead polls once a second):
+    STARTER_GONE_TICKS ticks. One that would wait for transcript silence starts within
+    SILENCE_PROXY_S and one SILENCE_POLL_S poll of the last write, which precedes the exit, plus
+    a tick. Never longer than `wait_s`."""
+    after = events[start + 1:]
+    hi = last_index(after, ("head-exit",))
+    if hi < 0:
+        return None, ""
+    tail = after[hi + 1:]
+    ai = last_index(tail, ("successor-aborted",))
+    if ai < 0 or any(e.get("event") == "head-successor" for e in tail):
+        return None, ""
+    _, _, kind = recorded_predecessor(events, after[hi])
+    bound = (STARTER_GONE_TICKS * tick_s if kind in ("pid", "seed")
+             else SILENCE_PROXY_S + SILENCE_POLL_S + tick_s)
+    bound = min(wait_s, bound)
+    ab = tail[ai]
+    ts = str(ab.get("ts") or "")
+    return bound, ("supervisor: the head's own starter already aborted (%s at %s): waiting %s s "
+                   "for a re-called starter, not %s s"
+                   % (ab.get("reason") or "no reason", ts[11:19] or "no ts",
+                      ("%g" % bound), ("%g" % wait_s)))
+
+
+def shell_children_text(pid):
+    """The starter's timeout note's list of the head's shell children, labelled unverified; an
+    unreadable table says so rather than reading as none (review CR-CAP2 finding 9)."""
+    table, why = process_table()
+    if table is None:
+        return "its shell children could not be read (%s)" % why
+    kids = [p for p, row in sorted(table.items()) if row[0] == pid and shell_name(row[3]) in SHELLS]
+    if not kids:
+        return ("its shell children now: none seen (a task the process table cannot show is "
+                "not counted)")
+    return "its shell children now: %s (not verified as tasks)" % "; ".join(
+        "pid %d (running %s) %s" % (p, table[p][2], task_command(table, p)) for p in kids)
+
+
 def cmd_successor(a):
+    if a.seed_pid and a.predecessor_pid is not None:
+        # An argument conflict is refused before anything is read (K3a0b95c3's review).
+        die("--seed-pid and --predecessor-pid each name the process the starter waits for: pass "
+            "one; nothing written")
     path = record_path(a.run)
     events = require_record(path)
     hi = last_index(events, HEAD_EVENTS)
@@ -5055,9 +8001,24 @@ def cmd_successor(a):
         die("a head-successor (session %s) already follows the last head-exit in %s: nothing "
             "started, since its own run-resume is the next head event"
             % (events[hi].get("session_id"), path))
+    # The cap at call time, before the model, the meter and any head-exit (register entry
+    # 2026-10-30 16:11): the starter's own test, applied while this head is still the lead.
+    count = successors_left(events, a.run)
+    if count["left"] <= 0:
+        return refuse_no_successor(path, a, "successor", count,
+                                   "Nothing was written (dry run)" if a.dry_run else
+                                   "Nothing was written but this refusal's observation")
     ro = run_open(events)
     ho = handoff_of(events, a.handoff)
-    prompt = resume_prompt(ho)
+    prompt = resume_instruction(a.run, ho)
+    # The head's model, before anything is written (K3dbf76d5): --model, else the newest head
+    # start's structured model on the record; none at all refuses the call, since a hands-off
+    # head never starts on the harness default.
+    model, msrc = resolve_head_model(events, a.model)
+    if model is None:
+        die("successor needs a model for the next head: %s; pass --model (a hands-off head never "
+            "starts on the harness default); nothing written" % msrc)
+    effort, esrc = resolve_head_effort(events, a.effort)
     xi = last_index(events, ("head-exit",))
     envelope, _ = envelope_of(events)
     if a.budget_usd is not None:
@@ -5065,25 +8026,35 @@ def cmd_successor(a):
     elif xi >= 0 and seed_exit(events[xi]) and isinstance(envelope, (int, float)) \
             and not isinstance(envelope, bool):
         # A seed head-exit records a session that never ran: it left no transcript, so the
-        # meter has nothing to read and the remainder is the envelope minus the spend the
-        # record already holds — never a premise failure (register entry 2026-09-07).
-        spent, _ = spent_sum(events, last_index(events, SESSION_EVENTS))
+        # meter has nothing to read of it and the remainder is the envelope minus the run's
+        # spend on what did run — never a premise failure (register entry 2026-09-07). The run
+        # figure is the gate's and the close's (register entry 2026-09-26 02:2x).
+        # A dry run leaves the meter cache unwritten (critic finding 9 of the review of
+        # 2026-10-11), as the gate's and the close's dry runs do.
+        spend = run_spend(events, a.run, path, session_line=a.meter_line,
+                          write_cache=not a.dry_run)
+        spent = spend["usd"] if spend["measured"] else 0.0
         budget = round(float(envelope) - spent, 2)
-        bsrc = ("envelope (seed): the last head-exit is a seed exit, so envelope $%s minus "
-                "$%.2f spent over every head-exit, unmetered" % (envelope, spent))
+        bsrc = ("envelope (seed): the last head-exit is a seed exit, so envelope $%s minus the "
+                "run's spend %s$%.2f, the session that never ran unmetered (run_spend: %s)"
+                % (envelope, "at least " if spend["floor"] else "", spent, spend["src"]))
     else:
         budget, bsrc = envelope_left(events, a.run, a.meter_line,
-                                     last_index(events, SESSION_EVENTS))
+                                     last_index(events, SESSION_EVENTS), path,
+                                     write_cache=not a.dry_run)
         if budget is None:
             die("%s; pass --budget-usd" % bsrc)
-        if budget <= 0:
-            if not a.dry_run:
-                append_record(path, event(a.run, "successor-aborted", reason="budget",
-                                          note="the envelope is spent (%s leaves $%.2f): the "
-                                               "owner tops up" % (bsrc, budget)))
-            die("the envelope is spent (%s leaves $%.2f): the owner raises it with `handsoff.py "
-                "raise-envelope --run %s --to USD --reason …`, or pass --budget-usd to extend it"
-                % (bsrc, budget, a.run))
+    # One refusal for every budget computed here rather than given (critic finding 6 of the review
+    # of 2026-10-11: the seed branch computed a remainder at or below zero and went on to launch):
+    # a spent envelope stops the call before any head-exit, detach or start.
+    if a.budget_usd is None and budget <= 0:
+        if not a.dry_run:
+            append_record(path, event(a.run, "successor-aborted", reason="budget",
+                                      note="the envelope is spent (%s leaves $%.2f): the "
+                                           "owner tops up" % (bsrc, budget)))
+        die("the envelope is spent (%s leaves $%.2f): the owner raises it with `handsoff.py "
+            "raise-envelope --run %s --to USD --reason …`, or pass --budget-usd to extend it"
+            % (bsrc, budget, a.run))
     # A head-resumed after the last head-exit starts a new head whose exit is not recorded yet
     # (review finding 2): that head's own call writes its head-exit.
     ri = last_index(events, START_EVENTS + ("head-exit",))
@@ -5105,16 +8076,19 @@ def cmd_successor(a):
         if own_pid is not None:
             exit_ev["pid"] = own_pid
         say("successor: pid %s (%s)" % ("none" if own_pid is None else own_pid, own_src))
-    if a.predecessor_pid is not None:
+    if a.seed_pid:
+        # An attended head's own process does not exit at the end of a reply, so the starter
+        # would wait its whole bound on it (register entry 2026-09-23 00:5x): it is handed a seed
+        # process instead, started below once every check has passed, which exits SEED_PID_S
+        # after this call.
+        pred, psrc = None, ("--seed-pid: a seed process that exits %d s after this call, standing "
+                            "in for an attended head whose own process does not exit at the end "
+                            "of a reply" % SEED_PID_S)
+    elif a.predecessor_pid is not None:
         pred, psrc = int(a.predecessor_pid), "--predecessor-pid"
-    elif exit_ev.get("pid") is not None:
-        pred, psrc = int(exit_ev["pid"]), "head-exit"
-    elif seed_predecessor(events):
-        pred, psrc = None, "none: the predecessor is a seed session with no pid, so no wait"
-    elif sev is not None and sev.get("pid") is not None:
-        pred, psrc = int(sev["pid"]), sev["event"]
     else:
-        pred, psrc = None, "none: %d s of transcript silence is the proxy" % SILENCE_PROXY_S
+        # The record's own rule, shared with the supervisor's wait after an abort (starter_gone).
+        pred, psrc, _ = recorded_predecessor(events, exit_ev)
     # A launcher-supplied pid that is this caller's own long-lived ancestor would hold the starter
     # on the caller itself (register entries 2026-09-10 10:51 and 2026-09-12 20:0x). A pid the
     # walk found is the exiting head's own, which the starter must outlive, so it is not tested.
@@ -5122,6 +8096,10 @@ def cmd_successor(a):
     refuse_own_ancestor([(a.pid, "--pid"), (a.predecessor_pid, "--predecessor-pid"),
                          (pred if seed is not None and pred is not None
                           and pred == seed.get("pid") else None, "the seed run-open's pid")])
+    # The background tasks the head's own process still runs beside this call (register entry
+    # 2026-10-25 16:28): named, never refused; a dry run prints them, a real call after its
+    # starter line, so the instruction is the last thing the head reads before its next act.
+    _, task_lines = background_tasks(a.seed_pid, pred, a.wait_s)
     if not have_exit:
         exit_ev["pack"] = False
     if a.reset_at:
@@ -5130,40 +8108,61 @@ def cmd_successor(a):
     transcript = transcript_for(sid) if sid else ""
     plan = ("starter: wait ≤%d s for pid %s (%s); abort if a head-successor already follows "
             "the head-exit, if the previous head-exit was unmetered too, or on timeout; then "
-            "from %s start the successor with the resume prompt (%d chars) on stdin, env "
-            "AIMYTH_HANDSOFF=1 AIMYTH_HANDSOFF_RUN=%s%s, budget $%.2f (budget_src: %s), output %s, and "
-            "supervise it (D30)" % (
-                a.wait_s, "none" if pred is None else pred, psrc, vault_root(), len(prompt),
+            "from %s start the successor with the fixed resume instruction (%d chars) on stdin, "
+            "env "
+            "AIMYTH_HANDSOFF=1 AIMYTH_HANDSOFF_RUN=%s%s, budget $%.2f (budget_src: %s), model %s "
+            "(model_src: %s), effort %s (effort_src: %s), output %s, and supervise it (D30)" % (
+                a.wait_s, "the seed's" if a.seed_pid else ("none" if pred is None else pred),
+                psrc, vault_root(), len(prompt),
                 a.run, " CLAUDE_CONFIG_DIR=%s" % a.config_dir if a.config_dir else "", budget,
-                bsrc, out))
-    cmd = head_command(a.harness_bin, "<fresh uuid4>", budget, a.model, a.effort)
+                bsrc, model, msrc, effort, esrc, out))
+    cmd = head_command(a.harness_bin, "<fresh uuid4>", budget, model, effort)
     if a.dry_run:
         say("successor: dry run · %s" % plan)
-        say("command: %s < resume prompt" % " ".join(cmd))
+        say("command: %s < resume instruction" % " ".join(cmd))
         if a.pack_fresh:
             say("successor: dry run · would record observation pack-fresh (the launcher's word "
                 "that the hand-off is current)")
         open_console_if_dark(a.run, dry_run=True)
+        for line in task_lines:
+            say(line)
         return 0
     if not have_exit:
+        refused = raced = None
         with record_lock(path):   # the supervisor or a repair may have written it meanwhile
             fresh, _ = read_record(path)
             ri = last_index(fresh, START_EVENTS + ("head-exit",))
             if ri >= 0 and fresh[ri].get("event") == "head-exit":
                 have_exit = True
+            elif successors_left(fresh, a.run)["left"] <= 0:
+                # The call-time cap again, on the record as it stands under the lock.
+                refused = successors_left(fresh, a.run)
+                raced = newer_successor(fresh, count)
             else:
                 append_record(path, exit_ev)
+        if refused is not None:
+            return refuse_no_successor(path, a, "successor", refused,
+                                       "Nothing was written but this refusal's observation",
+                                       raced)
     if a.pack_fresh:
         record_pack_fresh(path, a.run, "successor")
+    if a.seed_pid:
+        # The seed, started only now that every check has passed: its own session, its streams on
+        # /dev/null, never waited on here; the starter waits for it as for any predecessor.
+        seedproc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(%d)"
+                                     % SEED_PID_S], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    start_new_session=True, close_fds=True)
+        pred = seedproc.pid
+        plan = plan.replace("pid the seed's", "pid %d" % pred, 1)
     starter = [sys.executable, "-B", os.path.abspath(__file__), "_starter", "--run", a.run,
                "--handoff", ho, "--budget", "%.2f" % budget, "--out", out, "--wait-s",
                str(a.wait_s), "--harness-bin", a.harness_bin, "--transcript", transcript,
                "--max-wait-s", str(a.max_wait_s), "--probe-interval-s",
                str(a.probe_interval_s), "--tick-s", str(a.tick_s)]
-    if a.model:
-        starter += ["--model", a.model]
-    if a.effort:
-        starter += ["--effort", a.effort]
+    starter += ["--model", model, "--model-src", msrc]   # resolved above: never the default
+    if effort:
+        starter += ["--effort", effort, "--effort-src", esrc]
     if a.config_dir:
         starter += ["--config-dir", a.config_dir]
     if pred is not None:
@@ -5190,6 +8189,8 @@ def cmd_successor(a):
     say("successor: %s · starter pid %d detached (log %s) · %s" % (
         "head-exit already recorded" if have_exit
         else "head-exit recorded (band %s)" % exit_ev["band"], proc.pid, log, plan))
+    for line in task_lines:
+        say(line)
     return 0
 
 
@@ -5214,13 +8215,17 @@ def wait_silent(transcript, quiet, limit):
             return True
         if age >= quiet:
             return True
-        time.sleep(5)
+        time.sleep(SILENCE_POLL_S)
     return False
 
 
-def start_guards(events, hi, gone=True, why=""):
+def start_guards(events, hi, gone=True, why="", run=None):
     """The starter's loop guards over the record's last head-exit (index hi): (reason, detail)
-    for a successor-aborted event, or (None, None) when the start may go ahead."""
+    for a successor-aborted event, or (None, None) when the start may go ahead. The successor
+    cap is the run's own (successor_cap: the grants file, then AIMYTH_MAX_SUCCESSORS, then the
+    default), so a direct call of this script and a call through a wrapper read one number; the
+    count is successors_left's, the one `handoff --final`, `successor`, `gate` and the hard-band
+    hook read, so the call-time refusal and this backstop cannot disagree."""
     if hi < 0:
         return "no-head-exit", "the record carries no head-exit to succeed"
     if any(e.get("event") == "head-successor" for e in events[hi + 1:]):
@@ -5228,26 +8233,50 @@ def start_guards(events, hi, gone=True, why=""):
     if not gone:
         return "timeout", why
     earlier = [e for e in events[:hi] if e.get("event") == "head-exit"]
-    succ = [e for e in events if e.get("event") == "head-successor"]
-    cap = int(os.environ.get("AIMYTH_MAX_SUCCESSORS", "6"))   # backstop, set by judgement:
-    # a 20-hour run at ~3 h per head; the repeat-exit check below is the real guard
+    run = run or str(events[hi].get("run") or "")
+    count = successors_left(events, run)
 
     def item_before(idx):
-        """The item the head was on when it exited: the last gate before the exit, unless
-        a head event sits between (then the head exited before any gate)."""
-        for e in reversed(events[:idx]):
-            if e.get("event") == "gate":
-                return e.get("item")
-            if e.get("event") in START_EVENTS:
-                return None
-        return None
+        """The sole unfinished item proved by this head's window, else None. The latest
+        START_EVENTS event opens the window. Allowed items less completed boundaries must
+        leave exactly one item; a refusal on any item never allowed in the window means a
+        hand-over for room, regardless of gate order. A completed boundary reached before
+        any allowed gate on the backward read still names no item. Missing or malformed
+        gates cannot prove an attempt, and an earlier head's open items do not count.
+        Accepted residual: repeatedly allowing multiple unfinished items, or re-allowing
+        work and refusing an item never allowed in the window, can evade both repeat-exit
+        rules. The allowed gates prevent no_progress from catching those chains; only the
+        successor cap and the run's envelope bound them."""
+        start = last_index(events[:idx], START_EVENTS)
+        if start < 0:
+            return None
+        allowed, refused, completed = set(), set(), set()
+        for e in reversed(events[start + 1:idx]):
+            kind = e.get("event")
+            if kind == "gate":
+                item, decision = e.get("item"), e.get("decision")
+                if not isinstance(item, str) or not item or decision not in ("allow", "refuse"):
+                    return None
+                (allowed if decision == "allow" else refused).add(item)
+            elif kind == "phase-boundary":
+                if not allowed:
+                    return None
+                item = e.get("from")
+                if not isinstance(item, str) or not item:
+                    return None
+                completed.add(item)
+        unfinished = allowed - completed
+        if refused - allowed or len(unfinished) != 1:
+            return None
+        return next(iter(unfinished))
     if events[hi].get("band") == "unmetered" and earlier and \
             earlier[-1].get("band") == "unmetered":
         return "unmetered-loop", ("the previous head-exit was unmetered too: an unmetered "
                                   "fault buys at most one restart")
-    if len(succ) >= cap:
-        return "successor-cap", ("%d successors already started for this run "
-                                 "(AIMYTH_MAX_SUCCESSORS=%d)" % (len(succ), cap))
+    if count["left"] <= 0:
+        return "successor-cap", ("%d successors already started for this run, at its cap of %d "
+                                 "(%s); `handsoff.py grants --run %s --max-successors N` raises it"
+                                 % (count["used"], count["cap"], count["src"], run or "<run>"))
     if earlier and item_before(hi) is not None and \
             item_before(hi) == item_before(events.index(earlier[-1])) and \
             str(events[hi].get("band")) in ("80", "90") and \
@@ -5255,7 +8284,69 @@ def start_guards(events, hi, gone=True, why=""):
         return "repeat-exit", ("the last two head-exits followed a gate on the same item "
                                "(%s): the item does not fit the window; the hand-off is the "
                                "recovery" % item_before(hi))
+    stalled = no_progress(events, hi)
+    if stalled is not None:
+        return "repeat-exit", ("the last two head-exits, by two heads in turn at band 80 or 90, "
+                               "each followed a refused gate on the same item (%s) with no "
+                               "allowed gate and no completed boundary between the two "
+                               "refusals: no progress, and a third head would only pay another "
+                               "start to be refused again; the hand-off is the recovery"
+                               % stalled)
     return None, None
+
+
+def refused_exit(events, idx):
+    """(index, item) of the refused gate the head-exit at `idx` followed, else None. Read
+    backwards from the exit, the first gate or completed boundary decides: a refused gate naming
+    a non-empty string item answers; an allowed gate or a `phase-boundary` means the head did
+    not hand over at a refusal. A head start or an earlier head-exit ends the read with none, so the refusal is
+    always this head's own and never one an earlier exit already answered for."""
+    for j in range(idx - 1, -1, -1):
+        e = events[j]
+        kind = e.get("event")
+        if kind == "gate":
+            item = e.get("item")
+            if e.get("decision") == "refuse" and isinstance(item, str) and item:
+                return j, item
+            return None
+        if kind == "phase-boundary" or kind == "head-exit" or kind in START_EVENTS:
+            return None
+    return None
+
+
+def no_progress(events, hi):
+    """The pending item when the record's last two head-exits show no progress, else None
+    (start_guards' second repeat-exit rule, beside the attempt comparison; the fix's second
+    review, 2026-10-09). A refusal on an item never allowed in the head's window names no attempt,
+    so two heads in turn that are each refused at the same item would otherwise be bounded by the
+    successor cap alone. The rule holds when every part is read off the record: the two exits
+    (the last head-exit and the one before it) are by two different heads, the session each
+    exit's latest run-open, run-resume or head-successor names, both readable and unequal (a
+    head resumed in place keeps its session and is the same head); both sit at band 80 or 90;
+    each followed a refused gate on the same item (refused_exit); and between those two refusals
+    the record holds no allowed gate and no completed boundary. A part the record does not show
+    leaves the start alone: the guard never fires on a premise it cannot read."""
+    exits = [i for i in range(hi) if events[i].get("event") == "head-exit"]
+    if hi < 0 or not exits:
+        return None
+    pi = exits[-1]
+    if str(events[hi].get("band")) not in ("80", "90") or \
+            str(events[pi].get("band")) not in ("80", "90"):
+        return None
+    first, second = refused_exit(events, pi), refused_exit(events, hi)
+    if first is None or second is None or first[1] != second[1]:
+        return None
+    sid_first, sid_second = head_session(events[:pi])[0], head_session(events[:hi])[0]
+    if sid_first is None or sid_second is None or sid_first == sid_second:
+        return None
+    short_sid, full_sid = sorted((sid_first, sid_second), key=len)
+    if len(short_sid) >= 8 and full_sid.startswith(short_sid):
+        return None
+    for e in events[first[0] + 1:second[0]]:
+        kind = e.get("event")
+        if kind == "phase-boundary" or (kind == "gate" and e.get("decision") != "refuse"):
+            return None
+    return second[1]
 
 
 def abort(path, run, reason, detail):
@@ -5304,25 +8395,94 @@ def out_size(out):
     return os.path.getsize(out)
 
 
-def head_model_fields(a):
+def head_model_fields(a, model=None, model_src=None, effort=None, effort_src=None):
     """The model and effort a head start runs under, as its command line carries them
     (head_command), for the head-successor and head-resumed events (register entry 2026-09-10
-    20:29: watch.py's header reads them from the record alone). A start with no --model runs
-    the harness's default model: the field is null and model_src says so."""
-    model = getattr(a, "model", None) or None
-    return {"model": model, "effort": getattr(a, "effort", None) or None,
-            "model_src": "arg" if model else "harness default (no --model)"}
+    20:29: watch.py's header reads them from the record alone), with each one's provenance:
+    `arg`, or the record event it was inherited from (resolve_head_model, resolve_head_effort)."""
+    model = model or getattr(a, "model", None) or None
+    src = model_src or getattr(a, "model_src", None) or ("arg" if model else
+                                                         "harness default (no --model)")
+    effort = effort or getattr(a, "effort", None) or None
+    esrc = effort_src or getattr(a, "effort_src", None) or ("arg" if effort else "none")
+    return {"model": model, "effort": effort, "model_src": src, "effort_src": esrc}
+
+
+def resolve_head_model(events, explicit=None):
+    """(model, source) for a head this script is about to start: an explicit --model wins; else
+    the `model` field of the record's NEWEST head-start event that carries one — a head-resumed,
+    a head-successor, or a run-open or run-resume given --model — so a later resumed model wins
+    over an earlier start's; else (None, why). The free-text `head` description a run-open or
+    run-resume carries is never parsed for a model name (critic finding 5 of the batch's design
+    review). Register entry 2026-09-23 12:5x, and this run's own recurrence of 2026-10-10 13:36:
+    a successor started with no --model ran its head on the harness default."""
+    if explicit:
+        return explicit, "arg"
+    for ev in reversed(events):
+        if ev.get("event") not in START_EVENTS:
+            continue
+        model = ev.get("model")
+        if isinstance(model, str) and model.strip():
+            return model.strip(), "record: the %s at %s" % (ev.get("event"), ev.get("ts", "no ts"))
+    return None, ("the record names no head model: no head-start event carries a `model` field "
+                  "(the free-text head description is never read as one)")
+
+
+def resolve_head_effort(events, explicit=None):
+    """(effort, source) for a head this script is about to start (register entry 2026-10-04 22:58,
+    the owner's A4 of 4 October): an explicit --effort wins; else the `effort` of the record's
+    newest head-start event that carries one, so the effort a head was launched at survives a
+    resume and a succession; else HEAD_EFFORT_DEFAULT, which holds only where nothing was named."""
+    if explicit:
+        return explicit, "arg"
+    for ev in reversed(events):
+        if ev.get("event") not in START_EVENTS:
+            continue
+        effort = ev.get("effort")
+        if isinstance(effort, str) and effort.strip():
+            return effort.strip(), "record: the %s at %s" % (ev.get("event"), ev.get("ts", "no ts"))
+    return HEAD_EFFORT_DEFAULT, "default: no head start on the record names one"
+
+
+def launch_effort(a, path):
+    """(effort, source) for one actual head start (start_head, resume_head): the caller's effort
+    when it has one, else resolved from the record as it stands now (resolve_head_effort), so a
+    supervisor attached with no --effort inherits the newest at every start."""
+    if getattr(a, "effort", None):
+        return a.effort, getattr(a, "effort_src", None) or "arg"
+    return resolve_head_effort(read_record(path)[0])
+
+
+def launch_model(a, path):
+    """(model, source) for one actual head start (start_head, resume_head): the caller's model
+    when it has one (its own --model, or one resolved and passed on by `successor` or
+    `resume-head`), else resolved from the record as it stands now (resolve_head_model), so a
+    supervisor attached with no model inherits the newest at every start; (None, why) when there
+    is none, and the start is refused before any harness process exists."""
+    if getattr(a, "model", None):
+        return a.model, getattr(a, "model_src", None) or "arg"
+    return resolve_head_model(read_record(path)[0])
 
 
 def start_head(a, path, budget, out, t0, watch=None):
-    """A fresh head from the hand-off's resume prompt (the start path the starter has always
-    used), then the head-successor and supervise events: (proc, sid, out, offset, start index)
-    or None after successor-aborted, reason start-failed."""
+    """A fresh head on the fixed resume instruction naming the run and its hand-off (the start
+    path the starter has always used; never the hand-off's `## Resume prompt`, which is the
+    owner's), then the head-successor and supervise events: (proc, sid, out, offset, start
+    index) or None after successor-aborted, reason start-failed or model-unknown. A start with
+    no model to run (launch_model) is refused before any harness process exists: a hands-off head
+    never runs on the harness default (register entry 2026-09-23 12:5x; this run's recurrence of
+    2026-10-10 13:36 was the supervisor's own successor)."""
+    model, msrc = launch_model(a, path)
+    if model is None:
+        abort(path, a.run, "model-unknown", "no model for the next head: %s; no harness process "
+              "was started — start the successor by hand with --model" % msrc)
+        return None
     ho = handoff_of(read_record(path)[0], a.handoff)
     guard_pack(a, path, ho)          # a pack older than the last boundary is re-derived first
-    prompt = resume_prompt(ho)
+    prompt = resume_instruction(a.run, ho)
     sid = str(uuid.uuid4())
-    cmd = head_command(a.harness_bin, sid, budget, a.model, a.effort)
+    effort, esrc = launch_effort(a, path)
+    cmd = head_command(a.harness_bin, sid, budget, model, effort)
     offset = out_size(out)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     if watch is not None and watch.check():   # the last act before the start (D43; C2 H1: after
@@ -5339,7 +8499,7 @@ def start_head(a, path, budget, out, t0, watch=None):
     append_record(path, event(a.run, "head-successor", session_id=sid, pid=proc.pid,
                               config_dir=a.config_dir, budget=budget,
                               started_after_s=round(time.time() - t0), out=out,
-                              **head_model_fields(a)))
+                              **head_model_fields(a, model, msrc, effort, esrc)))
     events, _ = read_record(path)
     start = last_index(events, ("head-successor",))
     append_record(path, event(a.run, "supervise", mode="launched", pid=proc.pid, session_id=sid,
@@ -5357,8 +8517,9 @@ def start_head(a, path, budget, out, t0, watch=None):
 def out_result(out, offset):
     """(result, tail, note) from the .out written after `offset`: the LAST JSON object line is
     the harness's result; every other line is the tail text (a limit printed to stderr with no
-    result), cut to its last 4,000 characters. A missing, empty or JSON-less file gives an
-    empty result and a note naming the premise, never a guess."""
+    result), kept whole for terminal classification. Structured assistant/user/system records
+    are not stderr. A missing, empty or JSON-less file gives an empty result and a note naming
+    the premise, never a guess."""
     if not out or out == "none":
         return {}, "", "no .out file: transcript-only classification"
     try:
@@ -5372,7 +8533,7 @@ def out_result(out, offset):
         return {}, "", ("%s is empty" % out if offset == 0
                         else "nothing appended to %s since this head started" % out)
     lines = text.splitlines()
-    result, where = {}, -1
+    result, where, structured = {}, -1, set()
     for i in range(len(lines) - 1, -1, -1):
         stripped = lines[i].strip()
         if not stripped.startswith("{"):
@@ -5382,9 +8543,12 @@ def out_result(out, offset):
         except ValueError:
             continue
         if isinstance(rec, dict):
-            result, where = rec, i
-            break
-    tail = "\n".join(line for i, line in enumerate(lines) if i != where)[-4000:]
+            if rec.get("type") in ("assistant", "user", "system"):
+                structured.add(i)
+            if not result and rec.get("type") in (None, "result") and "result" in rec and (
+                    "subtype" in rec or "is_error" in rec):
+                result, where = rec, i
+    tail = "\n".join(line for i, line in enumerate(lines) if i != where and i not in structured)
     if not result:
         return {}, tail, "no JSON result line in %s" % out
     return result, tail, "result subtype %s" % result.get("subtype", "?")
@@ -5409,7 +8573,9 @@ def stop_class(events, start, out, offset, rc, transcript):
     lane, _, err = lane_module()
     if lane is None:
         return "classifier-missing", {"note": err, "text": ""}
-    parsed = lane.parse_transcript(transcript)
+    start_event = events[start] if 0 <= start < len(events) else {}
+    boundary = start_event.get("transcript_boundary", {"unknown": True}) if start_event.get("event") == "head-resumed" else None
+    parsed = lane.parse_transcript(transcript, boundary)
     subtype = str(result.get("subtype") or "")
     cls, signal = lane.classify(False, False, parsed, result, subtype, 0 if rc is None else rc,
                                 not result, tail)
@@ -5420,6 +8586,8 @@ def stop_class(events, start, out, offset, rc, transcript):
         note, cls = "%s (%s)" % (note, cls), "error"
     if signal:
         note = "%s · %s" % (note, signal)
+        if cls in ("network", "limit"):
+            text = signal
     return cls, {"note": note, "text": text, "subtype": subtype}
 
 
@@ -5565,6 +8733,206 @@ def stand_down(path, run, reason, detail, on_limit, src, waited):
     return 0
 
 
+# No model request or credentials: HEAD on the provider origin only.
+NETWORK_PROBE_TIMEOUT_S = 10   # set by judgement, unmeasured: bounds a connection attempt
+NETWORK_POLL_S = 30            # set by judgement, unmeasured: two checks per minute during an outage
+NETWORK_TICK_MIN_S = 0.01       # set by judgement, unmeasured: avoids a busy loop with a zero tick
+NETWORK_BACKOFF_FIRST_S = 60   # set by judgement, unmeasured: first repeated stop without progress
+NETWORK_BACKOFF_MAX_S = 1800   # set by judgement, unmeasured: about two resumes per hour at the cap
+NETWORK_NO_WORK_LIMIT = 2      # Owner-approved rule: stop after two consecutive no-work resumes.
+
+
+def network_resume_evidence(events, start, pid, record_uncertain=False):
+    """Separate positive work, readable absence and unknown; observe model answers separately.
+
+    Model-answer evidence is diagnostic only: the no-work count needs readable absence of
+    work while the provider answers. Unknown progress neither increments nor clears it.
+    The older boolean progress reader remains the backoff rule, never a no-work verdict.
+    """
+    own = usable_pid(pid) is not None and any(
+        e.get("caller_pid") == pid and e.get("event") not in (None, "heartbeat")
+        for e in events[start + 1:])
+    evidence = {"progress": "yes" if own else "unknown", "model_answer": "unknown",
+                "note": "head-authored event" if own else "progress evidence unavailable"}
+    resumed = events[start] if 0 <= start < len(events) else {}
+    boundary = resumed.get("transcript_boundary")
+    classifier, _, _ = lane_module()
+    if classifier is None or not isinstance(boundary, dict):
+        return evidence
+    try:
+        raw, uncertainty = classifier.a3_suffix(boundary)
+        if uncertainty:
+            evidence["note"] += "; " + uncertainty
+            return evidence
+        with open(boundary["path"], "rb") as handle:
+            prefix = handle.read(boundary["size"])
+        if classifier.a3_digest(prefix) != boundary["prefix_sha256"]:
+            return evidence
+        seen = set()
+        for line in prefix.splitlines():
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                return evidence
+            if isinstance(row.get("uuid"), str):
+                seen.add(row["uuid"])
+        uncertain, reached, worked = record_uncertain, False, own
+        for line in raw.splitlines():
+            try:
+                row = json.loads(line)
+            except (ValueError, UnicodeError, RecursionError):
+                uncertain = True
+                continue
+            if not isinstance(row, dict):
+                uncertain = True
+                continue
+            if row.get("type") != "assistant":
+                continue
+            message = row.get("message")
+            if not isinstance(message, dict):
+                uncertain = True
+                continue
+            model = message.get("model")
+            if isinstance(model, str) and model.startswith("<synthetic"):
+                continue
+            identity = row.get("uuid")
+            if not isinstance(model, str) or not model or not isinstance(identity, str) or not identity:
+                uncertain = True
+                continue
+            if identity in seen:
+                continue
+            reached = True
+            content = message.get("content")
+            if not isinstance(content, list):
+                uncertain = True
+                continue
+            if any(isinstance(block, dict) and (block.get("type") == "tool_use" or
+                    block.get("type") == "text" and isinstance(block.get("text"), str)
+                    and block["text"].strip()) for block in content):
+                worked = True
+        return {"progress": "yes" if worked else "unknown" if uncertain else "no",
+                "model_answer": "yes" if reached else "unknown" if uncertain else "not-observed",
+                "note": "new head work" if worked else "unreadable progress evidence" if uncertain
+                        else "readable evidence contains no new head work"}
+    except (OSError, ValueError, TypeError, KeyError, RecursionError):
+        return evidence
+
+
+def network_progress(events, start, pid, out, offset):
+    """New head-authored events or new real-model transcript content; never stdout."""
+    if usable_pid(pid) is not None and any(
+            e.get("caller_pid") == pid and e.get("event") not in (None, "heartbeat")
+            for e in events[start + 1:]):
+        return True
+    resumed = events[start] if 0 <= start < len(events) else {}
+    boundary = resumed.get("transcript_boundary")
+    classifier, _, _ = lane_module()
+    if classifier is None or not isinstance(boundary, dict):
+        return False
+    raw, uncertainty = classifier.a3_suffix(boundary)
+    if uncertainty:
+        return False
+    try:
+        with open(boundary["path"], "rb") as handle:
+            prefix = handle.read(boundary["size"])
+        if classifier.a3_digest(prefix) != boundary["prefix_sha256"]:
+            return False
+        seen = set()
+        for line in prefix.splitlines():
+            row = json.loads(line)
+            if isinstance(row, dict) and isinstance(row.get("uuid"), str):
+                seen.add(row["uuid"])
+        for line in raw.splitlines():
+            try:
+                row = json.loads(line)
+            except (ValueError, UnicodeError):
+                continue
+            if not isinstance(row, dict) or row.get("type") != "assistant":
+                continue
+            identity = row.get("uuid")
+            if not isinstance(identity, str) or not identity or identity in seen:
+                continue
+            message = row.get("message")
+            if not isinstance(message, dict):
+                continue
+            model = message.get("model")
+            if not isinstance(model, str) or not model or model.startswith("<synthetic"):
+                continue
+            content = message.get("content")
+            if isinstance(content, list) and any(isinstance(block, dict) and (
+                    block.get("type") == "tool_use" or block.get("type") == "text"
+                    and isinstance(block.get("text"), str) and block["text"].strip())
+                    for block in content):
+                return True
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    return False
+
+
+def network_delay(events, start, sid, pid, out, offset):
+    resumed = events[start] if 0 <= start < len(events) else {}
+    if (resumed.get("event") != "head-resumed" or resumed.get("session_id") != sid
+            or resumed.get("exit_class") != "network"
+            or network_progress(events, start, pid, out, offset)):
+        return 0
+    previous = resumed.get("network_delay_s") or 0
+    return min(NETWORK_BACKOFF_MAX_S, max(NETWORK_BACKOFF_FIRST_S, previous * 2))
+
+
+def connectivity_check():
+    """True/False for reachability; None when a credential-free HTTPS probe is impossible."""
+    try:
+        origin = urllib.parse.urlsplit(os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com")
+        if origin.scheme != "https" or not origin.hostname or origin.username or origin.password:
+            return None
+        port = origin.port
+    except ValueError:
+        return None
+    conn = http.client.HTTPSConnection(origin.hostname, port, timeout=NETWORK_PROBE_TIMEOUT_S)
+    try:
+        conn.request("HEAD", "/")
+        response = conn.getresponse()
+        # Authentication and not-found answers prove reachability; server errors do not.
+        return 200 <= response.status < 500
+    except (OSError, http.client.HTTPException):
+        return False
+    finally:
+        conn.close()
+
+
+def wait_for_network(a, path, start, stopped_at, watch, delay=0):
+    append_record(path, event(a.run, "stop-condition", which="network", lane="head",
+                              action="wait for a no-usage HTTPS answer, then resume"))
+    say("supervisor: network — waiting for the API; no model usage")
+    next_probe, ready_at = 0.0, None
+    while True:
+        if watch.check():
+            return "stood-down", "network", time.time() - stopped_at
+        events, _ = read_record(path)
+        if any(e.get("event") == "run-close" for e in events[start + 1:]):
+            return "closed", "network", time.time() - stopped_at
+        if any(e.get("event") in ("head-resumed", "head-successor") for e in events[start + 1:]):
+            watch.reason, watch.detail = "resumed-by-hand", "another head continuation was recorded"
+            return "stood-down", "network", time.time() - stopped_at
+        current = time.monotonic()
+        if ready_at is None and current >= next_probe:
+            answer = connectivity_check()
+            if answer is None:
+                abort(path, a.run, "network-probe-impossible",
+                      "provider origin cannot support a credential-free HTTPS probe; no resume")
+                return "probe-impossible", "invalid provider origin", time.time() - stopped_at
+            if answer:
+                ready_at = time.monotonic() + delay
+                append_record(path, event(a.run, "network-backoff", delay_s=delay,
+                                          reason="repeated network stop without head progress" if delay else "initial stop or head progress"))
+                say("supervisor: API answers; network delay %s s" % delay)
+                continue  # recheck stop and close after the connectivity check, even at zero delay
+            next_probe = current + NETWORK_POLL_S
+        if ready_at is not None and current >= ready_at:
+            return "ok", "no-usage HTTPS answer", time.time() - stopped_at
+        due = ready_at if ready_at is not None else next_probe
+        time.sleep(min(max(a.tick_s, NETWORK_TICK_MIN_S), max(NETWORK_TICK_MIN_S, due - time.monotonic())))
+
+
 def wait_for_reset(a, path, start, text, stopped_at, watch=None):
     """The limit wait (D28, D30): --reset-at first, else the stop text's reset time, and — only
     when --probe was passed (opt-in, owner ruling 2026-09-06) — the haiku probe under the same
@@ -5668,24 +9036,59 @@ RESUME_NOTE = (
     "the item in flight from your own context. The hand-off document may be older than your "
     "last action: trust the record and your context, and refresh the hand-off at the next "
     "boundary.\nLanes closed with exit class limit: resume each with lane.py resume before "
-    "anything else in that item.\n")
+    "anything else in that item, subject to D29 and lane.py advise. For a network close, check "
+    "the saved work, then use lane.py advise: resume is the default; "
+    "a fresh start is the head's judgement. Stop after two consecutive resumes with no new "
+    "work while the provider answers; unreadable progress neither advances nor resets that count.\n")
 
 
-def resume_head(a, path, sid, budget, bsrc, out, m, cls, waited, source, stopped_at):
+def resume_head(a, path, sid, budget, bsrc, out, m, cls, waited, source, stopped_at,
+                network_delay_s=0, network_no_work_n=0, successor_fallback=False):
     """`claude -p --resume <sid>` from the vault with the resume note on standard input, its
     output appended to the same .out (D30, D31): (proc, out, offset, start index) or None after
-    successor-aborted, reason resume-failed."""
-    if cls == "limit":
+    a refusal. A supervisor that can try the successor path records a non-terminal refusal;
+    a standalone resume still aborts and ends its holds."""
+    def refused(reason, detail):
+        if successor_fallback:
+            append_record(path, event(a.run, "head-resume-refused", reason=reason, note=detail))
+            say("supervisor: resume refused — %s: %s; considering the successor path"
+                % (reason, detail))
+        else:
+            abort(path, a.run, reason, detail)
+
+    if cls == "network":
+        opening = ("RESUMED after a network failure; the API answers again (%s).\n"
+                   "Read and check the unfinished work on disk before continuing.\n" % source)
+    elif cls == "limit":
         opening = ("RESUMED after the account window reset. The limit stopped this head at %s; "
                    "the window reset at %s (%s).\n"
                    % (fmt_ts(stopped_at), fmt_ts(stopped_at + waited), source))
     else:
         opening = ("RESUMED after a budget stop. The harness's cap stopped this head at %s; the "
                    "new cap is $%.2f (%s).\n" % (fmt_ts(stopped_at), budget, bsrc))
+    classifier, _, _ = lane_module()
+    if cls in ("limit", "network"):
+        problem = (classifier.resume_transcript_error(transcript_for(sid)) if classifier
+                   else "transcript reader unavailable")
+        if problem:
+            refused("resume-transcript", "cannot resume the head: " + problem)
+            return None
+    model, msrc = launch_model(a, path)
+    if model is None:
+        abort(path, a.run, "model-unknown", "no model to resume the head on: %s; no harness "
+              "process was started — resume by hand with --model" % msrc)
+        return None
     if out in (None, "none"):
         out, _ = next_out(a.run)
-    cmd = head_command(a.harness_bin, sid, budget, a.model, a.effort, resume=True)
+    effort, esrc = launch_effort(a, path)
+    cmd = head_command(a.harness_bin, sid, budget, model, effort, resume=True)
+    message = opening + RESUME_NOTE + rule_files_note(path)   # before the start: a read may refuse
     offset = out_size(out)
+    classifier, _, _ = lane_module()
+    try:
+        boundary = classifier.a3_boundary(transcript_for(sid)) if classifier else {"known": False}
+    except OSError:
+        boundary = {"unknown": True}
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "ab") as handle:
         try:
@@ -5693,23 +9096,25 @@ def resume_head(a, path, sid, budget, bsrc, out, m, cls, waited, source, stopped
                                     cwd=vault_root(), env=head_env(a.run, a.config_dir),
                                     start_new_session=True)
         except OSError as exc:
-            abort(path, a.run, "resume-failed",
-                  "cannot start %s --resume %s: %s" % (a.harness_bin, sid, exc))
+            refused("resume-failed", "cannot start %s --resume %s: %s" % (a.harness_bin, sid, exc))
             return None
-    feed(proc, opening + RESUME_NOTE)
+    feed(proc, message)
     events, _ = read_record(path)
     n = 1 + sum(1 for e in events
                 if e.get("event") == "head-resumed" and e.get("session_id") == sid)
     append_record(path, event(a.run, "head-resumed", session_id=sid, pid=proc.pid,
-                              context=m["context"], waited_s=round(waited),
+                              context=m.get("context"), waited_s=round(waited),
                               reset_source=source, resume_n=n, out=out, budget=budget,
-                              **head_model_fields(a)))
+                              exit_class=cls, network_delay_s=network_delay_s,
+                              **({"network_no_work_n": network_no_work_n} if cls == "network" else {}),
+                              transcript_boundary=boundary,
+                              **head_model_fields(a, model, msrc, effort, esrc)))
     events, _ = read_record(path)
     start = last_index(events, ("head-resumed",))
     append_record(path, event(a.run, "supervise", mode="launched", pid=proc.pid, session_id=sid,
                               out=out, supervisor_pid=os.getpid(), services_holds=True))
     say("supervisor: head-resumed pid %d session %s (resume %d) at %s tokens (%s) after %d s "
-        "→ %s" % (proc.pid, sid, n, format(m["context"], ","), m.get("source"), waited, out))
+        "→ %s" % (proc.pid, sid, n, format(m["context"], ",") if m.get("context") is not None else "unknown", m.get("source"), waited, out))
     if getattr(a, "viewer_opened", False):
         a.viewer_opened = False    # `resume-head` opened it before the detach
         say("viewer: the caller ran the opener before the detach (its lines are above in this log)")
@@ -5783,18 +9188,9 @@ def limit_exit_event(a, events, sid, start, pid, stopped_at, which):
 
 @contextlib.contextmanager
 def record_lock(path):
-    """An advisory exclusive lock on the run record itself, held only around a head-exit's
-    re-check and append (review finding 2 on register entry 2026-09-14 05:13): the supervisor,
-    `handoff --final` and `successor` each take it there, so two writers that measured in
-    parallel cannot both record a head-exit for one stop. The record is opened for append, so
-    the lock creates no file; without fcntl (off POSIX) no lock is taken."""
-    handle = open(path, "a", encoding="utf-8")
-    try:
-        if fcntl is not None:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    """The shared, stable record sidecar; nested appends reuse this transaction."""
+    with a3_shared().a3_record_lock(path):
         yield
-    finally:
-        handle.close()   # closing the descriptor releases the lock
 
 
 def stop_exit(events):
@@ -5827,7 +9223,18 @@ def owe_limit_exit(a, path, sid, start, pid, stopped_at, which):
     and again under record_lock just before the append, since a hand repair can land while the
     meter runs (review finding 2)."""
     def superseded(events):
-        return last_index(events[start + 1:], START_EVENTS + ("head-exit",)) >= 0
+        """A head-exit, a later head process (head-successor, head-resumed), or a run-open or
+        run-resume naming ANOTHER session after this head's start. The head's own run-resume —
+        the first act of every head this script starts — is not a later head: counting it left
+        an unparsed limit stop with no head-exit (register entry 2026-09-23 12:4x; the replay of
+        that run's record lines 1 to 179)."""
+        for e in events[start + 1:]:
+            kind = e.get("event")
+            if kind in ("head-exit", "head-successor", "head-resumed"):
+                return True
+            if kind in ("run-open", "run-resume") and start_session(e) != sid:
+                return True
+        return False
     events, _ = read_record(path)
     if superseded(events):
         say("supervisor: a head-exit or a later head start already follows this head's start: "
@@ -5883,7 +9290,7 @@ def succeed_exit(a, path, budget, t0, watch=None):
     """One successor after the record's last head-exit, under the loop guards (idempotent: a
     head-successor that appeared meanwhile is the duplicate guard's refusal)."""
     events, _ = read_record(path)
-    reason, detail = start_guards(events, last_index(events, ("head-exit",)))
+    reason, detail = start_guards(events, last_index(events, ("head-exit",)), run=a.run)
     if reason:
         abort(path, a.run, reason, detail)
         return None
@@ -5953,13 +9360,149 @@ def previous_stop(events):
     is skipped: nothing ran, so it cannot be the first of two consecutive faults (register
     2026-09-06). The head-exit is looked for beside the observation, which the supervisor and
     `handoff --final` write in either order."""
+    return (previous_stop_event(events)[1] or {}).get("exit_class")
+
+
+def previous_stop_event(events):
+    """(index, event) of the stop previous_stop reads — the last supervisor `head exited`
+    observation, a seed exit skipped by the same test — else (-1, None). The repeat-stop guard
+    reads the stop's recorded `progress` from it."""
     for i in range(len(events) - 1, -1, -1):
         ev = events[i]
         if ev.get("event") == "observation" and ev.get("what") == "head exited":
             if any(seed_exit(x) for x in events[max(0, i - 1):i + 2]):
                 continue
-            return ev.get("exit_class")
-    return None
+            return i, ev
+    return -1, None
+
+
+# The repeat-stop guard's pairing classes (the repeat-stop design of 2026-10-11, Revision 2): a stop
+# pairs when the supervisor would follow it with an automatic start. Never paired: a limit (its
+# wait and resume), closed, handed-over (its own successor call), classifier-missing (it aborts),
+# and a `waiting` exit, which the held-waits design keeps outside this guard; a stop the stop
+# marker stood down is excluded by stood_down_after. An unsucceeded head with its own packed
+# head-exit after its latest start has handed over; only its successor call is missing, which
+# the supervisor's existing wait covers, so it does not pair.
+REPEAT_STOP_PAIRED = ("error", "budget", "completed", "unsucceeded")
+REPEAT_STOP_UNPAIRED = ("limit", "closed", "handed-over", "classifier-missing", "waiting")
+
+
+def stop_pairs(cls, events=None, stop_i=None, pid=None):
+    """Whether a stop of class `cls` can be one of a repeat-stop pair: a named pairing class, or
+    any other named class that falls through to the successor path; never an unpaired class and
+    never a stop with no class. With the record, an unsucceeded head's own head-exit with
+    pack exactly True after its latest start does not pair. An absent pack field is not a
+    packed hand-over; a present non-boolean value cannot prove pairing and leaves it unpaired.
+    stop_i bounds a recorded stop;
+    absent, the current stop is at the end of events. A missing start or conflicting stop
+    identity cannot prove a pairing premise. Head-exits may omit pid (the hand-off command's
+    schema); the start window then attributes them. A different explicit pid does not count,
+    except the seed's explicit pid on a --pid seed record: final_pid writes it for every head.
+    An unreadable exit pid or owner cannot prove pairing either. Without events this answers
+    only the class rule, for callers inspecting the class list. Accepted residual: packed
+    hand-overs without boundaries no longer pair; repeat-exit bounds such a chain where its
+    exits name one item at band 80 or 90, otherwise the successor cap and the envelope alone
+    bound it. Re-allowed work with multiple unfinished items or a refusal on an item never
+    allowed in the window can evade both repeat-exit rules."""
+    if cls == "network":
+        return False
+    if cls == "unsucceeded" and events is not None:
+        end = len(events) if stop_i is None else stop_i
+        start = last_index(events[:end], START_EVENTS)
+        if start < 0:
+            return False
+        if stop_i is not None:
+            pid = events[stop_i].get("pid")
+        owner = event_pid(events[start])
+        if pid is not None and (usable_pid(pid) is None or owner != usable_pid(pid)):
+            return False
+        # final_pid writes a seed's explicit pid on every head's handoff --final on a seeded
+        # record, so that pid names no other head: the window attributes the exit.
+        seed = seed_run_open(events[:end])
+        seed_pid = (usable_pid(seed.get("pid"))
+                    if seed is not None and seed.get("pid_src") == "arg" else None)
+        for ev in events[start + 1:end]:
+            if ev.get("event") != "head-exit":
+                continue
+            if "pack" in ev and not isinstance(ev["pack"], bool):
+                return False
+            if ev.get("pack") is not True:
+                continue
+            if "pid" not in ev:
+                return False
+            exit_pid = usable_pid(ev.get("pid"))
+            if exit_pid is None or owner is None or exit_pid in (owner, seed_pid):
+                return False
+    if cls in REPEAT_STOP_PAIRED:
+        return True
+    return isinstance(cls, str) and cls != "" and cls not in REPEAT_STOP_UNPAIRED
+
+
+def stood_down_after(events, i):
+    """True when a `supervisor-stood-down` follows the stop observation at index `i`: its
+    supervisor stood down instead of starting anything, so that stop never pairs."""
+    return any(e.get("event") == "supervisor-stood-down" for e in events[i + 1:])
+
+
+def head_progress(events, pid, start, bad_watch, bad_stop, bad_at=None):
+    """(verdict, note) for the head that just stopped: `yes`, `no` or `unknown`, whether its own
+    process recorded progress (the repeat-stop design of 2026-10-11, Revision 2).
+
+    A head invocation is one process. Its window opens at the first start event (START_EVENTS)
+    naming `pid` after the stop recorded before `start` — this head's start event as the
+    supervisor holds it, since a hand-over's own observation is written once its successor has
+    started — so a later run-resume by the same process stays inside it and a head-resumed, a new
+    process, opens its own. Progress is a `phase-boundary` in the window whose caller_pid is
+    `pid`: `yes`. Otherwise the verdict is `unknown` where the premise cannot be read — no usable
+    pid, no start event naming it, a boundary in the window with no caller_pid, an unparseable
+    record line inside the window, or more unparseable lines at the stop (`bad_stop`) than when
+    the watch began (`bad_watch`), a line that may hold a boundary — and `no` where the window
+    holds no boundary of its own. `bad_at`, when given, places each unparseable line among
+    `events` (read_record's marks, from the same read): a line placed after the window's start
+    event lies inside it, from that start to this stop, whenever the watch began — an attach or a
+    console opened before the watch included (critic finding 3 of the review of 2026-10-11); a
+    line before the start event never disables the guard. A boundary another process wrote never
+    counts. A guard never fires on a premise it cannot read, so `unknown` never fires."""
+    pid = usable_pid(pid)
+    if pid is None:
+        return "unknown", "the supervisor holds no usable pid for the head"
+    upto = start if 0 <= start < len(events) else len(events)
+    floor = next((i for i in range(upto - 1, -1, -1)
+                  if events[i].get("event") == "observation"
+                  and events[i].get("what") == "head exited"), -1)
+    opened = next((i for i in range(floor + 1, len(events))
+                   if events[i].get("event") in START_EVENTS and event_pid(events[i]) == pid), -1)
+    if opened < 0:
+        return "unknown", "no start event names pid %d after the previous stop" % pid
+    own = unattributed = foreign = 0
+    for ev in events[opened + 1:]:
+        if ev.get("event") != "phase-boundary":
+            continue
+        caller = usable_pid(ev.get("caller_pid"))
+        if caller == pid:
+            own += 1
+        elif caller is None:
+            unattributed += 1
+        else:
+            foreign += 1
+    where = "since its %s at %s" % (events[opened].get("event"), events[opened].get("ts", "no ts"))
+    if own:
+        return "yes", "%d boundary event(s) by pid %d %s" % (own, pid, where)
+    if unattributed:
+        return "unknown", ("%d boundary event(s) %s carry no caller_pid, so whose they are cannot "
+                           "be read" % (unattributed, where))
+    inside = [k for k in (bad_at or ()) if k > opened]
+    if inside:
+        return "unknown", ("%d unparseable record line(s) lie inside this head's window, after its "
+                           "%s at %s: a line that cannot be read may hold its boundary"
+                           % (len(inside), events[opened].get("event"),
+                              events[opened].get("ts", "no ts")))
+    if bad_stop > bad_watch:
+        return "unknown", ("the record's unparseable lines rose from %d to %d while this head was "
+                           "watched: a line that cannot be read may hold its boundary"
+                           % (bad_watch, bad_stop))
+    return "no", "no boundary event by pid %d %s%s" % (
+        pid, where, " (%d by another process)" % foreign if foreign else "")
 
 
 # ------------------------------------------------------------------- held lanes ------------
@@ -6311,6 +9854,8 @@ def cmd_hold(a):
         die("lane %s/%s has no lane-closed after its latest start: a hold keeps a FINISHED lane "
             "warm; `watch` it first" % (a.run, lane))
     closed = events[close_i]
+    if not a3_can_beat(path, a.run, lane):
+        die("a held or unsettled task disposition is not a cache hold")
     cls = closed.get("exit_class")
     if cls not in HOLDABLE_EXITS:
         die("lane %s/%s closed %s: a beat re-enters only a close in %s (a limit or budget close "
@@ -6528,6 +10073,7 @@ def issue_beat(a, path, lane, harness, state, age, src):
     timeout) the supervisor writes one with ok false, so every attempt is on the record exactly
     once and the reference moves — no retry within this tick or the next interval."""
     wrapper = beat_wrapper(harness)
+    invocation = uuid.uuid4().hex
     n = len(state["beats"]) + 1
     before = len(read_record(path)[0])
     t0 = time.time()
@@ -6539,6 +10085,7 @@ def issue_beat(a, path, lane, harness, state, age, src):
                "--beat", "--format", "json"]
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", AIMYTH_VIEWER="none")
         env[BEAT_BY_ENV] = "supervisor"
+        env["A3_BEAT_INVOCATION"] = invocation
         timeout = getattr(a, "beat_timeout_s", HOLD_BEAT_TIMEOUT_S)
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
@@ -6567,6 +10114,8 @@ def issue_beat(a, path, lane, harness, state, age, src):
                duration))
         return ok
     append_record(path, event(a.run, "hold-beat", lane=lane, harness=harness, ok=False, n=n,
+                              invocation_id=invocation, observation_only=True,
+                              harness_may_survive=rc not in (2,) and os.path.isfile(wrapper),
                               by="supervisor", wrapper=wrapper, process_exit=rc,
                               duration_s=duration, usage=None,
                               error=one_line(err)[-NOTE_CUT:] if err else "exit %s" % rc,
@@ -6682,6 +10231,9 @@ def service_holds(a, path):
                 "tick ends the hold" % (a.run, lane,
                                         fresh[fresh_close].get("exit_class") or "unstated"))
             continue
+        if not a3_can_beat(path, a.run, lane):
+            say("supervisor: held or unsettled task disposition; no beat")
+            continue
         issue_beat(a, path, lane, lane_harness(opened), state, now_ts - ref, rsrc)
 
 
@@ -6713,6 +10265,7 @@ def wait_head(a, path, proc, pid):
                 # This supervisor's own stop state, read before the service and again inside it
                 # from the record it reads anyway: a stop asked for by marker is honoured at
                 # once, without waiting for the stand-down the head's exit will write.
+                a3_observe_helpers(path, a.run)
                 blocked = hold_service_blocked(a, path, ())[0]
                 if blocked:
                     say("supervisor: the open holds are not serviced: %s" % blocked)
@@ -6743,29 +10296,48 @@ def supervise_loop(a, path, sid, proc, pid, out, offset, start, t0):
     loop. Exit 0 when the run ended or was handed over, 1 after successor-aborted. The wait
     ticks every --tick-s to service the record's open holds."""
     while True:
+        # The unparseable-line count as this head's watch begins: a rise by its stop is a line
+        # inside its window that cannot be read, and one from before it never disables the guard.
+        bad_watch = read_record(path)[1]
         rc = wait_head(a, path, proc, pid)
         if proc is not None:
             pid = proc.pid
         stopped_at = time.time()
-        events, _ = read_record(path)
+        # Where each unparseable line sits among the events, read with them (critic finding 3 of
+        # the review of 2026-10-11): a line written after the head's start event and before this
+        # watch began — an attach, or the console opened after the start — lies inside its window
+        # as surely as one the watch saw arrive.
+        bad_at = []
+        events, bad_stop = read_record(path, bad_at)
         cls, d = stop_class(events, start, out, offset, rc, transcript_for(sid) if sid else None)
+        unsucceeded_wait = a.wait_s
         if cls == "unsucceeded":
-            # C2 N4: the head's own successor call may still be on its way (the starter's wait)
-            deadline = stopped_at + a.wait_s
+            # C2 N4: the head's own successor call may still be on its way (the starter's wait).
+            # Once that starter has aborted, only a re-called one could start a successor, and
+            # its own wait bounds this one (starter_gone; register entry 2026-10-25 16:28).
+            gone_bound, gone_line = starter_gone(events, start, a.tick_s, a.wait_s)
+            if gone_bound is not None:
+                unsucceeded_wait = gone_bound
+                say(gone_line)
+            deadline = stopped_at + unsucceeded_wait
             while time.time() < deadline:
                 time.sleep(max(0.0, min(a.tick_s, deadline - time.time())))
-                events, _ = read_record(path)
+                bad_at = []
+                events, bad_stop = read_record(path, bad_at)
                 cls, d = stop_class(events, start, out, offset, rc, None)
                 if cls != "unsucceeded":
                     break
-        before = previous_stop(events)
+        before_i, before_ev = previous_stop_event(events)
+        before = (before_ev or {}).get("exit_class")
+        progress, progress_note = head_progress(events, pid, start, bad_watch, bad_stop, bad_at)
         append_record(path, event(a.run, "observation", phase="", what="head exited",
-                                  exit_class=cls,
+                                  exit_class=cls, pid=pid, progress=progress,
+                                  progress_note=progress_note,
                                   note="session %s exit %s after %d s → %s (%s); output %s"
                                        % (sid, "unknown" if rc is None else rc,
                                           stopped_at - t0, cls, d["note"], out)))
-        say("supervisor: session %s exit %s → %s (%s)"
-            % (sid, "unknown" if rc is None else rc, cls, d["note"]))
+        say("supervisor: session %s exit %s → %s (%s) · progress %s (%s)"
+            % (sid, "unknown" if rc is None else rc, cls, d["note"], progress, progress_note))
         if cls in ("handed-over", "closed"):
             append_record(path, event(a.run, "observation", phase="", what="supervisor ended",
                                       note="%s: %s" % (cls, d["note"])))
@@ -6785,15 +10357,60 @@ def supervise_loop(a, path, sid, proc, pid, out, offset, start, t0):
                               on_limit, osrc, time.time() - stopped_at)
         if cls == "classifier-missing":
             return abort(path, a.run, "classifier-missing", d["note"])
-        # Two stops of the same fault end the loop, the successor cap being only the backstop:
-        # `error` and `budget` in either order, and `completed` against itself — a head that
-        # exits completed with neither a head-exit nor a run-close leaves nothing behind for
-        # its successor to do differently, so the second such exit is a loop, not progress.
-        if (cls in ("error", "budget") and before in ("error", "budget")) or \
-                (cls == "completed" and before == "completed"):
-            return abort(path, a.run, "repeat-stop", "two consecutive %s and %s stops: the "
-                         "head does not get a third start on the same fault" % (before, cls))
+        # Two stops in a row whose heads each made no progress end the loop, the successor cap
+        # being only the backstop (the repeat-stop design of 2026-10-11, Revision 2, after its
+        # design review): this stop and the previous recorded one both pair (stop_pairs, any mix
+        # of classes; the previous one not stood down) and both read `progress: no`, a boundary by
+        # neither head's own process. A head that recorded a boundary breaks the pair; `unknown`
+        # on either side — and an observation written before the field existed reads unknown —
+        # leaves the start to the successor cap and the stop marker. An abort and a restart
+        # between the two reset nothing: a restarted head breaks the pair with a boundary.
+        # An unsucceeded head's own packed exit also breaks the pair: its hand-over is on the
+        # record, and the wait above already covered its missing successor call.
+        if stop_pairs(cls, events, pid=pid) and progress == "no" and before_ev is not None and \
+                stop_pairs(before, events, before_i) and not stood_down_after(events, before_i) and \
+                before_ev.get("progress") == "no":
+            return abort(path, a.run, "repeat-stop", "two consecutive %s and %s stops with no "
+                         "progress (%s; %s): the head does not get a third start without one"
+                         % (before, cls, before_ev.get("progress_note", "no note"),
+                            progress_note))
         waited, source, watch = 0.0, "none: no wait after a %s stop" % cls, None
+        delay = 0
+        network_no_work_n = 0
+        if cls == "network":
+            if not sid:
+                return abort(path, a.run, "session-unknown", "network stop has no head session to resume")
+            resumed = events[start] if 0 <= start < len(events) else {}
+            is_network_resume = (resumed.get("event") == "head-resumed" and
+                                 resumed.get("session_id") == sid and resumed.get("exit_class") == "network")
+            if is_network_resume:
+                network_no_work_n = resumed.get("network_no_work_n")
+                if type(network_no_work_n) is not int or network_no_work_n < 0:
+                    return abort(path, a.run, "network-state-unknown", "unreadable network resume count")
+            evidence = network_resume_evidence(events, start, pid,
+                record_uncertain=bad_stop > bad_watch or any(k > start for k in bad_at))
+            delay = network_delay(events, start, sid, pid, out, offset)
+            watch = StandDown(a.run, transcript_for(sid) if sid else None, "resume", "network")
+            status, source, waited = wait_for_network(a, path, start, stopped_at, watch, delay)
+            if status == "stood-down":
+                return stand_down(path, a.run, watch.reason, watch.detail, "resume", "network", waited)
+            if status == "closed":
+                return 0
+            if status != "ok":
+                return 1
+            # A provider wait is not a resume. Once it answers, judge the completed resume:
+            # readable absence counts, positive work resets, unknown progress does neither.
+            if is_network_resume:
+                if evidence["progress"] == "yes":
+                    network_no_work_n = 0
+                elif evidence["progress"] == "no":
+                    network_no_work_n += 1
+            append_record(path, event(a.run, "network-resume-judged", session_id=sid, pid=pid,
+                                      resumed=is_network_resume, provider_answer=True,
+                                      no_work_n=network_no_work_n, **evidence))
+            if network_no_work_n >= NETWORK_NO_WORK_LIMIT:
+                return abort(path, a.run, "network-no-progress",
+                             "two network resumes did no new work while the provider answered")
         if cls == "limit":
             on_limit, osrc, gpath = run_on_limit(events, a.run)
             if on_limit != "resume":   # the gate's default (D42): stand down, no wait
@@ -6837,9 +10454,16 @@ def supervise_loop(a, path, sid, proc, pid, out, offset, start, t0):
         budget, bsrc = remainder(events, a, cls, start)
         if budget is None:
             return abort(path, a.run, "budget", bsrc)
+        # Every start below needs a model (K3dbf76d5): one refusal here, before either fork, so
+        # a resume that cannot start never falls through to a successor that cannot either.
+        model, msrc = launch_model(a, path)
+        if model is None:
+            return abort(path, a.run, "model-unknown", "no model for the next head: %s; no "
+                         "harness process was started — start the successor by hand with "
+                         "--model" % msrc)
         if cls == "unsucceeded":
             say("supervisor: the head-exit has no successor after %d s — starting one at $%.2f "
-                "(%s)" % (a.wait_s, budget, bsrc))
+                "(%s)" % (unsucceeded_wait, budget, bsrc))
             started = succeed_exit(a, path, budget, t0)
             if started is None:
                 return 1
@@ -6848,19 +10472,23 @@ def supervise_loop(a, path, sid, proc, pid, out, offset, start, t0):
         m = head_context(sid, events, start)
         resumes = sum(1 for e in events
                       if e.get("event") == "head-resumed" and e.get("session_id") == sid)
-        if cls in ("limit", "budget") and m.get("context") is not None and \
-                resume_in_place(events, m, stopped_at) and resumes < RESUME_CAP:
+        if (cls in ("limit", "network", "budget") and m.get("context") is not None and
+                resume_in_place(events, m, stopped_at, remaining_of(a, events))
+                and resumes < RESUME_CAP):
             events, _ = read_record(path)
             if any(e.get("event") in ("head-resumed", "head-successor")
                    for e in events[start + 1:]):
                 return abort(path, a.run, "duplicate-resume", "a head-resumed or head-successor "
                              "already follows this head's start: another supervisor got there "
                              "first")
+            if any(e.get("event") == "run-close" for e in events[start + 1:]):
+                return 0
             if watch is not None and watch.check():   # the last act before a start (D43)
                 return stand_down(path, a.run, watch.reason, watch.detail, watch.on_limit,
                                   watch.src, waited)
             resumed = resume_head(a, path, sid, budget, bsrc, out, m, cls, waited, source,
-                                  stopped_at)
+                                  stopped_at, network_delay_s=delay, network_no_work_n=network_no_work_n,
+                                  successor_fallback=cls in ("limit", "network"))
             if resumed is not None:
                 proc, out, offset, start = resumed
                 continue
@@ -6876,9 +10504,24 @@ def supervise_loop(a, path, sid, proc, pid, out, offset, start, t0):
         proc, sid, out, offset, start = started
 
 
+def open_lanes_line(events):
+    """The starter's first line: every lane open on the whole record (open_lane_attempts) with
+    its processes' liveness as the record names them — read, never signalled or restarted
+    (register entry 2026-09-24 00:4x: detached lanes died at hand-overs, and nothing showed which
+    were open when the successor path ran)."""
+    lanes = open_lane_attempts(events)
+    if not lanes:
+        return "starter: open lanes at the start: none on the record"
+    return "starter: open lanes at the start (%d): %s" % (len(lanes), "; ".join(
+        "%s open since %s (%s)" % (lane, opened.get("ts", "no ts"), lane_liveness(spawned))
+        for lane, opened, spawned in lanes))
+
+
+@a3_expose_notices
 def cmd_starter(a):
     t0 = time.time()
     path = record_path(a.run)
+    say(open_lanes_line(read_record(path)[0]))
     # No ancestor test here: during a normal hand-over the exiting head's own process is this
     # starter's ancestor until `successor` returns, so the test cannot tell a launcher's pid from
     # the head's. `successor` refuses a launcher-supplied one; a wait that outlives its bound
@@ -6895,17 +10538,32 @@ def cmd_starter(a):
         why = "predecessor pid %d alive after %d s" % (a.predecessor_pid, a.wait_s)
         if not gone:
             age, row = process_age_s(a.predecessor_pid), ps_row(a.predecessor_pid)
-            why += (" (%s, running %s): a long-lived process — a launcher's own, or an attended "
-                    "conversation's — does not exit at the end of a reply; a seed pid must "
-                    "belong to a process that exits within seconds"
-                    % (row[2] if row else "command unknown",
-                       "for an unknown time" if age is None else "%d s" % age))
+            evs = read_record(path)[0]
+            si = last_index(evs, START_EVENTS)
+            if (si >= 0 and event_pid(evs[si]) == a.predecessor_pid and row is not None
+                    and harness_command(row[2])):
+                # The head's own process outlived its hand-over (register entry 2026-10-25
+                # 16:28): the reason stays `timeout`, which launch-check reads; the note names
+                # the likely cause and what follows.
+                why += (" (%s, running %s): the head's own process, still alive after its "
+                        "hand-over — a print-mode head stays alive while a background task it "
+                        "started runs; %s; its supervisor starts the successor once it exits, "
+                        "within three ticks of the exit"
+                        % (row[2], "for an unknown time" if age is None else "%d s" % age,
+                           shell_children_text(a.predecessor_pid)))
+            else:
+                why += (" (%s, running %s): a long-lived process — a launcher's own, or an "
+                        "attended conversation's — does not exit at the end of a reply; a seed "
+                        "pid must belong to a process that exits within seconds"
+                        % (row[2] if row else "command unknown",
+                           "for an unknown time" if age is None else "%d s" % age))
     else:
         say("starter: %s pid %d waits for transcript silence" % (now(), os.getpid()))
         gone = wait_silent(a.transcript, SILENCE_PROXY_S, a.wait_s)
         why = "transcript %s still changing after %d s" % (a.transcript, a.wait_s)
     events, _ = read_record(path)
-    reason, detail = start_guards(events, last_index(events, ("head-exit",)), gone, why)
+    reason, detail = start_guards(events, last_index(events, ("head-exit",)), gone, why,
+                                  run=a.run)
     if reason:
         return abort(path, a.run, reason, detail)
     # One of the marker's three clearing sites: this starter is detached by cmd_successor and by
@@ -6978,11 +10636,11 @@ def cmd_supervise(a):
     cmd = [sys.executable, "-B", os.path.abspath(__file__), "_supervise", "--run", a.run,
            "--pid", str(pid), "--session", sid, "--out", out, "--harness-bin", a.harness_bin,
            "--max-wait-s", str(a.max_wait_s), "--probe-interval-s", str(a.probe_interval_s),
-           "--tick-s", str(a.tick_s), "--wait-s", str(a.wait_s), "--effort", a.effort,
+           "--tick-s", str(a.tick_s), "--wait-s", str(a.wait_s),
            "--beat-timeout-s", str(a.beat_timeout_s)]
     if a.probe:
         cmd += ["--probe"]   # never on its own: only when this caller opted in (2026-09-06)
-    for flag, value in (("--reset-at", a.reset_at), ("--model", a.model),
+    for flag, value in (("--reset-at", a.reset_at), ("--model", a.model), ("--effort", a.effort),
                         ("--config-dir", a.config_dir), ("--handoff", a.handoff),
                         ("--meter-line", a.meter_line)):
         if value:
@@ -7021,15 +10679,25 @@ def cmd_watch(a):
     os.execv(sys.executable, [sys.executable, "-B", script] + argv)
 
 
+@a3_expose_notices
 def cmd_resume_head(a):
     """`resume-head` (D42's recovery; critic C2 M4): resume the record's last head session in
     place — armed, evented and supervised — the owner's command after a limit the run stood down
-    on, instead of an unarmed hand-run `claude -p --resume`. Detaches at once, like `supervise`."""
+    on, instead of an unarmed hand-run `claude -p --resume`. Detaches at once, like `supervise`.
+    The head resumes on --model, else the newest head start's structured model on the record;
+    a record naming none is refused before anything is written (register entry 2026-09-23 12:5x)."""
     path = record_path(a.run)
     events = require_record(path)
     sid, sev = head_session(events)
     if not sid:
         die("no head session in the record: run-open first")
+    # The model the head is resumed on, before anything detaches (K3dbf76d5): --model, else the
+    # newest head start's structured model on the record; none refuses the call.
+    model, msrc = resolve_head_model(events, a.model)
+    if model is None:
+        die("resume-head needs a model to resume the head on: %s; pass --model (a hands-off head "
+            "never starts on the harness default); nothing written" % msrc)
+    effort, esrc = resolve_head_effort(events, a.effort)
     out, osrc = a.out, "--out"
     if not out and sev is not None and sev.get("out"):
         out, osrc = sev["out"], sev.get("event")
@@ -7045,11 +10713,12 @@ def cmd_resume_head(a):
     cmd = [sys.executable, "-B", os.path.abspath(__file__), "_resume-head", "--run", a.run,
            "--session", sid, "--out", out, "--harness-bin", a.harness_bin,
            "--max-wait-s", str(a.max_wait_s), "--probe-interval-s", str(a.probe_interval_s),
-           "--tick-s", str(a.tick_s), "--wait-s", str(a.wait_s), "--effort", a.effort,
-           "--beat-timeout-s", str(a.beat_timeout_s)]
+           "--tick-s", str(a.tick_s), "--wait-s", str(a.wait_s), "--effort", effort,
+           "--effort-src", esrc,
+           "--beat-timeout-s", str(a.beat_timeout_s), "--model", model, "--model-src", msrc]
     if a.probe:
         cmd += ["--probe"]
-    for flag, value in (("--reset-at", a.reset_at), ("--model", a.model),
+    for flag, value in (("--reset-at", a.reset_at),
                         ("--config-dir", a.config_dir), ("--handoff", a.handoff),
                         ("--meter-line", a.meter_line)):
         if value:
@@ -7057,8 +10726,8 @@ def cmd_resume_head(a):
     if a.budget_usd is not None:
         cmd += ["--budget-usd", "%.2f" % a.budget_usd]
     if a.dry_run:
-        say("resume-head: dry run · session %s · out %s (%s) · would detach %s%s"
-            % (sid, out, osrc, " ".join(cmd[3:]),
+        say("resume-head: dry run · session %s · out %s (%s) · model %s (%s) · would detach %s%s"
+            % (sid, out, osrc, model, msrc, " ".join(cmd[3:]),
                " · would record observation pack-fresh" if a.pack_fresh else ""))
         open_console_if_dark(a.run, dry_run=True)
         return 0
@@ -7092,9 +10761,14 @@ def cmd_resume_head_internal(a):
         return abort(path, a.run, "budget", bsrc)
     m = head_context(a.session, events, start)
     if m.get("context") is None:
-        return abort(path, a.run, "resume-unsized", "the head's context cannot be sized (no "
-                     "transcript, no gate event): start the successor from the hand-off instead")
-    verdict, why, stop_cls, stopped_at = resume_guard(events, m, start)
+        # The path sought is named (register entry 2026-09-24 07:3x: the abort said `no
+        # transcript` of a head whose transcript existed, and nothing said where it had looked).
+        sought = m.get("transcript") or transcript_for(a.session)
+        return abort(path, a.run, "resume-unsized", "the head's context cannot be sized: no "
+                     "usable transcript (sought %s: %s) and no gate event with a context in the "
+                     "session's span: start the successor from the hand-off instead"
+                     % (sought, one_line(str(m.get("reason") or "unknown"))[:NOTE_CUT]))
+    verdict, why, stop_cls, stopped_at = resume_guard(events, m, start, remaining_of(a, events))
     if verdict != "ok":
         return abort(path, a.run, verdict, why)
     clear_stop_marker(a.run)
@@ -7110,36 +10784,55 @@ def cmd_resume_head_internal(a):
 def cmd_grants(a):
     """Rewrite the run's grants file and run-<sid> pointer (C2 N7): for a head whose file is
     missing or wrong, since a second run-open is refused by design. A list the call does not
-    name is carried from the file, and the shrink guard refuses a rewrite that would lose a
-    write path the call does not re-issue (register entry 2026-09-12 21:3x). --network rewrites
-    the network key, and without it the file's value is carried."""
+    name is carried from the file; --add-grant and --add-write add to the baseline's lists; and
+    the shrink guard refuses any rewrite that would lose a path from either list unless the call
+    passes --replace (register entries 2026-09-12 21:3x and 2026-09-29 20:49). --network rewrites
+    the network key and --max-successors the run's successor cap; without them the file's values
+    are carried."""
     refuse_grants_file(a)
+    check_grant_forms(a, "grants")
     path = record_path(a.run)
     events = require_record(path)
     sid, _ = head_session(events)
     if not sid:
         die("no head session in the record: run-open first")
     gpath = grants_path(a.run)
-    on_limit, osrc = on_limit_choice(a, gpath)
-    viewer, vsrc = viewer_choice(a, gpath)
-    network, nsrc = network_choice(a, gpath)
-    payload, sources, dropped, against = grants_plan(a, gpath, events, "grants")
-    guard_shrink(a, "grants", dropped, against)
-    ev = event(a.run, "grants", grants_file=gpath, grants=payload["grants"],
-               writes=payload["writes"], session=sid, on_limit=on_limit, on_limit_src=osrc,
-               viewer=viewer, viewer_src=vsrc, network=network, network_src=nsrc,
-               grants_src=sources["grants"], writes_src=sources["writes"])
+
+    def plan(events):
+        on_limit, osrc = on_limit_choice(a, gpath)
+        viewer, vsrc = viewer_choice(a, gpath)
+        network, nsrc = network_choice(a, gpath)
+        cap, csrc = max_successors_choice(a, gpath)
+        payload, sources, dropped, against = grants_plan(a, gpath, events, "grants")
+        guard_shrink(a, "grants", dropped, against)
+        ev = event(a.run, "grants", grants_file=gpath, grants=payload["grants"],
+                   writes=payload["writes"], session=sid, on_limit=on_limit, on_limit_src=osrc,
+                   viewer=viewer, viewer_src=vsrc, network=network, network_src=nsrc,
+                   grants_src=sources["grants"], writes_src=sources["writes"])
+        if cap is not None:
+            ev["max_successors"], ev["max_successors_src"] = cap, csrc
+        return payload, sources, ev
+
     if a.dry_run:
+        _, _, ev = plan(events)
         say("grants: dry run · %s" % json.dumps(ev, ensure_ascii=False))
         return 0
-    write_grants(gpath, payload)
-    write_pointer(a.run, sid)
-    append_record(path, ev)
+    # The plan, the file and the event under the record's lock, the record re-read inside it: two
+    # calls adding a path each serialise here, so neither addition is lost (critic finding 4 of
+    # the batch's design review).
+    with record_lock(path):
+        events, _ = read_record(path)
+        payload, sources, ev = plan(events)
+        write_grants(gpath, payload)
+        write_pointer(a.run, sid)
+        append_record(path, ev)
     say("grants: %s · %d grants (%s) · %d writes (%s) · on_limit %s (%s) · viewer %s (%s) · "
-        "network %s (%s) · pointer run-%s"
+        "network %s (%s)%s · pointer run-%s"
         % (ev["grants_file"], len(payload["grants"]), sources["grants"], len(payload["writes"]),
-           sources["writes"], on_limit, osrc, viewer, vsrc, network_shown(network), nsrc,
-           sid[:8]))
+           sources["writes"], ev["on_limit"], ev["on_limit_src"], ev["viewer"],
+           ev["viewer_src"], network_shown(ev["network"]), ev["network_src"],
+           " · max_successors %d (%s)" % (ev["max_successors"], ev["max_successors_src"])
+           if "max_successors" in ev else "", sid[:8]))
     return 0
 
 
@@ -7154,6 +10847,14 @@ def read_pidfile(path):
 
 
 def cmd_heartbeat(a):
+    # Before the record, the pid file, the stop marker or any wait (register entry 2026-09-25
+    # 18:2x: a `-p` head armed the run's one heartbeat and blocked the attended watch's beat): a
+    # caller under AIMYTH_HANDSOFF=1 is a hands-off head, which has no idle state for a beat to
+    # refresh, so the call is refused with one line and touches nothing.
+    if os.environ.get("AIMYTH_HANDSOFF") == "1":
+        die("heartbeat refused: this caller runs under AIMYTH_HANDSOFF=1, a hands-off head, which "
+            "has no idle state for a beat to refresh; the run's one heartbeat belongs to an "
+            "attended session; nothing armed, stopped or written")
     path = record_path(a.run)
     require_record(path)
     pid_file, stop_file = heartbeat_files(a.run)
@@ -7353,25 +11054,30 @@ def cmd_wait_reset(a):
 
 def report_stops_text(events):
     """The warnings bullet's text: every head limit stop on the record (a stop-condition whose
-    `which` opens `limit`) with the head-resumed that followed it and the minutes between, and
+    `which` opens `limit`) with the first head start that followed it — a head-successor,
+    run-resume or head-resumed (register entry 2026-09-24 13:1x) — and the minutes between, and
     every lane closed `limit`; each count stated, so none reads as searched-and-empty."""
     heads = []
     for i, ev in enumerate(events):
         if ev.get("event") != "stop-condition" or not str(ev.get("which") or "").startswith("limit"):
             continue
         who = ev.get("lane") or "head"
-        resumed = next((x for x in events[i + 1:] if x.get("event") == "head-resumed"), None)
+        # The stop ends at the first head start after it (WAIT_END_EVENTS; register entry
+        # 2026-09-24 13:1x), so a successor that took over is named rather than a later resume.
+        resumed = next((x for x in events[i + 1:] if x.get("event") in WAIT_END_EVENTS), None)
         t0 = parse_ts(ev.get("ts"))
         t1 = parse_ts(resumed.get("ts")) if resumed is not None else None
         if resumed is None:
-            heads.append("%s at %s (%s), no head-resumed after it" % (who, ev.get("ts", "no ts"),
-                                                                     ev.get("which")))
+            heads.append("%s at %s (%s), no head start after it" % (who, ev.get("ts", "no ts"),
+                                                                    ev.get("which")))
         elif t0 is not None and t1 is not None and t1 >= t0:
-            heads.append("%s at %s (%s) → head-resumed %s, %.1f min" % (
-                who, ev.get("ts"), ev.get("which"), resumed.get("ts"), (t1 - t0) / 60.0))
+            heads.append("%s at %s (%s) → %s %s, %s min" % (
+                who, ev.get("ts"), ev.get("which"), resumed.get("event"), resumed.get("ts"),
+                fmt_min((t1 - t0) / 60.0)))
         else:
-            heads.append("%s at %s (%s) → head-resumed %s" % (
-                who, ev.get("ts", "no ts"), ev.get("which"), resumed.get("ts", "no ts")))
+            heads.append("%s at %s (%s) → %s %s" % (
+                who, ev.get("ts", "no ts"), ev.get("which"), resumed.get("event"),
+                resumed.get("ts", "no ts")))
     lanes = ["%s at %s" % (ev.get("lane") or "unnamed lane", ev.get("ts", "no ts"))
              for ev in events if ev.get("event") == "lane-closed" and ev.get("exit_class") == "limit"]
     return "%d limit stop(s)%s · %d lane(s) closed limit%s · read from the record at the close" % (
@@ -7453,7 +11159,7 @@ def plain_totals(events):
     return sorted(names), by_exit, round(spend, 2), src
 
 
-def close_plain(a, path, events):
+def close_plain(a, path, events, acked=None, seen=None):
     """`close` on the plain-lane-run shape (the register entry of 2026-09-06, widened
     2026-09-07): the `run-close` is written from the lane events alone.
 
@@ -7483,6 +11189,10 @@ def close_plain(a, path, events):
         say("close: lanes %d (%s) · spend $%.2f (%s) · would write no hand-off row, no commit, "
             "no push" % (len(names), tally, spend, src))
         return 0
+    held, fields = close_recheck(a, path, acked, len(events) if seen is None else seen)
+    if held is not None:
+        return held
+    ev.update(fields)
     ev["holds_ended"] = end_open_holds(path, a.run, events, "close")
     append_record(path, ev)
     say("close: %s · plain lane run (no run-open) · lanes %d (%s) · spend $%.2f (%s) · "
@@ -7491,14 +11201,181 @@ def close_plain(a, path, events):
     return 0
 
 
-def cmd_close(a):
+def close_statements(a):
+    """The close's statements, checked before anything is read or written (register entry
+    2026-09-20 02:12: a run-close carried items, register, log and lint `unstated`, and the
+    record's own verdict on the items lived only in a hand-off). --items is required: absent or
+    blank, the close is refused (exit 2) — a dry run reads it as unstated with a note, since it
+    writes nothing. An absent --register, --log or --lint is written `unstated` with one stderr
+    note each."""
+    if a.items is None or not str(a.items).strip():
+        if not a.dry_run:
+            die("close needs --items: the record's own verdict on the run's items (for example "
+                "\"item1 done; item2 held: <why>\"); nothing written")
+        note("close: --items absent: a real close refuses that; this dry run reads it as "
+             "unstated")
+        a.items = "unstated"
+    for flag in ("register", "log", "lint"):
+        value = getattr(a, flag, None)
+        if value is None or not str(value).strip():
+            note("close: --%s absent: written as unstated" % flag)
+            setattr(a, flag, "unstated")
+
+
+def close_recheck(a, path, acked, seen):
+    """The final recheck of the decisions channel, after the close has prepared everything and
+    before its first write (critic finding 6 of the batch's design review: an append racing the
+    acknowledgement was caught only by a next call, and a close has none). The owner's
+    provisional choice of 2026-10-10: the close re-reads the decisions file and the record's
+    AUTHOR observations at this point, holds (exit 6, nothing written) when either moved after the
+    call's own read, and otherwise records the cutoff it acknowledges — what arrives after it (in
+    the close's own writes, its commit or its push) is not covered by this close, and the
+    run-close says so. `seen` is the length of the very snapshot the decisions channel checked,
+    never a later read (critic finding 1 of the review of 2026-10-11: an AUTHOR observation
+    appended between the check and a second read fell behind the cursor unread); every event
+    after it is rechecked except this call's own acknowledgement (`a.own_ack`), left out once.
+    Returns (code or None, the run-close's decisions fields)."""
+    cutoff = now()
+    since = list(read_record(path)[0][seen:])
+    own = getattr(a, "own_ack", None)
+    if own is not None and own in since:
+        since.remove(own)   # the first equal event only: the call's own ack, and nothing else
+    authored = [e for e in since if e.get("event") == "observation"
+                and AUTHOR_RE.match(str(e.get("what") or ""))]
+    dfile = getattr(a, "decisions_file", None)
+    changed = None
+    if dfile is not None and acked is not None:
+        fpath, data, digest = decisions_digest_of(dfile)
+        if digest != acked[2]:
+            changed = (fpath, data, digest)
+    if authored or changed:
+        say("close: HOLD (decisions channel, exit %d) — %s arrived while the close was preparing, "
+            "after its read at the call and before its first write: nothing written; read %s and "
+            "run the close again" % (EXIT_HOLD, " and ".join(
+                part for part in ("%d AUTHOR observation(s)" % len(authored) if authored else "",
+                                  "a change to the decisions file" if changed else "") if part),
+                "them" if authored and changed else "it"))
+        for e in authored:
+            say("  %s · %s" % (e.get("ts", "no ts"), one_line(e.get("what") or ""))[:NOTE_CUT])
+        if changed:
+            fpath, data, digest = changed
+            grown = digest_prefix(data, acked[2])
+            lines = text_lines(data[grown:]) if grown is not None else text_lines(data)
+            say("  %s · %d byte(s) now · %s:" % (
+                fpath, len(data), "%d line(s) appended since the call's read" % len(lines)
+                if grown is not None else "edited, not only appended to, since the call's read: "
+                                          "the whole file"))
+            for line in lines:
+                say("  | " + line)
+            say("  " + decisions_read_hint(a.run, dfile))
+        return EXIT_HOLD, {}
+    fields = {"decisions_cutoff": cutoff,
+              "decisions_cutoff_note": "the close re-read the decisions channel at this time, "
+                                       "after its preparation and before its first write; what "
+                                       "arrives after it is not covered by this close"}
+    if dfile is not None and acked is not None:
+        fields.update(decisions_file=acked[0], decisions_digest=acked[2],
+                      decisions_size=len(acked[1]))
+    return None, fields
+
+
+def disarm_markers(run, events, dry_run=False):
+    """[(session, outcome, detail)] for the arming marker `armed-<sid>` of every head session the
+    record names (register entry 2026-09-30 18:48: markers of ended sessions were never removed).
+    A marker is removed only where this run still owns its session — the state directory's
+    pointer `run-<sid>` names this run (critic finding 3 of the batch's design review: a session
+    can belong to a later run since) — and kept where the pointer names another run; a missing,
+    unreadable or malformed pointer leaves the marker in place as `unresolved`, its ownership
+    unread. A marker already gone is `absent`, a success; a removal the system refuses is
+    `failed`, named, and `disarm` retries it. A dry run removes nothing (`would remove`)."""
+    results = []
+    for sid in run_heads(events)[0]:
+        marker = os.path.join(state_dir(), "armed-" + sid)
+        pointer = os.path.join(state_dir(), "run-" + sid)
+        if not os.path.lexists(marker):
+            results.append((sid, "absent", "no marker"))
+            continue
+        try:
+            with open(pointer, encoding="utf-8") as handle:
+                owner = handle.read().strip()
+        except FileNotFoundError:
+            results.append((sid, "unresolved", "no pointer %s, so whose arming this is cannot be "
+                                               "read: the marker is kept" % pointer))
+            continue
+        except OSError as exc:
+            results.append((sid, "unresolved", "the pointer %s is unreadable (%s): the marker is "
+                                               "kept" % (pointer, exc)))
+            continue
+        if not TOKEN_RE.fullmatch(owner or ""):
+            results.append((sid, "unresolved", "the pointer %s names no single run (%r): the "
+                                               "marker is kept" % (pointer, owner[:60])))
+            continue
+        if owner != run:
+            results.append((sid, "kept", "its pointer names run %s, which owns the session now"
+                                         % owner))
+            continue
+        if dry_run:
+            results.append((sid, "would remove", marker))
+            continue
+        try:
+            os.remove(marker)
+            results.append((sid, "removed", marker))
+        except FileNotFoundError:
+            results.append((sid, "absent", "removed meanwhile"))
+        except OSError as exc:
+            results.append((sid, "failed", "%s: %s — `handsoff.py disarm --run %s` retries it"
+                                           % (marker, exc, run)))
+    return results
+
+
+def disarm_line(run, results):
+    """One summary line for disarm_markers' results, each session short and its outcome."""
+    counts = {}
+    for _, outcome, _ in results:
+        counts[outcome] = counts.get(outcome, 0) + 1
+    shown = " · ".join("%s %d" % (k, counts[k]) for k in sorted(counts)) or "no head session"
+    detail = "; ".join("%s %s (%s)" % (sid[:8], outcome, detail)
+                       for sid, outcome, detail in results if outcome != "absent")
+    return "disarm: %s · %s%s" % (run, shown, " · " + detail if detail else "")
+
+
+def cmd_disarm(a):
+    """`disarm --run R [--dry-run]`: the arming markers of the run's head sessions removed after
+    its close (disarm_markers): the retry for a removal the close could not make, and the form
+    for a run closed before the close removed them. A run with no run-close is refused (exit 2):
+    a live run's head stays armed. Exit 0 when every marker is removed, kept for another run or
+    already absent; 1 when any is unresolved or failed. An environment arming (AIMYTH_HANDSOFF=1
+    in a process) is not a marker, and this verb claims nothing about it."""
     path = record_path(a.run)
     events = read_existing_record(path)
-    held = decisions_hold(a, path, events, "close")   # the decisions channel (2026-09-13 03:53)
+    ci = last_index(events, ("run-close",))
+    if ci < 0:
+        die("run %s carries no run-close: disarm follows the close, and a live run's head stays "
+            "armed; nothing removed" % a.run)
+    results = disarm_markers(a.run, events, a.dry_run)
+    say(disarm_line(a.run, results) + (" (dry run: nothing removed)" if a.dry_run else ""))
+    if os.environ.get("AIMYTH_HANDSOFF") == "1":
+        say("disarm: note: AIMYTH_HANDSOFF=1 is set in this process's environment; an environment "
+            "arming is not a marker, and disarm cannot clear it")
+    return 1 if any(outcome in ("unresolved", "failed") for _, outcome, _ in results) else 0
+
+
+@a3_expose_notices
+def cmd_close(a):
+    close_statements(a)   # --items before anything is read or written (register 2026-09-20 02:12)
+    path = record_path(a.run)
+    events = read_existing_record(path)
+    held, acked = decisions_hold(a, path, events, "close")   # the decisions channel (2026-09-13)
     if held is not None:
         return held
+    # The recheck's cursor is the snapshot the decisions channel checked, never a second read
+    # (critic finding 1 of the review of 2026-10-11): anything appended since — an owner's relay
+    # that raced the call included — is rechecked, the call's own ack alone left out. That ack
+    # records this same length as what it covers (DECISIONS_SEEN), so when the recheck holds, the
+    # next call still finds the relay pending (critic finding F1 of the second review).
+    seen = len(events)
     if is_plain_run(events):
-        return close_plain(a, path, events)
+        return close_plain(a, path, events, acked, seen)
     ro = run_open(events)
     ho = handoff_of(events, a.handoff)
     meter = meter_line(events, a.run, a.meter_line)
@@ -7540,6 +11417,13 @@ def cmd_close(a):
         ev["parity"] = a.parity
     if per_item:
         ev["head_context_per_item"] = per_item
+    unresolved = items_unresolved(events)
+    if unresolved:
+        ev["items_unresolved"] = [item for item, _ in unresolved]
+        say("close: %d item(s) started with no completion record, which the console reads as "
+            "unresolved: %s. This close converts none: run `item-done <item>` first for each one "
+            "that finished" % (len(unresolved), ", ".join(
+                "%s (started %s)" % row for row in unresolved)))
     refreshed = refresh_figures(lines, ro, meter, run_text=run_spend_short(spend, envelope))
     report_text, report_changed, report_problems = None, [], []
     if report is not None:
@@ -7557,12 +11441,20 @@ def cmd_close(a):
             say("report: dry run · would patch %s (%s)%s" % (
                 report, ", ".join(report_changed) or "nothing: already current",
                 " · NOT patched: %s" % "; ".join(report_problems) if report_problems else ""))
+        say("close: dry run · %s" % disarm_line(a.run, disarm_markers(a.run, events, True)))
         return 0
+    # The final recheck (G1, critic finding 6): the last read before the first write.
+    held, fields = close_recheck(a, path, acked, seen)
+    if held is not None:
+        return held
+    ev.update(fields)
     if refreshed:
         write_atomic(ho, "\n".join(lines))
     if report is not None and report_changed:
         write_atomic(report, report_text)   # before the commit, so the checkpoint carries it
     if a.commit is not None:
+        ev["root_untracked"], root_line = root_untracked(vault_root())
+        say("close: %s" % root_line)
         ev["commit"] = checkpoint_commit(vault_root(), a.commit)
     if a.push:
         ev["push"] = push(vault_root())
@@ -7580,6 +11472,15 @@ def cmd_close(a):
         "" if refreshed else " · morning report NOT refreshed (section missing)"))
     say("meter: %s" % meter)
     say("run spend: %s" % run_spend_line(spend, envelope))
+    say("decisions: %s" % ("the decisions file as read at the call (sha256 %s…, %d byte(s)) "
+                           "unchanged at the cutoff %s; what arrives after it is not covered by "
+                           "this close" % (fields["decisions_digest"][:12],
+                                           fields["decisions_size"], fields["decisions_cutoff"])
+                           if "decisions_digest" in fields
+                           else "no decisions file named; the AUTHOR observations re-read at the "
+                                "cutoff %s" % fields["decisions_cutoff"]))
+    # The arming markers of the run's head sessions, once run-close is on the record (K9dd0b7fb).
+    say(disarm_line(a.run, disarm_markers(a.run, read_record(path)[0])))
     if report is not None:
         say("report: %s · %s%s" % (
             report, "patched %s" % ", ".join(report_changed) if report_changed
@@ -7612,6 +11513,8 @@ LATER_BOUNDARY_FIELDS = (
     ("head_denials", "head fence denials", "arguable", "count"),
     ("limit_cut_resumed_usd", "first attempts of limit-cut lanes later resumed", "structural",
      "usd"),
+    ("fence_denials", "lane fence denials", "arguable", "count"),
+    ("sandbox_denials", "lane sandbox denials", "arguable", "count"),
 )
 TABLE_HEAD = ("| Item | ≈ $ or idle min | Kind | Fix and where it lands |", "|---|---|---|---|")
 LEGEND = ("Kinds are mechanical, never judged here: idle minutes and lost lanes are real; "
@@ -7648,18 +11551,24 @@ LEGEND = ("Kinds are mechanical, never judged here: idle minutes and lost lanes 
           "(transcript)`, one that cannot be metered leaves the lost-lane figure `unmeasured`, "
           "never $0.00, and a plan-usage (Codex) lane is counted, never priced; the first "
           "attempts of lanes closed `limit` and resumed afterwards, which the lost-lane cost "
-          "excludes, take a structural row of their own; the run total reads a billed line "
+          "excludes, take a structural row of their own; the heads' total reads a billed line "
           "carried by hand as `session ≈ <n>` or `session USD <n>` as well as the meter's "
           "`session $<n>`, and names the form it read. The two rows added that day appear only "
-          "on boundaries that carry their fields." % (
+          "on boundaries that carry their fields. The run total (2026-09-20 01:09) is the run's "
+          "spend as the last boundary or close recorded it, every head alone plus every lane, "
+          "never the heads' total plus the lanes, since a head's session figure may already hold "
+          "some of them." % (
               IDLE_GAP_S, REPORT_CAP_WORDS, WORDS_TO_TOKENS))
 # What each of the three re-defined fields means on a given boundary, read off the marker
 # fields the boundary command writes beside them; a boundary written before the rule has none
 # and is labelled as recorded, never re-read under the new meaning.
 FIELD_MEANINGS = {
     "idle_min": lambda ev: {
-        "transcript": "head idle: no lane running and no head call, gaps above %d s, the "
-                      "head's calls from its transcript (idle_src transcript)" % IDLE_GAP_S,
+        "transcript": ("head idle: no lane running and the head waiting, gaps above %d s that end "
+                       "in something other than the head's own record, read from its transcript "
+                       "(idle_src transcript)" % IDLE_GAP_S if ev.get("idle_rule") == "waits" else
+                       "head idle: no lane running and no head call, gaps above %d s, the "
+                       "head's calls from its transcript (idle_src transcript)" % IDLE_GAP_S),
         "record": "record-only fallback: silence after each lane close until the head's next "
                   "recorded act, summed per close, an overstatement under parallel lanes "
                   "(idle_src record)"}.get(
@@ -7673,6 +11582,11 @@ FIELD_MEANINGS = {
         + (" · %s" % ev["respawn_src"] if isinstance(ev.get("respawn_src"), str) else "")),
     "head_denials": lambda ev: "the head fence's deny lines in events.log for the span (%s)" % (
         ev.get("head_denials_src") or "no source recorded"),
+    "fence_denials": lambda ev: ("the lanes' own fence denials, summed from each lane close's "
+                                 "denials.fence (beside the tool denials, never added to them)"),
+    "sandbox_denials": lambda ev: ("the lanes' sandbox denials, summed from each lane close's "
+                                   "denials.sandbox (a Codex lane's; beside the tool denials, "
+                                   "never added to them)"),
     "limit_cut_resumed_usd": lambda ev: (
         "the first attempts of %s lane(s) closed limit and resumed afterwards, excluded from "
         "respawn_cost_usd (%s)" % (ev.get("limit_cut_resumed", "?"),
@@ -7805,35 +11719,53 @@ def cut_tail_text(found):
                 "; ".join(parts), WORDS_TO_TOKENS))
 
 
+# The head starts that end a limit wait (register entry 2026-09-24 13:1x): a successor head, a
+# head's own run-resume and an in-place resume each mean a head is working again.
+WAIT_END_EVENTS = ("head-successor", "run-resume", "head-resumed")
+
+
+def fmt_min(minutes):
+    """Minutes with one decimal, or two where the second is not zero (0.75 min reads 0.75)."""
+    text = "%.2f" % minutes
+    return text[:-1] if text.endswith("0") else text
+
+
 def limit_waits(events):
-    """[(stop-condition, head-resumed, minutes)] for every recorded limit stop the record shows
-    a head resumed from: the span between the two events. The limits ruling makes that wait a
-    cost of the chosen shape, so the table gives it a structural row of its own rather than
-    leaving it inside idle_min's real class (register entry 2026-09-06)."""
+    """[(stop-condition, the head start that ended the wait, minutes)] for every recorded LIMIT
+    stop (a stop-condition whose `which` opens `limit`; a band or envelope stop is no wait) that a
+    head start follows: the wait ends at the FIRST head-successor, run-resume or head-resumed after
+    the stop, so it never runs on through a successor that was working (register entry 2026-09-24
+    13:1x: waits of 622.5 and 229.7 minutes where the record showed a successor 0.75 and 19.4
+    minutes after the stop). The limits ruling makes that wait a cost of the chosen shape, so
+    the table gives it a structural row of its own rather than leaving it inside idle_min's real
+    class (register entry 2026-09-06)."""
     found = []
     for i, ev in enumerate(events):
-        if ev.get("event") != "stop-condition":
+        if ev.get("event") != "stop-condition" or \
+                not str(ev.get("which") or "").startswith("limit"):
             continue
-        resumed = next((x for x in events[i + 1:] if x.get("event") == "head-resumed"), None)
-        if resumed is None:
+        ended = next((x for x in events[i + 1:] if x.get("event") in WAIT_END_EVENTS), None)
+        if ended is None:
             continue
-        t0, t1 = parse_ts(ev.get("ts")), parse_ts(resumed.get("ts"))
+        t0, t1 = parse_ts(ev.get("ts")), parse_ts(ended.get("ts"))
         if t0 is None or t1 is None or t1 < t0:
             continue
-        found.append((ev, resumed, (t1 - t0) / 60.0))
+        found.append((ev, ended, (t1 - t0) / 60.0))
     return found
 
 
 def limit_wait_rows(events):
     """One structural row per recorded limit wait; none where the record holds no such pair."""
     rows = []
-    for stop, resumed, minutes in limit_waits(events):
-        rows.append(("limit wait · %s → head-resumed at %s"
-                     % (stop.get("which", "stop-condition"), resumed.get("ts", "no ts")),
-                     "%.1f min · stop-condition at %s to head-resumed at %s · a cost of the "
-                     "chosen shape (the limits ruling), not head idleness: a boundary whose "
-                     "span covers it counts the same minutes under idle_min"
-                     % (minutes, stop.get("ts", "no ts"), resumed.get("ts", "no ts")),
+    for stop, ended, minutes in limit_waits(events):
+        rows.append(("limit wait · %s → %s at %s"
+                     % (stop.get("which", "stop-condition"), ended.get("event"),
+                        ended.get("ts", "no ts")),
+                     "%s min · stop-condition at %s to the first head start after it, the %s at "
+                     "%s · a cost of the chosen shape (the limits ruling), not head idleness: a "
+                     "boundary whose span covers it counts the same minutes under idle_min"
+                     % (fmt_min(minutes), stop.get("ts", "no ts"), ended.get("event"),
+                        ended.get("ts", "no ts")),
                      "structural", FIX_NONE))
     return rows
 
@@ -7863,8 +11795,9 @@ def field_rows(events):
         if ev.get("event") != "phase-boundary":
             continue
         label = boundary_label(ev)
+        oi = last_index(events, ("run-open",))
         t0 = parse_ts(events[previous].get("ts")) if 0 <= previous < len(events) else \
-            parse_ts(run_open(events).get("ts"))
+            parse_ts((events[oi] if oi >= 0 else events[0]).get("ts"))
         waited = overlap_min(waits, t0, parse_ts(ev.get("ts")))
         for key, what, kind, unit in BOUNDARY_FIELDS:
             meaning = FIELD_MEANINGS[key](ev) if key in FIELD_MEANINGS else None
@@ -7890,7 +11823,7 @@ def field_rows(events):
     return rows
 
 
-# The run total's reader (register entry 2026-09-09 15:43): a boundary's billed line is the
+# The heads' total's reader (register entry 2026-09-09 15:43): a boundary's billed line is the
 # meter's `session $<n>`, or a line the head carried by hand after a meter failure, written
 # `session ≈ <n>` or `session USD <n>`; all three are read and the row names the form. The
 # envelope's own reader, session_spent, keeps the meter's literal form.
@@ -7958,10 +11891,41 @@ def head_totals(events, metered=None):
     return found
 
 
+def recorded_run_total(events):
+    """The waste table's run total, or None when no event carries one (register entry 2026-09-20
+    01:09: the row read the heads' session figures alone, USD 20.40, while the boundary's run
+    spend read USD 78.63 with the lanes): the run's spend as the latest phase-boundary or
+    run-close recorded it, the figure its own line printed — every head metered alone plus every
+    lane on the record (run_spend) — so no lane is counted twice, as adding the lanes to a head's
+    session figure, which may already hold some of them, would. Lane closes and beats recorded
+    after that event are named, the figure predating them."""
+    for i in range(len(events) - 1, -1, -1):
+        ev = events[i]
+        if ev.get("event") not in ("phase-boundary", "run-close") or "run_spend_usd" not in ev:
+            continue
+        where = "the %s at %s" % (ev["event"], ev.get("ts", "no ts"))
+        src = one_line(str(ev.get("run_spend_src") or "no source recorded"))
+        later = []
+        for e in events[i + 1:]:
+            if e.get("event") in ("lane-closed", "hold-beat") and e.get("lane") \
+                    and str(e["lane"]) not in later:
+                later.append(str(e["lane"]))
+        tail = (" · it predates the lane close(s) or beat(s) recorded after it: %s"
+                % ", ".join(later) if later else "")
+        figure = money(ev.get("run_spend_usd"))
+        if figure is None:
+            return "unmeasured · %s recorded no run figure (%s)%s" % (where, src, tail)
+        return "%s$%.2f · run_spend_usd of %s, the figure its line printed (%s)%s" % (
+            "at least " if ev.get("run_spend_floor") else "", figure, where, src, tail)
+    return None
+
+
 def billed_rows(events, metered=None):
     """The billed line at every boundary, quoted as the meter printed it, and the whole-run
-    rows: a run total as a shown sum of the per-head figures head_totals derives, with the
-    envelope base beside it. An unmetered or failed line is quoted, never zeroed."""
+    rows: the heads' total as a shown sum of the per-head figures head_totals derives, with the
+    envelope base beside it, and the run total as the last boundary or close recorded it
+    (recorded_run_total), never a sum of the two. An unmetered or failed line is quoted, never
+    zeroed."""
     rows, quoted = [], 0
     for i, ev in enumerate(events):
         if ev.get("event") != "phase-boundary":
@@ -7975,55 +11939,82 @@ def billed_rows(events, metered=None):
             quoted += 1
     totals = [(sid, usd, why) for sid, usd, why in head_totals(events, metered)
               if usd is not None]
-    if not rows and not totals:
+    recorded = recorded_run_total(events)
+    if not rows and not totals and recorded is None:
         return rows
-    envelope = run_open(events).get("envelope_usd")
+    oi = last_index(events, ("run-open",))
+    envelope = events[oi].get("envelope_usd") if oi >= 0 else None
     base = (" · envelope base $%.2f (run-open.envelope_usd)" % float(envelope)
             if isinstance(envelope, (int, float)) and not isinstance(envelope, bool)
-            else " · no envelope base (run-open carries no envelope_usd)")
+            else " · no envelope base (%s)" % ("run-open carries no envelope_usd" if oi >= 0
+                                                else "no run-open: an attended record"))
     seeds = seed_sessions(events)
     skipped = (" · seed (skipped): %s, marked seed by run-open and never a head"
                % ", ".join(seeds) if seeds else "")
+    heads_usd = round(sum(usd for _, usd, _ in totals), 2)
     if totals:
         shown = " + ".join("$%.2f" % usd for _, usd, _ in totals)
         fig = "%s = $%.2f · per head: %s%s%s%s" % (
-            shown, round(sum(usd for _, usd, _ in totals), 2),
+            shown, heads_usd,
             "; ".join("%s %s" % (sid, why) for sid, _, why in totals), base, skipped,
             "; %d boundary line(s) carried no session figure and are quoted above, never read "
             "as zero" % quoted if quoted else "")
+    elif oi < 0:
+        fig = ("unavailable · the record carries no run-open (an attended session's record), so "
+               "no head session is on it and no head figure is read%s" % base)
     else:
         fig = ("unmeasured · no boundary billed line carried a `session $` figure and no "
                "head-exit recorded spend; the %d line(s) are quoted above, never read as "
                "zero%s%s" % (quoted, base, skipped))
-    rows.append(("run total (shown sum)", fig, "billed", FIX_NA))
+    rows.append(("heads' total (shown sum)", fig, "billed", FIX_NA))
+    rows.append(("run total (recorded run spend)", recorded if recorded is not None else (
+        "unrecorded · no phase-boundary or run-close on the record carries run_spend_usd (a "
+        "record older than the run figure, or one that reached no boundary): `handsoff.py "
+        "run-spend` meters it, every head alone plus every lane, and the heads' total above is no "
+        "run total"), "billed", FIX_NA))
     return rows
 
 
 def context_rows(events):
-    """Context per item, read off the gate events as the delta between consecutive gates."""
+    """Context per item, read off the gate events as the delta between consecutive gates of one
+    head session. A gate opens its item, so the delta at a gate is the growth of the item before
+    it, and the row names that item; a head's first gate is differenced with nothing, since the
+    context across a hand-over is two heads' and no item's growth. A gate after an unmetered gate
+    is differenced with nothing too: that interval spans two items, so it is neither's growth."""
     gates = [e for e in events if e.get("event") == "gate"]
     if not gates:
         return [("context per item", "no gate events in the record · Step 2b drops the context "
                  "column for this run", "context", FIX_NA)]
-    rows, prev = [], None
-    for g in gates:
-        item = "context · item %s at %s" % (g.get("item", "?"), g.get("ts", "no ts"))
-        value = g.get("context")
+    rows, prev, prev_item, sid, seen = [], None, None, None, False
+    for e in events:
+        if e.get("event") in SESSION_EVENTS and start_session(e) != sid:
+            sid, prev, prev_item = start_session(e), None, None
+            continue
+        if e.get("event") != "gate":
+            continue
+        item = "context · item %s at %s" % (e.get("item", "?"), e.get("ts", "no ts"))
+        value = e.get("context")
         if not isinstance(value, int):
             rows.append((item, "unmeasured · the gate is unmetered (band %s)"
-                         % g.get("band", "?"), "context", FIX_NA))
+                         % e.get("band", "?"), "context", FIX_NA))
+            prev, prev_item = None, None
             continue
-        if prev is None:
+        if prev is None and seen:
+            rows.append((item, "%s tokens · no comparable preceding gate: nothing is differenced"
+                         % format(value, ","), "context", FIX_NA))
+        elif prev is None:
             rows.append((item, "%s tokens · the first metered gate, no earlier gate to "
                          "difference%s" % (format(value, ","),
                                            " (one gate event only)" if len(gates) == 1 else ""),
                          "context", FIX_NA))
         else:
             delta = value - prev
-            rows.append((item, "%s%s tokens · gate context %s → %s"
+            rows.append(("context · item %s, to the gate of item %s at %s"
+                         % (prev_item, e.get("item", "?"), e.get("ts", "no ts")),
+                         "%s%s tokens · gate context %s → %s"
                          % ("+" if delta >= 0 else "-", format(abs(delta), ","),
                             format(prev, ","), format(value, ",")), "context", FIX_NA))
-        prev = value
+        prev, prev_item, seen = value, e.get("item", "?"), True
     return rows
 
 
@@ -8200,6 +12191,7 @@ def waste_table(events, run, path, bad, metered=None, meter_lanes=False):
                      "control", "n/a · the zero-findings control names what was searched"))
     _, _, window_src = run_window(events)
     seeds = seed_sessions(events)
+    attended = last_index(events, ("run-open",)) < 0
     header = [
         "# Waste table · run %s" % run,
         "",
@@ -8221,6 +12213,13 @@ def waste_table(events, run, path, bad, metered=None, meter_lanes=False):
                                  "placeholder that never ran, so it is neither metered nor "
                                  "counted as a head session" % ", ".join(seeds) if seeds else
                                  "none — no run-open in this record marks a seed session"),
+    ]
+    if attended:
+        header.append("Head figures: unavailable — the record carries no run-open (an attended "
+                      "session's record, the plain-lane-run shape), so no head session is on it: "
+                      "the head rows say unmeasured or unavailable, and the lane rows are the "
+                      "record's evidence.")
+    header += [
         "Legend: %s" % LEGEND,
         "",
         "## Waste table",
@@ -8264,7 +12263,7 @@ def metered_heads(events, run, no_meter=False, overrides=None):
 
 def cmd_waste_table(a):
     path = record_path(a.run)
-    events = require_record(path)
+    events = read_existing_record(path)   # a record with no run-open renders too (its own header)
     bad = read_record(path)[1]
     out_path = (os.path.realpath(os.path.expanduser(a.out)) if a.out else
                 os.path.join(store_root(), "spawn-records", "%s-waste-table.md" % a.run))
@@ -8272,6 +12271,21 @@ def cmd_waste_table(a):
     text, _, counts = waste_table(events, a.run, path, bad, metered, meter_lanes=not a.no_meter)
     summary = "%d rows from %d boundaries, %d gates, %d lanes" % (
         counts["rows"], counts["boundaries"], counts["gates"], counts["lanes"])
+    ci = last_index(events, ("run-close",))
+    if not a.out and ci >= 0:
+        # A closed run's stored table is left as it is (register entry 2026-10-03 07:48: reading
+        # an earlier run's table re-rendered and replaced its stored copy): the render goes to
+        # standard output, and --out names a file when one is wanted.
+        if a.dry_run:
+            say("waste-table: dry run · %s · run %s is closed: would print to standard output and "
+                "leave %s as it is" % (summary, a.run, out_path))
+            return 0
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        note("waste-table: %s · run %s is closed (run-close at %s): printed to standard output; "
+             "the stored table %s is left as it is (pass --out PATH to write a file)"
+             % (summary, a.run, events[ci].get("ts", "no ts"), out_path))
+        return 0
     if a.dry_run:
         say("waste-table: dry run · %s · would write %s" % (summary, out_path))
         return 0
@@ -8317,8 +12331,25 @@ NOTIFICATION_RES = (
 # Cut closed task-notification spans from user text; any remaining owner message remains a
 # human turn. A record containing only notifications is excluded (register entry 2026-09-13 03:53).
 NOTIFICATION_SPAN_RE = re.compile(r"<task-notification\b.*?</task-notification>", re.S)
-# The harness's interrupt marker: a user record the owner never typed, never a human turn.
+# The harness's interrupt marker: a user record the owner never typed, never a human turn. A
+# marker beside the owner's own words is cut from them, as a system reminder is (register entry
+# 2026-09-13 03:53, its recurrence of 2026-09-20: a marker counted as a human turn).
 INTERRUPT_RE = re.compile(r"^\s*\[Request interrupted by user[^\]]*\]\s*$")
+INTERRUPT_ANY_RE = re.compile(r"\[Request interrupted by user[^\]]*\]")
+# A message relayed from another session (a peer's or a launcher's): never the owner's words,
+# whichever record carries it, though it may relay them (register entry 2026-09-13 03:53, the
+# status of 2026-10-01: counting it would read a relay of the owner's word as his consent).
+# A message relayed from another session, in either wrapper (register entry 2026-10-25 17:23). The
+# session tool closes `<session_message>` and then adds its own one-line reply note, which belongs
+# to the relay: read as text beside it, that note became an owner turn.
+CROSS_SESSION_RE = re.compile(r"^\s*<(?:cross-session-message|session_message)\b")
+CROSS_SESSION_SPAN_RE = re.compile(
+    r"<(cross-session-message|session_message)\b.*?</\1>"
+    r"(?:\s*Replying is optional\. If a response is needed, call \w+ with this session_id\.)?", re.S)
+# The harness's compaction summary: a user record carrying the earlier context the harness wrote
+# itself, never a human turn (register entry 2026-09-13 03:53, the recurrence of 2026-10-02).
+COMPACT_SUMMARY_RE = re.compile(r"^\s*This session is being continued from a previous "
+                                r"conversation")
 
 
 # An assistant record's tool calls carried into the extraction (register entry 2026-09-07): the
@@ -8329,30 +12360,57 @@ INTERRUPT_RE = re.compile(r"^\s*\[Request interrupted by user[^\]]*\]\s*$")
 # outside the table prints its name alone rather than a guessed field.
 TOOL_CALL_CHARS = 300
 TOOL_CALL_CUT = " …[cut]"
+# The field naming what a call acted on, the first one present; the Skill, WebFetch and WebSearch
+# fields joined the table with register entry 2026-10-02 06:19 (a reflector could not tell which
+# skill the head loaded).
 TOOL_ARG_KEYS = {"Bash": ("command",), "Read": ("file_path",), "Write": ("file_path",),
-                 "Edit": ("file_path",), "Grep": ("pattern",), "Glob": ("pattern",)}
+                 "Edit": ("file_path",), "Grep": ("pattern",), "Glob": ("pattern",),
+                 "Skill": ("skill", "command", "name"), "WebFetch": ("url",),
+                 "WebSearch": ("query",)}
+# Tools whose listed fields are ALL shown, joined: a subagent call's type and its description.
+TOOL_ALL_KEYS = {"Agent": ("subagent_type", "description"),
+                 "Task": ("subagent_type", "description")}
+# A line break inside one call's field, shown rather than joined with a space (register entry
+# 2026-10-02 06:19: two statements of a command read as one).
+NEWLINE_MARK = " ⏎ "
 
 
-def tool_call_line(block):
+def call_value(value):
+    """One input field on one line: each of its own line breaks shown as NEWLINE_MARK, the lines'
+    outer white space stripped, empty lines dropped."""
+    parts = [part.strip() for part in str(value).splitlines()]
+    return NEWLINE_MARK.join(part for part in parts if part)
+
+
+def tool_call_line(block, controls=None):
     """`- <tool>: <what it acted on>` for one tool_use block, or `- <tool>` where the tool is
-    not in the table above or its input carries none of that tool's fields. Cut at
-    TOOL_CALL_CHARS characters, the cut marked."""
+    not in the tables above or its input carries none of that tool's fields. A line break inside
+    a field shows as NEWLINE_MARK; the line is cut at TOOL_CALL_CHARS characters, the cut
+    marked. `controls` (control_patterns, the blind reflector's) is matched on the whole line
+    BEFORE the cut, so a control the cut would shorten past recognition is withheld whole
+    (critic finding 5 of the review of 2026-10-11)."""
     name = str(block.get("name") or "tool")
     data = block.get("input") if isinstance(block.get("input"), dict) else {}
     value = ""
-    for key in TOOL_ARG_KEYS.get(name, ()):
-        if data.get(key) not in (None, ""):
-            value = one_line(str(data[key]))
-            break
+    if name in TOOL_ALL_KEYS:
+        value = " · ".join(v for v in (call_value(data[k]) for k in TOOL_ALL_KEYS[name]
+                                       if data.get(k) not in (None, "")) if v)
+    else:
+        for key in TOOL_ARG_KEYS.get(name, ()):
+            if data.get(key) not in (None, ""):
+                value = call_value(data[key])
+                break
     line = "- %s: %s" % (name, value) if value else "- %s" % name
+    if controls is not None and names_control(line, controls):
+        return WITHHELD_LINE
     if len(line) > TOOL_CALL_CHARS:
         line = line[:TOOL_CALL_CHARS - len(TOOL_CALL_CUT)] + TOOL_CALL_CUT
     return line
 
 
-def tool_call_lines(blocks):
+def tool_call_lines(blocks, controls=None):
     """The tool-call lines of one assistant record, in the order the record holds them."""
-    return [tool_call_line(b) for b in blocks if b.get("type") == "tool_use"]
+    return [tool_call_line(b, controls) for b in blocks if b.get("type") == "tool_use"]
 
 
 def blocks_of(message):
@@ -8379,14 +12437,35 @@ def owner_text(text, extra):
     """(verdict, kept text, cut) for a user record's text. The system reminders and the closed
     task-notification spans are cut out first. Nothing left, or what is left still opening with
     a harness marker (an unclosed notification, the local-command caveat, an --notification-re
-    pattern), is `notification`; the bare interrupt marker is `interrupt`; anything else is
-    `owner`, the text left, with `cut` True when a span or a reminder was cut from it."""
+    pattern), is `notification`; a message relayed from another session is `cross_session` (a
+    closed span of one beside the owner's own words is cut from them); a text of interrupt
+    markers alone is `interrupt`, and a marker beside the owner's words is cut from them;
+    anything else is `owner`, the text left, with `cut` True when a span, a marker or a reminder
+    was cut from it."""
     left = NOTIFICATION_SPAN_RE.sub("", REMINDER_RE.sub("", text)).strip()
     if not left or any(pattern.match(left) for pattern in tuple(NOTIFICATION_RES) + tuple(extra)):
         return "notification", "", False
-    if INTERRUPT_RE.match(left):
+    if CROSS_SESSION_RE.match(left):
+        rest = CROSS_SESSION_SPAN_RE.sub("", left).strip()
+        if not rest or CROSS_SESSION_RE.match(rest):
+            return "cross_session", "", False
+        left = rest
+    if INTERRUPT_RE.match(left) or not INTERRUPT_ANY_RE.sub("", left).strip():
         return "interrupt", "", False
+    left = INTERRUPT_ANY_RE.sub("", left).strip()
     return "owner", left, left != text.strip()
+
+
+def queued_text(lane, prompt):
+    """The text a `queued_command` attachment carries in its `prompt`: a string as it is, or the
+    text blocks of a content list joined by lane.py's own block reader; "" for anything else."""
+    if isinstance(prompt, str):
+        return prompt
+    if isinstance(prompt, list):
+        return turn_text(lane, [b for b in prompt if isinstance(b, dict)])
+    if isinstance(prompt, dict):
+        return turn_text(lane, [prompt])
+    return ""
 
 
 def reconciliation(counts):
@@ -8422,7 +12501,7 @@ def replay_tail(text):
     return True, (text[marks[-1].end():].strip() if marks else "")
 
 
-def extract_turns(lane, path, extra):
+def extract_turns(lane, path, extra, withheld=None):
     """(turns, counts) from a transcript: human turns, assistant prose and the assistant's tool
     calls in file order, with the tool results and the injected user-record classes counted
     out. EVERY record lands in exactly one bucket (register entry 2026-09-07), so
@@ -8441,13 +12520,26 @@ def extract_turns(lane, path, extra):
     register entry 2026-09-13 03:53), noted under `notes.injections_cut`; the bare interrupt
     marker is `excluded.interrupt`; a record carrying a tool result beside owner text is a human
     turn noted under `notes.tool_result_with_text` (over-inclusive and visible, since the
-    harness's own shape is unverified here). Notes are never buckets."""
+    harness's own shape is unverified here). Since 2026-10-10 (register entry 2026-09-13 03:53):
+    a mid-turn owner message the harness queued as an `attachment` of type `queued_command` is a
+    human turn (noted under `notes.queued_commands`); a compaction summary (isCompactSummary, or
+    the summary's own opening) is `excluded.compaction` and a message relayed from another
+    session (a `<cross-session-message>` or `<session_message>` span and nothing else) is
+    `excluded.cross_session`, never the owner's; an interruption marker inside a text block is cut from the owner's text,
+    and a text that is nothing but markers is `excluded.interrupt`. Notes are never buckets.
+    `withheld`, the blind reflector's control texts (control_needles), is applied here, before
+    any text is split into lines or cut (critic finding 5 of the review of 2026-10-11): each tool
+    line is matched whole before its cut, and each turn's whole text across its line breaks
+    (redact_turns); the lines withheld are counted under `notes.controls_redacted`."""
+    controls = control_patterns(withheld) if withheld is not None else None
     turns = []
     counts = {"records": 0, "human_turns": 0, "assistant_turns": 0, "tool_call_turns": 0,
               "excluded": {"tool_result": 0, "meta": 0, "notification": 0, "interrupt": 0,
-                           "replay": 0, "synthetic": 0, "unparseable": 0, "other": 0},
+                           "replay": 0, "synthetic": 0, "unparseable": 0, "other": 0,
+                           "compaction": 0, "cross_session": 0},
               "other_types": {},
-              "notes": {"replay_trimmed": 0, "injections_cut": 0, "tool_result_with_text": 0}}
+              "notes": {"replay_trimmed": 0, "injections_cut": 0, "tool_result_with_text": 0,
+                        "queued_commands": 0, "controls_redacted": 0}}
     out = counts["excluded"]
     notes = counts["notes"]
 
@@ -8483,6 +12575,9 @@ def extract_turns(lane, path, extra):
                     counts["human_turns"] += 1
                     turns.append(("human", stamp, kept))
                     continue
+                if record.get("isCompactSummary") is True or COMPACT_SUMMARY_RE.match(text):
+                    out["compaction"] += 1    # the harness's own summary, never the owner's words
+                    continue
                 if record.get("isMeta") is True or SKILL_INJECTION_RE.match(text):
                     out["meta"] += 1
                     continue
@@ -8507,7 +12602,9 @@ def extract_turns(lane, path, extra):
                     out["synthetic"] += 1   # the harness's stop record, never the head's prose
                     continue
                 prose = turn_text(lane, blocks)
-                calls = tool_call_lines(blocks)
+                calls = tool_call_lines(blocks, controls)
+                if controls is not None:
+                    notes["controls_redacted"] += calls.count(WITHHELD_LINE)
                 if prose:
                     counts["assistant_turns"] += 1
                     body = prose + ("\n\nTool calls:\n" + "\n".join(calls) if calls else "")
@@ -8518,9 +12615,35 @@ def extract_turns(lane, path, extra):
                 else:
                     shapes = sorted(set(str(b.get("type") or "untyped") for b in blocks))
                     other("assistant: %s" % ("+".join(shapes) if shapes else "no content"))
+            elif kind == "attachment" and isinstance(record.get("attachment"), dict) \
+                    and record["attachment"].get("type") == "queued_command":
+                # A message sent while a turn was running (register entry 2026-09-13 03:53, the
+                # shape confirmed 2026-09-30): no user record carries it, so an extractor keyed on
+                # user records dropped it. It is classified by its wrapper as a user record's text
+                # is: a task notification or a relay from another session is not the owner's.
+                text = queued_text(lane, record["attachment"].get("prompt")).strip()
+                verdict, kept, cut = owner_text(text, extra) if text else ("other", "", False)
+                if verdict == "other":
+                    other("attachment: queued_command with no text")
+                    continue
+                if verdict != "owner":
+                    out[verdict] += 1     # notification, cross_session or interrupt
+                    continue
+                notes["queued_commands"] += 1
+                if cut:
+                    notes["injections_cut"] += 1
+                counts["human_turns"] += 1
+                turns.append(("human", stamp, kept))
+            elif kind == "attachment":
+                att = record.get("attachment")
+                other("attachment: %s" % (att.get("type") or "untyped" if isinstance(att, dict)
+                                          else "no attachment object"))
             else:
                 other(str(kind) if isinstance(kind, str) and kind else "(no type)")
     counts["extracted"] = counts["human_turns"] + counts["assistant_turns"]
+    if withheld is not None:
+        turns, spanned = redact_turns(turns, withheld)
+        notes["controls_redacted"] += spanned
     return turns, counts
 
 
@@ -8534,22 +12657,27 @@ def extraction_text(sid, path, turns, counts):
         "turns and the assistant prose, in order." % now(),
         "Excluded: %d tool-result record(s), %d Skill-tool injection(s) marked `isMeta`, %d "
         "harness injection(s), %d interrupt marker(s), %d replay(s) with no owner message left, "
-        "%d synthetic assistant record(s), %d unparseable line(s), and %d record(s) of other "
-        "types (%s)." % (
+        "%d synthetic assistant record(s), %d unparseable line(s), %d record(s) of other "
+        "types (%s), %d compaction summar%s and %d message(s) relayed from another session." % (
             out["tool_result"], out["meta"], out["notification"], out["interrupt"],
             out["replay"], out["synthetic"], out["unparseable"], out["other"],
-            other_list(counts)),
+            other_list(counts), out["compaction"], "y" if out["compaction"] == 1 else "ies",
+            out["cross_session"]),
         "Replays: %d record(s) in which the harness re-sent a whole prior conversation as one "
         "user record (a turn marker at the opening and at least two in all, whatever the size) "
         "were trimmed to the text after their last `User:` marker, which is the turn the owner "
         "typed, and read as human turns (notes.replay_trimmed); a replay with no owner message "
         "left is dropped and counted under excluded.replay." % counts["notes"]["replay_trimmed"],
         "Mid-turn messages: %d user record(s) read as human turns after a task-notification "
-        "span or a system reminder was cut from their text (notes.injections_cut), and %d "
+        "span or a system reminder was cut from their text (notes.injections_cut), %d "
         "record(s) carrying a tool result beside owner text read as human turns "
-        "(notes.tool_result_with_text); a record that is nothing but notifications stays "
-        "excluded, and the bare interrupt marker is never a human turn." % (
-            counts["notes"]["injections_cut"], counts["notes"]["tool_result_with_text"]),
+        "(notes.tool_result_with_text), and %d message(s) the owner sent while a turn ran, "
+        "carried by a `queued_command` attachment, read as human turns (notes.queued_commands); "
+        "a record that is nothing but notifications stays excluded, and an interrupt marker is "
+        "never a human turn. %d line(s) naming a registered control were withheld "
+        "(notes.controls_redacted)." % (
+            counts["notes"]["injections_cut"], counts["notes"]["tool_result_with_text"],
+            counts["notes"]["queued_commands"], counts["notes"]["controls_redacted"]),
         "An assistant record carrying only tool calls is a tool-call turn, headed `assistant · "
         "tool calls`: one line per call with the tool's name and the input field naming what it "
         "acted on, each line cut at %d characters. The calls are carried, never their results, "
@@ -8578,10 +12706,19 @@ def extraction_inputs(a):
         die("the transcript helpers are lane.py's, never a second parser of the same shape: %s"
             % err)
     sid = token(a.session, "session id")
-    root = os.path.realpath(os.path.expanduser(a.projects_root)) if a.projects_root else None
-    path = transcript_for(sid, root)
-    if not os.path.isfile(path):
-        die("no transcript for session %s at %s" % (sid, path))
+    frozen = getattr(a, "transcript", None)
+    if frozen:
+        # A frozen copy of the session's transcript (the self-cross remedy, register entry
+        # 2026-09-06: a copy taken BEFORE the controls line was written cannot carry it).
+        path = os.path.realpath(os.path.expanduser(frozen))
+        if not os.path.isfile(path):
+            die("--transcript %s is not a file: pass the frozen copy of session %s's transcript"
+                % (frozen, sid))
+    else:
+        root = os.path.realpath(os.path.expanduser(a.projects_root)) if a.projects_root else None
+        path = transcript_for(sid, root)
+        if not os.path.isfile(path):
+            die("no transcript for session %s at %s" % (sid, path))
     try:
         extra = [re.compile(pattern) for pattern in (a.notification_re or [])]
     except re.error as exc:
@@ -8589,11 +12726,13 @@ def extraction_inputs(a):
     return lane, sid, path, extra
 
 
-def write_extraction(lane, sid, path, out_dir, extra):
+def write_extraction(lane, sid, path, out_dir, extra, withheld=None):
     """turns.md and counts.json under out_dir, and the counts behind them — one writer for
-    `extract-transcript` and `reflect-inputs`, so the two can never differ."""
+    `extract-transcript` and `reflect-inputs`, so the two can never differ. `withheld` is the
+    blind reflector's list of control texts (control_needles): every line naming one is withheld
+    inside the extraction, before its texts are split or cut and before anything is written."""
     try:
-        turns, counts = extract_turns(lane, path, extra)
+        turns, counts = extract_turns(lane, path, extra, withheld)
     except OSError as exc:
         die("cannot read the transcript %s: %s" % (path, exc))
     counts["session"] = sid
@@ -8617,9 +12756,10 @@ def write_extraction(lane, sid, path, out_dir, extra):
 
 def excluded_text(out):
     return ("excluded tool_result %d, meta %d, notification %d, interrupt %d, replay %d, "
-            "synthetic %d, unparseable %d, other %d" % (
+            "synthetic %d, unparseable %d, other %d, compaction %d, cross_session %d" % (
                 out["tool_result"], out["meta"], out["notification"], out["interrupt"],
-                out["replay"], out["synthetic"], out["unparseable"], out["other"]))
+                out["replay"], out["synthetic"], out["unparseable"], out["other"],
+                out["compaction"], out["cross_session"]))
 
 
 def cmd_extract_transcript(a):
@@ -8637,9 +12777,9 @@ def cmd_extract_transcript(a):
 
 # ------------------------------------------------- the blind reflector's whole input set -----
 
-# A spawner pre-registers its controls in the record as an observation whose phase starts
-# `controls` (the convention: `handsoff.py ledger --phase controls-<LANE> …`), and a lane event
-# carries the brief it was given and the case planted for it. None of that is the P4
+# Legacy: a record written before the reflection controls were retired may hold them as an observation
+# whose phase starts `controls` (`handsoff.py ledger --phase controls-<LANE> …`); no run records one now.
+# A lane event carries the brief it was given and any test device recorded for it. None of that is the P4
 # reflector's to read: that lane is blind to what the head expected, so `reflect-inputs` drops
 # those observations from the copy it writes and strips these keys from every event it keeps.
 CONTROL_PHASE = "controls"
@@ -8664,33 +12804,207 @@ def blinded_events(events):
     return kept, dropped, stripped
 
 
-def refuse_out_inside(out_dir, what, root):
+# The blind reflector's view of the head's transcript (critic finding 2 of the batch's design
+# review: a control the spawner registered survived in the extraction through the Bash command
+# that registered it). A control's text is withheld wherever it shows, and so is every line of
+# the registration command itself, whose phase opens `controls` by convention.
+CONTROL_MARK_RE = re.compile(r"--phase(?:=|\s+)['\"]?controls")
+WITHHELD_LINE = "[withheld from the blind reflector: a line naming a registered control]"
+NEEDLE_MIN = 8      # a control text shorter than this is too common a string to withhold by
+NEEDLE_HEAD = 40    # a cut tool line keeps a long text's head: matched on its first 40 characters
+REFLECTOR_CLASS = "reflector"   # the one lane class whose controls the reflector is blind to
+
+
+def control_needles(events):
+    """The texts the blind reflector must not read, from the record: the `what` and `note` of
+    every observation whose phase starts CONTROL_PHASE, and the `controls_checked` and `plant`
+    values (strings, or lists and mappings of them) of any event not known to be another class's,
+    each at least NEEDLE_MIN characters. A lane's CONTROL+ check is a reading-list check of its
+    own class, never a control the reflector is blind to (register entry 2026-10-23 03:48), so
+    only a `reflector` lane's count; an event whose class cannot be found stays a needle, since
+    this guard errs towards a lost line. A lane-resumed takes its lane's lane-open class."""
+    classes = {str(ev["lane"]): ev["class"] for ev in events
+               if ev.get("event") == "lane-open" and ev.get("lane") and ev.get("class")}
+    found = []
+
+    def add(value):
+        if isinstance(value, str):
+            text = one_line(value)
+            if len(text) >= NEEDLE_MIN and text not in found:
+                found.append(text)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                add(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                add(item)
+    for ev in events:
+        phase = ev.get("phase")
+        if ev.get("event") == "observation" and isinstance(phase, str) \
+                and phase.startswith(CONTROL_PHASE):
+            add(ev.get("what"))
+            add(ev.get("note"))
+        if (ev.get("class") or classes.get(str(ev.get("lane")))) in (None, "", REFLECTOR_CLASS):
+            for key in ("controls_checked", "plant"):
+                if key in ev:
+                    add(ev[key])
+    return found
+
+
+def flat_text(text):
+    """A text as the redaction matches it: each NEWLINE_MARK (a tool line's own line break) a
+    space, every run of white space one space, the ends stripped."""
+    return re.sub(r"\s+", " ", str(text).replace(NEWLINE_MARK.strip(), " ")).strip()
+
+
+def path_like(text):
+    """True for a flattened needle that reads as a file path, not prose."""
+    return text.startswith(("/", "~")) or ("/" in text and not re.search(r"\s", text))
+
+
+def control_patterns(needles):
+    """[(whole, head)] for the control texts: each text flattened (flat_text), matched whole
+    wherever it shows, and its first NEEDLE_HEAD characters where only its head was kept. A path
+    matches whole alone: its head is the folder it shares with every path under the same root."""
+    found = []
+    for needle in needles or ():
+        whole = flat_text(needle)
+        head = whole if path_like(whole) else whole[:NEEDLE_HEAD]
+        if whole and (whole, head) not in found:
+            found.append((whole, head))
+    return found
+
+
+def names_control(text, controls):
+    """True when the flattened text carries the controls registration command or any control's
+    whole text or head (control_patterns)."""
+    flat = flat_text(text)
+    return bool(CONTROL_MARK_RE.search(flat)) or any(
+        whole in flat or head in flat for whole, head in controls)
+
+
+def redact_text(text, controls):
+    """(text, lines withheld) for one turn's whole text: the lines are flattened and joined, so
+    a control wrapped across a line break — or the registration command so wrapped — is matched
+    across it, and every line a match touches is replaced by WITHHELD_LINE (critic finding 5 of
+    the review of 2026-10-11: each line was matched alone, so a wrapped control survived). A
+    line already withheld is not counted again."""
+    lines = text.split("\n")
+    flat, spans = "", []
+    for line in lines:
+        norm = flat_text(line)
+        if not norm:
+            spans.append(None)
+            continue
+        if flat:
+            flat += " "
+        spans.append((len(flat), len(flat) + len(norm)))
+        flat += norm
+    found = [(m.start(), m.end()) for m in CONTROL_MARK_RE.finditer(flat)]
+    for whole, head in controls:
+        for pattern in (whole, head):
+            at = flat.find(pattern)
+            while at >= 0:
+                found.append((at, at + len(pattern)))
+                at = flat.find(pattern, at + 1)
+    hit = set()
+    for start, end in found:
+        for i, span in enumerate(spans):
+            if span is not None and span[0] < end and start < span[1]:
+                hit.add(i)
+    if not hit:
+        return text, 0
+    counted = sum(1 for i in hit if lines[i] != WITHHELD_LINE)
+    return "\n".join(WITHHELD_LINE if i in hit else line for i, line in enumerate(lines)), counted
+
+
+def redact_turns(turns, needles):
+    """(turns, lines withheld): every line of every turn that carries a control's text — whole,
+    or its first NEEDLE_HEAD characters — or the controls registration command, each matched
+    across the turn's line breaks (redact_text), replaced by WITHHELD_LINE; every other line,
+    ordinary tool calls and unrelated prose included, kept."""
+    controls = control_patterns(needles)
+    out, withheld = [], 0
+    for role, stamp, text in turns:
+        text, n = redact_text(text, controls)
+        withheld += n
+        out.append((role, stamp, text))
+    return out, withheld
+
+
+def stage_reflect_dir(run):
+    """The run's own reflection directory under its stage root, `<store>/stages/<run>/reflect`,
+    as a real path: the one place inside the store a reflection input set may be written (the
+    owner's provisional choice of 2026-10-10 on register entry 2026-09-17 21:08), since the stage
+    root (G19) is where the run's held work lives and the reflector is granted this directory
+    alone."""
+    return os.path.realpath(os.path.join(store_root(), "stages", token(run, "run id"), "reflect"))
+
+
+def refuse_out_inside(out_dir, what, root, carve=None):
     """A premise failure when --out sits in a directory the blind lane is not granted: the
     reflector is granted its own directory alone, and an input set written into the store or
-    the projects root either needs a grant it must not have or is read as the run's own."""
+    the projects root either needs a grant it must not have or is read as the run's own. `carve`
+    is the one directory, and its subtree, allowed inside `root` (stage_reflect_dir), compared as
+    real paths, so a sibling, another run's, a prefix lookalike or a symlink leading out of it is
+    refused like any other path in the store."""
     real = os.path.realpath(os.path.expanduser(out_dir))
+    if carve and (real == carve or real.startswith(carve + os.sep)):
+        return
     for spelling in spellings(root):
         if real == spelling or real.startswith(spelling + os.sep):
             die("--out %s is inside the %s (%s): the reflector lane is granted its output "
                 "directory alone, so the input set is written outside both — allowed: any "
                 "directory outside the run store (%s) and the projects root (%s), such as one "
-                "under /tmp" % (out_dir, what, spelling, store_root(), projects_root()))
+                "under /tmp%s" % (out_dir, what, spelling, store_root(), projects_root(),
+                                 ", or the run's own %s" % carve if carve else ""))
+
+
+def refuse_out_nonempty(out_dir):
+    """A premise failure when --out already holds anything (register entry 2026-10-15 01:33 f):
+    the input set goes by fixed names, so a second session into one directory would silently
+    replace the first's extraction and leave a reflection with one of the run's heads."""
+    try:
+        held = sorted(os.listdir(out_dir))
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        die("cannot read --out %s: %s" % (out_dir, exc))
+    if held:
+        die("--out %s is not empty (%d entr%s, first %s): the input set goes by fixed names, so a "
+            "second extraction here would replace the first; nothing written, name a fresh "
+            "directory for each session" % (out_dir, len(held), "y" if len(held) == 1 else "ies",
+                                            held[0]))
 
 
 def cmd_reflect_inputs(a):
     """The P4 boundary reflection's whole input set in one directory (D36): the extraction, the
     waste table and a filtered copy of the run record, written before the event that records
-    them so the copy never carries its own line."""
+    them so the copy never carries its own line. A record with no run-open is read in its
+    attended form (register entry 2026-09-26 03:5x): --session's transcript, or the frozen copy
+    --transcript names, with Step 2b rendered from the record's lane events; a record whose
+    run-open line may be the torn one is refused rather than read as attended. --out may be the
+    run's own <store>/stages/<run>/reflect (stage_reflect_dir, register entry 2026-09-17 21:08),
+    and any extraction line that names a control a legacy record holds is withheld and counted."""
     path = record_path(a.run)
-    events = require_record(path)
+    events = read_existing_record(path)
     bad = read_record(path)[1]
+    if is_plain_run(events) and bad:
+        # The attended form takes a record with no run-open; a record whose run-open line may be
+        # the torn one is not that (critic finding 2 of the batch's design review: malformed
+        # history must not become an attended record because its run-open was skipped).
+        die("the record %s carries no readable run-open and %d unparseable line(s): an attended "
+            "record must read whole, since a torn run-open would pass for one; nothing written"
+            % (path, bad))
     out_dir = os.path.realpath(os.path.expanduser(a.out))
-    refuse_out_inside(out_dir, "run store", store_root())
+    refuse_out_inside(out_dir, "run store", store_root(), carve=stage_reflect_dir(a.run))
     refuse_out_inside(out_dir, "projects root", projects_root())
+    refuse_out_nonempty(out_dir)
     lane, sid, tpath, extra = extraction_inputs(a)
+    needles = control_needles(events)
     if a.dry_run:
         try:
-            _, counts = extract_turns(lane, tpath, extra)
+            turns, counts = extract_turns(lane, tpath, extra, needles)
         except OSError as exc:
             die("cannot read the transcript %s: %s" % (tpath, exc))
         _, _, wcounts = waste_table(events, a.run, path, bad,
@@ -8698,15 +13012,17 @@ def cmd_reflect_inputs(a):
                                                   meter_overrides(a.meter_line)),
                                     meter_lanes=not a.no_meter)
         kept, dropped, stripped = blinded_events(events)
-        say("reflect-inputs: dry run · %d turns (%d human, %d assistant) of %d records · %d "
-            "tool-call turn(s) · %d waste row(s) · %d event(s) kept, %d controls observation(s) "
-            "dropped, %d stripped of %s · would write turns.md, counts.json, waste-table.md and "
-            "record-filtered.jsonl under %s and append one reflect-inputs event"
-            % (counts["extracted"], counts["human_turns"], counts["assistant_turns"],
-               counts["records"], counts["tool_call_turns"], wcounts["rows"], len(kept),
-               dropped, stripped, "/".join(BLINDED_KEYS), out_dir))
+        say("reflect-inputs: dry run · %s%d turns (%d human, %d assistant) of %d records · %d "
+            "tool-call turn(s) · %d line(s) naming a control withheld · %d waste row(s) · %d "
+            "event(s) kept, %d controls observation(s) dropped, %d stripped of %s · would write "
+            "turns.md, counts.json, waste-table.md and record-filtered.jsonl under %s and append "
+            "one reflect-inputs event"
+            % ("attended record (no run-open) · " if is_plain_run(events) else "",
+               counts["extracted"], counts["human_turns"], counts["assistant_turns"],
+               counts["records"], counts["tool_call_turns"], counts["notes"]["controls_redacted"],
+               wcounts["rows"], len(kept), dropped, stripped, "/".join(BLINDED_KEYS), out_dir))
         return 0
-    counts = write_extraction(lane, sid, tpath, out_dir, extra)
+    counts = write_extraction(lane, sid, tpath, out_dir, extra, withheld=needles)
     text, _, wcounts = waste_table(events, a.run, path, bad,
                                    metered_heads(events, a.run, a.no_meter,
                                                  meter_overrides(a.meter_line)),
@@ -8723,17 +13039,20 @@ def cmd_reflect_inputs(a):
                "tool_call_turns": counts["tool_call_turns"], "records": counts["records"],
                "waste_rows": wcounts["rows"], "events_kept": len(kept),
                "controls_dropped": dropped, "events_stripped": stripped,
+               "controls_redacted": counts["notes"]["controls_redacted"],
                "excluded": sum(counts["excluded"].values()),
                "in_no_bucket": reconciliation(counts)[1]}
+    shape = "attended" if is_plain_run(events) else "hands-off"
     append_record(path, event(a.run, "reflect-inputs", session=sid, out=out_dir,
-                              counts=summary))
-    say("reflect-inputs: %d turns (%d human, %d assistant) of %d records · %d tool-call turn(s) "
-        "· %d waste row(s) · %d event(s) kept, %d controls observation(s) dropped, %d stripped "
-        "of %s → %s"
-        % (summary["turns"], summary["human_turns"], summary["assistant_turns"],
-           summary["records"], summary["tool_call_turns"], summary["waste_rows"],
-           summary["events_kept"], summary["controls_dropped"], summary["events_stripped"],
-           "/".join(BLINDED_KEYS), out_dir))
+                              counts=summary, shape=shape, transcript=tpath))
+    say("reflect-inputs: %s%d turns (%d human, %d assistant) of %d records · %d tool-call "
+        "turn(s) · %d line(s) naming a control withheld · %d waste row(s) · %d event(s) kept, %d "
+        "controls observation(s) dropped, %d stripped of %s → %s"
+        % ("attended record (no run-open) · " if shape == "attended" else "",
+           summary["turns"], summary["human_turns"], summary["assistant_turns"],
+           summary["records"], summary["tool_call_turns"], summary["controls_redacted"],
+           summary["waste_rows"], summary["events_kept"], summary["controls_dropped"],
+           summary["events_stripped"], "/".join(BLINDED_KEYS), out_dir))
     return 0
 
 
@@ -8745,6 +13064,7 @@ def main():
 
     def common(p, handoff=True):
         p.add_argument("--run", required=True, help="run id (the record's file stem)")
+        p.add_argument("--record", default=None, help="explicit run record for notice/receipt operations")
         if handoff:
             p.add_argument("--handoff", default=None, help="hand-off path (default: run-open's)")
         p.add_argument("--dry-run", action="store_true", help="print what would be written")
@@ -8757,12 +13077,28 @@ def main():
         p.add_argument("--grant", action="append", default=[], metavar="PATH",
                        help="a read grant (repeatable); the defaults are always present; given, "
                             "it replaces the file's read list, and absent, grants and "
-                            "run-resume carry that list forward")
+                            "run-resume carry that list forward; a replacement that would lose "
+                            "a read path is refused unless --replace")
         p.add_argument("--write", action="append", default=[], metavar="PATH",
                        help="a write grant (repeatable); the store and the state directory are "
                             "always present; given, it replaces the file's write list, and "
                             "absent, that list is carried forward: a rewrite that would lose a "
-                            "write path with neither --grant nor --write is refused")
+                            "path from either list is refused unless --replace")
+        p.add_argument("--add-grant", action="append", default=[], metavar="PATH",
+                       help="add a read grant to the run's current read list (repeatable; "
+                            "grants and run-resume): every path the run holds is kept")
+        p.add_argument("--add-write", action="append", default=[], metavar="PATH",
+                       help="add a write grant to the run's current write list (repeatable; "
+                            "grants and run-resume): every path the run holds is kept")
+        p.add_argument("--replace", action="store_true",
+                       help="the lists named with --grant/--write replace the run's even where "
+                            "they lose a path (the delta on stderr): the explicit narrowing, and "
+                            "the next call's baseline")
+        p.add_argument("--max-successors", type=int, default=None, metavar="N",
+                       help="the run's successor cap, written to the grants file and read by "
+                            "the starter before AIMYTH_MAX_SUCCESSORS and the default %d; "
+                            "absent, the file's own value is carried forward"
+                            % MAX_SUCCESSORS_DEFAULT)
         p.add_argument("--on-limit", choices=ON_LIMIT_VALUES, default=None,
                        help="the limit gate (D42, the pre-flight's class L): stop (the default: "
                             "the supervisor stands down on a limit, the hand-off is the recovery) "
@@ -8819,15 +13155,23 @@ def main():
 
     def decisions_channel(p):
         p.add_argument("--decisions-file", default=None, metavar="PATH",
-                       help="the run's decisions file (no default): an mtime after the last gate "
-                            "or ack holds the call with exit 6, as a newer AUTHOR observation "
-                            "does; a named file that does not exist is refused")
+                       help="the run's decisions file (no default): content that no accepted "
+                            "ack's digest covers holds the call with exit 6, as a newer AUTHOR "
+                            "observation does; a named file that does not exist is refused")
         p.add_argument("--ack", default=None, metavar="LINE",
                        help="one line naming what was read: records an observation 'ack: LINE' "
                             "and the held call proceeds")
+        p.add_argument("--ack-digest", default=None, metavar="SHA256",
+                       help="required with --ack whenever --decisions-file is given: the whole "
+                            "sha256 `decisions-read` printed for the file; missing, or not the "
+                            "file's at the call, the call is held (exit 6) with the unread lines "
+                            "and nothing is recorded")
         return p
 
     p = common(sub.add_parser("run-open", help="record the run's opening"), handoff=False)
+    p.add_argument("--decisions-file", default=None, metavar="PATH",
+                   help="the run's decisions file, bound on the record: gate, close and both "
+                        "launchers read it from there; a named file that does not exist is refused")
     p.add_argument("--session", required=True)
     p.add_argument("--head", required=True)
     p.add_argument("--regime", required=True, choices=("single", "multi"))
@@ -8844,6 +13188,16 @@ def main():
                    help="seed: a launcher's placeholder session that never runs, written as "
                         "session_kind on the run-open event; the waste table and the meter skip "
                         "it rather than reading it as a head that spent nothing (default: head)")
+    p.add_argument("--model", default=None,
+                   help="the run's head model as a structured field on the run-open event: a "
+                        "successor or a resume that names no --model inherits the newest such "
+                        "field on the record (never parsed out of --head)")
+    p.add_argument("--effort", default=None,
+                   help="the run's head effort as a structured field: a successor or a resume "
+                        "that names no --effort inherits the newest such field on the record")
+    p.add_argument("--runbook", default=None,
+                   help="the run's runbook, refused if it never names `handsoff.py boundary`; "
+                        "absent, <store>/stages/<run>/RUNBOOK.md is read when it is there")
     grants(p)
     network_flag(p)
 
@@ -8852,6 +13206,11 @@ def main():
     p.add_argument("--head", required=True)
     p.add_argument("--detail", required=True)
     p.add_argument("--pid", type=int, default=None)
+    p.add_argument("--model", default=None,
+                   help="this head's model as a structured field, read as run-open's is: a head "
+                        "no start of this script named has no other readable model")
+    p.add_argument("--effort", default=None,
+                   help="this head's effort as a structured field, read as run-open's is")
     two_heads(p)
     grants(p)
 
@@ -8871,6 +13230,17 @@ def main():
                                              "(item0=40k,item1=90000): an expect-items event "
                                              "the gate's fit estimate reads, overriding run-open"))
     p.add_argument("--items", required=True, metavar="ITEM=TOKENS,...")
+    p = common(sub.add_parser("notices", help="read pending notice versions or acknowledge a receipt"), handoff=False)
+    p.add_argument("--pending", action="store_true")
+    p.add_argument("--ack", action="store_true")
+    p.add_argument("--notice-id")
+    p.add_argument("--notice-version", type=int)
+    p.add_argument("--notice-sha256")
+    p.add_argument("--receipt")
+    p.add_argument("--receipt-sha256")
+    p.add_argument("--route", choices=("hands-off", "attended"))
+    p.add_argument("--format", choices=("text", "json"), default="text")
+
     p = common(sub.add_parser("ledger", help="one findings-ledger row plus an observation, or "
                                              "--observation alone on any record"))
     # The four are required together (cmd_ledger refuses a partial set by name); they are not
@@ -8879,6 +13249,9 @@ def main():
     p.add_argument("--what", default=None)
     p.add_argument("--evidence", default=None)
     p.add_argument("--routing", default=None)
+    p.add_argument("--notice-id")
+    p.add_argument("--notice-version", type=int)
+    p.add_argument("--notice-sha256")
     p.add_argument("--observation", default=None, metavar="WHAT",
                    help="append one observation event and NO hand-off row, to any record that "
                         "exists: the form a record with no run-open (a plain lane run) takes, "
@@ -8916,7 +13289,8 @@ def main():
     p.add_argument("--routing", default="no action",
                    help="the ledger row's routing (default: no action)")
 
-    p = common(sub.add_parser("handoff", help="rewrite named sections or bullets; --final records head-exit"))
+    p = common(sub.add_parser("handoff", help="rewrite named sections or bullets; --final records head-exit, "
+                                              "refused (exit 10, the pack still written) with no successor left"))
     p.add_argument("--inflight", default=None)
     p.add_argument("--inflight-file", default=None)
     p.add_argument("--inflight-from-record", action="store_true",
@@ -8926,22 +13300,37 @@ def main():
     p.add_argument("--set", action="append", metavar="KEY=VALUE",
                    help="bullets: %s; sections: %s" % (", ".join(sorted(BULLETS)), ", ".join(sorted(SECTIONS))))
     p.add_argument("--set-file", action="append", metavar="KEY=PATH")
-    p.add_argument("--final", action="store_true", help="record head-exit; needs the next-task pack (D41)")
+    p.add_argument("--final", action="store_true",
+                   help="record head-exit; needs the next-task pack (D41); with no successor left "
+                        "on the run's cap no head-exit is written and the call exits 10")
     p.add_argument("--band", default=None, help="the band edge crossed, unmetered, limit or error (default: measured)")
     p.add_argument("--pid", type=int, default=None)
     p.add_argument("--meter-line", default=None, help="a billed line in hand for head-exit's spent_usd (skips the meter)")
 
     def head_options(p):
-        p.add_argument("--model", default=None)
-        p.add_argument("--effort", default="max", help="effort for the head (default max; the owner's head rule)")
-        p.add_argument("--config-dir", default=None, help="optional; unused by default (single account, D28)")
+        p.add_argument("--model", default=None,
+                       help="the head's model; absent, the newest head start's structured model "
+                            "on the record, and with none a start is refused (a hands-off head "
+                            "never starts on the harness default)")
+        p.add_argument("--model-src", default=None, help=argparse.SUPPRESS)
+        p.add_argument("--effort", default=None,
+                       help="effort for the head; absent, the newest head start's effort on the "
+                            "record, and with none %s (the owner's head rule)" % HEAD_EFFORT_DEFAULT)
+        p.add_argument("--effort-src", default=None, help=argparse.SUPPRESS)
+        p.add_argument("--config-dir", default=None, help="optional; unused by default (a run stays on one login, D28)")
         p.add_argument("--harness-bin", default=HARNESS, help="the harness binary (a suite substitutes a stub)")
         return p
 
-    p = common(sub.add_parser("successor", help="record head-exit, start the detached starter (which supervises); returns at once"))
+    p = common(sub.add_parser("successor", help="record head-exit, start the detached starter (which supervises); returns at once; "
+                                                "refused (exit 10) with no successor left; names the head's background tasks"))
     head_options(p)
     p.add_argument("--budget-usd", type=float, default=None, help="default: the envelope's remainder (N5)")
     p.add_argument("--predecessor-pid", type=int, default=None)
+    p.add_argument("--seed-pid", action="store_true",
+                   help="for an attended head handing over: the starter waits on a seed process "
+                        "that exits %d s after this call, not on the head's own process, which "
+                        "does not exit at the end of a reply; refused beside --predecessor-pid"
+                        % SEED_PID_S)
     p.add_argument("--band", default=None)
     p.add_argument("--pid", type=int, default=None)
     p.add_argument("--wait-s", type=int, default=STARTER_WAIT_S, help="the predecessor-pid wait's bound")
@@ -9019,7 +13408,7 @@ def main():
     p.add_argument("--stop-file", default=None)
     p.add_argument("--reset-at", default=None, metavar="HH:MM|+Ns|ISO")
     p.add_argument("--probe", action="store_true", help="opt in to a $0.05 haiku probe every --probe-interval-s until one succeeds; OFF by default (owner ruling 2026-09-06): without it an unparsed reset records stop-condition limit-unparsed and ends (exit 7), the hand-off being the recovery; a limit scoped to one model records limit-model and ends the same way, with or without the flag")
-    p.add_argument("--config-dir", default=None, help="optional; unused by default (single account, D28)")
+    p.add_argument("--config-dir", default=None, help="optional; unused by default (a run stays on one login, D28)")
     p.add_argument("--probe-interval-s", type=int, default=PROBE_INTERVAL_S)
     p.add_argument("--max-wait-s", type=int, default=8 * 3600, help="give up (exit 7) past this, from the wait's start")
     p.add_argument("--max-block-s", type=int, default=MAX_BLOCK_S, help="one call blocks at most this long")
@@ -9071,22 +13460,35 @@ def main():
     p.add_argument("--session", required=True, metavar="SID")
     p.add_argument("--out", required=True, metavar="DIR",
                    help="the reflector lane's own directory: never inside the run store or the "
-                        "projects root, which the lane is not granted")
+                        "projects root, which the lane is not granted, except the run's own "
+                        "<store>/stages/<run>/reflect/ (the stage root's reflection directory)")
     p.add_argument("--projects-root", default=None, metavar="P",
                    help="default: AIMYTH_PROJECTS_DIR, else ~/.claude/projects")
+    p.add_argument("--transcript", default=None, metavar="FILE",
+                   help="a frozen copy of the session's transcript, read instead of the live "
+                        "one: for a self-cross reflection, a copy taken before the controls "
+                        "were registered")
     p.add_argument("--notification-re", action="append", default=[], metavar="REGEX",
                    help="an extra injected-user-record marker, matched at the start (repeatable)")
     p.add_argument("--dry-run", action="store_true",
                    help="print the counts and what would be written; write and record nothing")
     window_meter(p)
 
+    p = two_heads(common(sub.add_parser(
+        "item-done", help="an explicit completion record for each item named, with no meter: what "
+                          "the console reads as done, for items worked side by side"), handoff=False))
+    p.add_argument("items", nargs="+", metavar="ITEM", help="an item, as the pack or a gate names it")
+    p.add_argument("--note", default="", help="one line on what finished it")
+
     p = common(sub.add_parser("close", help="final meter, run-close, commit and push on grant"))
     p.add_argument("--commit", default=None, metavar="MSG")
     p.add_argument("--push", action="store_true")
-    p.add_argument("--items", default="unstated")
-    p.add_argument("--register", default="unstated")
-    p.add_argument("--log", default="unstated")
-    p.add_argument("--lint", default="unstated")
+    p.add_argument("--items", default=None,
+                   help="required: the record's own verdict on the run's items (a close without "
+                        "it is refused, exit 2; a dry run reads it as unstated)")
+    p.add_argument("--register", default=None, help="absent: written unstated, with a note")
+    p.add_argument("--log", default=None, help="absent: written unstated, with a note")
+    p.add_argument("--lint", default=None, help="absent: written unstated, with a note")
     p.add_argument("--parity", default=None)
     p.add_argument("--meter-line", default=None)
     p.add_argument("--report", default=None, metavar="PATH",
@@ -9099,6 +13501,25 @@ def main():
 
     p = common(sub.add_parser("run-is-closed", help="exit 0 when the record carries a run-close, "
                                                     "1 when it does not, 2 with no record"),
+               handoff=False)
+
+    p = sub.add_parser("decisions-read", help="the decisions file's lines the run has not "
+                       "acknowledged, then `digest: <sha256>`, the value an ack's --ack-digest "
+                       "repeats (IDEAS 171 (b); reads, writes nothing)")
+    p.add_argument("--run", required=True, help="run id (the record's file stem)")
+    p.add_argument("--record", default=None, help="explicit run record (default: the run's)")
+    p.add_argument("--decisions-file", default=None, metavar="PATH",
+                   help="the run's decisions file (default: the one its record binds)")
+
+    two_heads(decisions_channel(common(sub.add_parser(
+        "decisions-ack", help="the acknowledgement between gates, which a held spawn asks for: "
+                              "--ack and, with a decisions file, --ack-digest"), handoff=False)))
+
+    p = common(sub.add_parser("disarm", help="after the run's close: remove the arming marker of "
+                                             "every head session the run names whose pointer "
+                                             "still names this run (close does it too; this is "
+                                             "the retry); exit 1 when any is unresolved or "
+                                             "failed"),
                handoff=False)
 
     p = common(sub.add_parser("launch-check", help="the launch kit's start confirmation: poll "
@@ -9127,6 +13548,15 @@ def main():
                         "(AIMYTH_HANDSOFF=1, the head's pid among this shell's ancestors, or "
                         "the session marker under a harness process): only when this shell is "
                         "NOT the head the starter waits for")
+    p.add_argument("--lanes", default=None, metavar="ID[,ID...]",
+                   help="the planned first batch of helpers: after the head starts, the check "
+                        "waits inside the same --wait deadline until every one has opened and "
+                        "shows activity since its open (a record or transcript event) or has "
+                        "closed completed, then prints STARTED CLEAN (exit 0); a helper that "
+                        "failed, or any not progressing at the deadline, is NOT CLEAN (exit 1), "
+                        "each helper's state named; an empty or repeated list is refused (exit "
+                        "2). A first batch starts minutes after its head: pass a --wait that "
+                        "covers it")
 
     p = common(sub.add_parser("open-console", help="the run's console window on demand, one "
                                                    "when none is alive; --check prints the live "
@@ -9190,7 +13620,8 @@ def main():
 
     a = ap.parse_args()
     handlers = {"run-open": cmd_run_open, "run-resume": cmd_run_resume, "boundary": cmd_boundary,
-                "ledger": cmd_ledger, "gate": cmd_gate, "handoff": cmd_handoff, "expect": cmd_expect,
+                "item-done": cmd_item_done,
+                "notices": cmd_notices, "ledger": cmd_ledger, "gate": cmd_gate, "handoff": cmd_handoff, "expect": cmd_expect,
                 "successor": cmd_successor, "_starter": cmd_starter,
                 "supervise": cmd_supervise, "_supervise": cmd_supervise_internal,
                 "resume-head": cmd_resume_head, "_resume-head": cmd_resume_head_internal,
@@ -9200,6 +13631,8 @@ def main():
                 "extract-transcript": cmd_extract_transcript,
                 "reflect-inputs": cmd_reflect_inputs, "watch": cmd_watch,
                 "raise-envelope": cmd_raise_envelope, "decision": cmd_decision,
+                "decisions-read": cmd_decisions_read, "decisions-ack": cmd_decisions_ack,
+                "disarm": cmd_disarm,
                 "run-is-closed": cmd_run_is_closed, "run-spend": cmd_run_spend,
                 "launch-check": cmd_launch_check, "open-console": cmd_open_console,
                 "hold": cmd_hold, "release": cmd_release,

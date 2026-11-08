@@ -22,7 +22,8 @@
 #                     allowlist entry the candidate has reached into a finding.
 #   --publish <word>  the owner's go on the recap, verbatim; needs --message AND --approved. Absent,
 #                     the chain stops at the recap. The script never asks: consent reaches it as an
-#                     argument.
+#                     argument. It also needs a --release of the form vMAJOR.MINOR.PATCH, since that
+#                     becomes the release's tag and each user's copy finds its baseline by that form.
 #   --message <msg>   the commit message the owner gave or confirmed; needs --publish.
 #   --approved <dig>  the `recap-digest` the recap-only run printed as its last line. It is what
 #                     binds the owner's word to the recap the owner actually saw: without it a
@@ -45,11 +46,13 @@
 #      and pushed.
 #   1  a gate refused the publish: drift, a payload-gate finding, a release-gate finding, a
 #      throttle finding — or the approval check found the approved recap or its tree no longer on
-#      disk as approved. Nothing is committed.
+#      disk as approved, or the release's tag already exists, or the branch would push somewhere
+#      other than the address the recap names. Nothing is committed.
 #   2  a broken premise: usage, a missing script, a repo that is not a git clone, the vault passed
 #      as the repo, a vault it cannot read, a recap it cannot write or (under --publish) cannot
 #      find, a gate that exited 2. Nothing is committed.
-#   3  a step of the chain failed: pull, overlay, stage, commit or push.
+#   3  a step of the chain failed: pull, overlay, stage, commit, tag or push. A failed push takes
+#      the local tag and the commit back, so the same word can be tried again on the same index.
 #
 # WHAT IT WRITES — the whole of it:
 #   · the recap file (default <vault>/output/publish-recap.txt): the only file it writes in the
@@ -59,9 +62,10 @@
 #     index `git add -A` stages. Both are written BEFORE the gates run, so a gate STOP leaves the
 #     clone with the overlay in its working tree and everything staged, uncommitted —
 #     `git -C <repo> reset -q` clears the index, and the next run overlays and stages again.
-#   · under --publish: the commit and the push, and nothing else. That run does not pull, does not
-#     overlay and does not stage: it re-gates the index as it stands, which is the index the
-#     approved recap named by its tree hash, so the committed tree is the one the recap described.
+#   · under --publish: the commit, the release's annotated tag and one atomic push of both, and
+#     nothing else. That run does not pull, does not overlay and does not stage: it re-gates the
+#     index as it stands, which is the index the approved recap named by its tree hash, so the
+#     committed tree is the one the recap described.
 #
 # WHAT IT DOES NOT DO — by the two-repos rule and SKILL.md's own division:
 #   · the private vault backup (SKILL.md step 7) is a separate command outside this chain;
@@ -130,6 +134,13 @@ if [ -n "$OWNER_WORD$MESSAGE$APPROVED" ] && { [ -z "$OWNER_WORD" ] || [ -z "$MES
   die 2 "STOP premise — --publish, --message and --approved come as a set: the owner's word, the message it authorised, and the recap-digest the recap-only run printed as its last line. Run without them first, read the recap, then pass all three"
 fi
 
+# The tag is what every user's copy compares itself with, by the pattern v[0-9]*. A release named
+# without the v, or with a fourth part, would leave the last good tag as the newest match, so every
+# copy would warn.
+if [ -n "$OWNER_WORD" ] && ! printf '%s\n' "$RELEASE" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+  die 2 "STOP premise — --publish needs a --release of the form vMAJOR.MINOR.PATCH, and '$RELEASE' is not: it becomes the release's tag. Nothing committed"
+fi
+
 # ── premises: the repo, the vault, the three scripts, the recap file ─────────────────────────
 [ -d "$REPO" ]      || die 2 "STOP premise — $REPO is not a directory"
 REPO="$(cd "$REPO" && pwd)"
@@ -161,6 +172,8 @@ GUARD="$SCRIPT_DIR/publish_guard.py"
 THROTTLE="$VAULT/.claude/skills/delegate/throttle.py"
 [ -f "$EXPORT" ]   || die 2 "STOP premise — no export_template.sh beside this script ($SCRIPT_DIR)"
 [ -f "$GUARD" ]    || die 2 "STOP premise — no publish_guard.py beside this script ($SCRIPT_DIR): the payload gate cannot run, and a skipped gate is never a pass"
+STRIP="$SCRIPT_DIR/strip_vault_local.py"
+[ -f "$STRIP" ]    || die 2 "STOP premise — no strip_vault_local.py beside this script ($SCRIPT_DIR): the drift check cannot compare a marked file"
 [ -f "$THROTTLE" ] || die 2 "STOP premise — no throttle.py at $THROTTLE: the throttle gate cannot run"
 [ -d "$SCRIPT_DIR/payload" ] || die 2 "STOP premise — no payload/ beside this script ($SCRIPT_DIR)"
 
@@ -198,8 +211,10 @@ LEFT_BEHIND="the clone keeps the overlay in its working tree with everything sta
 # export script rather than listed here by name, so a new transform or a new marked block needs no
 # edit in this file:
 #   1. the paths apply_fixes() rewrites — parsed out of that function's body;
-#   2. any Markdown file carrying the conditional-compile marker, whose block the export strips —
-#      the marker string itself is read out of the same script.
+#   2. any file carrying the conditional-compile marker, whose block the export strips — the marker
+#      string itself is read out of the same script. Such a file is still compared: the vault copy
+#      goes through the export's own strip first (strip_vault_local.py), and a difference left after
+#      that is drift, so a marker never takes a file out of the check.
 # A third class is packaged rather than copied: the machinery under the skill's payload/ (the git
 # dotfiles, setup.sh, the seed demo), which lands at a repo path whose vault twin is a different
 # file. It is recognised by content — a staged file whose bytes are some payload file's bytes.
@@ -212,6 +227,13 @@ elif command -v sha256sum >/dev/null; then SUM=(sha256sum)
 else die 2 "STOP premise — neither shasum nor sha256sum is on PATH: the packaged-file exemption cannot be computed"
 fi
 sum_of() { "${SUM[@]}" "$1" | awk '{ print $1 }'; }
+# 0 when the vault file, after the export's own strip, is the staged file's bytes; 1 when it is not.
+# A strip that cannot run is a broken premise, never a difference and never a match.
+same_after_strip() {                           # $1 vault file, $2 staged file
+  python3 "$STRIP" --stdout "$1" > "$TMPD/stripped.out" \
+    || die 2 "PROBE FAILED: the strip could not read $1 ($(head -1 "$TMPD/stripped.out")) — the drift check cannot compare it"
+  cmp -s "$TMPD/stripped.out" "$2"
+}
 
 # ── the recap digest: what binds the owner's word to the recap the owner read ────────────────
 # The recap-only run prints `recap-digest <d>` as its last line; --publish carries that d back and
@@ -289,8 +311,8 @@ step_drift() {
     reason=""
     if printf '%s\n' "$TRANSFORMS" | grep -qxF -- "$p"; then
       reason="transformed by apply_fixes()"
-    elif grep -q -- "$MARKER" "$VAULT/$p"; then
-      reason="a $MARKER block was stripped on export"
+    elif grep -q -- "$MARKER" "$VAULT/$p" && same_after_strip "$VAULT/$p" "$REPO/$p"; then
+      reason="a $MARKER block was stripped on export, and the copies match after the same strip"
     elif grep -qxF -- "$(sum_of "$REPO/$p")" "$TMPD/payload.sums"; then
       reason="packaged from the skill payload, not copied from the vault"
     fi
@@ -355,6 +377,7 @@ step_recap() {
     printf 'remote      %s\n' "$REMOTE_URL"
     printf 'vault       %s\n' "$VAULT"
     printf 'candidate   %s\n' "$RELEASE"
+    printf 'tag         %s (annotated, pushed in one atomic push with the commit)\n' "$RELEASE"
     printf 'tree        %s\n' "$TREE"
     printf '\n-- staged (git diff --cached --stat) --\n'
     cat "$TMPD/stat.txt"
@@ -432,16 +455,50 @@ step_finish() {
     return 0
   fi
   printf -- '-- publish (owner word: %s)\n' "$OWNER_WORD"
+  # Where a plain `git push` would go: the branch's upstream, so the tag rides the same remote.
+  local branch remote ref rc=0 before head dest
+  branch="$(git -C "$REPO" symbolic-ref -q --short HEAD)" || die 3 "STOP tag — HEAD in $REPO is on no branch"
+  remote="$(git -C "$REPO" config --get "branch.$branch.remote" || echo origin)"
+  ref="$(git -C "$REPO" config --get "branch.$branch.merge" || echo "refs/heads/$branch")"
+  # The word was given on a recap that names origin's address, so a push going anywhere else stops
+  # here, before the commit. Two push addresses are a difference too: the push would reach both.
+  dest="$(git -C "$REPO" remote get-url --push --all "$remote")" \
+    || die 2 "STOP remote — branch $branch pushes to '$remote', and git can read no push address for it. Nothing committed; $LEFT_BEHIND"
+  [ "$dest" = "$REMOTE_URL" ] || die 1 \
+    "STOP remote — the recap names $REMOTE_URL, but branch $branch would push to $(printf '%s' "$dest" | tr '\n' ' ') (remote '$remote'), and the word was given on the recap's address. Make the two agree, then re-run without --publish. Nothing committed; $LEFT_BEHIND"
+  # A tag that exists stops the run here, before the commit, on either side.
+  ! git -C "$REPO" rev-parse -q --verify "refs/tags/$RELEASE" >/dev/null \
+    || die 1 "STOP tag — $RELEASE already exists in $REPO: a published tag never moves, so name the next release. Nothing committed; $LEFT_BEHIND"
+  git -C "$REPO" ls-remote --exit-code --tags "$remote" "refs/tags/$RELEASE" >/dev/null || rc=$?
+  case "$rc" in
+    2) ;;
+    0) die 1 "STOP tag — $RELEASE already exists on $remote: a published tag never moves, so name the next release. Nothing committed; $LEFT_BEHIND" ;;
+    *) die 3 "STOP tag — could not read the tags on $remote (exit $rc). Nothing committed; $LEFT_BEHIND" ;;
+  esac
+  before="$(git -C "$REPO" rev-parse -q --verify HEAD || true)"
+  # After a failed tag or push the commit comes back off, so the index stands as the recap named it
+  # and the same word can run again; a tag left behind would stop that retry.
+  undo_commit() {
+    if [ -n "$before" ]; then git -C "$REPO" reset -q --soft "$before"; else git -C "$REPO" update-ref -d HEAD; fi
+  }
   git -C "$REPO" commit -m "$MESSAGE" || die 3 "STOP commit — 'git commit' failed in $REPO"
-  git -C "$REPO" push               || die 3 "STOP push — 'git push' failed in $REPO (auth? set up a token or key and re-run)"
-  local head
+  if ! git -C "$REPO" tag -a "$RELEASE" -m "$MESSAGE"; then
+    undo_commit
+    die 3 "STOP tag — 'git tag' failed in $REPO; the commit was taken back, nothing published"
+  fi
+  if ! git -C "$REPO" push --atomic "$remote" "HEAD:$ref" "refs/tags/$RELEASE"; then
+    git -C "$REPO" tag -d "$RELEASE" >/dev/null
+    undo_commit
+    die 3 "STOP push — 'git push' failed in $REPO (auth? set up a token or key and re-run); the tag and the commit were taken back, so the same --publish line can run again"
+  fi
   head="$(git -C "$REPO" rev-parse --short HEAD)"
   {
     printf '\npublished    %s\n' "$head"
+    printf 'tag          %s\n' "$RELEASE"
     printf 'message      %s\n' "$MESSAGE"
     printf 'owner word   %s\n' "$OWNER_WORD"
   } >> "$RECAP" || die 2 "STOP recap — cannot append the publish result to $RECAP"
-  printf 'PUBLISHED: %s pushed to %s\n' "$head" "$REMOTE_URL"
+  printf 'PUBLISHED: %s tagged %s, pushed to %s\n' "$head" "$RELEASE" "$REMOTE_URL"
 }
 
 # One chain per mode. Each step also exits on its own failure with its own code, so the `&&` links

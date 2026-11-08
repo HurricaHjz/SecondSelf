@@ -1,0 +1,43 @@
+name: Bug report
+description: Report something in the framework that does not work as its manual says.
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        An issue is public. Describe the fault in general terms. Leave out home paths, text from
+        your wiki or your preferences, and transcripts.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, and what the framework did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened, and where the manual says so, if it does.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest path to the fault, on a fresh copy if you can.
+    validations:
+      required: true
+  - type: input
+    id: core-check
+    attributes:
+      label: Core check
+      description: >-
+        The `core:` line from the start of a session, or what
+        `python3 .claude/hooks/core-check.py --report` prints. It says whether your core still
+        matches its release, so a local change is not read as a framework fault. Where no check
+        runs in your copy, write: no check ran.
+      placeholder: "core: v1.2.3, unchanged (240 files)"
+    validations:
+      required: true

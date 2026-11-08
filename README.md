@@ -1,135 +1,187 @@
-# Second Yourself
+# SecondSelf
 
-Pre-release: the design changes often until v1.0. Forks are welcome; pull updates often.
+Your AI may remember what you told it. Nothing makes sure it does it, and you end up repeating yourself and checking its work by hand. Everyone has the same models, so the mind you build sets you apart.
 
-**Second yourself. One agent that remembers you, with many hands to act for you.**
+aiMyth (open-sourced as SecondSelf) is a framework to build a transparent, local mind of your own. It is one super agent that is yours, and the same mind sits behind every window you open. It brings your knowledge, your rules and a team of helpers into the AI tools you already use. Today it runs in Claude Code, and GPT models can join as helpers through the Codex CLI.
 
-> *Tony Stark never had to reintroduce himself to Jarvis. Jarvis thought with him, acted for him, and never forgot.*
+![A second self at the centre, joined to a foundation model, a knowledge base and a multi-agent harness](assets/three-parts.png)
 
-We believe true intelligence comes from the same composition. A foundation model gives it reason. A multi-agent harness gives it hands. A well-structured knowledge base gives it memory. Second Yourself is built where the three meet.
+## Why it is different
 
-![Three parts joining into one agent that works for a person: a foundation model that reasons, a team of agents that acts and checks its own work, and a knowledge base of linked notes kept on the user's machine](assets/three-parts.png)
+Memory tools help your AI remember. aiMyth makes sure it follows through. We believe it is the complement to today's harnesses, and a path towards the intelligence that comes next. A harness gives an agent hands, and aiMyth gives those hands a mind of your own.
 
-Today Second Yourself runs in Claude Code or the Claudian plugin inside Obsidian, with GPT models as helper agents through the Codex CLI and a wiki of plain Markdown on your own machine.
+- **One mind behind every window.** However many windows you open, with any agent in any tool, you always talk to the same mind. Ask any of them what you decided yesterday, and it knows.
+- **Tell it once.** It improves itself by your rules, the way you would improve yourself. A correction you give today shapes every later job that needs it, including work handed to a helper.
+- **Your mind stays with you.** Change your harness or your personal agent, and your knowledge, rules and lessons stay.
+- **Easy to start, in any harness.** Clone it, run the set-up, open it in the tool you already use, and start talking. Each harness or personal agent you connect gains your mind.
+- **Every better model makes it stronger.** The faster AI moves, the stronger your mind gets. Each better model, and each better Claude Code or Codex, is a free upgrade, and any part can be swapped for a better tool.
+- **Big jobs get done while you sleep.** Hand over a long job, and a team of helpers works through it within your limits. A morning report then sorts every item by what it needs from you.
+- **You can see why.** Every answer shows its sources and how far to trust them, and every rule keeps its reason.
+- **It makes you better, never replaces you.** Every decision stays yours, and in research your ideas and your writing stay yours too.
 
-A second brain stores what you know. A second self knows it with you and acts on it.
+Some of these describe where aiMyth is going. [What runs today](#what-runs-today) lists what works now and where to check it.
 
-What you build is up to you:
+## How to use it
 
-* **A second you**, the goal this project is built towards: an agent that can act for you rather than only answer, from a brief in your voice to an elderly parent's medication and appointments.
-* **A research assistant**, what ships today: drop in papers and articles, ask questions, and get answers cited from your own library.
-* **A shared brain for many agents**, which already runs: one wiki that a team of agents works from.
+aiMyth comes as a folder of rules and skills that you clone onto your own computer and open in an AI coding agent. You drop your sources into it, from papers and articles to web pages, and the agent compiles them into a wiki of linked notes in plain Markdown. You can then ask it questions and get answers that cite those notes, have it write cited documents, and hand it larger jobs. The agent you talk to calls itself aiMyth until you rename it.
 
-## The foundation model
+aiMyth is a pre-release whose design changes often until v1.0.
 
-Reasoning comes from whichever frontier model you plug in. Today Claude models coordinate the work. From release v0.9.6, a launcher with its own test script runs the GPT helper agents. Models are replaced every year. The other two parts are yours, and they compound.
+## Set up
 
-## The multi-agent harness
+This is a framework rather than a plugin. It needs an AI coding agent that reads `CLAUDE.md` and the skills in `.claude/skills/`, and today that agent is Claude Code or the Claudian plugin inside Obsidian. You need a computer that runs Obsidian, the agent and the command-line tools below. The reasoning happens in a cloud model, so there is no GPU to buy and no local model to host, and the running cost is API credits or plan quota.
 
-You speak to one agent, and it briefs helper agents under a written contract. Each helper may write only the files it is given. Long jobs run unattended for hours.
-
-Independent critic and verifier agents check the work. A check that reports nothing must first show that it can catch a planted case, so a silent failure is not read as a clean result.
-
-The harness is this repository, with its rules, 13 skills under `.claude/skills/`, 9 agent definitions under `.claude/agents/` and 34 test scripts. Every commit on the main branch is a version, from v0.1 on 24 June 2026, and tagged releases start at v0.9.6.
-
-## The knowledge base
-
-You drop sources into your Obsidian vault, and the agent compiles them into a wiki of linked notes that it maintains on its own. The notes are yours to open, read and correct. Every knowledge page carries a graded trust level, and every answer cites the pages it drew on. To see one before you build your own, run `bash setup.sh --with-example`, which loads a bundled demo wiki.
-
-Think of the model as a CPU and its context window as RAM, fast but emptied when a conversation ends. The wiki is the disk underneath, and the notes a conversation needs flow back up into the context window.
-
-![Two loops around an AI agent labelled cpu with its context tray labelled ram: on the left, the user sends a question and receives an answer; on the right, the agent files sources into a violet vault labelled disk that holds a knowledge graph, and draws a note back into its tray](assets/hero.png)
-
-Feed it for a month and the assistant stops being a stranger; a year in, nothing else will know your work the way it does.
-
-## What it does today
-
-Simply drop in your sources (PDFs, slides, links, blogs, and almost any other file format). The agent processes each one into linked Markdown, files it correctly, and keeps your cross-references and catalogue completely up to date. Instead of building a folder of unread clippings, you create a structured, compounding knowledge base that an AI can read natively.
-
-Once populated, the wiki can:
-* **Answers and generation:** The agent answers questions and creates almost any deliverable, from briefs and reports to presentations, tables, and cross-source syntheses.
-* **Smart referencing:** It acts as a living, cited knowledge base that any agent can draw from. Every note carries a confidence level, so answers are grounded in your own sources and weighted by how trustworthy each one is, all while maintaining highly efficient token usage.
-* **Persistent insight:** It proactively synthesises across your sources and offers to save valuable answers as permanent, linked notes, so a brilliant idea from a conversation can be preserved instead of lost when the chat ends.
-* **Self-maintenance and growth:** The system actively cross-links files, merges duplicates, and flags conflicting information or knowledge gaps. It automatically maintains your catalogue and graph as your information compounds.
-
-Reliability is built in rather than hoped for. Plans that change the framework are reviewed by an independent critic agent before they are approved.
-
-We purposely designed the architecture to be universal and highly adaptable. Although it is pre-tuned for AI and machine learning research (treating models and benchmarks as primary note types), you can easily customise the repository to perfectly fit your own field or workflow. You can also personalise the agent itself in `CUSTOMISATION.md`, created on first setup: its name, tone, output styles and task roles come as starter examples, and the file is open-ended, so add whatever standing preferences you want every session to follow.
-
-![The knowledge graph the agent builds, coloured by note type](assets/framework_demo.png)
-
-## Setup
-
-This is a framework rather than a plugin. It needs an AI coding agent that reads `CLAUDE.md` and the skills in `.claude/skills/`, and today that agent is Claude Code or the Claudian plugin inside Obsidian. Setup takes about ten minutes.
-
-1. **Obsidian and the agent.** Install [Obsidian](https://obsidian.md) and open this folder as a vault. Then install the agent: the **Claudian** community plugin (Settings → Community plugins → Browse → *Claudian*), or [Claude Code](https://claude.com/claude-code) run from a terminal in the vault. Claudian is the only Obsidian plugin the framework requires.
-
-2. **Command-line tools.** Install MarkItDown, which converts PDFs and Office documents to Markdown:
+1. Install [Obsidian](https://obsidian.md) and the command-line tools. MarkItDown converts PDFs and Office documents to Markdown. PyYAML lets the agent's checks read the properties at the top of each note. markdown-it-py lets the compile step and the weekly audit read Markdown structure. Install `python3`, `curl` and `git`, then these packages.
 
    ```bash
-   pip install 'markitdown[all]'
+   pip install 'markitdown[all]' pyyaml markdown-it-py==4.2.0
    ```
 
-   `python3`, `curl`, and `git` are also used, and are usually already present.
-
-   GPT helper agents require an installed, authenticated Codex CLI; select model and effort options supported by that installation. The delegate skill documents their invocation. The open-access resolver requires your own `OA_CONTACT_EMAIL` configuration. The professor-loop authoring workflow is not included in this version.
-
-3. **Capture skills (recommended).** Install kepano's [obsidian-skills](https://github.com/kepano/obsidian-skills). The agent uses `defuddle` for clean web capture and `obsidian-cli` for vault access. Without them, the framework falls back to `curl` and MarkItDown.
-
-4. **Web Clipper (optional).** The [Obsidian Web Clipper](https://obsidian.md/clipper) browser extension saves web pages into `raw/` in one click. You can also drop files in `raw/` or paste a URL to the agent.
-
-5. **Clone and initialise.**
+2. Clone and initialise.
 
    ```bash
-   git clone https://github.com/HurricaHjz/second-yourself.git
-   cd second-yourself
+   git clone https://github.com/HurricaHjz/SecondSelf.git
+   cd SecondSelf
    bash setup.sh
    ```
 
-   **Always run `setup.sh` once before first use.** It creates the wiki registries and applies the graph colour palette. It is safe to re-run at any time and never overwrites existing notes.
+   Always run `setup.sh` once before first use. It creates the wiki registries, applies the graph colour palette and locks the framework's core files against accidental edits (see [Make it yours](#make-it-yours)). It is safe to re-run at any time and never overwrites existing notes.
 
-   To start with the bundled demo instead, run `bash setup.sh --with-example`. Then open the folder in Obsidian, open the graph view, and ask the agent `/query what is GPT?`. The answer is drawn from the demo wiki, with links to the notes behind it. Run `bash setup.sh --reset` when you are ready to start your own knowledge base. After that, the `examples/` folder is safe to delete.
+3. Install [Claude Code](https://code.claude.com/docs/en/setup) and sign in. On macOS, Linux or WSL, run the installer, then run `claude` once and follow the browser prompts. Claude Code needs a Pro, Max, Ultra, Team, Enterprise or Console account, since the free plan does not include it. Its setup page gives the Windows commands.
 
-   > **A fresh vault's graph is empty** until you load the demo or `/ingest` your first source. That is expected, not a fault. `setup.sh` and your first ingest apply the colour palette automatically, and Obsidian then colour-codes nodes by type. If the colours ever vanish later (Obsidian can rewrite its own graph config), just ask the agent to restore your graph colours.
+   ```bash
+   curl -fsSL https://claude.ai/install.sh | bash
+   claude
+   ```
 
-6. **Back up your vault (optional).** Install the [Obsidian Git](https://github.com/Vinzent03/obsidian-git) plugin to sync your *whole* vault, notes included, to a **private** repository for version history and multi-device backup. Keep that private remote separate from this public framework repo. Your notes are never part of it.
+4. Open the cloned folder as a vault in Obsidian, then add the Claudian plugin: in Settings, open Community plugins, choose Browse, search for "Claudian", install it and enable it. Claudian is the only Obsidian plugin the framework requires. To work without Obsidian, run `claude` from a terminal in the folder instead.
 
-## Hardware and running costs
+5. Start talking to the agent. Open Claudian from its ribbon icon or the command palette, or run `claude` in the folder. `setup.sh` has already made a small framework graph. Load the demo below or `/ingest` your first source to add your own knowledge.
 
-Any computer that runs Obsidian is enough. The intelligence lives in the cloud agent, so there is no GPU to buy and no local model to host, and the vault itself is plain text that stays at megabytes even after months of use. The one optional extra, qmd semantic search, runs a small embedding model comfortably on a laptop CPU.
+## See it work
 
-The real cost is API credits or plan quota, and the framework is built to keep it small. The agent reads selectively, catalogue first and then only the notes a task needs, instead of loading the whole vault. It also benefits from Claude's prompt caching. The stable opening of every session (the agent's rules and your preferences) is cached after the first turn, and re-reading cached text costs about a tenth of the normal input price, so long working sessions stay warm and cheap. Two habits help: batch new sources into one ingest run, and keep one task per conversation.
+The bundled example in [`examples/seed/`](examples/seed/) runs from a source to cited notes to a report to a caught fault. After [Set up](#set-up), load it from your clone.
+
+```bash
+bash setup.sh --with-example
+```
+
+That adds one source and the notes compiled from it, for GPT, OpenAI, MMLU and the idea of a large language model. Open its source page, `wiki/sources/example-gpt4-and-mmlu.md`, and the frontmatter names the raw file and the confidence level.
+
+```yaml
+type: source
+confidence: high
+sources: ["raw/2-papers/example-gpt4-and-mmlu.md"]
+```
+
+In Obsidian, open the graph view to see the notes and their links. Then ask the agent for an answer and a report.
+
+```text
+/query what is GPT?
+/output a one-page brief on GPT for a non-expert
+```
+
+The first answer is drawn from the demo wiki, with links to the notes behind it. The second writes a cited brief into `output/`.
+
+Now make a fault on purpose. In `wiki/models/GPT.md`, change the `[[MMLU]]` under "Key Points" to `[[MMLU2]]` and run `/lint`. Its link check, `python3 .claude/skills/lint/check-links.py`, names the page and the link.
+
+```text
+DEAD LINKS: 1
+  wiki/models/GPT.md -> [[MMLU2]]
+```
+
+As a wiki grows, the graph view shows what your mind knows, in plain sight. Each point is a note, and each line a link.
+
+![The knowledge graph the agent builds, coloured by note type](assets/framework_demo.png)
+
+### Start your own
+
+Run `bash setup.sh --reset` when you are ready to start your own knowledge base. It removes the demo and blanks the registries. After that, the `examples/` folder is safe to delete.
+
+## What runs today
+
+This is what runs now, and where to check each line.
+
+| What runs | Where to check |
+|---|---|
+| The repository holds 15 skills, 9 agent definitions and 72 test files. | `.claude/skills/`, `.claude/agents/` and `git ls-files \| grep -c '/test_'` |
+| Its history runs from v0.1 on 24 June 2026, and tagged releases start at v0.9.6. | `git log --reverse` and `git tag` |
+| You talk to one agent, which calls itself aiMyth until you rename it. Claude models lead the work, and `codex-lane.py` runs GPT helper agents through the Codex CLI. | `CUSTOMISATION.md`, created on first set-up, and `.claude/skills/delegate/` |
+| `/ingest` compiles sources from `raw/` into linked Markdown notes in `wiki/`. Every source page names its raw file, and every page but the maps carries a confidence level. | `CLAUDE.md`, section 4, and [the example](#see-it-work) |
+| `/query` answers from the wiki with links to the pages it drew on, and `/output` writes a cited document into `output/`. | [The example](#see-it-work) |
+| Each helper gets one job, a written brief and limits on what it may touch. Those limits are partly enforced, and the rest is written contract. | `.claude/agents/` and `.claude/skills/delegate/SKILL.md` |
+| Independent critic and verifier agents check the work. A check that reports nothing must first show that it can catch a known case, so a silent failure is not read as a clean result. | `.claude/agents/critic.md`, `.claude/agents/verifier.md` and `CLAUDE.md`, section 11 |
+| A long job can run as a hands-off run. You confirm one pre-flight table, and a morning report waits for you at the end. It needs the `hands-off` kit, which `bash setup.sh --enable hands-off` turns on. | The [Manual](MANUAL.md), "Hands-off long runs" |
+| Reports and lists of items come back as a Handback, which sorts every item into Decide, Approve, Your to-dos, Undo if you disagree and Done. | `CUSTOMISATION.md`, created on first set-up |
+| `bash setup.sh` locks the core, and each new session opens with one `core:` line saying whether the core still matches its release. | `.claude/core-paths` and `.claude/hooks/core-check.py` |
+| Your own working repositories stay outside the vault under the `project` skill, with one registry row each and snapshots that enter the wiki only when you ask. | `.claude/skills/project/` |
+| A feature that keeps making the same kind of decision can hold a short page of your rules and lessons in `wiki/experience/`, read at the step where it decides. | The [Manual](MANUAL.md), "Experience pages" |
+
+Your knowledge, rules and lessons live in plain files on your own machine. The thinking happens in a cloud model, so what an agent reads for a job reaches that model's provider, and so do its rules and your preferences at the start of each session. The agent reads selectively, the catalogue first and then only the notes a task needs, instead of loading the whole wiki.
 
 ## Usage
 
-**New here? Read the [Manual](MANUAL.md).** It covers the commands, the capture → compile → ask → maintain workflow, and all the options in full, so this README doesn't repeat them.
-
-## How it works
-
-Sources live in `raw/`; compiled notes live in `wiki/`, organised by type, with a generated `index.md` and `log.md`. The skills:
+The [Manual](MANUAL.md) covers the commands, the capture → compile → ask → maintain workflow, and all the options in full, so this page does not repeat them. Sources live in `raw/`. Compiled notes live in `wiki/`, organised by type, with a generated `index.md` and `log.md`.
 
 | Skill | Purpose |
 |-------|---------|
 | `ingest` | Compile sources from `raw/` into linked notes. |
-| `gather` | Capture a topic into `raw/` — web-search it, or start from a page and the sources it cites. |
+| `gather` | Capture a topic into `raw/`: search the web for it, or start from a page and the sources it cites. |
 | `query` | Answer a question from the wiki, with citations. |
 | `output` | Produce a grounded, cited document in `output/`. |
-| `lint` | Check the wiki for broken links, orphans, and gaps (cheap, frequent). |
-| `deep-lint` | Heavier ~monthly pass, token-bounded: audit confidence levels, flag stale claims, and re-check a capped set of sources against their live online versions. |
-| `attic` | Retire notes into cold storage, or restore them — only ever on your explicit instruction. |
-| `project` | Manage your own working repositories (Overleaf LaTeX, code) from the vault on your instruction: clones live outside the vault, the wiki keeps one registry row per repository, and content enters only as commit-pinned snapshots through `raw/` when you ask. |
-| `reflect` | Capture what a working session taught — insight, method lessons, defects — and file what you approve. Only on your explicit instruction. |
-| `adopt` | Bring a third-party skill or tool into the vault: fingerprint it, recommend a use level, report, then install and record it on your yes; `--retire` reverses. |
-| `delegate` | The agent's own runbook for handing work to subagents: which lane, what it may write, how its findings get checked. You never call it; it shapes how larger jobs are run. |
-| `qmd-search` | *(optional)* Local semantic search over the wiki via qmd; dormant unless installed. |
-| `export-template` | Sync with the framework repo: `--pull` updates your copy from upstream; `--push` is the maintainer's publish path. See the [Manual](MANUAL.md). |
+| `lint` | Check the wiki for broken links, orphans and gaps (cheap, frequent). |
+| `deep-lint` | A heavier pass, roughly monthly and token-bounded: audit confidence levels, flag stale claims, and re-check a capped set of sources against their live online versions. |
+| `attic` | Retire notes into cold storage, or restore them, always on your word. The agent may prepare an archive for your yes. |
+| `project` | Manage your own working repositories (Overleaf LaTeX, code) from the vault on your instruction. Clones live outside the vault, the wiki keeps one registry row per repository, and content enters only as commit-pinned snapshots through `raw/` when you ask. |
+| `reflect` | Capture what a working session taught (insight, method lessons, defects) and file what you approve. In an attended session, a lesson an independent agent has checked can also go onto a feature's existing experience page, where you can undo it. Only on your explicit instruction. |
+| `weekly-audit` | The weekly review's tools: a fresh-eyes audit of the week's framework changes and a waste report from the run records. The calendar's Weekly review runs them, or you can on request. Nothing runs on its own. |
+| `adopt` | Assess a third-party skill or tool: fingerprint it, recommend a use level and report, then give an installation plan and record your decision. `--retire` retires the registry entry and preserves its history, and installed files remain. |
+| `delegate` | The agent's own runbook for handing work to helpers: which helper, what it may write, how its findings get checked. You never call it. It shapes how larger jobs are run. |
+| `qmd-search` | Optional local semantic search over the wiki through qmd, dormant unless installed. |
+| `export-template` | Sync with the framework repository. `--pull` updates your copy from upstream, and `--push` is the maintainer's publish path. See the [Manual](MANUAL.md). |
+| `suggest` | Draft a change you would like in the framework's core as a suggestion. It shows exactly what it would share and leaves the filing to you. |
+
+## Optional extras
+
+- GPT helper agents need an installed, authenticated Codex CLI. Select model and effort options your installation supports, and see the `delegate` skill for how they are invoked. Without the Codex CLI the GPT helpers are simply off: a reviewing seat stays on the Claude side in a fresh context, and its report says the review was by the same model family.
+- We recommend kepano's [obsidian-skills](https://github.com/kepano/obsidian-skills). The agent uses `obsidian-cli` for vault access. Web capture uses `defuddle` or MarkItDown according to the page. Failed captures can use Jina Reader when you authorise it.
+- The [Obsidian Web Clipper](https://obsidian.md/clipper) browser extension saves web pages into `raw/` in one click. You can also drop files in `raw/` or paste a URL to the agent.
+- The open-access resolver needs your own `OA_CONTACT_EMAIL` configuration.
+- `bash setup.sh --enable` turns on an optional kit. It takes `hands-off`, for long unattended runs, and `ingest-check`, which warns at the end of a turn when an ingest was left open and stale.
+- To back up your vault, create a **private** repository of your own and run `bash setup.sh --backup <its address>`. It keeps a separate git folder outside your vault, adds [your layer](#make-it-yours) there, notes included, and pushes to your repository. It never commits to this clone, so updates keep working. Run the same command whenever you want a fresh backup. Keep that private repository separate from this public one, and do not point a git plugin such as Obsidian Git at this clone itself. A commit made here is a commit the release lacks, and an update refuses it.
+- Bring any other skill or tool through `/adopt` for an assessment, an installation plan and a record of your decision. The [Manual](MANUAL.md) covers the remaining optional tools.
+
+## Updating
+
+An update moves the core to a newer release and never touches your layer. Preview first, then apply.
+
+```bash
+bash .claude/skills/export-template/export_template.sh --pull .
+bash .claude/skills/export-template/export_template.sh --pull . --apply
+```
+
+The preview lists the files that would change. Applying is plain git, `git merge --ff-only --no-overwrite-ignore` onto the branch your copy follows, then `bash setup.sh --lock`. Where git refuses, its refusal stands. The throttle, `throttle` in `CUSTOMISATION.md`, rewrites the `model:` and `effort:` lines of the helper definitions, and a routing overlay is a `classes.<name>` override in `.claude/routing.local.json`. If your throttle is not `auto`, or a routing overlay changes a helper's model or effort, follow "Updating" in the [Manual](MANUAL.md), which holds the steps.
+
+## Make it yours
+
+Your copy holds two things. The **core** is how SecondSelf works: `CLAUDE.md`, `MANUAL.md`, `setup.sh`, the skills, the helper definitions and the hooks under `.claude/`, with the full list in `.claude/core-paths`. **Your layer** is everything that makes it yours: `CUSTOMISATION.md`, your wiki, your sources, your calendar, your own skills (kept in `.claude/skills/my-<name>/`) and your own routing choices (in `.claude/routing.local.json`). Lint's local list of what you have added is `.claude/sanctioned.local.txt`.
+
+`bash setup.sh` locks the core's files so that a stray edit does not land, and the agent will not edit a core file itself. If you ask for a change there, it does the job in your layer where that can serve, or it drafts a suggestion with the `suggest` skill, shows you exactly what it would share, and leaves the filing to you. Each new session starts with one `core:` line saying whether the core still matches its release. If you do want to change the core yourself, `bash setup.sh --unlock` lets you, and that line then shows your change.
+
+`CUSTOMISATION.md`, created on first set-up, personalises the agent. Its name, tone, output styles and task roles come as starter examples, and the file is open-ended, so add whatever standing preferences you want every session to follow. The note types are pre-tuned for AI and machine learning research, with models and benchmarks as primary types, and the framework adapts to your own field or workflow.
 
 ## What the repository tracks
 
-The repository holds the framework only: skills, rules, configuration, and a small demo. Your own notes stay on your machine: `wiki/`, `raw/`, `output/`, `attic/`, `index.md`, `log.md`, and your personal `CUSTOMISATION.md` are excluded by `.gitignore`, so pushing only ever publishes changes to the framework.
+The repository holds the framework only: skills, rules, configuration, and a small demo. Your own notes stay on your machine. `wiki/`, `raw/`, `output/`, `attic/` and your personal `CUSTOMISATION.md` are excluded by `.gitignore`, so they never enter this repository. To back them up, use `bash setup.sh --backup <address>`, which gives you a separate, private repository.
 
-To back those notes up, use the optional Obsidian Git step above. That gives you a separate, private repository.
+## Get involved
+
+We are looking for people and support to take this further: research collaborators, internships, compute, funding, and anyone who wants to build their own mind on aiMyth and tell us what breaks. To report a bug or suggest a change to the core, use the repository's [issue forms](https://github.com/HurricaHjz/SecondSelf/issues/new/choose).
 
 ## Credits and licence
 
-The wiki layer builds on Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern, and capture uses kepano's [obsidian-skills](https://github.com/kepano/obsidian-skills). Released under the MIT License ([`LICENSE`](LICENSE.md)).
+The wiki builds on Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern, and capture uses kepano's [obsidian-skills](https://github.com/kepano/obsidian-skills). Released under the MIT License ([`LICENSE`](LICENSE.md)).
+
+### How to cite
+
+If SecondSelf helps your work, please cite it with the details in [`CITATION.cff`](CITATION.cff). GitHub's "Cite this repository" button reads that file. This is a request, not a term of the licence.

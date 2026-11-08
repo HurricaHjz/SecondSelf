@@ -10,9 +10,17 @@ Three sweeps over wiki pages, each with its own positive control on the same run
      excluded: frontmatter, fenced code blocks, table rows, HTML-comment interiors, headings
      and list items (a heading renders, but it is not wrapped prose, so pairing it with the
      line beneath it manufactures suspects).
-  2. raw `<tag>` tokens in rendered prose outside backticks and comments — Obsidian parses a
-     bare angle-bracket token as HTML and hijacks or silently strips it. Headings and list
-     items DO count here: they render, so a raw tag in one is a live defect.
+  2. raw `<tag>` tokens, opening or closing, in rendered prose outside code spans and comments —
+     Obsidian parses a bare angle-bracket token as HTML and hijacks or silently strips it.
+     Headings and list items DO count here: they render, so a raw tag in one is a live defect.
+     A code span is a run of n backticks closed by the next run of exactly n on the SAME line,
+     read after the line's one-line comments are cut; a run with no closer on its line protects
+     nothing, so a span over two lines counts as prose (the strict one-line policy of lint's
+     tool-markup check; its cost is a rare false alarm). A line opens a comment that runs to the
+     next line holding `-->` when it holds `<!--` outside its code spans and no `-->`, so a
+     backticked opener in prose is code, never a comment. The inline formatting tags u, sub, sup,
+     br, kbd and mark, opening or closing, in any case, are not reported; every other tag is
+     (the list is set by judgement, unmeasured).
   3. correction-narrative phrases in wiki/developments/ — those docs read forward-facing
      (CLAUDE.md 12), so a phrase that argues with earlier wording is a finding.
 
@@ -20,11 +28,12 @@ wiki/log.md is skipped throughout: it is append-only history, not maintained pro
 
 The controls are a synthetic page put through the SAME scan path as a real page, so they
 prove the whole pipeline — line classification included — not just a regex: the control page
-carries one genuine wrapped pair, one raw tag beside a backticked one, one fenced tag, one
-heading trap and one list trap, and the run fails its premise unless exactly the genuine
-cases come back. The narrative control is scanned SEPARATELY, on its own one-line page: a
-user-supplied phrase carrying an angle-bracket token or a line break would otherwise land in
-the shared control page and make the raw-tag or hard-wrap control fail a healthy run.
+carries one genuine wrapped pair, one raw tag beside a backticked one and after a backticked
+comment opener, one fenced tag, one heading trap and one list trap, and the run fails its
+premise unless exactly the genuine cases come back. The narrative control is scanned
+SEPARATELY, on its own one-line page: a user-supplied phrase carrying an angle-bracket token or
+a line break would otherwise land in the shared control page and make the raw-tag or hard-wrap
+control fail a healthy run.
 
 Usage (from the vault root):
   python3 .claude/skills/deep-lint/sweeps.py
@@ -51,10 +60,14 @@ EXCERPT = 110
 FRAGMENT = 40
 
 FM_RE = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n?", re.S)
-TAG_RE = re.compile(r"<[A-Za-z][A-Za-z0-9-]*(?:\s[^>]*)?/?>")
+TAG_RE = re.compile(r"</?([A-Za-z][A-Za-z0-9-]*)(?:\s[^>]*)?/?>")
+# Formatting tags that are not reported, compared without regard to case. Set by judgement, unmeasured.
+FORMATTING_TAGS = frozenset(("u", "sub", "sup", "br", "kbd", "mark"))
 LIST_RE = re.compile(r"^\s*([-*+]|\d+\.)\s")
 HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s")
-INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
+# A one-line code span: a whole run of n backticks, then the next whole run of exactly n on the same
+# line. A run with no such closer matches nothing, and the search moves on to the next run.
+INLINE_CODE_RE = re.compile(r"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)")
 # A byte-order mark, written as an escape so the character never sits invisibly in shipped source.
 BOM = "\ufeff"
 # The one log file that is append-only history rather than maintained prose, addressed by PATH:
@@ -73,6 +86,8 @@ continuing beneath the item.
 
 a sentence wrapped at a fixed column and
 continues here in lowercase.
+
+a quoted `<!--` opener is code, so the lines after it still render.
 
 a safe `<code>` span beside a raw <tag> in prose.
 
@@ -118,7 +133,9 @@ def classify(text):
             rendered.append(None)
             prose.append(None)
             continue
-        if "<!--" in stripped and "-->" not in stripped:
+        # An opener is looked for once the line's code spans are masked, so a backticked `<!--` in prose is
+        # code, not a comment (known-issues 2026-10-11); the test for `-->` reads the line as before.
+        if "<!--" in INLINE_CODE_RE.sub(" ", stripped) and "-->" not in stripped:
             in_comment = True
             rendered.append(None)
             prose.append(None)
@@ -160,6 +177,8 @@ def scan_text(text, is_dev, phrases):
             continue
         bare = INLINE_CODE_RE.sub(" ", line)
         for found in TAG_RE.finditer(bare):
+            if found.group(1).lower() in FORMATTING_TAGS:
+                continue
             tags.append({"line": offset + i + 1, "tag": found.group(0)[:40]})
         if is_dev:
             low = bare.lower()
@@ -313,7 +332,8 @@ def main():
     for hit in tag_hits:
         print(f"  {hit['path']}:{hit['line']} {hit['tag']}")
     print(f"tag-control: {'fired' if controls['raw_tag'] else 'DID NOT FIRE'} "
-          f"(synthetic page: raw tag caught, backticked and fenced tags not)")
+          f"(synthetic page: raw tag caught after a backticked comment opener, backticked and fenced "
+          f"tags not)")
 
     print("--- CORRECTION NARRATIVE (wiki/developments/) ---")
     print(f"narrative phrases: {len(narrative_hits)} hits over {dev_pages} development pages "

@@ -39,6 +39,43 @@ One question can.)
 Read `wiki/index.md` **whole** — `route` mode, CLAUDE.md §5 — and locate candidate pages across **every**
 `## ` section. Read the whole catalogue before choosing pages: lexical search or a hand-picked list
 can omit pages relevant to the answer.
+An index past one Read call's limit is read whole in consecutive offsets to the end, the lines read checked against `wc -l wiki/index.md`, never stopped at a refused or truncated first chunk.
+
+### Step 1b — A membership question goes to the lookup verb
+"Is this work in the vault?" and "which of these papers do we have?" are answered by the ingest skill's
+lookup verb, never by index or page greps: a phrase grep misses hyphenated page names and page names that
+omit the author. The verb reads the source pages (`wiki/sources/`) only: raw files are not searched, so a
+work captured under `raw/` and not yet compiled to a source page gets no verdict from it. Give it every key
+the citation carries:
+`python3 .claude/skills/ingest/dedup_probe.py --lookup --title "<title>" --author "<first author>" --year <year> --arxiv <arxiv-id> --doi <doi> --url <url>`
+For several works, write one JSON object per line (keys `id`, `title`, `author`, `year`, `arxiv`, `doi`,
+`url`) to a file under `/tmp` and run `python3 .claude/skills/ingest/dedup_probe.py --lookup --list <file>`:
+one index and one set of controls serve the whole list, and each work gets the verdict it gets alone.
+Each verdict proves only what its key can:
+- **MATCH <page>** — a canonical identifier the citation gives is that one page's own: the work is held;
+  cite the page.
+- **CANDIDATE <page> (<keys>; <why not a match>)** — the work may be held. Read the page and confirm it on
+  substance (the title, authors, year and venue in the page agree with the citation) before the answer
+  names it; opening the page is not confirmation. A candidate printed with a `conflict:` stays unresolved
+  unless the page's own text shows both identifiers belong to the one work, and the answer names the
+  conflict. Several candidates are each read.
+- **NO MATCH (keys tried; coverage)** — report "no match under these keys" with the coverage line, which
+  also says raw files are not searched; never "missing", "absent" or "not held". Step 4's "Nothing in the
+  local wiki covers this" is not a membership answer.
+- **UNKEYED** — no usable key: unresolved. Name the discarded keys and look for a better key (an
+  identifier, a fuller title, the first author with the year); never report it as a no-match or as missing.
+- **Exit 2, `PROBE FAILED`** — no verdict at all: unresolved. Report the failure and fix it (it names every
+  source page whose frontmatter cannot be read or parsed, and one such page stops every lookup until it is
+  fixed); never fall back to greps and never read it as a no-match.
+
+A NO MATCH, an UNKEYED or a failed probe never by itself justifies a missing-work claim or a gather. Before
+one supports either (Step 4b's gap proposal included), verify the miss: re-run with every key the citation
+gives, then search by reading (the index's Sources section for the title's distinctive words and the first
+author's surname, any candidate page in full, and `raw/`, which the verb does not search). The instrument
+for that check follows the instrument rule's own reasons (CLAUDE.md §2.2): the head verifies a short list
+it can confirm item by item itself; a list whose breadth one context cannot hold goes to a verifier lane,
+with that reason recorded and its two search controls run as a separate first step, reported apart from
+its results. Only a verified miss is reported as not held.
 
 ### Step 2 — Deep-read the targets (triage by confidence)
 Open the most relevant pages in full with the read tool (or `obsidian-cli`). Follow `## Related`
@@ -54,11 +91,13 @@ semantic fallback (`qmd query "<q>" --json --files`), confidence-rank the hits, 
 - Cite every page you draw from inline as `[[Page Name]]`.
 - For a verbatim claim, use a `> blockquote`.
 - Don't over-cite: one citation at the start and end of a passage from the same page is enough.
-- **Weight by `confidence`:** resolve conflicts toward the higher tier (and, if tied, the newer
-  `updated`); state `authoritative`/`high` plainly, but attribute and hedge `low`/`very-low`
+- **Weight by `confidence`:** by default resolve conflicts toward the better-grounded tier (and, if
+  tied, the newer `updated`); where the tiers are close or the stakes high, weigh the two sources'
+  evidence rather than their badges, except a conflict between the owner's own positions, which keeps both with their dated notes (CLAUDE.md §4.7: a later date alone replaces nothing); state `authoritative`/`high` plainly, but attribute and hedge `low`/`very-low`
   ("a promotional listing claims…", "an unverified transcript suggests…"); never let a `very-low` or
-  `unverified` claim harden into an asserted fact. Optionally flag a weak citation inline, e.g.
-  `[[X]] *(low-confidence)*` (only for `low`/`very-low`).
+  `unverified` claim harden into an asserted fact. Flag a weak citation inline, e.g.
+  `[[X]] *(low-confidence)*`: optionally for `low`, always for a `very-low` page the answer or a
+  decision rests on.
 
 ### Step 3b — Freshness duty (Tier-2 flags; costs no extra reads)
 Judge only the pages you have ALREADY read for this answer — never read extra pages for this duty:
@@ -89,7 +128,8 @@ Judge only the pages you have ALREADY read for this answer — never read extra 
 When Step 4 declared missing or weak coverage, a gather proposal MAY follow the answer — never
 replace it — if ALL four hold: the gap is **evidenced** by the search just run (the brief cites what
 was searched — a zero-findings claim carries its probe, CLAUDE.md §11); **load-bearing** for the core
-of the task (answerable-but-`low` coverage stays a warning, not a proposal); plausibly **fixable by
+of the task (answerable-but-`low` coverage stays a warning, unless the pages name a stronger source
+that public web capture can reach, which the proposal may then name); plausibly **fixable by
 public web sources** (not owner-only knowledge); and **not explicitly declined** this session. At
 most ONE proposal per reply, surfaced whatever the active style, formatted why (gap + evidence) ·
 what (source kinds, rough count) · how (the literal `/gather` command with its page budget — never
@@ -108,9 +148,8 @@ On yes, create `wiki/syntheses/<slug>.md` (kebab-case) with synthesis frontmatte
 Give it a **conservative inherited `confidence`** (a synthesis *defaults* to `medium` as agent-derived and *caps* at `high`, per §4.6; drop to
 `low` if it rests mainly on `low` sources); never crystallise a `low`/`unverified` claim as asserted fact.
 **Report the filed page and its `confidence`** to the user — every newly added wiki file states its level
-(as `ingest` Step 8 does), so you can review and re-grade it. **Refresh on write:** the new page's qmd
-embedding refreshes per the `qmd-search` contract — a turn-end hook where installed, inline only where not;
-a no-op when qmd is dormant.
+(as `ingest` Step 8 does), so you can review and re-grade it. **qmd:** filing the page does not refresh
+qmd; the `qmd-search` skill's freshness gate catches the index up before the next qmd search (CLAUDE.md §10).
 
 ### Step 6 — Log it (only if you filed a synthesis)
 **A pure inline answer is NOT logged** — logging is for brain-updating ops only (see CLAUDE.md §5).

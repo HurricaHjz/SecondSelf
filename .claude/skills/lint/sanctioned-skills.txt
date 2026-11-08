@@ -8,7 +8,11 @@
 # e.g. a third-party tool's automatic SKILL.md installation).
 # Machine-local baselines live OUTSIDE the vault, never shipped: ~/.claude/skills/.sanctioned.txt
 # and ~/.claude/agents/.sanctioned.txt (one name per line each).
-# Adding a skill or an agent definition is a conscious CLAUDE.md §12 act: add its line here in the
+
+# A user's own skill or helper (a `my-` name) is listed in `.claude/sanctioned.local.txt`, not here:
+# this file is core in a user's copy. The line format is the same, and lint reads both.
+
+# Adding a core skill or agent definition is a conscious CLAUDE.md §12 act: add its line here in the
 # same pass; the guard checks the resulting exposure rather than trusting the admission record.
 vault:adopt
 vault:attic
@@ -19,9 +23,12 @@ vault:gather
 vault:ingest
 vault:lint
 vault:output
+vault:project
 vault:qmd-search
 vault:query
 vault:reflect
+vault:suggest
+vault:weekly-audit
 agent:critic.md
 agent:memory-hunter.md
 agent:planner.md
@@ -30,3 +37,4 @@ agent:verifier.md
 agent:wiki-compile.md
 agent:builder.md
 agent:gate-judge.md
+agent:writer.md

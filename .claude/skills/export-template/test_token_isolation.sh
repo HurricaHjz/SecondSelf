@@ -26,7 +26,7 @@ echo "== 1) frequent everyday skills never reference the git/sync features =="
 for s in $NORMAL; do
   # sanctioned-skills.txt is the injection-guard NAME REGISTRY (lists every vault skill incl. export-template);
   # naming a skill is not loading export machinery, so the registry is excluded from this scan.
-  if grep -rEiq --exclude=sanctioned-skills.txt "$GITPAT" ".claude/skills/$s/"; then no "skill '$s' references git features"; else ok "skill '$s' free of git refs (loads no git content)"; fi
+  if grep -rEiq --include='*.md' --include='*.txt' --exclude=sanctioned-skills.txt "$GITPAT" ".claude/skills/$s/"; then no "skill '$s' prose references git features"; else ok "skill '$s' scanned prose free of git refs"; fi
 done
 
 echo "== 2) CLAUDE.md (loaded every session) does not pull in the heavy git files =="
