@@ -86,7 +86,7 @@ bash .claude/skills/export-template/export_template.sh template-export
 ```
 
 ## Where the publish files live
-The professor-loop skill is excluded from public builds while its standalone prerequisites are being prepared (the owner's decision of 3 November 2026, answer 3g; its upgrade is set for v0.10.1). Build and push remove any previous generated copy of that skill from the destination. The source skill remains local. Other skills continue to be discovered automatically.
+The professor-loop skill is excluded from public builds while its standalone prerequisites are being prepared (the owner's decision of 3 November 2026, answer 3g; its upgrade is set for v0.10.2, moved from v0.10.1 by his yes of 9 November 2026 so that v0.10.1 could ship the README). Build and push remove any previous generated copy of that skill from the destination. The source skill remains local. Other skills continue to be discovered automatically.
 
 - **At the vault root** — `README.md`, `LICENSE.md`, `CITATION.cff` + the `assets/` screenshot
   (canonical and visible; edit them in place).

@@ -8,11 +8,13 @@
 # reading the script must refuse to guess (a failed exit, an unrecognised shape, a missing program, a
 # silent server past its bound, a notice that usage limits are unavailable, window headings with no
 # figure, a figure with a sign (`-1%`, `+4%`, a Unicode minus), a progress line that names no usage
-# window, alone or before real windows (`Download 42% complete`), a token glued to a letter
+# window, alone or before real windows (`Download 42% complete`), a window heading followed only by
+# such a line, with or without an unavailable-usage notice between them, a token glued to a letter
 # (`x-7%`), a whole token above 100 after a valid window, an Astra window whose used percent is
-# null, a string or out of range) prints `could not read` and exits 1, while valid figures at the
-# edges (0, 100, a decimal, a dash with a space before a figure) with the live text's trailing notes
-# are read; a bad bound is a usage error (exit 2);
+# absent, null, a string or out of range) prints `could not read` and exits 1, while valid figures at the
+# edges (0, 100, a decimal, a dash with a space before a figure) with the live text's trailing notes,
+# and a real `4% used` whose line says its reset time is unavailable, are read; a bad bound is a
+# usage error (exit 2);
 # the head-role fence clears the reader's own command and still denies the `claude -p '/usage'` form
 # it replaces (the control); and the last legs prove the suite and the reader wrote nothing beside
 # the script: a checksum-and-mode manifest of this directory before and after, with a planted
@@ -20,15 +22,16 @@
 # planted control must hit.
 #
 # Run:  sh test_read_usage.sh          (from anywhere; it finds read-usage.py beside itself)
+# READ_USAGE_PY and READ_USAGE_FENCE may name staged readers and a separate fence checker.
 # The last line is PASS n/n or FAIL k/n; a broken premise prints PROBE FAILED and exits 2.
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd) || { echo 'PROBE FAILED: cannot locate the test directory'; echo 'FAIL 1/1'; exit 2; }
 PY=${PYTHON:-python3}
-R="$HERE/read-usage.py"
-FENCE="$HERE/lane-fence.py"
+R=${READ_USAGE_PY:-$HERE/read-usage.py}
+FENCE=${READ_USAGE_FENCE:-$HERE/lane-fence.py}
 command -v "$PY" >/dev/null || { echo "PROBE FAILED: no $PY on PATH"; echo 'FAIL 1/1'; exit 2; }
-[ -f "$R" ] || { echo "PROBE FAILED: no read-usage.py beside the suite ($HERE)"; echo 'FAIL 1/1'; exit 2; }
+[ -f "$R" ] || { echo "PROBE FAILED: no usage reader at $R"; echo 'FAIL 1/1'; exit 2; }
 export PYTHONDONTWRITEBYTECODE=1
 
 W=$(mktemp -d "${TMPDIR:-/tmp}/read-usage-suite.XXXXXXXX") || { echo 'PROBE FAILED: cannot create a fixture directory'; echo 'FAIL 1/1'; exit 2; }
@@ -82,6 +85,34 @@ cat > "$W/bin/claude-unavailable" <<'CLAUDE_UNAVAILABLE_END'
 #!/bin/sh
 printf 'Usage limits unavailable for this session\n'
 CLAUDE_UNAVAILABLE_END
+cat > "$W/bin/claude-unavailable-download" <<'CLAUDE_UNAVAILABLE_DOWNLOAD_END'
+#!/bin/sh
+printf 'Usage limits unavailable for this session\nDownload 42%% complete\n'
+CLAUDE_UNAVAILABLE_DOWNLOAD_END
+cat > "$W/bin/claude-pending-unavailable" <<'CLAUDE_PENDING_UNAVAILABLE_END'
+#!/bin/sh
+printf 'Current session\nUsage limits unavailable\nDownload 42%% complete\n'
+CLAUDE_PENDING_UNAVAILABLE_END
+cat > "$W/bin/claude-worded-unavailable" <<'CLAUDE_WORDED_UNAVAILABLE_END'
+#!/bin/sh
+printf 'Current session\n%s\nDownload 42%% complete\n' "$USAGE_NOTICE"
+CLAUDE_WORDED_UNAVAILABLE_END
+cat > "$W/bin/claude-reset-unavailable" <<'CLAUDE_RESET_UNAVAILABLE_END'
+#!/bin/sh
+printf 'Current session: 4%% used\nReset time unavailable\n'
+CLAUDE_RESET_UNAVAILABLE_END
+cat > "$W/bin/claude-reset-unavailable-inline" <<'CLAUDE_RESET_UNAVAILABLE_INLINE_END'
+#!/bin/sh
+printf 'Current session usage: 4%% used; reset time unavailable\n'
+CLAUDE_RESET_UNAVAILABLE_INLINE_END
+cat > "$W/bin/claude-reset-clause" <<'CLAUDE_RESET_CLAUSE_END'
+#!/bin/sh
+printf 'Current session usage: 4%% used; reset times for usage limits are unavailable\n'
+CLAUDE_RESET_CLAUSE_END
+cat > "$W/bin/claude-borrow" <<'CLAUDE_BORROW_END'
+#!/bin/sh
+printf 'Current session\nDownload 42%% complete\n'
+CLAUDE_BORROW_END
 cat > "$W/bin/claude-headings" <<'CLAUDE_HEADINGS_END'
 #!/bin/sh
 printf 'Current session\nCurrent week (all models)\n'
@@ -130,7 +161,7 @@ CLAUDE_EDGES_END
 # The Codex stand-in speaks the app-server's line protocol: it answers `initialize` (id 1) and
 # `account/rateLimits/read` (id 2), each reply one JSON line; its first argument picks the case.
 cat > "$W/bin/codex-server.py" <<'CODEX_SERVER_END'
-import json, sys, time
+import copy, json, sys, time
 mode = sys.argv[1]
 if mode == "silent":
     time.sleep(30)
@@ -151,21 +182,65 @@ for line in sys.stdin:
             used = {"null": None, "string": "19", "range": 150}[mode]
             result = {"rateLimits": {"primary": {"usedPercent": used, "windowDurationMins": 10080,
                                                   "resetsAt": 1791955800}}}
+        elif mode.startswith("live"):
+            # The supplied live shape: two copies of the primary, null secondaries and
+            # two reset credits. Figures, durations and timestamps come from that sample.
+            limit = {"limitId": "codex", "limitName": None,
+                     "primary": {"usedPercent": 32, "windowDurationMins": 10080,
+                                 "resetsAt": 1794588090},
+                     "secondary": None,
+                     "credits": {"hasCredits": True, "unlimited": False, "balance": "fixture"},
+                     "individualLimit": None, "spendControlReached": False,
+                     "planType": "fixture", "rateLimitReachedType": None}
+            result = {"rateLimits": limit, "rateLimitsByLimitId": {"codex": copy.deepcopy(limit)},
+                      "rateLimitResetCredits": {"availableCount": 2, "credits": [
+                          {"id": "first", "resetType": "fixture", "status": "fixture",
+                           "grantedAt": 1793476701, "expiresAt": 1796068701,
+                           "title": "fixture", "description": "fixture"},
+                          {"id": "second", "resetType": "fixture", "status": "fixture",
+                           "grantedAt": 1793572292, "expiresAt": 1796164292,
+                           "title": "fixture", "description": "fixture"}]},
+                      "accountId": "fixture", "rateLimitUpsell": None}
+            if mode == "live-missing-primary":
+                del result["rateLimits"]["primary"]["usedPercent"]
+            elif mode == "live-missing-secondary":
+                # Five hours, converted to minutes; the other windows remain valid.
+                result["rateLimits"]["secondary"] = {"windowDurationMins": 5 * 60,
+                                                     "resetsAt": 1794588090}
+            elif mode == "live-missing-mapped":
+                del result["rateLimitsByLimitId"]["codex"]["primary"]["usedPercent"]
+            elif mode == "live-no-credits":
+                del result["rateLimitResetCredits"]
+        elif mode == "minutes-missing":
+            # Review V1: describe() reads windowMinutes as a length too, so a window given that
+            # way without a used percent must be refused like a windowDurationMins one.
+            result = {"rateLimits": {"primary": {"usedPercent": 32, "windowMinutes": 10080},
+                                     "secondary": {"windowMinutes": 300, "resetsAt": 1794588090}}}
+        elif mode == "used-only":
+            # Both accepted spellings still identify windows without a duration.
+            result = {"windows": [{"usedPercent": 0}, {"used_percent": 100}]}
         else:
             result = {"rateLimits": {"something": "else"}}
         print(json.dumps({"id": 2, "result": result}))
     sys.stdout.flush()
 CODEX_SERVER_END
-for mode in ok odd silent null string range; do
+for mode in ok odd silent null string range live live-no-credits \
+  live-missing-primary live-missing-secondary live-missing-mapped minutes-missing used-only; do
   printf '#!/bin/sh\n[ "$1" = "app-server" ] || { echo "stand-in: unexpected arguments: $*" >&2; exit 9; }\nexec "%s" -B "%s" %s\n' \
     "$(command -v "$PY")" "$W/bin/codex-server.py" "$mode" > "$W/bin/codex-$mode"
 done
 chmod 755 "$W/bin/claude-ok" "$W/bin/claude-fail" "$W/bin/claude-odd" "$W/bin/claude-live" \
-  "$W/bin/claude-unavailable" "$W/bin/claude-headings" "$W/bin/claude-partial" \
+  "$W/bin/claude-unavailable" "$W/bin/claude-unavailable-download" \
+  "$W/bin/claude-pending-unavailable" "$W/bin/claude-reset-unavailable" \
+  "$W/bin/claude-reset-unavailable-inline" "$W/bin/claude-worded-unavailable" \
+  "$W/bin/claude-reset-clause" "$W/bin/claude-borrow" \
+  "$W/bin/claude-headings" "$W/bin/claude-partial" \
   "$W/bin/claude-signed" "$W/bin/claude-download" "$W/bin/claude-plus" "$W/bin/claude-minus" \
   "$W/bin/claude-before" "$W/bin/claude-glued" "$W/bin/claude-big" "$W/bin/claude-edges" \
   "$W/bin/codex-ok" "$W/bin/codex-odd" "$W/bin/codex-silent" "$W/bin/codex-null" "$W/bin/codex-string" \
-  "$W/bin/codex-range"
+  "$W/bin/codex-range" "$W/bin/codex-live" "$W/bin/codex-live-no-credits" \
+  "$W/bin/codex-live-missing-primary" "$W/bin/codex-live-missing-secondary" \
+  "$W/bin/codex-live-missing-mapped" "$W/bin/codex-minutes-missing" "$W/bin/codex-used-only"
 
 run() { # env pairs then arguments; output to $W/out, exit code to RC
   RC=0
@@ -211,6 +286,45 @@ if [ "$RC" = 1 ] && [ "$(grep -c '' "$W/out")" = 1 ] \
    && grep -q '^claude-usage: could not read (a window with no figure: Usage limits unavailable for this session)$' "$W/out"; then
   ok "a notice that usage limits are unavailable is unread, never a reading (exit 1)"
 else no "the unavailable notice  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+# Only a figure written `N% used` fills a window, so a later unrelated percentage never fills a
+# window whose usage is unavailable, whatever the notice says (reviews CR2 and CR3 of
+# run-20261108-auditfix2; the notice wordings below are CR3's and the staged build's, and the
+# reader keeps no list of them).
+run USAGE_CLAUDE_BIN="$W/bin/claude-unavailable-download" "$PY" -B "$R" --only claude
+if [ "$RC" = 1 ] && [ "$(cat "$W/out")" = 'claude-usage: could not read (a window with no figure: Usage limits unavailable for this session)' ]; then
+  ok "unavailable-download: an unavailable notice cannot borrow an unrelated later percentage (exit 1)"
+else no "unavailable-download  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+for mode in pending-unavailable borrow; do
+  run USAGE_CLAUDE_BIN="$W/bin/claude-$mode" "$PY" -B "$R" --only claude
+  if [ "$RC" = 1 ] && [ "$(cat "$W/out")" = 'claude-usage: could not read (a window with no figure: Current session)' ]; then
+    ok "$mode: a window heading cannot borrow a later 'Download 42% complete' (exit 1)"
+  else no "$mode  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+done
+
+for notice in 'Usage is unavailable' 'Limits are unavailable' 'Usage: unavailable' \
+  'Usage limits are currently unavailable' 'Usage is temporarily unavailable' 'Usage limit unavailable'; do
+  run USAGE_CLAUDE_BIN="$W/bin/claude-worded-unavailable" USAGE_NOTICE="$notice" "$PY" -B "$R" --only claude
+  if [ "$RC" = 1 ] && [ "$(cat "$W/out")" = 'claude-usage: could not read (a window with no figure: Current session)' ]; then
+    ok "$notice: the pending window stays empty before a later percentage (exit 1)"
+  else no "$notice  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+done
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-reset-clause" "$PY" -B "$R" --only claude
+if [ "$RC" = 0 ] && [ "$(cat "$W/out")" = 'claude-usage: Current session usage: 4% used; reset times for usage limits are unavailable' ]; then
+  ok "a real 4% figure is read when its line says reset times for usage limits are unavailable (exit 0)"
+else no "the reset-times clause  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-reset-unavailable" "$PY" -B "$R" --only claude
+if [ "$RC" = 0 ] && grep -q '^claude-usage: Current session: 4% used / Reset time unavailable$' "$W/out"; then
+  ok "control: an unavailable reset time does not invalidate a real usage figure (exit 0)"
+else no "the unavailable reset-time control  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-reset-unavailable-inline" "$PY" -B "$R" --only claude
+if [ "$RC" = 0 ] && [ "$(cat "$W/out")" = 'claude-usage: Current session usage: 4% used; reset time unavailable' ]; then
+  ok "a real 4% usage figure is read when its reset time is unavailable on the same line (exit 0)"
+else no "the same-line unavailable reset time  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
 
 run USAGE_CLAUDE_BIN="$W/bin/claude-headings" "$PY" -B "$R" --only claude
 if [ "$RC" = 1 ] && grep -q '^claude-usage: could not read (a window with no figure: Current session)$' "$W/out"; then
@@ -284,6 +398,48 @@ if [ "$RC" = 1 ] && grep -q '^astra-usage: could not read (a window whose used p
   ok "an Astra used percent above 100 is unread (exit 1)"
 else no "the out-of-range used percent  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
 
+# ------------------------------------------------------- duration-marked windows ----
+run USAGE_CODEX_BIN="$W/bin/codex-live" "$PY" -B "$R" --only astra
+LIVE_RC=$RC
+LIVE_OUTPUT=$(cat "$W/out")
+LIVE_WINDOW=${LIVE_OUTPUT#astra-usage: }
+LIVE_WINDOW=${LIVE_WINDOW%% · *}
+# Exactly two windows: primary under rateLimits and its copy under rateLimitsByLimitId.
+if [ "$RC" = 0 ] && [ "$(grep -c '' "$W/out")" = 1 ] \
+   && grep -q '^astra-usage: 7 d window 32% used, resets ' "$W/out" \
+   && [ "$LIVE_OUTPUT" = "astra-usage: $LIVE_WINDOW · $LIVE_WINDOW" ]; then
+  ok "control: the live result's two valid windows read 32% with null secondaries (exit 0)"
+else no "the live app-server shape  [exit $RC: $LIVE_OUTPUT]"; fi
+
+run USAGE_CODEX_BIN="$W/bin/codex-live-no-credits" "$PY" -B "$R" --only astra
+if [ "$RC" = 0 ] && [ "$LIVE_RC" = 0 ] && [ "$(cat "$W/out")" = "$LIVE_OUTPUT" ]; then
+  ok "reset-credit items with grantedAt and expiresAt add no windows (same reading with and without credits)"
+else no "the reset-credit control  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+for mode in live-missing-primary live-missing-secondary live-missing-mapped; do
+  case "$mode" in
+    live-missing-secondary) MINS=$((5 * 60)) ;;
+    *) MINS=$((7 * 24 * 60)) ;;
+  esac
+  run USAGE_CODEX_BIN="$W/bin/codex-$mode" "$PY" -B "$R" --only astra
+  if [ "$RC" = 1 ] && [ "$(grep -c '' "$W/out")" = 1 ] \
+     && grep -Fqx "astra-usage: could not read (a window whose used percent is not a figure from 0 to 100: {\"windowDurationMins\": $MINS, \"resetsAt\": 1794588090})" "$W/out"; then
+    ok "$mode: a duration-marked window without usedPercent is named and refused despite valid neighbours (exit 1)"
+  else no "$mode  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+done
+
+run USAGE_CODEX_BIN="$W/bin/codex-minutes-missing" "$PY" -B "$R" --only astra
+if [ "$RC" = 1 ] && [ "$(grep -c '' "$W/out")" = 1 ] \
+   && grep -Fqx 'astra-usage: could not read (a window whose used percent is not a figure from 0 to 100: {"windowMinutes": 300, "resetsAt": 1794588090})' "$W/out"; then
+  ok "minutes-missing: a window whose length is windowMinutes and which has no usedPercent is named and refused (exit 1)"
+else no "minutes-missing  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+run USAGE_CODEX_BIN="$W/bin/codex-used-only" "$PY" -B "$R" --only astra
+if [ "$RC" = 0 ] \
+   && grep -Fqx 'astra-usage: length unstated window 0% used, reset unstated · length unstated window 100% used, reset unstated' "$W/out"; then
+  ok "control: usedPercent and used_percent still identify windows without a duration (exit 0)"
+else no "the used-percent-only windows  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
 run USAGE_CLAUDE_BIN="$W/bin/no-such-claude" "$PY" -B "$R" --only claude
 if [ "$RC" = 1 ] && grep -q '^claude-usage: could not read (.*no-such-claude is not executable)$' "$W/out"; then
   ok "a program that is not there prints could not read and names it (exit 1)"
@@ -329,17 +485,27 @@ else
 fi
 
 # ------------------------------------------------------------- wrote nothing ----
-# A planted same-length change in a scratch copy must show in the manifest: the control that the
-# comparison can see a change at all.
-mkdir -p "$W/manifest-control"
-printf 'before\n' > "$W/manifest-control/witness.txt"
-M1=$(manifest "$W/manifest-control")
-printf 'after!\n' > "$W/manifest-control/witness.txt"
-M2=$(manifest "$W/manifest-control")
+# A protected fixture in the same folder and under the same permissions is unchanged by the
+# reader; then a one-byte change there must be caught by the same manifest comparison.
+M1=$(manifest "$W/bin")
+run USAGE_CODEX_BIN="$W/bin/codex-live" "$PY" -B "$R" --only astra
+ASTRA_RC=$RC
+ASTRA_OUTPUT=$(cat "$W/out")
+run USAGE_CLAUDE_BIN="$W/bin/claude-ok" "$PY" -B "$R" --only claude
+M2=$(manifest "$W/bin")
+CONTROL_RC=0
+"$PY" -B - "$W/bin/claude-ok" <<'READ_USAGE_BYTE_CONTROL_END' || CONTROL_RC=$?
+import sys
+with open(sys.argv[1], "r+b") as fh:
+    fh.write(b"!")
+READ_USAGE_BYTE_CONTROL_END
+M3=$(manifest "$W/bin")
 AFTER=$(manifest "$HERE")
-if [ "$M1" != "$M2" ] && [ "$BEFORE" = "$AFTER" ]; then
-  ok "the script directory's checksum-and-mode manifest is unchanged after every leg (control: a planted same-length change showed)"
-else no "the manifest  [control differs: $([ "$M1" != "$M2" ] && echo yes || echo no); directory unchanged: $([ "$BEFORE" = "$AFTER" ] && echo yes || echo no)]"; fi
+if [ "$RC" = 0 ] && grep -q '^claude-usage: Current session / 4% used' "$W/out" \
+   && [ "$ASTRA_RC" = 0 ] && [ "$ASTRA_OUTPUT" = "$LIVE_OUTPUT" ] \
+   && [ "$CONTROL_RC" = 0 ] && [ "$M1" = "$M2" ] && [ "$M2" != "$M3" ] && [ "$BEFORE" = "$AFTER" ]; then
+  ok "the script directory and stand-ins are unchanged (control: one byte in the same stand-in folder under unchanged permissions was caught)"
+else no "the checksum-and-mode manifest or its one-byte control failed"; fi
 
 SCAN=$("$PY" -B - "$R" <<'READ_USAGE_SCAN_END'
 import re, sys

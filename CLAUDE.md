@@ -1,4 +1,4 @@
-# CLAUDE.md — LLM Wiki Schema & Operating Contract
+# CLAUDE.md — aiMyth Schema & Operating Contract
 
 > This file is the **schema / governance layer** for this vault. It turns you from a generic
 > chatbot into a **personal assistant with a disciplined, compounding memory**. Read it at the

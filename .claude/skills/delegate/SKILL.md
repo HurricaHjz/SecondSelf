@@ -138,6 +138,7 @@ must not change. Resume has two exceptions: a long write cut short by a usage li
   single-agent; reserve them for framework-changing decisions and broad briefs. It decides how
   WIDE a sanctioned fan-out may be; whether any lane is called at all is the instrument rule's.
   One bounded task stays with the head unless a reason above holds.
+- **Whether a review runs (owner, 8 November 2026)** — Whether a review of aiMyth's own work runs is decided by its cost and the owner's rules, not by what aiMyth expects it to find.
 - **Review completion and stops** — when a critic's findings change the mechanism, the fold itself
   takes an independent delta review; a design reaches its approval gate only when no load-bearing finding
   remains. Whether review continues, the design stops or the item waits for the owner follows §2's review rules.
@@ -268,7 +269,7 @@ minimum, not the maximum.
 
 Spawn with `python3 .claude/skills/delegate/codex-lane.py spawn --run <run> --lane <lane> --class <class> --brief <file> --cwd <directory> --reason "(a–d) <reason>" --choice-reason "<model and effort reason>" --delegation <single|multi> --delegation-src <head|owner> --model <model> --effort <effort>`. Add only authorised write, staging, search and network grants. Use `watch --run <run> --lane <lane>` to wait for the latest pass; the wait is bounded: after about 570 s by default it returns `still-running` (exit 8), which is not a close, and `--max-wait-s 0` waits without bound. `resume` carries the recorded model, effort, configuration and delegation pair unless overridden: with neither `--delegation` nor `--delegation-src` it takes the lane-open's regime and source together and records them on `lane-resumed`, and an override names both flags; `resume --stage-from <directory>` refreshes an existing staged copy in place. Detached operation uses `--detach --no-wait`, which returns 0 only once the worker has written this call's own `lane-open` or `lane-resumed`; exit 4 means unconfirmed, the worker left running. Without `--no-wait` the caller stays in the foreground watching the worker, and stopping that caller's task with `TaskStop` has ended its worker too.
 
-A background wait uses `wait --run <run> --lane <lane>` without a time bound; a foreground check uses `watch --run <run> --lane <lane>`, which returns `still-running` (exit 8, not a close) after about 570 s by default, or waits without bound with `--max-wait-s 0`. Both commands wait for the latest pass and retain the wrapper's close and watcher-error handling. A chained wait over several helpers wakes once, at the last close; use one wait per helper when any result is needed sooner.
+A background wait uses `wait --run <run> --lane <lane>` without a time bound; a foreground check uses `watch --run <run> --lane <lane>`, which returns `still-running` (exit 8, not a close) after about 570 s by default, or waits without bound with `--max-wait-s 0`. Both commands wait for the latest pass and retain the wrapper's close and watcher-error handling. A chained wait over several helpers wakes once, at the last close; use one wait per helper when any result is needed sooner. A background task's state is read from its completion notice or the launcher's status command, never from the text of its output file.
 
 Codex choices are explicit and are not resolved by the Claude throttle. Which model takes which work, and where reviewing seats sit, is the routing table's (the `rules` block at the top of `routing.json`, with the user's own rows from `.claude/routing.local.json` appended where that file exists). The critic, planner, reflector and writer class metadata describe their Codex halves. A reflector is read-only, accepts `gpt-6-astra` at `xhigh` or `max` with `max` as its anchor, and uses the same output gate and controls as its Claude counterpart. Record the reason for each pick. The sandbox controls writes; the wrapper records reads as unrestricted. Exclude sibling reports when staging a blind review. Usage recorded as `codex-plan` is unpriced, not zero cost. Consult the wrapper's `--help` for options and exit classes.
 
@@ -592,7 +593,7 @@ nothing** — its whole contract is the lane core, the granted `contract/` slice
 a rule it needs that none of them carries is a gap for it to report (§2b). These are the eight
 **brief slots**, not the plan-of-record's eight head-agent rules: plan rules 1 (registry write
 mechanism), 4 (head-agent empirical lane) and 5 (retry attribution) are discharged in §4–§5
-below, not in briefs.
+below, not in briefs. During a run, the lead passes each new lesson to the later helpers whose job it concerns.
 
 0. **Spawn record open, echoed per the `pre-report` knob** — before any spawn, one line
    per lane in the run's session scratch: run id · lane id · agent name · definition ·
@@ -833,8 +834,8 @@ conversation that armed it and keeps firing there after the run passes to anothe
 closes each item with the boundary commit and the hand-off update; a `framework` log entry only where the item changed the
 system, since an item that changes nothing logs nothing (CLAUDE.md §5) — the per-item
 `framework`-entry formula of the run-2 and run-3 briefs is retired (2026-09-06). **Every session that hands over leaves no wait armed behind it (register 2026-10-05 19:05):** a launcher, an attended head or any session that passes a run, an item or a task to another lists in the hand-off every background wait it still has armed (a `Monitor`, a helper's background `wait`, a heartbeat). A wait bound to its conversation (a `Monitor`, or any background wait, task or heartbeat that conversation started) keeps firing there after the hand-over, so before its last reply the session stops every such wait with `TaskStop`, launchers included; naming the successor never discharges such a wait, and the successor arms its own where it needs one. Only a wait that no conversation owns (a detached process or a scheduled job that the successor can read and stop by the pid or id the hand-off gives) may be handed over, by naming the successor as its owner. That last reply asks the owner to close the old conversation, since an open one stays a live head that a firing wait can wake. A hands-off reflection's
-`--yes` appends land under `wiki/syntheses/` only, narrower than the reflect skill's own path bounds, and a
-run brief never widens it (2026-09-08). A head never ends its turn while a lane is open: it
+`--yes` appends land under `wiki/syntheses/` only, narrower than the reflect skill's own path bounds, and
+checked lesson edits land only on existing pages in `wiki/experience/`, within the reflect skill's experience bound; a run brief never widens either (2026-09-08; the experience bound admitted by owner ruling 8 November 2026). A head never ends its turn while a lane is open: it
 re-issues the watch in the foreground until the lane returns closed (`lane.py watch` and `codex-lane.py watch` return `still-running`, exit 8 and not a close, after about 570 s by default, and wait without bound under `--max-wait-s 0`) — nor, since 2026-09-17, while any background job it
 started is open: a long command (a suite, a conversion) runs in the foreground or is waited for in a bounded foreground
 loop (the status line at the end of this paragraph) — since a job a headless head leaves running either
@@ -915,17 +916,17 @@ attempt is not permitted, the failed fix stays held.
 
 **Supervise.** An unattended go covers preparing and finalising the plan as its first supervised phase; work that depends on the plan waits behind its review gate, and the owner's steering is acknowledged on delivery (owner, 1 November 2026).
 
-**A report's blind sort.** Before a report's Handback reaches the owner, a fresh read-only helper
-sorts its items blind against the rule (CUSTOMISATION.md, "Five groups, named the Handback"): it
+**A report's blind sort (owner, 8 November 2026).** The blind sort runs by default, once at the end, on a report built while the owner was away, such as a hands-off run's; elsewhere it is off, and the lead turns it on for a big or important report, saying why.
+When it runs, a fresh read-only helper sorts the report's items blind against the rule
+(CUSTOMISATION.md, "Five groups, named the Handback") before the Handback reaches the owner: it
 receives the ungrouped items with each item's current authority and action status and their
 pointers, and never the head's groups. Where a fresh reviewer is already required, that pass does
 the sort. The head settles each difference and shows the owner any it keeps against the sorter.
 The sort's record sits beside the report and names the report version it read; a changed item or
-authority needs a fresh judgement. The head looks for that record before `close` and at a
-walk-through. A chat list takes no helper: every item in any list carries a few words on why it
-sits in its group. A hook cannot judge
-meaning, so this stays a duty. It retires after five reports in a row with no difference the head
-accepts and re-arms on the owner's next correction (the number set by judgement, unmeasured).
+authority needs a fresh judgement. Where the sort runs, the head looks for that record before
+`close` and at a walk-through. A chat list takes no helper: every item in any list carries a few
+words on why it sits in its group. A hook cannot judge meaning, so this stays a
+duty.
 
 
 **Boundary records (2026-09-05).** One primitive writes them:
@@ -1144,12 +1145,12 @@ live run where the script misses or false-alarms — until then the script is th
   is append-only): an accepted proposal is traced by the `--cross` run's own entry; a run
   that writes nothing logs nothing, so accepted-but-empty reads as declined — a declared
   limit. The spawn record's checklist field mirrors the decision.
-  **A hands-off run reflects once, at its close (owner ruling 2026-09-19; row G7 of the hands-off
+  **A hands-off run reflects once, at its close (owner ruling 2026-09-19, amended by owner ruling 8 November 2026; row G7 of the hands-off
   pre-flight template):** no per-item reflection, since each boundary already writes the hand-off,
   the log and the register and the head's context is the scarce resource. At the close, first a
   read-only cross-reflector lane runs over the run's whole transcript (every session), then the head
   runs its single `reflect --yes` with the reflector's table in hand, writing what it accepts under the
-  `wiki/syntheses/` bound and listing the rest in the morning report; a proposal that names a
+  `wiki/syntheses/` bound, and each checked lesson edit on how a feature decides on that feature's existing page in `wiki/experience/` within the experience bound, listing those edits in the morning report under Undo if you disagree and the rest in the morning report; a proposal that names a
   framework defect or a head conduct fault goes to the report as stated, the head adding its
   view but never leaving it out, and what becomes of it follows CLAUDE.md §12's bullet
   "Act now if you can; park only with a reason".

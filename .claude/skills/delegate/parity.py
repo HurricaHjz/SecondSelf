@@ -176,6 +176,13 @@ def cmd_fixture(args):
         if out.root.startswith(os.path.realpath(arm_dir) + os.sep):
             die("--out sits inside an arm directory: the fixture would copy itself")
 
+    # Claim this build's directory exclusively, including an existing empty directory: a
+    # reused fixture must never bring an older artefact into the judge's reading grant.
+    try:
+        os.mkdir(out.path("fixture"))
+    except OSError as exc:
+        die("cannot create a fresh fixture directory: %s" % exc)
+
     entries = []
     for arm, files in (("a", a_files), ("b", b_files)):
         for index, path in enumerate(files, start=1):
@@ -531,10 +538,31 @@ def cmd_judge_brief(args):
     fixture = os.path.realpath(args.fixture)
     if not os.path.isdir(fixture):
         die("fixture directory not found: %s" % fixture)
-    ids = sorted(os.path.splitext(os.path.basename(p))[0]
-                 for p in glob.glob(os.path.join(fixture, "art-*.md")))
-    if not ids:
-        die("the fixture holds no artefact named art-N.md: %s" % fixture)
+    # The build records its ids outside the judge's grant. Do not discover new ids from
+    # the directory: an added file would then become part of the blind judge's input.
+    mapping_path = os.path.join(os.path.dirname(fixture), "mapping.json")
+    try:
+        mapping = json.loads(read_text(mapping_path, "fixture mapping"))
+    except ValueError as exc:
+        die("invalid fixture mapping: %s" % exc)
+    neutral = mapping.get("neutral_to_arm") if isinstance(mapping, dict) else None
+    if not isinstance(neutral, dict) or not neutral or any(
+            not re.fullmatch(r"art-[1-9][0-9]*", key) for key in neutral):
+        die("fixture mapping carries no valid neutral_to_arm table")
+    ids = sorted(neutral)
+    expected = {nid + ".md" for nid in ids}
+    try:
+        actual = set(os.listdir(fixture))
+    except OSError as exc:
+        die("cannot list fixture directory: %s" % exc)
+    if actual != expected:
+        die("fixture files differ from mapping (extra: %s; missing: %s)"
+            % (", ".join(sorted(actual - expected)) or "none",
+               ", ".join(sorted(expected - actual)) or "none"))
+    for name in sorted(expected):
+        path = os.path.join(fixture, name)
+        if os.path.islink(path) or not os.path.isfile(path):
+            die("fixture artefact is not a regular file: %s" % name)
     truth_dir = os.path.realpath(args.truth)
     truth_file = os.path.join(truth_dir, "truth.md" if args.rubric == "lint" else "query-truth.md")
     if not os.path.isfile(truth_file):

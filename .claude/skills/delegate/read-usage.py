@@ -19,10 +19,14 @@ guessed); 2 on a usage error. A real figure: in Claude's text, a per-cent token 
 whole run of digits, letters, dots and signs before a `%`), and every token is a figure from 0 to
 100 with no sign, so `-1% used` is unread, never read as 1%; the text names at least one usage
 window (a line naming a session or a week), every figure stands on a window line or after one, and
-every window line has its figure, on that line or on a later line before the next window line. So
-a notice such as "usage limits unavailable for this session", window headings with no figures, or
-a progress line such as "Download 42% complete" is unread. In Astra's result, every window's used
-percent is a number from 0 to 100, so a null, a string or a value out of range is unread.
+every window line has its figure, on that line or on a later line before the next window line. Only
+a figure written as `N% used` fills a window: any other per-cent token is still checked as above
+but fills none. So a notice such as "usage limits unavailable for this session", window headings
+with no figures, or a progress line such as "Download 42% complete", alone or after a window
+heading whose usage is unavailable, is unread, with no list of notice wordings to keep current;
+a real `4% used` stays read whatever its line says about reset times. In Astra's result, every
+window (a dict holding a used percent or a window length) has a used percent from 0 to 100, so an
+absent one, a null, a string or a value out of range is unread.
 
 Executables: USAGE_CLAUDE_BIN and USAGE_CODEX_BIN override the `claude` and `codex` found on PATH
 (a suite's stand-ins). The Codex reading talks to `codex app-server` over stdio: `initialize`, the
@@ -48,6 +52,7 @@ WINDOW_RE = re.compile(r"\b(session|week)\b", re.I)          # a line that names
 TOKEN_CHAR_RE = re.compile(r"[\w.+\-−]")                # a character of a per-cent token
 NUMBER_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?")               # a whole figure, such as 4 or 17.5
 SIGNED_RE = re.compile(r"[+\-−][0-9]+(?:\.[0-9]+)?")    # a figure with a sign, refused
+USED_RE = re.compile(r"%\s*used\b", re.I)                     # the only form that fills a window
 TEXT_CUT = 400        # characters of condensed text kept on the line; set by judgement, unmeasured
 
 
@@ -64,7 +69,7 @@ def percent(value):
 def tokens(line):
     """Every per-cent token on a line, whole: the run of word characters, dots and signs that ends
     at a `%` (one space allowed before it), so `-1% used` holds the token `-1`, never the figure 1.
-    A run with no digit in it is no token."""
+    A run with no digit in it is no token. Each token comes with the place of its `%`."""
     out = []
     for at in [m.start() for m in re.finditer("%", line)]:
         end = at - 1 if at and line[at - 1].isspace() else at
@@ -72,7 +77,7 @@ def tokens(line):
         while start and TOKEN_CHAR_RE.match(line[start - 1]):
             start -= 1
         if re.search("[0-9]", line[start:end]):
-            out.append(line[start:end])
+            out.append((line[start:end], at))
     return out
 
 
@@ -88,21 +93,22 @@ def figure_problem(token):
 def text_problem(lines):
     """Why Claude's kept lines are no reading, or None: every per-cent token is a whole figure from
     0 to 100 with no sign, at least one line names a usage window, no figure comes before the first
-    window line, and each window line is paired with the first figure on it or on a later line
-    before the next window line."""
+    window line, and each window line is paired with the first figure written `N% used` on it or
+    on a later line before the next window line; another per-cent token fills no window."""
     windows, waiting = 0, None
     for line in lines:
         if WINDOW_RE.search(line):
             if waiting is not None:
                 return "a window with no figure: %s" % waiting
             waiting, windows = line, windows + 1
-        for token in tokens(line):
+        for token, at in tokens(line):
             why = figure_problem(token)
             if why:
                 return "%s (%s%%): %s" % (why, token, line)
             if not windows:
                 return "a figure outside any usage window: %s" % line
-            waiting = None
+            if USED_RE.match(line, at):
+                waiting = None
     if waiting is not None:
         return "a window with no figure: %s" % waiting
     if not windows:
@@ -147,10 +153,12 @@ def read_claude(timeout_s):
 
 
 def windows_in(node, found):
-    """Every dict carrying a used-percent figure, wherever it sits in the result."""
+    """Every dict carrying usedPercent or a window length (windowDurationMins or windowMinutes, the
+    two that describe() reads), wherever it sits in the result, so a window that has a length but
+    lost its used percent is found and refused, never skipped."""
     if isinstance(node, dict):
         keys = {k.lower().replace("_", ""): k for k in node}
-        if "usedpercent" in keys:
+        if keys.keys() & {"usedpercent", "windowdurationmins", "windowminutes"}:
             found.append(node)
         for value in node.values():
             windows_in(value, found)

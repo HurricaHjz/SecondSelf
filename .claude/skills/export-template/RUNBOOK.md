@@ -10,7 +10,7 @@ bash .claude/skills/export-template/export_template.sh template-export
 Produces `template-export/` per `SPEC.md`.
 
 ## B. Verify (script prints most of this — confirm)
-- Skills are discovered automatically. The public payload contains every discovered skill except professor-loop, whose standalone prerequisites are still being prepared (the owner's decision of 3 November 2026, answer 3g; its upgrade is set for v0.10.1). Verify both that professor-loop is absent and that an ordinary skill and export-template are present. Verify the vault's excluded skill is unchanged. The exclusion applies to build/push packaging, not to private source maintenance.
+- Skills are discovered automatically. The public payload contains every discovered skill except professor-loop, whose standalone prerequisites are still being prepared (the owner's decision of 3 November 2026, answer 3g; its upgrade is set for v0.10.2, moved from v0.10.1 by his yes of 9 November 2026 so that v0.10.1 could ship the README). Verify both that professor-loop is absent and that an ordinary skill and export-template are present. Verify the vault's excluded skill is unchanged. The exclusion applies to build/push packaging, not to private source maintenance.
 - **Suites — run every one the tree holds (discovered from the tree), then the build-side re-run; green = `0 failed` printed by each suite itself** (never compare against a historical count — assertion totals grow):
   ```bash
   n=0; L=$(mktemp -d); while IFS= read -r t; do n=$((n+1)); d=$(dirname "$t"); f=$(basename "$t")

@@ -94,7 +94,7 @@ SHELL
   watchdog can tell work from a stall: start the work as a job and touch your progress file every 30 s
   until it exits — `$LLM_WIKI_LANE_PROGRESS`, i.e. `/tmp/<run>-<lane>.progress` — without shell
   redirection, which the fence denies on every lane:
-  `(cmd) & while kill -0 $!; do python3 -c 'import os,time; open(os.environ["LLM_WIKI_LANE_PROGRESS"],"a").write(time.ctime()+chr(10))'; sleep 30; done`
+  `(cmd) & while kill -0 $!; do python3 -c 'import os,time; open(os.environ["LLM_WIKI_LANE_PROGRESS"],"a").write(time.ctime()+chr(10))'; sleep 30; done; wait $!`
   (design: the hands-off mode's watchdog, 2026-09-05; the transcript is silent for the whole call).
   Write your report only with the result in hand; after a resume, re-run whatever was running when
   you stopped.

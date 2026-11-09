@@ -1,23 +1,29 @@
 # SecondSelf
 
-Your AI may remember what you told it. Nothing makes sure it does it, and you end up repeating yourself and checking its work by hand. Everyone has the same models, so the mind you build sets you apart.
+Your AI may remember what you told it, but remembering alone doesn't make sure it clearly recalls what's needed, or acts on it properly, so you end up repeating yourself and checking its work by hand.
 
-aiMyth (open-sourced as SecondSelf) is a framework to build a transparent, local mind of your own. It is one super agent that is yours, and the same mind sits behind every window you open. It brings your knowledge, your rules and a team of helpers into the AI tools you already use. Today it runs in Claude Code, and GPT models can join as helpers through the Codex CLI.
+For big jobs, you often either wire up a team of agents yourself, step by step, or hand the work to a team that runs out of sight, by its maker's rules. Across your windows and tools, keeping track of your sessions is still your job, which drains your attention and caps what you can actually do.
+
+Much of what your assistant has learned about you lives inside one product. Moving it to another may take an import, with nothing to make sure it then works the same, and when you use both, keeping what they learn in step both ways is impossible without a shared memory setup.
+
+We believe that once everyone has the same strongest models and the same harnesses, what will set you apart is the mind you build.
+
+**aiMyth (open-sourced as SecondSelf) builds your second self by giving your AI harness a "mind" of your own.** The mind is made of your knowledge, rules and lessons, kept in interconnected files stored on your own computer, and it can learn, improve, do tasks and organise teams of agents just as you would have done yourself, from whatever harness you already use, such as Claude Code. Today it runs in Claude Code, and GPT models can join as helpers through the Codex CLI.
 
 ![A second self at the centre, joined to a foundation model, a knowledge base and a multi-agent harness](assets/three-parts.png)
 
-## Why it is different
+## Why choose aiMyth
 
-Memory tools help your AI remember. aiMyth makes sure it follows through. We believe it is the complement to today's harnesses, and a path towards the intelligence that comes next. A harness gives an agent hands, and aiMyth gives those hands a mind of your own.
+Memory tools help your AI remember. aiMyth makes sure it not only remembers, but also follows through. A harness gives an agent hands, and aiMyth gives those hands a mind of your own. We believe aiMyth is the complement to today's harnesses, and a path towards the intelligence that comes next:
 
-- **One mind behind every window.** However many windows you open, with any agent in any tool, you always talk to the same mind. Ask any of them what you decided yesterday, and it knows.
-- **Tell it once.** It improves itself by your rules, the way you would improve yourself. A correction you give today shapes every later job that needs it, including work handed to a helper.
-- **Your mind stays with you.** Change your harness or your personal agent, and your knowledge, rules and lessons stay.
-- **Easy to start, in any harness.** Clone it, run the set-up, open it in the tool you already use, and start talking. Each harness or personal agent you connect gains your mind.
-- **Every better model makes it stronger.** The faster AI moves, the stronger your mind gets. Each better model, and each better Claude Code or Codex, is a free upgrade, and any part can be swapped for a better tool.
-- **Big jobs get done while you sleep.** Hand over a long job, and a team of helpers works through it within your limits. A morning report then sorts every item by what it needs from you.
+- **One mind behind every window.** However many windows you open, with any agent in any tool, you always talk to the same mind. It looks after its own sessions and context, so you never have to manage them. Ask any window what you decided last week, and it knows.
+- **It strengthens you, never replaces you.** It takes on the work and brings every real decision back to you. While you are away it carries on within your rules. In research, your ideas and your writing stay yours.
+- **Tell it once.** It improves every day, by your rules, the way you would improve yourself. A correction you give today shapes every later job that needs it, including the work it hands to its teams.
+- **Big jobs get done even while you sleep.** Hand over a job of any size, and aiMyth sets up the teams and workflows it needs, as you would yourself, and works through it within your rules. A report then sorts every item by what it needs from you.
+- **Your mind stays with you.** When you change your harness or your personal agents, your knowledge, rules and lessons won't be lost.
 - **You can see why.** Every answer shows its sources and how far to trust them, and every rule keeps its reason.
-- **It makes you better, never replaces you.** Every decision stays yours, and in research your ideas and your writing stay yours too.
+- **Easy to start, in any harness.** Clone it, run the set-up, open it in any harness you already use, and start talking. Each harness or personal agent you connect gains your mind.
+- **Every better model makes it stronger.** The faster AI moves, the stronger your mind gets. Each better model, and each better Claude Code or Codex, is a free upgrade, and any part can be swapped for a better tool.
 
 Some of these describe where aiMyth is going. [What runs today](#what-runs-today) lists what works now and where to check it.
 
@@ -133,7 +139,7 @@ The [Manual](MANUAL.md) covers the commands, the capture → compile → ask →
 | `deep-lint` | A heavier pass, roughly monthly and token-bounded: audit confidence levels, flag stale claims, and re-check a capped set of sources against their live online versions. |
 | `attic` | Retire notes into cold storage, or restore them, always on your word. The agent may prepare an archive for your yes. |
 | `project` | Manage your own working repositories (Overleaf LaTeX, code) from the vault on your instruction. Clones live outside the vault, the wiki keeps one registry row per repository, and content enters only as commit-pinned snapshots through `raw/` when you ask. |
-| `reflect` | Capture what a working session taught (insight, method lessons, defects) and file what you approve. In an attended session, a lesson an independent agent has checked can also go onto a feature's existing experience page, where you can undo it. Only on your explicit instruction. |
+| `reflect` | Capture what a working session taught (insight, method lessons, defects) and file what you approve. In an attended session, or at a hands-off close run with `--yes`, a lesson an independent agent has checked can also go onto a feature's existing experience page, where you can undo it. Only on your explicit instruction. |
 | `weekly-audit` | The weekly review's tools: a fresh-eyes audit of the week's framework changes and a waste report from the run records. The calendar's Weekly review runs them, or you can on request. Nothing runs on its own. |
 | `adopt` | Assess a third-party skill or tool: fingerprint it, recommend a use level and report, then give an installation plan and record your decision. `--retire` retires the registry entry and preserves its history, and installed files remain. |
 | `delegate` | The agent's own runbook for handing work to helpers: which helper, what it may write, how its findings get checked. You never call it. It shapes how larger jobs are run. |
@@ -180,7 +186,7 @@ We are looking for people and support to take this further: research collaborato
 
 ## Credits and licence
 
-The wiki builds on Andrej Karpathy's [LLM Wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) pattern, and capture uses kepano's [obsidian-skills](https://github.com/kepano/obsidian-skills). Released under the MIT License ([`LICENSE`](LICENSE.md)).
+aiMyth builds on Claude Code, Codex, Obsidian and kepano's [obsidian-skills](https://github.com/kepano/obsidian-skills), and grows stronger as each of them improves. Released under the MIT License ([`LICENSE`](LICENSE.md)).
 
 ### How to cite
 

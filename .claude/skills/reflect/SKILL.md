@@ -263,7 +263,8 @@ head is unsure of goes under Decide instead. What each mode admits:
 |---|---|---|
 | Attended `/reflect`, with its critic | Checked lessons, within the bound | Preview and approval as above |
 | An attended session's own cross-reflection with `--yes`, or its eligible successor | Checked lessons, within the bound | The reflector proposes; the head re-verifies and writes |
-| A hands-off close, with or without `--yes` | None | Its `wiki/syntheses/` append bound stands; checked lessons go to the morning report under Approve, with their exact edits, and a hands-off close records a waiting lesson there, not in the register |
+| A hands-off close with `--yes` | Checked lessons, within the bound | Its `wiki/syntheses/` append bound stands beside it; checked lessons are listed in the morning report under Undo if you disagree, what the bound excludes waits there under Approve with its exact edit, and a hands-off close records a waiting lesson there, not in the register |
+| A hands-off close without `--yes` | None | The whole table goes to the morning report, each lesson under Approve with its exact edit, and a waiting lesson is recorded there, not in the register |
 | Any other run, such as another session's cross run, a read-only reflector lane, a headless head without `--yes`, or a run with `--no-critic` | None | Findings and exact proposals, which prevents applying a lesson without its required authority or check |
 
 The register duty above also takes a lesson that must wait (a new page's yes, his decision, a missing
@@ -358,11 +359,11 @@ Bash, the routing's model) granted DIR alone beside the wiki and this skill, and
 named candidate table including every discard. Before applying any item the head re-verifies it
 exactly as this section prescribes: the dedup checks and a re-read of the cited transcript span. With
 `--yes` the head then writes the items that pass, inside the `--yes` path bounds below and nowhere
-else (create-and-append inside `wiki/`, plus the corrections of aiMyth's own working records the
+else (create-and-append inside `wiki/`, the experience bound's lesson edits, plus the corrections of aiMyth's own working records the
 bounds name; never `developments/`, `known-issues.md` or any other file outside the wiki), logging
 each write as `synthesis`; every item the bounds exclude, and every item that
 fails re-verification, goes to the run's morning report with the full named table for the owner's
-line-by-line approval. The experience bound does not widen this form: checked lessons go to the morning
+line-by-line approval. With `--yes` the experience bound applies to this form as Step 6's table sets it: checked lessons are applied and listed in the morning report under Undo if you disagree; what the bound excludes goes to the morning
 report under Approve, each with its exact edit, for the session that walks it to apply on his yes.
 Without `--yes` the head applies nothing and the whole table goes to the
 morning report. An ineligible cross run has no automatic experience grant, which prevents applying

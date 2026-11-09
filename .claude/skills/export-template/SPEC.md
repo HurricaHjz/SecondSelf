@@ -48,7 +48,7 @@ The skills line above names this release's skills. The export copies every skill
 ## KEEP / STRIP (copied from the live vault by the builder)
 
 `professor-loop` stays out of public builds (the owner's decision of 3 November 2026, answer 3g; its
-upgrade is set for v0.10.1).
+upgrade is set for v0.10.2, moved from v0.10.1 by his yes of 9 November 2026).
 
 - **KEEP →** CLAUDE.md, MANUAL.md, `README.md`/`LICENSE.md` + `assets/` (from the vault root),
   `.claude/skills/**` — every publishable skill, including `export-template` (the maintainer's publish tool, with its `payload/`), except `professor-loop` while its standalone prerequisites are being prepared,
