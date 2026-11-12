@@ -320,7 +320,7 @@ a workflow-end proposal (the delegate skill §5 owns that policy: the head may p
 declared first, never auto-run; the run's log entry records whether one was proposed — `proposed`
 or `not eligible`, 2026-08-30 — an accepted proposal being traced by the cross run's own entry). **Target:** a finished session's transcript, or the current
 session's transcript as of spawn — the live-write race is declared in the report; for the current
-session (a self-cross run) the head freezes a `/tmp` copy of the transcript and grants the copy
+session (a self-cross run) the head freezes a `/tmp` copy of the transcript, from the session's verified project path and never the first match across project folders, and grants the copy
 alone, because the live file keeps growing while the lane reads it. The timing of the frozen
 copy and any follow-up reflection follows CUSTOMISATION.md's closing rule in
 "Session hand-off after a queue item". The close's follow-up check lists the owner turns with

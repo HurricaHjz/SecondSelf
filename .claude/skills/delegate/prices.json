@@ -48,6 +48,14 @@
   ],
   "units": "input and output are US dollars per million tokens; the three multipliers apply to the family's input rate, giving $/MTok for cache reads, 5-minute cache writes and 1-hour cache writes.",
   "ids": {
+    "claude-fable-5-2": {
+      "input": 8.0,
+      "output": 40.0,
+      "read_mult": 0.025,
+      "write_5m_mult": 1.25,
+      "write_1h_mult": 2.0,
+      "source": "Input and output are list-price references in the declared units; cache prices derive from input multiplied by the listed factors. Confirm current vendor rates and cache tiers."
+    },
     "claude-opus-5": {
       "input": 5.0,
       "output": 25.0,
@@ -61,7 +69,7 @@
     "_": "Expected vendor model identifiers for alias resolution; re-probe and update these values when aliases change.",
     "aliases": {
       "opus": "claude-opus-5-5",
-      "fable": "claude-fable-5-1",
+      "fable": "claude-fable-5-2",
       "sonnet": "claude-sonnet-5-5"
     },
     "aliases_probed": "Probe each configured alias locally and record its returned model identifier before relying on fallback detection.",

@@ -1,14 +1,16 @@
 # SecondSelf
 
-Your AI may remember what you told it, but remembering alone doesn't make sure it clearly recalls what's needed, or acts on it properly, so you end up repeating yourself and checking its work by hand.
+https://github.com/user-attachments/assets/674a3e19-2e29-42fa-b062-6290ee9d0961
 
-For big jobs, you often either wire up a team of agents yourself, step by step, or hand the work to a team that runs out of sight, by its maker's rules. Across your windows and tools, keeping track of your sessions is still your job, which drains your attention and caps what you can actually do.
+→ Your AI may remember what you told it, but remembering alone doesn't make sure it clearly recalls what's needed, or acts on it properly, so you end up repeating yourself and checking its work by hand.
 
-Much of what your assistant has learned about you lives inside one product. Moving it to another may take an import, with nothing to make sure it then works the same, and when you use both, keeping what they learn in step both ways is impossible without a shared memory setup.
+→ For big jobs, you often either wire up a team of agents yourself, step by step, or hand the work to a team that runs out of sight, by its maker's rules. Across your windows and tools, keeping track of your sessions is still your job, which drains your attention and caps what you can actually do.
+
+→ Much of what your assistant has learned about you lives inside one product. Moving it to another may take an import, with nothing to make sure it then works the same, and when you use both, keeping what they learn in step both ways is impossible without a shared memory setup.
 
 We believe that once everyone has the same strongest models and the same harnesses, what will set you apart is the mind you build.
 
-**aiMyth (open-sourced as SecondSelf) builds your second self by giving your AI harness a "mind" of your own.** The mind is made of your knowledge, rules and lessons, kept in interconnected files stored on your own computer, and it can learn, improve, do tasks and organise teams of agents just as you would have done yourself, from whatever harness you already use, such as Claude Code. Today it runs in Claude Code, and GPT models can join as helpers through the Codex CLI.
+**aiMyth (open-sourced as SecondSelf) builds your second self by giving your AI harness a "mind" of your own.** The mind is made of your knowledge, rules and lessons, kept in interconnected files stored on your own computer, and it can learn, improve, do tasks and organise teams of agents just as you would have done yourself, from whatever harness you already use, such as Claude Code. Today it runs in Claude Code, and GPT models can join as subagents through the Codex CLI.
 
 ![A second self at the centre, joined to a foundation model, a knowledge base and a multi-agent harness](assets/three-parts.png)
 
@@ -112,10 +114,10 @@ This is what runs now, and where to check each line.
 |---|---|
 | The repository holds 15 skills, 9 agent definitions and 72 test files. | `.claude/skills/`, `.claude/agents/` and `git ls-files \| grep -c '/test_'` |
 | Its history runs from v0.1 on 24 June 2026, and tagged releases start at v0.9.6. | `git log --reverse` and `git tag` |
-| You talk to one agent, which calls itself aiMyth until you rename it. Claude models lead the work, and `codex-lane.py` runs GPT helper agents through the Codex CLI. | `CUSTOMISATION.md`, created on first set-up, and `.claude/skills/delegate/` |
+| You talk to one agent, which calls itself aiMyth until you rename it. Claude models lead the work, and `codex-lane.py` runs GPT subagents through the Codex CLI. | `CUSTOMISATION.md`, created on first set-up, and `.claude/skills/delegate/` |
 | `/ingest` compiles sources from `raw/` into linked Markdown notes in `wiki/`. Every source page names its raw file, and every page but the maps carries a confidence level. | `CLAUDE.md`, section 4, and [the example](#see-it-work) |
 | `/query` answers from the wiki with links to the pages it drew on, and `/output` writes a cited document into `output/`. | [The example](#see-it-work) |
-| Each helper gets one job, a written brief and limits on what it may touch. Those limits are partly enforced, and the rest is written contract. | `.claude/agents/` and `.claude/skills/delegate/SKILL.md` |
+| Each subagent gets one job, a written brief and limits on what it may touch. Those limits are partly enforced, and the rest is written contract. | `.claude/agents/` and `.claude/skills/delegate/SKILL.md` |
 | Independent critic and verifier agents check the work. A check that reports nothing must first show that it can catch a known case, so a silent failure is not read as a clean result. | `.claude/agents/critic.md`, `.claude/agents/verifier.md` and `CLAUDE.md`, section 11 |
 | A long job can run as a hands-off run. You confirm one pre-flight table, and a morning report waits for you at the end. It needs the `hands-off` kit, which `bash setup.sh --enable hands-off` turns on. | The [Manual](MANUAL.md), "Hands-off long runs" |
 | Reports and lists of items come back as a Handback, which sorts every item into Decide, Approve, Your to-dos, Undo if you disagree and Done. | `CUSTOMISATION.md`, created on first set-up |
@@ -142,14 +144,14 @@ The [Manual](MANUAL.md) covers the commands, the capture → compile → ask →
 | `reflect` | Capture what a working session taught (insight, method lessons, defects) and file what you approve. In an attended session, or at a hands-off close run with `--yes`, a lesson an independent agent has checked can also go onto a feature's existing experience page, where you can undo it. Only on your explicit instruction. |
 | `weekly-audit` | The weekly review's tools: a fresh-eyes audit of the week's framework changes and a waste report from the run records. The calendar's Weekly review runs them, or you can on request. Nothing runs on its own. |
 | `adopt` | Assess a third-party skill or tool: fingerprint it, recommend a use level and report, then give an installation plan and record your decision. `--retire` retires the registry entry and preserves its history, and installed files remain. |
-| `delegate` | The agent's own runbook for handing work to helpers: which helper, what it may write, how its findings get checked. You never call it. It shapes how larger jobs are run. |
+| `delegate` | The agent's own runbook for handing work to subagents: which subagent, what it may write, how its findings get checked. You never call it. It shapes how larger jobs are run. |
 | `qmd-search` | Optional local semantic search over the wiki through qmd, dormant unless installed. |
 | `export-template` | Sync with the framework repository. `--pull` updates your copy from upstream, and `--push` is the maintainer's publish path. See the [Manual](MANUAL.md). |
 | `suggest` | Draft a change you would like in the framework's core as a suggestion. It shows exactly what it would share and leaves the filing to you. |
 
 ## Optional extras
 
-- GPT helper agents need an installed, authenticated Codex CLI. Select model and effort options your installation supports, and see the `delegate` skill for how they are invoked. Without the Codex CLI the GPT helpers are simply off: a reviewing seat stays on the Claude side in a fresh context, and its report says the review was by the same model family.
+- GPT subagents need an installed, authenticated Codex CLI. Select model and effort options your installation supports, and see the `delegate` skill for how they are invoked. Without the Codex CLI the GPT subagents are simply off: a reviewing seat stays on the Claude side in a fresh context, and its report says the review was by the same model family.
 - We recommend kepano's [obsidian-skills](https://github.com/kepano/obsidian-skills). The agent uses `obsidian-cli` for vault access. Web capture uses `defuddle` or MarkItDown according to the page. Failed captures can use Jina Reader when you authorise it.
 - The [Obsidian Web Clipper](https://obsidian.md/clipper) browser extension saves web pages into `raw/` in one click. You can also drop files in `raw/` or paste a URL to the agent.
 - The open-access resolver needs your own `OA_CONTACT_EMAIL` configuration.
@@ -166,11 +168,11 @@ bash .claude/skills/export-template/export_template.sh --pull .
 bash .claude/skills/export-template/export_template.sh --pull . --apply
 ```
 
-The preview lists the files that would change. Applying is plain git, `git merge --ff-only --no-overwrite-ignore` onto the branch your copy follows, then `bash setup.sh --lock`. Where git refuses, its refusal stands. The throttle, `throttle` in `CUSTOMISATION.md`, rewrites the `model:` and `effort:` lines of the helper definitions, and a routing overlay is a `classes.<name>` override in `.claude/routing.local.json`. If your throttle is not `auto`, or a routing overlay changes a helper's model or effort, follow "Updating" in the [Manual](MANUAL.md), which holds the steps.
+The preview lists the files that would change. Applying is plain git, `git merge --ff-only --no-overwrite-ignore` onto the branch your copy follows, then `bash setup.sh --lock`. Where git refuses, its refusal stands. The throttle, `throttle` in `CUSTOMISATION.md`, rewrites the `model:` and `effort:` lines of the subagent definitions, and a routing overlay is a `classes.<name>` override in `.claude/routing.local.json`. If your throttle is not `auto`, or a routing overlay changes a subagent's model or effort, follow "Updating" in the [Manual](MANUAL.md), which holds the steps.
 
 ## Make it yours
 
-Your copy holds two things. The **core** is how SecondSelf works: `CLAUDE.md`, `MANUAL.md`, `setup.sh`, the skills, the helper definitions and the hooks under `.claude/`, with the full list in `.claude/core-paths`. **Your layer** is everything that makes it yours: `CUSTOMISATION.md`, your wiki, your sources, your calendar, your own skills (kept in `.claude/skills/my-<name>/`) and your own routing choices (in `.claude/routing.local.json`). Lint's local list of what you have added is `.claude/sanctioned.local.txt`.
+Your copy holds two things. The **core** is how SecondSelf works: `CLAUDE.md`, `MANUAL.md`, `setup.sh`, the skills, the subagent definitions and the hooks under `.claude/`, with the full list in `.claude/core-paths`. **Your layer** is everything that makes it yours: `CUSTOMISATION.md`, your wiki, your sources, your calendar, your own skills (kept in `.claude/skills/my-<name>/`) and your own routing choices (in `.claude/routing.local.json`). Lint's local list of what you have added is `.claude/sanctioned.local.txt`.
 
 `bash setup.sh` locks the core's files so that a stray edit does not land, and the agent will not edit a core file itself. If you ask for a change there, it does the job in your layer where that can serve, or it drafts a suggestion with the `suggest` skill, shows you exactly what it would share, and leaves the filing to you. Each new session starts with one `core:` line saying whether the core still matches its release. If you do want to change the core yourself, `bash setup.sh --unlock` lets you, and that line then shows your change.
 

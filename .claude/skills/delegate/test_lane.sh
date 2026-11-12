@@ -168,7 +168,7 @@ if STDIN.strip() == "Reply with the single word ok.":
         usage = json.loads(planted)
     else:
         requested = argv[argv.index("--model") + 1] if "--model" in argv else "opus"
-        resolved = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-1", "sonnet": "claude-sonnet-5-5",
+        resolved = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-2", "sonnet": "claude-sonnet-5-5",
                     "haiku": "claude-haiku-4-5-20251001"}.get(requested, requested)
         usage = {resolved: {"outputTokens": 1}, "claude-haiku-4-5-20251001": {"outputTokens": 1}}
     sys.stdout.write(json.dumps({"type": "result", "result": "ok", "modelUsage": usage,
@@ -210,7 +210,7 @@ def model_usage():
     if planted is not None:
         return json.loads(planted)
     requested = argv[argv.index("--model") + 1] if "--model" in argv else "opus"
-    resolved = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-1", "sonnet": "claude-sonnet-5-5",
+    resolved = {"opus": "claude-opus-5-5", "fable": "claude-fable-5-2", "sonnet": "claude-sonnet-5-5",
                 "haiku": "claude-haiku-4-5-20251001"}.get(requested, requested)
     block = {"inputTokens": 10, "outputTokens": 20, "cacheReadInputTokens": 5000,
              "cacheCreationInputTokens": 400}
@@ -444,7 +444,11 @@ mkvault "$FXV" '- **delegation**: single — the fixture regime'
 
 # One environment for every offline wrapper call.
 mkdir -p "$F/progress"
-LANEV="env -u CLAUDE_CONFIG_DIR PATH=$BIN:$PATH LLM_WIKI_STORE=$STORE STUB_LOG=$F/stub STUB_PROJECTS=$PROJ CLAUDE_PROJECT_DIR=$FXV LLM_WIKI_PROGRESS_DIR=$F/progress AIMYTH_VIEWER_CMD=$BIN/viewer-stub.sh AIMYTH_VIEWER_ARGV=$F/viewer-default.argv"
+# PATH entries that hold a space (this Mac's "Application Support" ones) are left out of the
+# fixture's PATH: LANEV is one string the shell splits on spaces, so such an entry broke every
+# call with exit 127 (register, 2026-11-10). An entry without a space reaches env as before.
+SAFEPATH=$(printf '%s\n' "$PATH" | tr ':' '\n' | grep -v ' ' | paste -s -d: -)
+LANEV="env -u CLAUDE_CONFIG_DIR PATH=$BIN:$SAFEPATH LLM_WIKI_STORE=$STORE STUB_LOG=$F/stub STUB_PROJECTS=$PROJ CLAUDE_PROJECT_DIR=$FXV LLM_WIKI_PROGRESS_DIR=$F/progress AIMYTH_VIEWER_CMD=$BIN/viewer-stub.sh AIMYTH_VIEWER_ARGV=$F/viewer-default.argv"
 # --reason is required of every spawn (register, 2026-09-07), so the helper carries one; "$@"
 # comes after it, and a call site's own --reason is the one argparse keeps.
 spawn(){ $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
