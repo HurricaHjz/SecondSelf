@@ -14,6 +14,16 @@ Score each compile lane's output set against its raw sources and the surrounding
 every path is absolute.
 
 DECISIONS: {{the run's decisions that bear on this verify leg (the depth pinned, which lane's pages are in scope) | none}} — a decision the leg needs and the brief lacks is a gap to report, never a guess (A1).
+Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
+A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
+
+GRANTS
+- Bounds: {{the job page's Bounds and lesson index (path); the hard limits that apply, each naming its source: the owner's strict mark, an approved rule, or the lead's own choice}}
+- Pushed: {{lesson ids or grants, each with one line on why this seat needs it | none}}
+- Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
+- Left out on purpose: {{what, and why | none}}
+- Second seat: {{this seat is one: the rule that earns it, and what it checks against}}
+The read directories and the write scope are SCOPE's, below.
 
 SCOPE (read-only apart from the scratch dir the file whitelist names)
 - Raw: {{post-sort raw path(s) — the converted .md and, where one exists, the original}}
@@ -71,7 +81,13 @@ PROTOCOL, in this order for each compile lane
      the literature-note sections exactly (`## Citation` · `## Research Question` ·
      `## Methodology` · `## Key Findings` · `## Data / Setup` · `## Contributions` ·
      `## Limitations & Threats to Validity` · `## Relation to Wiki` · `## Key Quotes` ·
-     `## Open Questions / Follow-ups` · `## Related`), `authors`/`year` correct against the
+     `## Open Questions / Follow-ups` · `## Related`), or, for a research-depth primary source that is
+     not a paper (a regulation, a handbook, a contract, a policy document, a tool's documentation or a
+     repository pack), where the page and the run report declare the substitution, genre-fitting
+     sections in place of `## Research Question` … `## Limitations & Threats to Validity`, none of
+     them a miss, while `## Citation`, `## Relation to Wiki`, `## Key Quotes`,
+     `## Open Questions / Follow-ups` and `## Related` stay; an undeclared substitution is a
+     structure miss; `authors`/`year` correct against the
      raw (`venue:` may read "arXiv …" and `doi:` may be the abs URL, `10.48550/arXiv.<id>`
      or omitted — none a miss); at research depth the provenance sentence sits in `## Citation`
      — an added `## Summary` there is a structure miss, provenance absent from `## Citation` a

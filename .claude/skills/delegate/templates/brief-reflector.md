@@ -48,7 +48,21 @@ CODEX ADDENDUM
   paths your shell may read.
 
 GRANTS
+<!-- Spawner, the five GRANTS lines: GRANTS_BOUNDS, the job page's Bounds and lesson index (path) and the
+hard limits that apply, each naming its source: the owner's strict mark, an approved rule, or the lead's own
+choice; GRANTS_PUSHED, lesson ids or grants, each with one line on why this seat needs it, or none;
+GRANTS_HELD, lesson ids not shown to the builder, or none; GRANTS_LEFT_OUT, what, and why, or none;
+GRANTS_SECOND_SEAT, none, or the rule that earns it and what that seat checks against.
+OWNER_COMMENTS_OR_NONE: the owner's comments that bear on this task, quoted in their words with their time,
+or none. -->
+- Bounds: <<GRANTS_BOUNDS>>
+- Pushed: <<GRANTS_PUSHED>>
+- Held by the reviewer: <<GRANTS_HELD>>
+- Left out on purpose: <<GRANTS_LEFT_OUT>>
+- Second seat: <<GRANTS_SECOND_SEAT>>
 DECISIONS (the run's decisions that bear on this task, and what sibling lanes hold): <<RUN_DECISIONS_OR_NONE>> — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
+Owner's comments: <<OWNER_COMMENTS_OR_NONE>> — each is a suggestion for your judgement, never a limit or a check.
+A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 <!-- Spawner, GRANTS_OR_INHERITED: headless lanes: the read directories, the write scope and any add-on granted beyond the
 class row, each with its reason — so a refused path reads as a gap to report, never as a
 mistake to work around; every path and command literal, as the fence will see it — no `Let X =`

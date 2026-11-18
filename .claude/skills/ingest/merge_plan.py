@@ -14,6 +14,10 @@ own matching run_open. Runless events inherit only their own file's run_open.
 File order proves sequence within a ledger; strict timestamps prove it across
 files. Every expected lane's latest opening and latest close must precede its
 verification. A later close invalidates earlier verification until another verify.
+A compile lane the head withdrew owes no verify when its latest close carries
+"written_by": "head", "exit": "killed" and "pages": [] (the Verify step's manifest
+for that lane, found empty before the head wrote the close), and the lane has no
+claim and no checkpoint past read (see WITHDRAWN_STAGES).
 All eight score names are required, with distinct quarantine references per object.
 --allow-malformed settles only the real FILE and LINE explicitly named by the head.
 The expected base hash stays tied to the bytes used to validate the diff; drift
@@ -87,6 +91,12 @@ PARSER_PIN = '4.2.0'  # The version the critic probe sets in test_merge_plan.sh 
 HASH_LENGTH = 16  # The prefix length used by source_hash and the de-dup probe.
 TIERS = {tier: rank for rank, tier in enumerate(('very-low', 'low', 'medium', 'high', 'authoritative'))}  # Confidence ordinal; compiled pages cap at high.
 SCORES = ('fab', 'cov', 'tier', 'struct', 'integ', 'lang', 'anom', 'claims')
+# The checkpoint stages a compile lane passes before it writes anything. The ingest skill's stage order is
+# deduped, converted, read, then compiled (pages written), claims_emitted, registered, sort_planned, sorted.
+# Checkpoints alone cannot show that a lane wrote nothing: it writes its pages before it appends compiled. So
+# withdrawn() also needs the head's empty manifest ("pages": [] on its close). Any other stage, a new or unknown
+# one included, keeps the verify owed.
+WITHDRAWN_STAGES = frozenset(('deduped', 'converted', 'read'))
 DIRS = {'entity': 'entities', 'tool': 'tools', 'concept': 'concepts', 'model': 'models', 'benchmark': 'benchmarks', 'source': 'sources'}
 LINK = re.compile(r'\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]')
 HUNK = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$')
@@ -546,6 +556,20 @@ def score_values(event, lane):
     return {k: None if v == '-' else int(v) for k, v in values.items()}
 
 
+def withdrawn(own, close, claims):
+    """True when the head withdrew this compile lane whose close records an empty output set (`"pages": []`,
+    the Verify step's manifest): the lane's latest close is head-written with "exit": "killed", no claim
+    names the lane, and none of its checkpoints passed read. A close the lane wrote, any other exit, a
+    pages field that is absent or names a page, a claim or a later stage keeps the verify owed."""
+    if close.get('written_by') != 'head' or close.get('exit') != 'killed':
+        return False
+    if close.get('pages') != []:     # the head's Verify-step manifest for this lane, taken before it wrote the close
+        return False
+    if claims:
+        return False
+    return all(e.get('stage') in WITHDRAWN_STAGES for e in own if e['event'] == 'checkpoint')
+
+
 def evidence(events, claims, lanes):
     expected = set(lanes) | {c['lane'] for c in claims} | {e.get('lane') for e in events if e['event'] == 'lane_open' and (e.get('role') == 'compile' or not e.get('role') and e.get('definition') == 'wiki-compile')}
     expected.discard(None)
@@ -564,6 +588,8 @@ def evidence(events, claims, lanes):
             incomplete.append(lane); continue
         valid = [v for v in verifies if before(completions[0], v)]
         if not valid:
+            if withdrawn(own, completions[0], [c for c in claims if c['lane'] == lane]):
+                continue                     # withdrawn before writing anything: no verify is owed
             incomplete.append(lane); continue
         last = [v for v in valid if all(v is w or before(w, v) for w in valid)]
         if len(last) != 1:

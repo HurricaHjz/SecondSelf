@@ -281,6 +281,31 @@ closed_again=copy.deepcopy(rows)+[event('lane_close',5,'LA')]
 leg('F4a close-verify-close leaves lane unverified',closed_again,2,'latest lane_close: LA')
 leg('F4b verify after final close passes',closed_again+[event('verify',6,'LA',scores=scores,quarantined=[])],0,'apply GPT')
 leg('F4c single close then verify still passes',rows,0,'apply GPT')
+# W1-W9 (register [2026-11-13 05:03], 2026-11-14): a compile lane the head withdrew owes no verify when
+# its close records an empty output set. Its close is the shape the head wrote on 13 November (role
+# compile, written_by head, exit killed, a note) plus "pages": [], the Verify step's manifest for the
+# lane, after only deduped and read checkpoints. A compiled checkpoint, a claims_emitted checkpoint, a
+# close the lane wrote or that names no writer, another exit, an ordinary close, a pages list naming a
+# page (W7) and a close with no pages field (W8) each keep the verify owed; W6 is a withdrawn lane
+# verified anyway, which still plans; W9 is W7's and W8's must-not-fire case, with "pages": [] given
+# explicitly so that it does not rest on the shape's default.
+def withdrawn_rows(extra=(), **close):
+    shape = {'role':'compile','written_by':'head','exit':'killed','note':'restarted by the head; no wiki page written','pages':[]}
+    shape.update(close)
+    shape = {k: v for k, v in shape.items() if v is not None}
+    return copy.deepcopy(rows)+[event('lane_open',10,'LW',role='compile'),event('checkpoint',11,'LW',stage='deduped',source='w.md'),event('checkpoint',12,'LW',stage='read',source='w.md'),*extra,event('lane_close',14,'LW',**shape)]
+owed='compile lanes with no verify event after their latest lane_close: LW'
+leg('W1 head-written killed close, no claim, nothing past read: no verify owed',withdrawn_rows(),0,'apply GPT')
+leg('W2a the same lane with a compiled checkpoint still owes a verify',withdrawn_rows([event('checkpoint',13,'LW',stage='compiled',source='w.md')]),2,owed)
+leg('W2b a claims_emitted checkpoint still owes a verify',withdrawn_rows([event('checkpoint',13,'LW',stage='claims_emitted',claims=[copy.deepcopy(claim)])]),2,owed)
+leg('W3a a killed close the lane wrote still owes a verify',withdrawn_rows(written_by='lane'),2,owed)
+leg('W3b a killed close naming no writer still owes a verify',withdrawn_rows(written_by=None),2,owed)
+leg('W4 a head-written close with another exit still owes a verify',withdrawn_rows(exit='completed'),2,owed)
+leg('W5 an ordinary completed lane with no verify still owes one',withdrawn_rows([event('checkpoint',13,'LW',stage='compiled',source='w.md')],written_by=None,exit=None,note=None,pages=None),2,owed)
+leg('W6 control: a withdrawn lane verified anyway still plans',withdrawn_rows()+[event('verify',15,'LW',scores=scores,quarantined=[])],0,'apply GPT')
+leg('W7 a head-written killed close whose pages list a page still owes a verify',withdrawn_rows(pages=['wiki/sources/w.md']),2,owed)
+leg('W8 a head-written killed close with no pages field still owes a verify',withdrawn_rows(pages=None),2,owed)
+leg('W9 must not fire: a head-written killed close with "pages": [], no claim and nothing past read owes no verify',withdrawn_rows(pages=[]),0,'apply GPT')
 foreign=copy.deepcopy(rows);foreign[-1]['run']='foreign';foreign[-2]['run']='foreign'
 leg('M51 CR-153C-N3 foreign verify',foreign,2,'foreign or unbound')
 premature=copy.deepcopy(rows);premature[2],premature[4]=premature[4],premature[2]
@@ -1700,8 +1725,10 @@ check('T01 the revised verifier-consumer predicate passes and the retired one fa
 import ast
 # sha256[:16] of each definition's source text in the planner shipped on 2026-09-15: the
 # ledger, evidence, diff, patch and write core that the union work never touches. A change
-# to one of these is deliberate and updates its digest here.
-SHIPPED_CORE = {'Catalogue': '9be31e6270feb7c8', 'ProbeError': 'f7863de8dea489f7', 'apply_memory': 'db7e9d2454c36164', 'base_problem': '0a9d262eab81f769', 'before': '141cb4a53736e8dd', 'claim_name': '9c62d49eef6d47d1', 'claims_from': '7cba20831c7483eb', 'diff_problem': '2a5ccabcc4cf5753', 'digest': '8806915ea38cdfc8', 'emit_union': '90eb985663c10d8b', 'evidence': 'a1c23c50488654f2', 'header_path': 'f484ba85ed622f1c', 'json_type': '7364b307a83b7a86', 'normalise': '43e9f98f9efa0cb9', 'normalise_link_line': 'a0b540108bcd0b8e', 'parse_diff': 'aad3616cf63623cb', 'patch_command': 'f02d7cbe5edf46ef', 'read_events': 'aec96bff180e8f58', 'reference_ids': '01c264e34b47d9b2', 'scalar': 'a5ac5e47b8b7aeb0', 'score_values': 'aa0f9c570ca9c34f', 'timestamp': '3f8343f07f595978'}
+# to one of these is deliberate and updates its digest here. 2026-11-14: `evidence` changed and
+# `withdrawn` joined the core (register [2026-11-13 05:03]: a withdrawn compile lane owes no verify; legs W1-W6).
+# Later on 2026-11-14 `withdrawn` also requires the close's empty "pages" list, the Verify step's manifest (legs W7-W9).
+SHIPPED_CORE = {'Catalogue': '9be31e6270feb7c8', 'ProbeError': 'f7863de8dea489f7', 'apply_memory': 'db7e9d2454c36164', 'base_problem': '0a9d262eab81f769', 'before': '141cb4a53736e8dd', 'claim_name': '9c62d49eef6d47d1', 'claims_from': '7cba20831c7483eb', 'diff_problem': '2a5ccabcc4cf5753', 'digest': '8806915ea38cdfc8', 'emit_union': '90eb985663c10d8b', 'evidence': 'e3f030e04bcbf2ea', 'header_path': 'f484ba85ed622f1c', 'json_type': '7364b307a83b7a86', 'normalise': '43e9f98f9efa0cb9', 'normalise_link_line': 'a0b540108bcd0b8e', 'parse_diff': 'aad3616cf63623cb', 'patch_command': 'f02d7cbe5edf46ef', 'read_events': 'aec96bff180e8f58', 'reference_ids': '01c264e34b47d9b2', 'scalar': 'a5ac5e47b8b7aeb0', 'score_values': 'aa0f9c570ca9c34f', 'timestamp': '3f8343f07f595978', 'withdrawn': 'e7e34996308ccb8e'}
 source_lines = script.read_text().split('\n')
 found = {node.name: hashlib.sha256('\n'.join(source_lines[node.lineno - 1:node.end_lineno]).encode()).hexdigest()[:16] for node in ast.parse('\n'.join(source_lines)).body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
 same = [name for name, value in SHIPPED_CORE.items() if found.get(name) == value]

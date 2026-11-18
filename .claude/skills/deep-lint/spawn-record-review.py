@@ -3,7 +3,8 @@
 
 Carries two guards from one read of the spawn records, and never calls the meter:
   the instrument rule's over-calling guard — every lane-open line carries its reason letter
-  (a)–(d), and a run's lane count never exceeds its reason tally; and the per-call model and
+  (a)–(d), bracketed or leading (`a:`, `d —`) as lane.py reads it, and a run's lane count never
+  exceeds its reason tally; and the per-call model and
   effort rule's pick guard — a pick below the lane's recorded row default carries its reason
   (`<model> because …`, `effort <x> because …`) unless the active throttle floored that axis; and,
   from 2026-09-08, the `auto` pick guard — under the `auto` throttle (the owner's ruling of
@@ -35,7 +36,10 @@ RULE_FROM = "2026-09-06T18:22+0100"    # the ship instant; the suite asserts it 
 LETTER_FROM = "2026-09-04T00:00+0100"  # the instrument rule's date (delegate §1, 2026-09-04)
 FLOOR_MODEL = {"cheap", "cheap-fast"}
 FLOOR_EFFORT = {"fast", "cheap-fast"}
-LETTER_RE = re.compile(r"\(([a-d])\)")
+# The instrument-rule letter, read as lane.py reads it (reason_letters: REASON_BRACKET_RE and
+# REASON_LEAD_RE, the forms `(a)`, `a:`, `a —`, `a -`); a twin kept in step with lane.py by hand.
+LETTER_RE = re.compile(r"\(([a-dA-D])\)")
+LETTER_LEAD_RE = re.compile(r"^\s*([a-dA-D])\s*(?::|[\u2014-](?=\s|$))")
 
 def die(msg):
     print("PROBE FAILED: " + msg); sys.exit(2)
@@ -148,8 +152,8 @@ def main():
             run["lanes"] += 1; lane = e.get("lane", "?"); reason = e.get("reason") or ""
             opened = parse_ts(e.get("ts"))
             if opened is None: run["findings"].append("%s: unparsed ts %r" % (lane, e.get("ts"))); continue
-            m = LETTER_RE.search(reason)
-            if m: run["letters"][m.group(1)] = run["letters"].get(m.group(1), 0) + 1
+            m = LETTER_RE.search(reason) or LETTER_LEAD_RE.match(reason)
+            if m: run["letters"][m.group(1).lower()] = run["letters"].get(m.group(1).lower(), 0) + 1
             elif opened >= letter_from: run["findings"].append("%s: no instrument-rule letter in reason" % lane)
             cls = e.get("class") or e.get("agent")
             if e.get("harness") == "codex":

@@ -480,6 +480,12 @@ The vault index and log pages are propose-don't-write: never touch them. This la
 at all.
 
 GRANTS
+- Bounds: the artefacts and the truth file SCOPE lists, and nothing else; the hard limits are
+  SCOPE's (read-only, no original of an artefact), set by the parity gate's design to keep you blind
+- Pushed: none
+- Held by the reviewer: none
+- Left out on purpose: the artefact-to-source mapping, so scoring stays blind
+- Second seat: none; the score step averages the judges briefed on this rubric, none checking another
 Read: `%(fixture)s` (the fixture artefacts) and `%(truth_dir)s` (the truth files). No write scope,
 no network, no store. A path you need that is not granted is a gap to report, never one to work
 around by reading an original.

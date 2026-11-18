@@ -6,7 +6,9 @@ Run store: LLM_WIKI_STORE (default ~/.llm-wiki, resolved to its real path), file
 spawn-records/<run>.jsonl; the hand-off document is the path the run's run-open event names.
 
 Subcommands
-  run-open     record the run's opening: session, head, regime, hand-off path, envelope, pid,
+  run-open     record the run's opening: session, head, regime, hand-off path, envelope (required:
+               --envelope-usd, a positive figure, the run's hard spend line; refused without one,
+               nothing written), pid,
                and --session-kind seed|head written as `session_kind` (default head; seed marks
                a launcher's placeholder session, which no reader counts as a head that ran, and
                records no pid unless --pid is given, since a seed never runs); writes the grants
@@ -29,6 +31,14 @@ Subcommands
                against the record's decision events (the fixes of 2026-10-10 below)
   item-done    an explicit completion record for each item named, with no meter, for items worked
                side by side, which one boundary's from and to fit badly; refused on a closed run
+  release-model-stop
+               the owner's release of a head-model stop (decided line DW-20261021-1), from a
+               shell outside the run's head; refused inside it (exit 2). The check itself runs
+               first in `gate` and `boundary` for a head the starter started: the served model in
+               the head's own transcript against the briefed one; unverified carries on marked
+               (one line, the event's `model_check`, the close's summary); a confirmed swap is an
+               observation in the trial state (MODEL_CHECK_MODE) and, in enforce, exit 11 with a
+               latch on the successor, resume and hand-off
   ledger       one row in the hand-off's findings ledger plus an observation event; a
                `## Findings ledger` section that holds prose and no table gets the table
                created directly under its heading first, the prose kept below it, and one line
@@ -158,7 +168,8 @@ Subcommands
   waste-table  Step 2b's usage-and-waste table rendered from the run record alone (D36); for
                a closed run with no --out it prints to stdout and leaves the stored table alone
   extract-transcript
-               the head's own transcript extracted for a reflector lane (D36)
+               the head's own transcript extracted for a reflector lane (D36); with
+               --decisions-file, a session's human turns appended to its decisions file instead
   reflect-inputs
                that reflector lane's whole input set in one directory: the extraction, the
                waste table and a filtered copy of the run record (D36); a record with no run-open
@@ -252,6 +263,10 @@ one line to stdout; --dry-run prints the counts and writes nothing.
 `extract-transcript --session SID` writes `turns.md` (the human turns, the assistant prose and
 the assistant's tool CALLS, each headed `## turn N · role · timestamp`) and `counts.json` (the
 `read k of N` figure the reflector verifies) under --out (default `/tmp/aimyth-extract-<sid>/`).
+A record whose text opens with a relay tag from another session is also listed whole, apart from
+the turns and above the first of them, under `## Relayed messages` with its sender (`name (from)`
+where the tag names a `from-name` too) or "(no sender named)", every line quoted; the listing
+changes no record's reading and no count (`notes.relays_listed`).
 An assistant record holding only tool calls is a tool-call turn headed `assistant · tool calls`:
 one line per call with the tool's name and the input field naming what it acted on (Bash
 `command`, Read/Edit/Write `file_path`, Grep/Glob `pattern`, any other tool its name alone), each
@@ -271,6 +286,27 @@ a human turn (`notes.replay_trimmed`; a replay with no owner message left is `ex
 an assistant record whose model field opens `<synthetic` is the
 harness's own stop text and is skipped, counted under `excluded.synthetic`, as the watermark
 hook's measure() skips it.
+`extract-transcript --session SID --decisions-file PATH` writes PATH and nothing else (One session
+to talk to, P4): it appends the session's human turns, as the extraction above reads them, that
+PATH does not hold yet, each verbatim under `## Turn N · <UTC time>` (N its place among the human
+turns, the time the record's own moved to UTC) with every line quoted, so the owner's words reach
+a decisions file by program and no session retypes them. A turn the extraction cannot show is
+the owner's (the words after a relay's close, words opening with a tag as a harness record's do,
+words beside a tool result, a replay's tail, the start message this program gives a head it
+starts) is written with a note below its words saying it is
+not yet read as theirs and why, and what the extraction did to a written turn's record (a
+reminder cut, text blocks joined, white space trimmed and the like) is named in the output line
+(the fold of 2026-11-14). A turn the file holds already (the same time and the same words) is
+never written again, so a second run appends nothing; a relayed message is never written as a
+turn. The file is appended to under an exclusive lock on itself, awaited for 60 s at most (then
+exit 2 naming the processes that hold it open), opened again if another writer renames a copy
+over it meanwhile, and never rewritten whole; one that does not exist is created (mode 600) with
+the one line `# Decisions file of session SID`, and one appended to is set to mode 600.
+An unreadable transcript, a file holding no turn heading that does not open with that line, and
+a file holding a turn that is not in this transcript (another session's file, or one changed by
+hand; judged on a second read under the lock where the first lacks a turn the file holds) write
+nothing and exit 2 naming them; a turn the file lacks from before its last turn is appended
+after it and named.
 `reflect-inputs --run R --session SID --out DIR` writes that lane's whole input set into DIR and
 nothing else: `turns.md` and `counts.json` (the extraction above, same options), `waste-table.md`
 (the table above) and `record-filtered.jsonl`, the run record with every observation whose phase
@@ -337,10 +373,28 @@ duplicate guard refuses when a head-successor appears meanwhile). Every head-exi
 `spent_usd`, the session's billed total metered once at exit, and the remainder any next head
 is sized at is the envelope minus every head-exit's spent_usd minus the current session's
 total — the envelope is never re-granted per head.
-`limit` is decided by the run's limit gate — the grants file's `on_limit` (design D42, the
-pre-flight's class L): `stop`, the default, stands the supervisor down at once (event
-supervisor-stood-down reason limit-stop, exit 0, the hand-off the recovery — the designed
-default, never an abort); `resume` (the pre-flight's limit-off) waits: the explicit --reset-at first, else the reset parsed from the stop text; the
+`limit` is decided by the run's limit policy (limit policy 1; owner decisions N17 to N20 of
+2026-10-21; decided line DW-20261021-2): the grants file carries `on_limit` (Claude's 5-hour
+window; design D42, the pre-flight's class L), `claude_week_limit` and `gpt_credits_approved`,
+written at run-open, where a flagless run-open writes resume, stop and false; a file without
+`limit_policy_version` (a run opened before the policy) reads its on_limit, else stop, with stop
+and false. A model-scoped stop keeps the path below. Otherwise the stop text is classified on
+whole words (week, weekly, 7-day or 7-days: the weekly window, which wins over session, 5-hour or
+5-hours: the short one); a text naming neither takes ONE Claude usage reading through
+read-usage.py --format json (a week at 100 % or more is weekly, a 5-hour window at 100 % or more
+beside a week under 100 % is short) or stands down `limit-unclassified`. The weekly window under
+`claude_week_limit: stop` stands down at once (`limit-weekly`, no wait); under `wait` it takes the
+wait below. For the short window `stop` stands the supervisor down at once (event
+supervisor-stood-down reason limit-stop, exit 0, the hand-off the recovery, never an abort);
+`resume` (a new run's default; for an older run the pre-flight's limit-off) waits: the explicit
+--reset-at first, else the reset parsed from the stop text by the installed parser (an ISO time
+or a time of day; the strict reset parse of package B2 stays retired). The wait takes no GPT
+reading: each Codex lane's own watch reads GPT's week while the lane runs (codex-lane.py's Runner,
+every usage_windows.GPT_WATCH_EVERY_S). Every stand-down reads it once while a Codex lane is open;
+at 100 % or more without credits approved at run-open those lanes are stopped through
+`codex-lane.py kill` under usage_windows.GPT_STOP_MODE (enforce as shipped; its trial state
+records would_stop). The stand-down event lists the Codex lanes still open after that reading and
+any stop (`codex_lanes_open`, re-read from the record) and the lanes it stopped. The
 sleep runs in SUPERVISE_TICK_S ticks so a run-close written meanwhile ends it, and --max-wait-s
 bounds it (successor-aborted, reason reset-timeout). During that wait, and as the last act
 before a resume or a successor start, the supervisor stands down when the head transcript
@@ -377,19 +431,19 @@ when two heads in turn each exited at band 80 or 90 after a refused gate on the 
 no allowed gate and no completed boundary between the two refusals, since a third head would
 only be refused again. Accepted residual: heads that repeatedly allow multiple unfinished
 items, or re-allow work and refuse an item never allowed in their window, can loop past both
-repeat-exit rules; the successor cap and the run's envelope are their only bound. Packed
-hand-overs without boundaries also escape repeat-stop; repeat-exit bounds such a chain where
-its exits name one item at band 80 or 90, otherwise only the cap and envelope bound it.
-`successor-cap` (the run's grants file, then AIMYTH_MAX_SUCCESSORS, then the default of 20) is
-the backstop, applied by `handoff --final` and `successor` at call time as well (the hand-over
-checks below). A
+repeat-exit rules; the run's envelope, and a successor limit where a run set one, are their only
+bound. Packed hand-overs without boundaries also escape repeat-stop; repeat-exit bounds such a chain
+where its exits name one item at band 80 or 90, otherwise only the envelope and any limit bound it.
+`successor-cap` (the run's grants file, then AIMYTH_MAX_SUCCESSORS) stops a run only where one of
+those sets a limit: a run has no limit by default (the owner's decision of 2026-11-04), and a limit
+is applied by `handoff --final` and `successor` at call time as well (the hand-over checks below). A
 resume runs only after the process has exited, refuses (duplicate-resume) when a
 head-resumed or head-successor already follows this head's start, and is capped at two per
 session (RESUME_CAP: a third would-be resume takes the successor path). Two consecutive
-stops whose heads each made no progress end in successor-aborted reason repeat-stop, the
-successor cap being only the backstop (the repeat-stop design of 2026-10-11, Revision 2, after
-its design review). A stop pairs when the supervisor would follow it with an automatic start:
-error, budget, completed (a head that exits with neither a head-exit nor a run-close),
+stops whose heads each made no progress end in successor-aborted reason repeat-stop, a successor
+limit, where a run sets one, being only the backstop (the repeat-stop design of 2026-10-11,
+Revision 2, after its design review). A stop pairs when the supervisor would follow it with an
+automatic start: error, budget, completed (a head that exits with neither a head-exit nor a run-close),
 unsucceeded without its head's own packed head-exit after its latest start, and any other class
 that falls through to the successor path; never limit,
 closed, handed-over, classifier-missing, a waiting exit, or a stop the stop marker stood down.
@@ -467,8 +521,8 @@ when the floor is already at or above the envelope. A remainder at or below zero
 item, armed or not, with a stop-condition event — `{"event": "stop-condition", "which":
 "envelope", "lane": "head", "action": …, "note": <the figures>}` — and exit 5: the run stops
 there, and the owner tops the envelope up with `raise-envelope` before any successor (which
-refuses on the same figure), the refusal line naming that command. A record with no envelope
-prints `envelope: none` and allows; a run of which no head and no lane could be metered or read
+refuses on the same figure), the refusal line naming that command. A record with no envelope (one
+opened before run-open required `--envelope-usd`) prints `envelope: none` and allows; a run of which no head and no lane could be metered or read
 prints `envelope: unmeasured (<reason>)` and allows, never a refusal and never a zero. The
 successor's cap and the supervisor's resume cap keep `envelope_left` (every head-exit's spent_usd
 plus this session's billed total): their logic is out of this change's scope. A warning
@@ -487,8 +541,10 @@ Armed: AIMYTH_HANDSOFF=1 in the environment, or the marker file armed-<sid> in A
 (default ~/.aimyth/handoffs; the hooks' handsoff-gate.py convention). Bands: AIMYTH_BANDS
 (two or three ascending edges; the second is the gate's threshold) and AIMYTH_CONTEXT_WINDOW,
 read through the watermark hook's own bands() and window() so gate and prompt line agree. The
-head's transcript is <sid>.jsonl under the vault's dashed project directory beneath
-AIMYTH_PROJECTS_DIR (default ~/.claude/projects), the session id from the LAST run-open,
+head's transcript is <sid>.jsonl under the vault's dashed project directory beneath the head's
+projects folder (head_projects_root: AIMYTH_PROJECTS_DIR, else the login folder its own
+head-successor records as config_dir, else the caller's CLAUDE_CONFIG_DIR, each with
+/projects, else ~/.claude/projects), the session id from the LAST run-open,
 run-resume or head-successor event; the dashed form replaces every non-alphanumeric character
 with a dash (the harness's encoding, checked against a live projects root). measure() is
 imported from the hooks directory's context-watermark.py beside this script's tree, never
@@ -549,14 +605,16 @@ write list). --add-grant and --add-write add paths to the baseline's list instea
 trustworthy baseline (no recorded lists and a grants file missing or unreadable) an addition
 is refused rather than added to the defaults. --grant with --add-grant, --write with
 --add-write, --replace with an add form or with no list are refused, and run-open, which writes
-the first file, takes neither an add form nor --replace. The file also carries
-`max_successors`, the run's successor cap (`run-open --max-successors N`, `grants
+the first file, takes neither an add form nor --replace. The file can carry
+`max_successors`, the run's successor limit (`run-open --max-successors N`, `grants
 --max-successors N` and `run-resume --max-successors N`, a rewrite of that key alone, write
-it, refusing a value below 1; every other rewrite carries it; register entry 2026-09-24
-07:3x: the cap lived only in a wrapper's environment), which the starter reads before
-AIMYTH_MAX_SUCCESSORS and MAX_SUCCESSORS_DEFAULT, naming its source in a refusal; `handoff
---final`, `successor`, `gate`, `run-resume` and the hard-band hook read the same count through
-successors_left; a key this script does not manage is carried through every rewrite.
+it, refusing a value below 1, and `--max-successors none` clears it; every other rewrite carries
+it; register entry 2026-09-24 07:3x: the cap lived only in a wrapper's environment), which the
+starter reads before AIMYTH_MAX_SUCCESSORS, naming its source in a refusal; with neither there is
+no limit (the owner's decision of 2026-11-04: a limit is added only when it can be justified and he
+approves it in that run's pre-flight). `handoff --final`, `successor`, `gate`, `run-resume` and the
+hard-band hook read the same count through successors_left; a key this script does not manage is
+carried through every rewrite.
 
 The network key. The grants file carries `network`, the host names the head fence's network
 check lets a command address; an empty list means none, and a file written before the key
@@ -684,7 +742,8 @@ The decisions channel (register entry 2026-09-13 03:53).
 `gate` and `close` hold with exit 6
 while the record carries an `observation` whose `what` opens with the whole word `AUTHOR` (a
 non-letter or the end follows it: `AUTHOR ruling`, `AUTHOR-side note` and `AUTHOR: …` count,
-`AUTHORED the page` does not) after the reference
+`AUTHORED the page` does not, and neither does `AUTHOR-QUESTION: …`, a run's own parked question,
+never the owner's word) after the reference
 point — the furthest the record reached when a call that wrote a `gate` event or an `ack: …`
 observation read it, which each records as `decisions_seen` (a relay appended between that read
 and the call's own write stays pending, so an ack recorded by a close its recheck then holds
@@ -700,7 +759,7 @@ observation `what: ack: <line>` carrying the digest, and the call proceeds; an e
 digest with no ack or with no decisions file, and a digest that is not a whole sha256 are
 refused (exit 2), while an ack with no digest, or with one the file has grown past since its
 read, holds again (exit 6), printing the lines appended since. `close` reads the file once more
-just before its first write (the owner's provisional choice of 2026-10-10): content changed
+just before its first write (aiMyth's design of 2026-10-10): content changed
 since the ack holds that same close, as does an AUTHOR observation anywhere after the record
 the call checked (its own ack alone left out), and a close that goes through records
 `decisions_file`, `decisions_digest`, `decisions_size`, `decisions_cutoff` and its note on the
@@ -722,8 +781,8 @@ records no observation beside them, and `close` counts the `decision` events plu
 observations whose `what` opens with the word decision (the ledger form heads used before), so
 each decision is counted once. Since 2026-10-10 the call assigns the event `decision_id` HD-<n>,
 the next free number on the record, under the record's lock, and prints it; `boundary` reads the
-HD-<n> identifiers its --disposition names (explicit references, never prose matching: the
-owner's provisional choice of 2026-10-10) and warns, its exit unchanged, for one the record
+HD-<n> identifiers its --disposition names (explicit references, never prose matching: aiMyth's
+design of 2026-10-10) and warns, its exit unchanged, for one the record
 holds no decision for, or two, recording `decision_refs` on its event; an owner decision (D<n>)
 is never checked, and a decision described in words and not named is not seen.
 
@@ -765,15 +824,18 @@ exit codes 6 and 9 (the run design's, both unused here before); PID_MAX 2**31 - 
 253 in all (the DNS name limits).
 The numbers of 2026-10-10: CONSOLE_CONFIRM_HOLD_S 3 s, SEED_PID_S 2 s, NEEDLE_MIN 8 and
 NEEDLE_HEAD 40 characters (derived, or named as judgement, beside the constants).
-The numbers of 2026-10-30: MAX_SUCCESSORS_DEFAULT 20 (a night run's measured lead length; it
-was 6), EXIT_NO_SUCCESSOR 10 (the lowest unused code), STARTER_GONE_TICKS 3 (a pid-waiting
-starter's measured 0 to 2 s; unmeasured below the default tick) and SILENCE_POLL_S 5 s
-(wait_silent's existing poll), each derived beside the constant.
+The numbers of 2026-10-30: EXIT_NO_SUCCESSOR 10 (the lowest unused code), STARTER_GONE_TICKS 3 (a
+pid-waiting starter's measured 0 to 2 s; unmeasured below the default tick) and SILENCE_POLL_S 5 s
+(wait_silent's existing poll), each derived beside the constant. The default successor limit of
+that date (20, and 6 before it) was removed on 2026-11-04.
 
 The hand-over checks (2026-10-30; register entries 2026-10-30 16:11 and 2026-10-25 16:28). The
 successor count is one reading, successors_left: the head-successor events on the record against
-the run's cap, as the starter's successor-cap guard reads it. `gate` and `run-resume` print it on
-every line ("successors: k of N started, M left"), and the gate event records it. `handoff
+the run's limit, as the starter's successor-cap guard reads it. `gate` and `run-resume` print it on
+every line ("successors: k of N started, M left", or "successors: k started, no limit" for a run
+with none, whose event carries null for the limit and for what is left), and the gate event records
+it. With no limit no_successor_left is false for every reader, so each of these checks passes and
+none of what follows applies. `handoff
 --final` and `successor` apply the starter's own test before either writes a head-exit, and
 again under the record's lock just before the append: with none left each exits 10 and records
 one observation (`handoff --final refused: no successor left`, `successor refused: no successor
@@ -782,7 +844,8 @@ closes the run with its morning report; a gate refusal with none left says close
 than hand over. A cap that falls back past a grants file whose own cap cannot be read
 (unreadable, not a JSON object, an unusable value) is named as that fault, with how to recover
 the cap, and whether the run's last lead has come is then undecided; a readable grants file with
-no cap key is a run that set none, and its fallback is the decided cap. `successor` reads the
+no cap key is a run that set none, so AIMYTH_MAX_SUCCESSORS where present is its limit, and
+otherwise it has none. `successor` reads the
 process table once and names each session-leading shell child of the calling head's own process
 other than its own shell: a background task, which keeps a print-mode head alive after its last
 reply; the call goes on, and "none" is printed only when the same read showed the call's own
@@ -844,12 +907,14 @@ import functools
 import errno
 import glob as globmod
 import hashlib
+import html
 import importlib.util
 import json
 import math
 import os
 import re
 import shlex
+import signal
 import subprocess
 import time
 import uuid
@@ -941,7 +1006,18 @@ BEAT_WRAPPER_DIR_ENV = "AIMYTH_BEAT_WRAPPER_DIR"   # a directory holding lane.py
 CODEX_HOME_ENV = "CODEX_HOME"           # the Codex CLI's home, whose sessions/ tree holds a lane's session file
 TAIL_BYTES = 65536             # how much of a session file's tail is read for its last timestamp: a session line is a few KB at most (set by judgement)
 ON_LIMIT_VALUES = ("stop", "resume")   # the limit gate (design D42): the pre-flight's class L
-ON_LIMIT_DEFAULT = "stop"              # respect the limit; `resume` is the pre-flight's limit-off
+ON_LIMIT_DEFAULT = "stop"              # reading a file that lacks the key: a legacy file never starts waiting
+# The limit defaults (owner decisions N17 to N20 of 2026-10-21, with the launcher's readings N21
+# and N22; decided line DW-20261021-2): a NEW run waits at Claude's 5-hour limit, stands down at
+# Claude's weekly limit, and approves no GPT credits; a pre-flight may set each the other way at
+# run-open. `on_limit` now governs Claude's 5-hour window alone; the weekly window has its own key.
+ON_LIMIT_OPEN_DEFAULT = "resume"       # run-open's default for a new run (N18, N20)
+CLAUDE_WEEK_VALUES = ("stop", "wait")  # Claude's weekly window: stand down, or the opt-in wait
+CLAUDE_WEEK_DEFAULT = "stop"           # N18, N22 (a)
+LIMIT_POLICY_VERSION = 1               # written at run-open; a file without it is a legacy run (usage_windows' too)
+LIMIT_POLICY_SRC = "default (limit policy 1)"
+KILL_BATCH_S = 10                      # the GPT stops' kill batch, plus KILL_BATCH_GRACE_S; set by judgement, unmeasured
+KILL_BATCH_GRACE_S = 5                 # codex-lane.py's own KILL_GRACE_S
 VIEWER_VALUES = ("terminal", "none")   # the viewer key: a Terminal window on the run's console
 VIEWER_DEFAULT = "terminal"            # a run the owner can see; `none` is the opt-out
 # Use an absolute opener path; tests may override it with the supported stub setting.
@@ -1019,6 +1095,28 @@ EXIT_TWO_HEADS = 9
 # and `successor` exit 10 when no successor is left. 10 is the lowest code no subcommand uses:
 # 0 to 9 are taken (the docstring's exit codes), and no subcommand exits 10 or above.
 EXIT_NO_SUCCESSOR = 10
+# The head-model check at gate and boundary (decided line DW-20261021-1; the owner's choices of
+# 21 October 2026, "the swap check at 5 s" and "carry on marked unverified"): a confirmed swap
+# refuses with 11, the lowest code no subcommand uses now that 0 to 10 are taken (above).
+EXIT_MODEL = 11
+# The check's one mode constant. A new check that can block first runs in a trial state that
+# logs what it would block and blocks nothing (check-lifecycle), and the run decision D6 of
+# 9 November 2026 starts this one there: "trial" records a confirmed swap as one observation per
+# session and blocks nothing; "enforce" refuses the gate's next item and the boundary's
+# checkpoint, and latches the session's successor, resume and hand-off. No flag, grant or
+# environment variable changes it, so nothing a head can write lowers it.
+MODEL_CHECK_MODE = "trial"
+# The transcript read's budget: the owner's 5 s less 1.0 s for the record append and the stop
+# line (set by judgement, unmeasured); a read that does not finish inside it reads unverified,
+# never a late pass.
+MODEL_CHECK_BUDGET_S = 4.0
+# Distinct primary ids kept with their first record; beyond this the check reads unverified.
+# Set by judgement, unmeasured: a head session shows one id, two or three after a swap.
+MODEL_CHECK_MAX_IDS = 32
+MODEL_ALIAS_RE = re.compile(r"^[a-z][a-z-]*$")   # lane.py's ALIAS_RE: an alias is a bare word
+MODEL_STOP_WHICH = "model"                       # the stop-condition's `which` for a model stop
+MODEL_TRIAL_WHAT = "model check would refuse"    # the trial observation's `what`
+MODEL_RELEASE_WHAT = "model stop released"       # the owner's release observation's `what`
 # A launcher-supplied pid that is the caller's own ancestor and has run longer than this is
 # refused by `successor` and the starter, which would otherwise wait on the caller itself
 # (register entries 2026-09-10 10:51 and 2026-09-12 20:0x). A seed pid's process exits within
@@ -1033,8 +1131,13 @@ PID_START_SLACK_S = 2
 # against an event (set by that resolution).
 REWRITE_SLACK_S = 1
 # A relayed owner instruction's `what` opens with the whole word AUTHOR, a non-letter or the end
-# following it (`AUTHOR ruling`, `AUTHOR-side note`, `AUTHOR: …`); `AUTHORED the page` is not one.
-AUTHOR_RE = re.compile(r"AUTHOR(?![^\W\d_])")
+# following it (`AUTHOR ruling`, `AUTHOR-side note`, `AUTHOR: …`); `AUTHORED the page` is not one,
+# and neither is the tag `AUTHOR-QUESTION` (any case, a non-letter or the end after it), a run's own
+# parked question, which is never his word (his item 57 of 2026-11-09: a run's question goes on his
+# open-questions list; review V-T8-G2b, point 5 (iii)). Every reader below goes through this one
+# pattern: the spawn hold, the gate's and the close's holds, the close's recheck and the pack's
+# owner lines.
+AUTHOR_RE = re.compile(r"AUTHOR(?![^\W\d_])(?!-(?i:QUESTION)(?![^\W\d_]))")
 ACK_PREFIX = "ack: "             # the head's acknowledgement observation's `what`
 # The record length a call's decisions check read, kept on the ack observation and the gate event
 # it writes: what that check covered, which the next call's reference point is (decisions_covered,
@@ -1064,16 +1167,13 @@ DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 # which the decisions file numbers `D<n>`; only these references are checked, never prose.
 HEAD_DECISION_PREFIX = "HD-"
 HEAD_DECISION_RE = re.compile(r"(?<![A-Za-z0-9])HD-(\d{1,6})(?![0-9])")
-# The successor cap's default when neither the grants file nor AIMYTH_MAX_SUCCESSORS sets one (the
-# owner's amendment of 2026-10-30: 6 was too few for a night run). Derived from the night run of
-# 29 to 30 October 2026 (register entry 2026-10-30 16:11): its eight leads that handed over ran 36
-# to 148 minutes from head start to their own head-exit, 86.8 minutes (1.45 h) on average, so a
-# 20-hour run takes about 14 leads (20 / 1.45 = 13.8) and 20 leaves six of headroom; the ninth lead
-# closed the run. It stays a backstop: the repeat-exit and repeat-stop guards and
-# the envelope are the real bounds, and the call-time check (successors_left) makes the run's last
-# lead close the run rather than hand over into nothing. A pre-flight sizes the run's own cap
-# (run-open --max-successors N), which the grants file carries and which wins over this default.
-MAX_SUCCESSORS_DEFAULT = 20
+# A run has no limit on successor leads (the owner's decision of 2026-11-04). The repeat-exit,
+# repeat-stop and unmetered-loop guards and the envelope are the real bounds. A limit is added only
+# when it can be justified and the owner approves it in that run's pre-flight: `run-open
+# --max-successors N`, which the grants file carries, or AIMYTH_MAX_SUCCESSORS where the file has
+# none. Then the call-time check (no_successor_left) makes the run's last lead close the run rather
+# than hand over into nothing. `--max-successors none` clears a limit from the grants file.
+MAX_SUCCESSORS_CLEAR = "none"     # the one word --max-successors takes besides a whole number
 # `successor --seed-pid` (register entry 2026-09-23 00:5x): an attended head's own process does
 # not exit at the end of a reply, so the starter is handed a seed process that exits this many
 # seconds after the call instead. Two seconds outlast the call's own return; set by judgement,
@@ -1242,9 +1342,9 @@ def grants_payload(run, source, grants, writes, on_limit=ON_LIMIT_DEFAULT,
     """The defaults first (critic C1 F2: the head's own primitives are never denied), then the
     paths given, every one in both spellings, de-duplicated in order; `on_limit` is the limit
     gate (D42), `viewer` the console window's key, `network` the hosts the head fence's network
-    check allows (an empty list: none) and `max_successors` the run's successor cap (written only
-    when set), each carried by this file alone. `carry` is the file's current payload: every key
-    of it that this script does not manage is kept as it stands."""
+    check allows (an empty list: none) and `max_successors` the run's successor limit (written only
+    when set, so None clears it), each carried by this file alone. `carry` is the file's current
+    payload: every key of it that this script does not manage is kept as it stands."""
     def merge(paths):
         out = []
         for p in paths:
@@ -1411,16 +1511,41 @@ def max_successors_of(payload):
     return None, "unusable value %s" % ("%r" % (value,))[:40]
 
 
+def max_successors_arg(text):
+    """--max-successors as argparse reads it: `none`, or a whole number, which
+    max_successors_choice then bounds; anything else is argparse's own usage error."""
+    return MAX_SUCCESSORS_CLEAR if text == MAX_SUCCESSORS_CLEAR else int(text)
+
+
 def max_successors_choice(a, path, current=None):
-    """(cap, source) the next write of the grants file carries: --max-successors when given (a
-    whole number of at least 1, else a premise failure), else the file's own value carried
-    forward, as on_limit and viewer are, else none. `current` as for on_limit_choice."""
+    """(limit, source) the next write of the grants file carries: --max-successors when given (a
+    whole number of at least 1, else a premise failure, or `none`, which gives (None, "arg"): the
+    key cleared), else the file's own value carried forward, as on_limit and viewer are, else none.
+    `current` as for on_limit_choice."""
     chosen = getattr(a, "max_successors", None)
+    if chosen == MAX_SUCCESSORS_CLEAR:
+        return None, "arg"
     if chosen is not None:
         if isinstance(chosen, bool) or not isinstance(chosen, int) or chosen < 1:
             die("--max-successors must be a whole number of at least 1, got %r" % (chosen,))
         return chosen, "arg"
     return max_successors_of(read_grants(path) if current is None else current)
+
+
+def record_limit_choice(ev, limit, source):
+    """The limit fields on a run-open, grants or run-resume event: the limit it writes, or null with
+    its source `arg` when this call cleared one, so the record says so; nothing otherwise."""
+    if limit is not None or source == "arg":
+        ev["max_successors"], ev["max_successors_src"] = limit, source
+
+
+def max_successors_shown(ev):
+    """The limit as a command's own line names it: empty when the event carries none."""
+    if "max_successors" not in ev:
+        return ""
+    if ev["max_successors"] is None:
+        return " · max_successors %s (%s)" % (MAX_SUCCESSORS_CLEAR, ev["max_successors_src"])
+    return " · max_successors %d (%s)" % (ev["max_successors"], ev["max_successors_src"])
 
 
 def grants_cap_read(path):
@@ -1457,34 +1582,16 @@ def cap_state_of(payload):
 # unreadable, not a JSON object (no grants payload is ever written so), or its max_successors value
 # unusable. A cap that falls back past such a file is not the run's decided cap
 # (successor_cap_read's `fault`), so whether the run's last lead has come is undecided. A readable
-# file with NO max_successors key is not among them: grants_payload writes the key only when a cap
-# is set, so a keyless file is a run that set no cap, and the fallback (AIMYTH_MAX_SUCCESSORS, else
-# MAX_SUCCESSORS_DEFAULT) is its decided cap (build review RV-CAP finding F5).
+# file with NO max_successors key is not among them: grants_payload writes the key only when a limit
+# is set, so a keyless file is a run that set none, and AIMYTH_MAX_SUCCESSORS where present, else no
+# limit, is its decided state (build review RV-CAP finding F5).
 CAP_FAULT_STATES = ("unreadable", "not a JSON object", "readable, unusable")
 CAP_OWN_SRC = "the grants file %s"   # the cap's source when the run's grants file carries it
 
 
-def successor_cap_read(run, planned=None):
-    """(cap, source, fault) for the run's successor cap: the run's grants file first (the key
-    `run-open --max-successors` and `grants --max-successors` write), then AIMYTH_MAX_SUCCESSORS,
-    then MAX_SUCCESSORS_DEFAULT; the source names which, and a fallback names the grants file's
-    real state (grants_cap_read). `fault` is that state when the file is present but its cap
-    cannot be read — unreadable, not a JSON object, or an unusable max_successors value — else
-    None: the number is the starter's either way, but a fallback past a faulty file is not the
-    run's decided cap, so the call-time checks name the fault, say the last-lead question is
-    undecided, and the hard-band hook denies (review CR-CAP2 finding 6). A missing file and a
-    readable file with no key are no fault: grants_payload writes the key only when a cap is set,
-    so such a run set no cap and the fallback is its decided cap (build review RV-CAP finding F5).
-    `planned`, a grants payload in hand, is read in the file's place: the count a dry run's
-    rewrite would leave, nothing being written. An unusable environment value is named on stderr
-    and passed over."""
-    path = grants_path(run)
-    payload, state = (grants_cap_read(path) if planned is None
-                      else (planned, cap_state_of(planned)))
-    value, _ = max_successors_of(payload)
-    if value is not None:
-        return value, CAP_OWN_SRC % path, None
-    fault = state if state.startswith(CAP_FAULT_STATES) else None
+def env_successor_limit():
+    """(limit or None, the words naming it) from AIMYTH_MAX_SUCCESSORS. An unusable value is named on
+    stderr and passed over; an absent or empty one is simply none."""
     raw = os.environ.get("AIMYTH_MAX_SUCCESSORS")
     if raw:
         try:
@@ -1492,14 +1599,38 @@ def successor_cap_read(run, planned=None):
         except ValueError:
             n = 0
         if n >= 1:
-            return n, "AIMYTH_MAX_SUCCESSORS=%d (the grants file: %s)" % (n, state), fault
+            return n, "AIMYTH_MAX_SUCCESSORS=%d" % n
         note("AIMYTH_MAX_SUCCESSORS=%r is not a whole number of at least 1: passed over" % raw)
-    return (MAX_SUCCESSORS_DEFAULT,
-            "the default (the grants file: %s; no AIMYTH_MAX_SUCCESSORS)" % state, fault)
+    return None, "no AIMYTH_MAX_SUCCESSORS"
+
+
+def successor_cap_read(run, planned=None):
+    """(limit, source, fault) for the run's successor limit: the run's grants file first (the key
+    `run-open --max-successors` and `grants --max-successors` write), then AIMYTH_MAX_SUCCESSORS,
+    and with neither None, no limit (the owner's decision of 2026-11-04); the source names which,
+    and a fallback names the grants file's real state (grants_cap_read). `fault` is that state when
+    the file is present but its limit cannot be read — unreadable, not a JSON object, or an unusable
+    max_successors value — else None: a fallback past a faulty file is not the run's decided state,
+    so the call-time checks name the fault, say the last-lead question is undecided, and the
+    hard-band hook denies (review CR-CAP2 finding 6). A missing file and a readable file with no key
+    are no fault: grants_payload writes the key only when a limit is set, so such a run set none
+    (build review RV-CAP finding F5). `planned`, a grants payload in hand, is read in the file's
+    place: the count a dry run's rewrite would leave, nothing being written."""
+    path = grants_path(run)
+    payload, state = (grants_cap_read(path) if planned is None
+                      else (planned, cap_state_of(planned)))
+    value, _ = max_successors_of(payload)
+    if value is not None:
+        return value, CAP_OWN_SRC % path, None
+    fault = state if state.startswith(CAP_FAULT_STATES) else None
+    limit, words = env_successor_limit()
+    if limit is not None:
+        return limit, "%s (the grants file: %s)" % (words, state), fault
+    return None, "no limit (the grants file: %s; %s)" % (state, words), fault
 
 
 def successor_cap(run):
-    """(cap, source) for the successor-cap guard (successor_cap_read without its fault)."""
+    """(limit or None, source) for the successor-cap guard (successor_cap_read without its fault)."""
     cap, src, _ = successor_cap_read(run)
     return cap, src
 
@@ -1509,28 +1640,43 @@ def successors_left(events, run, planned=None):
     `handoff --final` and `successor` at call time, `gate` and `run-resume` on every line, the
     starter's and the supervisor's successor-cap guard (start_guards) and the hard-band hook
     (last_lead_state). A dict: `used`, the record's head-successor events (every head start, the
-    seeded first lead's included); `cap` and `src`, the run's cap and where it came from
-    (successor_cap_read, or the default where no run id names a grants file); `own`, whether the
-    run's grants file carries it; `fault`, as successor_cap_read gives it; `left`, cap less used;
-    and `run`. `planned` is a grants payload read in the file's place (a dry run's rewrite)."""
+    seeded first lead's included); `cap` and `src`, the run's limit and where it came from
+    (successor_cap_read, or the environment where no run id names a grants file), `cap` None for no
+    limit; `own`, whether the run's grants file carries it; `fault`, as successor_cap_read gives it;
+    `left`, limit less used, None for no limit, so the JSON a reader writes stays valid; and `run`.
+    `planned` is a grants payload read in the file's place (a dry run's rewrite). Every reader asks
+    no_successor_left rather than comparing `left`."""
     used = sum(1 for e in events if e.get("event") == "head-successor")
     if TOKEN_RE.fullmatch(run or ""):
         cap, src, fault = successor_cap_read(run, planned)
     else:
-        cap, src, fault = (MAX_SUCCESSORS_DEFAULT,
-                           "the default (no run id to read a grants file)", None)
-    return {"used": used, "cap": cap, "src": src, "left": cap - used, "fault": fault,
-            "own": src.startswith(CAP_OWN_SRC % ""), "run": run}
+        cap, words = env_successor_limit()
+        src = "%s (no run id to read a grants file)" % (words if cap is not None else "no limit")
+        fault = None
+    return {"used": used, "cap": cap, "src": src, "left": None if cap is None else cap - used,
+            "fault": fault, "own": src.startswith(CAP_OWN_SRC % ""), "run": run}
+
+
+def no_successor_left(s):
+    """True when the run has a limit and no start is left under it; never true with no limit."""
+    return s["cap"] is not None and s["left"] <= 0
 
 
 def successors_clause(s):
     """The count as every gate, run-resume and hand-over refusal prints it: the short form when
-    the run's grants file carries the cap (`successors: 8 of 14 started, 6 left`), the source in
-    full for a fallback, the run's-last-lead guidance when none is left, and the file's fault
-    instead of that guidance when the cap fell back past a faulty grants file."""
+    the run's grants file carries the limit (`successors: 8 of 14 started, 6 left`), the number
+    started and `no limit` for a run with none, the source in full for a fallback, the
+    run's-last-lead guidance when none is left, and the file's fault instead of that guidance when
+    the limit fell back past a faulty grants file, or could not be read and nothing replaced it."""
     src = "" if s["own"] else " (%s)" % s["src"]
-    head = "successors: %d of %d started" % (s["used"], s["cap"])
     fix = "`handsoff.py grants --run %s --max-successors N` writes the run's cap" % s["run"]
+    if s["cap"] is None:
+        head = "successors: %d started, no limit" % s["used"]
+        if s["fault"]:
+            return ("%s — warn: a limit the run may have set cannot be read from its grants file "
+                    "(%s): %s" % (head, s["fault"], fix))
+        return head
+    head = "successors: %d of %d started" % (s["used"], s["cap"])
     if s["fault"] and s["left"] <= 0:
         return ("%s, none left on a fallback cap%s — the run's own cap cannot be read from its "
                 "grants file, so whether this is the run's last lead is undecided: %s"
@@ -1592,7 +1738,7 @@ def last_lead_state(sid):
         clause = successors_clause(s)
         if s["fault"]:
             return "undecided", "%s: the grants file is %s" % (clause, s["fault"])
-        if s["left"] > 0:
+        if not no_successor_left(s):
             return "not-last", clause
         lead, _ = head_session(events)
         if lead is None:
@@ -1910,6 +2056,23 @@ def require_record(path, hint=""):
     if is_plain_run(events):
         die("no run-open event in %s%s" % (path, hint))
     return events
+
+
+def import_usage_windows():
+    """The sibling usage_windows.py (the window meter and the limit policy's shared parts: one
+    process-group runner, the GPT credits rule and verdict, the GPT modes), loaded by path from
+    this script's own directory, so a copy under test runs the module beside it; it leaves no
+    __pycache__ in the skill directory. Every caller shares the one instance."""
+    want = os.path.realpath(os.path.join(HERE, "usage_windows.py"))
+    mod = sys.modules.get("usage_windows")
+    if mod is not None and os.path.realpath(getattr(mod, "__file__", "") or "") == want:
+        return mod
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location("usage_windows", want)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["usage_windows"] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def a3_shared():
@@ -2482,18 +2645,107 @@ def transcript_for(sid, root=None):
     return hits[0] if len(hits) == 1 else direct
 
 
-def measure_head(sid):
-    """The watermark hook's measure() on the head's transcript, plus percent and band edge."""
+PROJECTS_ENV = "AIMYTH_PROJECTS_DIR"
+
+
+def head_projects_root(events, sid):
+    """(projects folder, source) for head session `sid`, or (None, why) when the record names a
+    login folder that cannot be read as one (register entry 2026-11-12 02:38 b: a head started
+    under a login folder was metered only when AIMYTH_PROJECTS_DIR named that folder by hand).
+    In order: AIMYTH_PROJECTS_DIR when set and not empty; else the last `head-successor` for the
+    session carrying a non-empty string `config_dir`, as `<config_dir>/projects` (a null or
+    absent value falls through, and a relative one is read against the vault root, the head's
+    working directory); else this process's CLAUDE_CONFIG_DIR when set and not empty, as
+    `<it>/projects` (lane.py's `config_home` and watch.py's `projects_root` order); else
+    ~/.claude/projects. A recorded value that is not a string, or a folder that is not a
+    directory, is a reason and never a silent fall-back to another folder."""
+    given = os.environ.get(PROJECTS_ENV)
+    if given:
+        return os.path.realpath(os.path.expanduser(given)), PROJECTS_ENV
+    for ev in reversed(events or []):
+        if ev.get("event") != "head-successor" or ev.get("session_id") != sid:
+            continue
+        value = ev.get("config_dir")
+        if value is None or value == "":
+            continue
+        stamp = ev.get("ts") or "no ts"
+        if not isinstance(value, str):
+            return None, ("the config_dir recorded for session %s on head-successor at %s is not "
+                          "a path (%s)" % (sid, stamp, type(value).__name__))
+        home, how = os.path.expanduser(value), ""
+        if not os.path.isabs(home):
+            home, how = os.path.join(vault_root(), home), ", read against the vault root"
+        home = os.path.realpath(home)
+        if not os.path.isdir(home):
+            return None, ("the login folder %s recorded for session %s (head-successor at %s) is "
+                          "not a directory" % (home, sid, stamp))
+        return os.path.join(home, "projects"), "config_dir %s on head-successor at %s%s" % (
+            home, stamp, how)
+    caller = os.environ.get("CLAUDE_CONFIG_DIR")
+    if caller:
+        return (os.path.join(os.path.realpath(os.path.expanduser(caller)), "projects"),
+                "the caller's CLAUDE_CONFIG_DIR (the record names no login folder for session %s)"
+                % sid)
+    return (os.path.realpath(os.path.expanduser(os.path.join("~", ".claude", "projects"))),
+            "the default: neither the record nor the caller names a login folder")
+
+
+def root_note(source):
+    """The words a failure line gains when its folder was derived rather than named by the
+    caller's AIMYTH_PROJECTS_DIR: '' for the variable, else ' (projects root: <source>)'."""
+    return "" if source in (None, PROJECTS_ENV) else " (projects root: %s)" % source
+
+
+@contextlib.contextmanager
+def projects_env(root):
+    """AIMYTH_PROJECTS_DIR set to `root` for the block and restored in `finally`, an absent
+    variable left absent: the watermark hook's measure() refuses a transcript outside the folder
+    that variable names, so a head under a login folder is measured inside its own."""
+    saved = os.environ.get(PROJECTS_ENV)
+    os.environ[PROJECTS_ENV] = root
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(PROJECTS_ENV, None)
+        else:
+            os.environ[PROJECTS_ENV] = saved
+
+
+def measure_head(sid, events=None):
+    """The watermark hook's measure() on the head's transcript, plus percent and band edge. The
+    transcript is looked for under the head's own projects folder (head_projects_root), measured
+    with AIMYTH_PROJECTS_DIR scoped to that folder; without the run's `events` the resolver reads
+    the caller's variables alone (head_projects_root([], sid); independent check V10A finding 6:
+    a separate projects_root() branch disagreed with the hook once CLAUDE_CONFIG_DIR was set).
+    One folder is read, the resolver's: where the caller's CLAUDE_CONFIG_DIR names a folder, a
+    transcript only under ~/.claude/projects is not looked for, though the hook would accept it
+    there — the meter, the run's spend and reflect-inputs read the same single folder, so the
+    context figure and the bill never come from two different transcripts (independent check
+    V10A2 finding 3: the title of the leg pinning this had said "as the hook does")."""
     module, path = watermark()
     if not sid:
         return {"reason": "no head session in the record", "transcript": None}
     if module is None:
         return {"reason": "context-watermark.py not found at %s" % path, "transcript": None}
-    tp = transcript_for(sid)
-    m = dict(module.measure(tp))
+    root, source = head_projects_root(events or [], sid)
+    if root is None:
+        return {"reason": source, "transcript": None}
+    tp = transcript_for(sid, root)
+    try:
+        with projects_env(root):
+            m = dict(module.measure(tp))
+    except OSError as exc:
+        # An unreadable transcript (its mode, a vanished mount) reads unmetered and never ends
+        # the caller: the gate and the boundary have already marked the head-model check
+        # unverified and go on to write their event (reviewer V-T2a, R4). The transcript is
+        # not handed on, so no later reader of this call reopens it.
+        return {"context": None, "transcript": None,
+                "reason": "transcript unreadable (%s): %s%s" % (exc.strerror or exc, tp,
+                                                                root_note(source))}
     m["transcript"] = tp
     if m.get("context") is None:
-        m["reason"] = "%s: %s" % (m.get("reason", "unknown"), tp)
+        m["reason"] = "%s: %s%s" % (m.get("reason", "unknown"), tp, root_note(source))
         return m
     w, e = window(), edges()
     m["percent"] = m["context"] * 100 // w
@@ -3528,7 +3780,7 @@ def head_start_verdict(events, budget=None):
 # The first batch (owner decision D21 (c) of 2026-10-10, register entry 2026-10-04 01:02): the
 # launch check certifies a clean start only when every planned first-batch helper has opened and
 # is making progress. "Making progress" is observable activity of the helper's latest attempt
-# after its open (the owner's provisional choice of 2026-10-10 under his D19): a record event the
+# after its open (aiMyth's design of 2026-10-10, taken under the owner's D19): a record event the
 # helper's wrapper writes only once its model call has begun (LAUNCH_LANE_ACTIVITY), or a
 # transcript or session-file record stamped after the open. A process that is merely alive is
 # not progress.
@@ -3989,11 +4241,12 @@ def run_window(events):
         start, how, end)
 
 
-def meter_cmd(meter, run, sid, ro, lanes, start=None, end=None):
+def meter_cmd(meter, run, sid, ro, lanes, start=None, end=None, root=None):
     """The meter's command line for one head session, over a window when one is given: the
     `--start`/`--end` pair the meter already takes (its own main), so the head is metered over
-    the run's window rather than over its whole session (T6)."""
-    vault, root = vault_root(), projects_root()
+    the run's window rather than over its whole session (T6). `root` is the head's projects
+    folder (head_projects_root), projects_root() when none is given."""
+    vault, root = vault_root(), root or projects_root()
     cmd = [sys.executable, "-B", meter, "--session", sid, "--lanes", lanes,
            "--spawn-record", record_path(run), "--projects-root", root, "--vault", vault,
            "--project-dir", os.path.join(root, dashed(vault))]
@@ -4032,7 +4285,11 @@ def meter_command_text(events, run):
         return "none: no head session in the record"
     if sid in seed_sessions(events):
         return "none: run-open marks session %s a seed" % sid
-    cmd = meter_cmd(os.path.join(HERE, "fable-share.py"), run, sid, run_open(events), "auto")
+    root, source = head_projects_root(events, sid)
+    if root is None:
+        return "none: %s" % source
+    cmd = meter_cmd(os.path.join(HERE, "fable-share.py"), run, sid, run_open(events), "auto",
+                    root=root)
     return "%s (then --lanes none when the meter says '%s')" % (
         " ".join(shlex.quote(word) for word in cmd), METER_NO_LANES)
 
@@ -4056,8 +4313,11 @@ def meter_line(events, run, override=None, start=None, end=None, session=None):
     meter = os.path.join(HERE, "fable-share.py")
     if not os.path.isfile(meter):
         return "failed: fable-share.py not found beside handsoff.py"
+    root, source = head_projects_root(events, sid)
+    if root is None:
+        return "failed: %s" % source
     ro = run_open(events)
-    base = meter_cmd(meter, run, sid, ro, "auto", start, end)
+    base = meter_cmd(meter, run, sid, ro, "auto", start, end, root=root)
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     for lanes in ("auto", "none"):
         cmd = list(base)
@@ -4066,19 +4326,22 @@ def meter_line(events, run, override=None, start=None, end=None, session=None):
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=METER_TIMEOUT_S,
                                   env=env)
         except subprocess.TimeoutExpired:
-            return "failed: the meter did not finish in %d s" % METER_TIMEOUT_S
+            return "failed: the meter did not finish in %d s%s" % (METER_TIMEOUT_S,
+                                                                  root_note(source))
         except OSError as exc:
-            return "failed: %s" % exc
+            return "failed: %s%s" % (exc, root_note(source))
         if proc.returncode == 0:
             for line in proc.stdout.splitlines():
                 if line.startswith("billed ("):
                     return line.strip() + (HEAD_ALONE if lanes == "none" else "")
-            return "failed: the meter printed no billed line"
+            return "failed: the meter printed no billed line%s" % root_note(source)
         if lanes == "auto" and METER_NO_LANES in (proc.stdout or "") + (proc.stderr or ""):
             continue
         said = meter_says(proc)
-        return "failed: exit %d%s" % (proc.returncode, " · " + one_line(said)[:300] if said else "")
-    return "failed: the meter refused both lane modes"
+        return "failed: exit %d%s%s" % (proc.returncode,
+                                        " · " + one_line(said)[:300] if said else "",
+                                        root_note(source))
+    return "failed: the meter refused both lane modes%s" % root_note(source)
 
 
 def count_words(path):
@@ -4271,17 +4534,18 @@ def head_figure(line):
     return billed_field(line, r"head \$([0-9]+(?:\.[0-9]+)?)", float)
 
 
-def session_bill(sid, transcript, timeout=None):
+def session_bill(sid, transcript, timeout=None, root=None):
     """(dollars, how) for one session metered ALONE by fable-share.py (--lanes none) from its
     transcript path: the billed line's `head $` figure. (None, why) on a missing meter, a
     timeout, a refusal (the `unbilled` premise, a missing price table included) or a line with
-    no figure — a reason, never a zero. `timeout` bounds the call (default METER_TIMEOUT_S)."""
+    no figure — a reason, never a zero. `timeout` bounds the call (default METER_TIMEOUT_S);
+    `root` is the session's projects folder, projects_root() when none is given."""
     meter = os.path.join(HERE, "fable-share.py")
     if not os.path.isfile(meter):
         return None, "fable-share.py not found beside handsoff.py"
     bound = int(timeout) if timeout else METER_TIMEOUT_S
     cmd = [sys.executable, "-B", meter, "--session", sid, "--lanes", "none", "--project-dir",
-           os.path.dirname(transcript), "--projects-root", projects_root(), "--vault",
+           os.path.dirname(transcript), "--projects-root", root or projects_root(), "--vault",
            vault_root()]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=bound,
@@ -4651,6 +4915,11 @@ def root_untracked(vault):
 
 AMPM_RE = re.compile(r"resets?\s*(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.I)
 ISO_IN_TEXT_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?")
+# Claude's stop text, classified on whole words before the supervisor acts (limit policy 1): both
+# present, the weekly window wins; the classification never depends on how near the reset is. The
+# reset parse above is the installed one, unchanged (package B2's strict parse stays retired).
+CLAUDE_WEEK_RE = re.compile(r"\b(?:weekly|week|7-days?)\b", re.I)
+CLAUDE_SHORT_RE = re.compile(r"\b(?:session|5-hours?)\b", re.I)
 # A limit scoped to ONE model, not to the account: the harness names the scope ("You've reached
 # your Fable limit") and the remedy ("Switch to another model"), and states no reset time, so
 # neither the reset wait nor the haiku probe can clear it - a probe runs on a model that is not
@@ -5088,7 +5357,7 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
     state = {"changed": False, "calls": 0}
     deadline = time.monotonic() + budget_s
 
-    def meter(sid, transcript):
+    def meter(sid, transcript, root=None):
         """(usd, how) through the cache and the budget; a success is cached."""
         try:
             st = os.stat(transcript)
@@ -5103,7 +5372,7 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
         if left < 1:
             return None, "the run meter's %d s budget was spent before %s" % (budget_s, transcript)
         state["calls"] += 1
-        usd, how = session_bill(sid, transcript, timeout=min(METER_TIMEOUT_S, int(left)))
+        usd, how = session_bill(sid, transcript, timeout=min(METER_TIMEOUT_S, int(left)), root=root)
         if usd is not None:
             cache[sid] = dict(key, usd=usd)
             state["changed"] = True
@@ -5121,12 +5390,16 @@ def run_spend(events, run, path=None, session_line=None, use_cache=True, write_c
             if usd is not None:
                 heads.append((sid, usd, "the session's billed line in hand (head $)"))
                 continue
-        transcript = transcript_for(sid)
-        if not os.path.isfile(transcript):
-            how = "no transcript at %s" % transcript
-            usd = None
+        root, source = head_projects_root(events, sid)
+        if root is None:
+            how, usd = source, None
         else:
-            usd, how = meter(sid, transcript)
+            transcript = transcript_for(sid, root)
+            if not os.path.isfile(transcript):
+                how = "no transcript at %s%s" % (transcript, root_note(source))
+                usd = None
+            else:
+                usd, how = meter(sid, transcript, root)
         if usd is None:
             unmetered.append("head %s (%s)" % (short, how))
         heads.append((sid, usd, how))
@@ -5277,10 +5550,40 @@ def run_spend_line(spend, envelope=None):
     return "%s · %s" % (head, spend["src"])
 
 
+def require_envelope(value):
+    """A hands-off run opens with its hard spend line (review V-T8-G2b, change 2's note (i)). With no
+    successor limit by default (the owner's decision of 2026-11-04), the envelope is the last bound on
+    a loop of heads that hand over without stopping, which the repeat-exit, repeat-stop and
+    unmetered-loop guards do not stop; and every run's pre-flight states that line (row G9: two
+    lines, always both, the hard one the only spend figure that halts a run). So run-open refuses a
+    missing figure, and one that is not a positive finite number of dollars (`inf` or `nan` would bound
+    nothing, zero or less would stop the first gate), before it reads or writes anything, a dry run
+    included. A record opened before this rule, with no envelope_usd, still reads `envelope: none`."""
+    if value is None:
+        die("run-open: no --envelope-usd: a hands-off run opens with its hard spend line, the figure "
+            "its pre-flight states (row G9) and the only spend number that halts the run; with no "
+            "successor limit by default it is the run's last bound on heads that hand over without "
+            "stopping. Pass --envelope-usd USD; nothing written")
+    if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+        die("run-open: --envelope-usd %s is not a positive number of dollars, so it bounds nothing; "
+            "nothing written" % value)
+
+
 @a3_expose_notices
 def cmd_run_open(a):
     refuse_grants_file(a)
     check_grant_forms(a, "run-open", opening=True)
+    require_envelope(a.envelope_usd)
+    # The window meter (package A2, rebuilt on this file): the pre-flight's usage attachment is
+    # read once and validated before any write; malformed data is a premise failure, nothing written.
+    usage_windows = import_usage_windows()
+    plan = plan_sha = None
+    if getattr(a, "preflight_data", None):
+        try:
+            plan, plan_sha = usage_windows.load_preflight_data(
+                os.path.realpath(os.path.expanduser(a.preflight_data)))
+        except usage_windows.PreflightError as exc:
+            die("--preflight-data %s: %s; nothing written" % (a.preflight_data, exc))
     path = record_path(a.run)
     events = read_record(path)[0] if os.path.isfile(path) else []
     if last_index(events, ("run-open",)) >= 0:
@@ -5290,6 +5593,8 @@ def cmd_run_open(a):
     if not os.path.isfile(handoff):
         die("hand-off document not found: %s" % handoff)
     runbook_note = check_runbook(a)
+    # The opening reading, after the input checks: it runs while the rest of the open is composed.
+    usage = None if a.dry_run else usage_windows.UsageRead(HERE).start()
     if a.session_kind == "seed" and a.pid is None:
         # A seed never runs, and a parent walk from here reaches the launcher's own long-lived
         # process, which the first starter would then wait on (register entry 2026-09-12 20:0x).
@@ -5313,14 +5618,35 @@ def cmd_run_open(a):
     if a.expect_items:
         ev["expect_items"] = parse_expect_items(a.expect_items)
     ev["grants_file"] = grants_path(a.run)
-    ev["on_limit"], ev["on_limit_src"] = on_limit_choice(a, ev["grants_file"])
+    # The limit policy (limit policy 1; owner decisions N18 to N20): --on-limit, else the value
+    # an existing grants file carries, else resume; the weekly key and the GPT credits approval
+    # come from their run-open flags alone, never carried from a file prepared beforehand.
+    existing = read_grants(ev["grants_file"])
+    if getattr(a, "on_limit", None) in ON_LIMIT_VALUES:
+        ev["on_limit"], ev["on_limit_src"] = a.on_limit, "--on-limit"
+    elif existing.get("on_limit") in ON_LIMIT_VALUES:
+        ev["on_limit"], ev["on_limit_src"] = existing["on_limit"], "grants"
+    else:
+        ev["on_limit"], ev["on_limit_src"] = ON_LIMIT_OPEN_DEFAULT, LIMIT_POLICY_SRC
+    week = getattr(a, "claude_week_limit", None)
+    ev["claude_week_limit"] = week if week in CLAUDE_WEEK_VALUES else CLAUDE_WEEK_DEFAULT
+    credits = getattr(a, "gpt_credits_approved", None)
+    ev["gpt_credits_approved"] = credits == "yes"
+    ev["limit_policy_version"] = LIMIT_POLICY_VERSION
+    ev["limit_src"] = {"on_limit": ev["on_limit_src"],
+                       "claude_week_limit": "--claude-week-limit" if week in CLAUDE_WEEK_VALUES
+                       else LIMIT_POLICY_SRC,
+                       "gpt_credits_approved": "--gpt-credits-approved %s" % credits
+                       if credits in ("yes", "no") else LIMIT_POLICY_SRC}
     ev["viewer"], ev["viewer_src"] = viewer_choice(a, ev["grants_file"])
     ev["network"], ev["network_src"] = network_choice(a, ev["grants_file"])
     cap, cap_src = max_successors_choice(a, ev["grants_file"])
-    if cap is not None:
-        ev["max_successors"], ev["max_successors_src"] = cap, cap_src
+    record_limit_choice(ev, cap, cap_src)
     payload = grants_payload(a.run, "run-open", a.grant, a.write, ev["on_limit"], ev["viewer"],
-                             ev["network"], cap, carry=read_grants(ev["grants_file"]))
+                             ev["network"], cap, carry=existing)
+    # Written explicitly, so no value a file held before run-open is carried in (N4).
+    payload.update((k, ev[k]) for k in ("claude_week_limit", "gpt_credits_approved",
+                                        "limit_policy_version", "limit_src"))
     # The lists on the event are the contract the shrink guard reads when the file is gone.
     ev["grants"], ev["writes"] = payload["grants"], payload["writes"]
     if a.decisions_file:
@@ -5331,6 +5657,13 @@ def cmd_run_open(a):
     # seed whose section holds prose and no table is repaired before the first head starts.
     ledger, seeded = seed_ledger(seeded)
     ev["ledger_table"] = ledger
+    # The opening reading joined and embedded (a dry run starts none); the first delta is null.
+    if usage is None:
+        ev.update(usage_windows.dry_run_reading())
+    else:
+        ev["usage_reading"] = usage.join()
+        ev["usage_delta"] = usage_windows.sample_delta(None, ev["usage_reading"])
+    ev["usage_plan"], ev["usage_plan_sha256"] = plan, plan_sha
     say(runbook_note)
     if a.dry_run:
         say("run-open: dry run · %s" % json.dumps(ev, ensure_ascii=False))
@@ -5346,9 +5679,13 @@ def cmd_run_open(a):
         write_atomic(handoff, "\n".join(seeded))
     append_record(path, ev)
     say("run-open: %s · session %s (session_kind %s) · pid %s (%s) · hand-off %s · grants %s · "
-        "on_limit %s (%s) · viewer %s (%s) · network %s (%s)"
+        "on_limit %s (%s) · claude_week_limit %s (%s) · gpt_credits_approved %s (%s) · "
+        "viewer %s (%s) · network %s (%s)"
         % (a.run, a.session[:8], ev["session_kind"], "none" if pid is None else pid, shown,
-           handoff, ev["grants_file"], ev["on_limit"], ev["on_limit_src"], ev["viewer"],
+           handoff, ev["grants_file"], ev["on_limit"], ev["on_limit_src"],
+           ev["claude_week_limit"], ev["limit_src"]["claude_week_limit"],
+           "true" if ev["gpt_credits_approved"] else "false",
+           ev["limit_src"]["gpt_credits_approved"], ev["viewer"],
            ev["viewer_src"], network_shown(ev["network"]), ev["network_src"]))
     if trace_warning(trace, False):
         say(trace_warning(trace, False))
@@ -5386,10 +5723,9 @@ def resume_grant_fields(ev, payload, sources):
     writes and from the sources of the same plan (grants_plan), in the order the event has always
     carried them: the cap (where the payload sets one), on_limit, viewer, network, then the two
     lists — a rewrite records the lists it writes, as run-open and grants do, so the shrink
-    guard's baseline follows an explicit narrowing and never a file narrowed by hand."""
-    if "max_successors" in payload:
-        ev["max_successors"] = payload["max_successors"]
-        ev["max_successors_src"] = sources["max_successors"]
+    guard's baseline follows an explicit narrowing and never a file narrowed by hand. A limit this
+    call cleared (`--max-successors none`) is recorded as null."""
+    record_limit_choice(ev, payload.get("max_successors"), sources["max_successors"])
     ev["on_limit"], ev["on_limit_src"] = payload["on_limit"], sources["on_limit"]
     ev["viewer"], ev["viewer_src"] = payload["viewer"], sources["viewer"]
     ev["network"], ev["network_src"] = payload["network"], sources["network"]
@@ -5436,7 +5772,8 @@ def cmd_run_resume(a):
     # not name is carried from the file, under the shrink guard (register entry 2026-09-11 04:17).
     # The cap is one of the keys a resume rewrites (critic finding 7 of the review of 2026-10-11:
     # a cap-only resume kept the file and dropped the cap unread, a zero included); its value is
-    # checked before anything is written (max_successors_choice: a whole number of at least 1).
+    # checked before anything is written (max_successors_choice: a whole number of at least 1, or
+    # `none`, which clears it).
     keep = (not a.grant and not a.write and getattr(a, "on_limit", None) is None
             and getattr(a, "viewer", None) is None
             and getattr(a, "max_successors", None) is None
@@ -5497,8 +5834,7 @@ def cmd_run_resume(a):
            " (kept)" if keep else (" (lists carried)" if carried
                                    else " (paths added)" if added else ""),
            ev["on_limit"], ev["viewer"], network_shown(ev["network"]),
-           " · max_successors %d (%s)" % (ev["max_successors"], ev["max_successors_src"])
-           if "max_successors" in ev else "",
+           max_successors_shown(ev),
            # the count every head sees at its first act (register entry 2026-10-30 16:11),
            # read after any cap this call wrote
            successors_clause(successors_left(events, a.run))))
@@ -6259,16 +6595,21 @@ def cmd_run_is_closed(a):
     return 1
 
 
-def refresh_figures(lines, ro, meter, a=None, run_text=None):
+def refresh_figures(lines, ro, meter, a=None, run_text=None, windows=None):
     """The morning report's spend and warnings bullets, plus shipped, waits and saving when
     given; `run_text` is the run figure (run_spend_short) the spend bullet carries after the
-    session line and the envelope. False when the section is missing."""
+    session line and the envelope; `windows`, the window meter's three owned bullets
+    (usage_windows.render_windows: readings and deltas only), replaced in place. False when the
+    section is missing."""
     spend = meter + (" · envelope $%s" % ro["envelope_usd"]
                      if ro.get("envelope_usd") is not None else "")
     if run_text:
         spend += " · run %s" % run_text
     if not set_bullet(lines, "spend", spend):
         return False
+    if windows:
+        i = heading_index(lines, "Morning report")
+        import_usage_windows().place_bullets(lines, i, section_end(lines, i), windows)
     set_bullet(lines, "warnings", str(table_rows(lines, "Findings ledger")), number_only=True)
     for key in ("shipped", "waits", "saving"):
         value = getattr(a, key, None)
@@ -6401,11 +6742,18 @@ def cmd_item_done(a):
     ev = event(a.run, "item-done", items=items)
     if a.note:
         ev["note"] = one_line(a.note)
+    # The head-model check's word on this completion (DW-20261021-1; reviewer V-T2a, Fold H1).
+    mark = completion_mark(events)
+    ev.update(mark)
     if a.dry_run:
         say("item-done: dry run · %s" % json.dumps(ev, ensure_ascii=False))
         return 0
     append_record(path, ev)
     say("item-done: %s recorded on %s" % (", ".join(items), a.run))
+    if mark.get("completion") == "done-unverified":
+        say("item-done: recorded done-unverified (%s) · held for the owner: the console and the "
+            "close count %s held, never done, until a later head-model check of session %s reads "
+            "verified" % (mark["completion_why"], ", ".join(items), mark["completion_session"]))
     return 0
 
 
@@ -6415,19 +6763,39 @@ def cmd_boundary(a):
     events = require_record(path)
     refuse_placeholder("boundary", {key: getattr(a, key, None) for key in
                                     ("disposition", "next", "waste", "shipped", "waits", "saving")})
+    # The head-model check (DW-20261021-1) first, before the meter. An enforced swap writes no
+    # hand-off, no commit and no phase-boundary (whose `from` the console reads as done): the
+    # stop-condition, carrying the check, is the trace, and nothing the swapped head typed is
+    # kept (critic CR-T2a, M3). Unverified and trial go on; their event carries the check.
+    mc = head_model_check(events, head_session(events)[0])
+    if mc is not None:
+        stopped = model_verdict(a, path, mc, "boundary",
+                                "the %s → %s checkpoint" % (a.from_, a.to))
+        if stopped is not None:
+            if stopped == EXIT_MODEL:
+                say("boundary: nothing written to the hand-off, no commit and no phase-boundary")
+            return stopped
     ro = run_open(events)
     ho = handoff_of(events, a.handoff)
     prev = last_index(events, ("phase-boundary",))
     if prev < 0:
         prev = last_index(events, ("run-open",))
+    # The window meter's reading (package A2) starts after the model check, so a boundary that
+    # check ends with exit 11 starts none (critic CR-T2b finding 13), and before the dollar work,
+    # beside which it runs under its own one deadline; a dry run starts none.
+    usage_windows = import_usage_windows()
+    usage = None if a.dry_run else usage_windows.UsageRead(HERE).start()
     meter = meter_line(events, a.run, a.meter_line)
     sid, _ = head_session(events)
     warning = grants_warning(events, a.run, sid)
     if warning:
         say(warning)
-    m = measure_head(sid)
+    m = measure_head(sid, events)
     fields, unmeasured = waste_fields(events, prev, transcript=m.get("transcript"))
     ev = event(a.run, "phase-boundary", **{"from": a.from_, "to": a.to})
+    if mc is not None:
+        ev["model_check"] = mc   # an unverified checkpoint proceeds, marked on its own event
+        ev.update(completion_mark(events, mc))   # its `from` done or done-unverified (Fold H1)
     # Credit only the head's foreground shell command, including its session-leading shell
     # directly below the harness. Workers and other session/group changes record null with
     # caller_pid_src none; the supervisor reads uncertain authorship as unknown.
@@ -6443,6 +6811,18 @@ def cmd_boundary(a):
     spend = run_spend(events, a.run, path, session_line=meter, write_cache=not a.dry_run)
     ev.update(run_spend_usd=spend["usd"] if spend["measured"] else None,
               run_spend_floor=spend["floor"], run_spend_src=spend["src"])
+    # Joined after the dollar work; its delta is recomputed at the append, under the record lock.
+    if usage is None:
+        ev.update(usage_windows.dry_run_reading())
+    else:
+        ev["usage_reading"] = usage.join()
+        ev["usage_delta"] = usage_windows.sample_delta(usage_windows.previous_reading(events),
+                                                       ev["usage_reading"])
+    windows = usage_windows.render_windows(events + ([ev] if usage is not None else []))
+    # The run's backstop in points of the Claude week at the rate the record carries (decision
+    # E3): the owner's line reads points, never dollars; the dollars stay in this machine field.
+    backstop_text, ev["usage_backstop"] = usage_windows.backstop(
+        events, envelope, spend["usd"] if spend["measured"] else None, spend["floor"])
     lines = read_text(ho, "hand-off").split("\n")
     problems = []
     span = table_span(lines, "Trace")
@@ -6451,7 +6831,7 @@ def cmd_boundary(a):
     else:
         lines.insert(span[1] + 1, "| %s | %s → %s | %s | %s | %s |" % (
             hhmm(), cell(a.from_), cell(a.to), cell(a.disposition), cell(meter), cell(a.waste)))
-    if not refresh_figures(lines, ro, meter, a, run_spend_short(spend, envelope)):
+    if not refresh_figures(lines, ro, meter, a, run_spend_short(spend, envelope), windows=windows):
         problems.append("no '## Morning report' section")
     # The head decisions the disposition names (register entry 2026-10-05 20:18; the owner's
     # provisional choice of 2026-10-10: explicit HD-<n> references): a warning, never a refusal —
@@ -6486,7 +6866,11 @@ def cmd_boundary(a):
         ev["root_untracked"], root_line = root_untracked(vault_root())
         say("boundary: %s" % root_line)
         ev["commit"] = checkpoint_commit(vault_root(), a.commit)
-    append_record(path, ev)
+    with record_lock(path):
+        # The predecessor is the record's last reading as it stands at commit (package A2).
+        ev["usage_delta"] = usage_windows.sample_delta(
+            usage_windows.previous_reading(read_record(path)[0]), ev["usage_reading"])
+        append_record(path, ev)
     respawn = fields["respawn_cost_usd"]
     cut_usd = fields["limit_cut_resumed_usd"]
     say("boundary: %s → %s · idle %s min · denials %d · over-cap %d · %s · "
@@ -6518,6 +6902,7 @@ def cmd_boundary(a):
         say("limit-cut resumed: %s" % fields["limit_cut_src"])
     say("meter: %s" % meter)
     say("run spend: %s" % run_spend_line(spend, envelope))
+    say(usage_windows.summary_line(ev["usage_reading"], ev["usage_delta"], backstop_text))
     if problems:
         say("hand-off: NOT refreshed — %s" % "; ".join(problems))
         return 3
@@ -6671,10 +7056,11 @@ def envelope_stop(path, a, env_text, env_why, figure, clause=""):
 
 
 def gate_arrow(s, usual):
-    """A gate refusal's instruction: `usual` (the hand-over) while a successor is left; with none
-    left, close the run instead (register entry 2026-10-30 16:11); with none left on a fallback
-    past a faulty grants file, the fault to repair first (review CR-CAP2 finding 6)."""
-    if s["left"] > 0:
+    """A gate refusal's instruction: `usual` (the hand-over) while a successor is left, and always
+    with no limit; with none left, close the run instead (register entry 2026-10-30 16:11); with
+    none left on a fallback past a faulty grants file, the fault to repair first (review CR-CAP2
+    finding 6)."""
+    if not no_successor_left(s):
         return usual
     if s["fault"]:
         return ("→ no successor is left on a fallback cap, and the run's own cap cannot be read "
@@ -6998,6 +7384,14 @@ def cmd_gate(a):
     refused = refuse_two_heads(a, path, events, "gate")
     if refused is not None:
         return refused
+    # The head-model check (decided line DW-20261021-1) next, before the decisions hold, the
+    # meter and every measurement, so only its own read budget stands between the call and its
+    # verdict; a peer's gate is refused above and never reaches it.
+    mc = head_model_check(events, head_session(events)[0])
+    if mc is not None:
+        stopped = model_verdict(a, path, mc, "gate", "item %s" % a.to)
+        if stopped is not None:
+            return stopped
     held, content = decisions_hold(a, path, events, "gate")
     if held is not None:
         return held
@@ -7011,7 +7405,7 @@ def cmd_gate(a):
     clause = successors_clause(count)
     count_fields = {"successors_used": count["used"], "successors_cap": count["cap"],
                     "successors_left": count["left"], "successors_src": count["src"]}
-    m = measure_head(sid)
+    m = measure_head(sid, events)
     is_armed, how = armed(sid)
     warning = grants_warning(events, a.run, sid)
     if warning:
@@ -7045,6 +7439,8 @@ def cmd_gate(a):
                    **count_fields)
         ev[DECISIONS_SEEN] = len(events)   # what this gate's decisions check covered
         ev.update(bound)
+        if mc is not None:
+            ev["model_check"] = mc
         if orient is not None:
             ev["orientation_tokens"], ev["orientation_note"] = orient
         obs = event(a.run, "observation", phase=a.phase, what="gate unmetered",
@@ -7085,6 +7481,8 @@ def cmd_gate(a):
                **count_fields)
     ev[DECISIONS_SEEN] = len(events)   # what this gate's decisions check covered
     ev.update(bound)
+    if mc is not None:
+        ev["model_check"] = mc
     figure = "context %s (%d %%) · band %d · armed %s" % (
         format(m["context"], ","), m["percent"], m["band"], how if is_armed else "no")
     figure += " · fit %s (next %s, %s; belt %d %%)" % (
@@ -7548,7 +7946,8 @@ def newer_successor(fresh, count):
 
 def no_successor_refusal(cmd, s, kept, raced=None):
     """The REFUSED (exit 10) text `handoff --final` and `successor` print when no successor is
-    left (register entry 2026-10-30 16:11). `kept` says what the call wrote; `raced` is a
+    left under a limit (register entry 2026-10-30 16:11), so `cap` is a number here: with no limit
+    no_successor_left is never true. `kept` says what the call wrote; `raced` is a
     head-successor that landed while the call ran (then another head has started, and this head
     is no longer the run's lead). No text tells the head to run `--final` again."""
     count = "%d of %d head starts on its cap (%s)" % (s["used"], s["cap"], s["src"])
@@ -7603,6 +8002,17 @@ def refuse_no_successor(path, a, cmd, s, kept, raced=None):
 def cmd_handoff(a):
     path = record_path(a.run)
     events = require_record(path)
+    # The head-model latch (DW-20261021-1; critic CR-T2a, M3): in enforce mode the swapped
+    # session's own shell writes no hand-off while its model stop is open; the owner, outside
+    # the head, still can.
+    stop = open_model_stop(events) if MODEL_CHECK_MODE == "enforce" and not a.dry_run else None
+    if stop is not None and stop.get("session") == head_session(events)[0]:
+        inside = inside_head(events)
+        if inside:
+            say("handoff: REFUSED (stop-condition model, exit %d): session %s carries a confirmed "
+                "head-model swap (the stop at %s), so it writes no hand-off; nothing written (%s)"
+                % (EXIT_MODEL, stop.get("session"), stop.get("ts", "no ts"), inside))
+            return EXIT_MODEL
     ho = handoff_of(events, a.handoff)
     lines = read_text(ho, "hand-off").split("\n")
     changes = []
@@ -7658,7 +8068,7 @@ def cmd_handoff(a):
             # and no head has started since (register entry 2026-09-14 05:13; review finding
             # 2): a second one would count the stop twice.
             have_exit = events[xi]
-        elif count["left"] <= 0:
+        elif no_successor_left(count):
             # The cap at call time, before any head-exit (register entry 2026-10-30 16:11): with
             # no successor left the starter would refuse one, so this head stays the run's lead,
             # its pack still written below, and no head-exit is left behind for repeat-exit or
@@ -7666,7 +8076,7 @@ def cmd_handoff(a):
             refused = count
         else:
             sid, _ = head_session(events)
-            m = measure_head(sid)
+            m = measure_head(sid, events)
             pid, psrc = final_pid(events, a.pid)
             say("handoff: pid %s (%s)" % ("none" if pid is None else pid, psrc))
             exit_ev = event(a.run, "head-exit", band=band_value(a.band, m),
@@ -7695,7 +8105,7 @@ def cmd_handoff(a):
             xi = stop_exit(fresh)
             if xi >= 0:
                 exit_ev, have_exit = None, fresh[xi]
-            elif successors_left(fresh, a.run)["left"] <= 0:
+            elif no_successor_left(successors_left(fresh, a.run)):
                 # A head-successor or a lowered cap landed while this call measured: the same
                 # refusal, decided on the record as it stands under the lock.
                 refused, exit_ev = successors_left(fresh, a.run), None
@@ -7737,7 +8147,16 @@ def resume_instruction(run, ho):
     no gate an earlier head of the run wrote, it begins, as the run's first head does, at the
     gate In flight names (worded so, rather than calling the head the first, because a successor
     whose predecessor never gated takes that branch too); otherwise it continues from In flight.
-    The head reads the record and decides; the text is the same for every start. The command is
+    The head reads the record and decides; the text is the same for every start. Three clauses
+    serve a head that is not the run's first: In flight governs within the plan of record, which
+    binds where the two differ (register entry 2026-11-10 11:57 b: a pack told its successor to
+    install while the plan held installs); the decisions file is acknowledged after the head's
+    `run-resume` and before its first spawn, so the spawn hold finds an ack of this head's own (the
+    owner's yes to report item 103 of 2026-11-09): head_unacknowledged counts an ack as the head's
+    only when it stands after the head's latest run-open or run-resume, so an ack made before that
+    `run-resume` reads as an earlier head's (review V-T8-G2b, 2026-11-10); and the RUNBOOK's role
+    and style are applied, since the anchor's state is per
+    session (register entry 2026-11-10 11:56: successor heads ran on the defaults). The command is
     spelled as by_hand_line spells the owner's: the absolute interpreter (interpreter(), never a
     bare `python3`, which a shell may map to another program: register entry 2026-09-30 17:36),
     `-B`, the derived path."""
@@ -7751,12 +8170,18 @@ def resume_instruction(run, ho):
     return ("You are the next head of hands-off run %s, started by handsoff.py.\n"
             "Hand-off: %s\n"
             "Read that hand-off whole, starting with its `## In flight` section: In flight is the "
-            "authority for what you do next. Then read the RUNBOOK and the decisions file the "
-            "hand-off names.\n"
+            "authority for what you do next within the plan of record, which binds where they "
+            "differ; record any difference as a decision. Then read the RUNBOOK and the decisions "
+            "file the hand-off names.\n"
+            "Apply the RUNBOOK's role and style (the anchor's `set-role` and `set-style`) before "
+            "any item work: an earlier head's do not carry to your session.\n"
             "Before any item work, whether you are the run's first head or a later one: read the "
             "tail of the run record %s and `git status`, then run `%s`. That registers your "
             "session on the record, which the session meter needs to count your helpers as "
             "yours.\n"
+            "After that `run-resume`, and before your first spawn, acknowledge the decisions file "
+            "(`decisions-read`, then `decisions-ack`): the spawn hold counts only an "
+            "acknowledgement made after your own `run-resume`.\n"
             "%s"
             "Then, if that record shows no `gate` event written by an earlier head of this run, "
             "begin, as the run's first head does, at the gate In flight names; otherwise continue "
@@ -8004,7 +8429,7 @@ def cmd_successor(a):
     # The cap at call time, before the model, the meter and any head-exit (register entry
     # 2026-10-30 16:11): the starter's own test, applied while this head is still the lead.
     count = successors_left(events, a.run)
-    if count["left"] <= 0:
+    if no_successor_left(count):
         return refuse_no_successor(path, a, "successor", count,
                                    "Nothing was written (dry run)" if a.dry_run else
                                    "Nothing was written but this refusal's observation")
@@ -8060,7 +8485,7 @@ def cmd_successor(a):
     ri = last_index(events, START_EVENTS + ("head-exit",))
     have_exit = ri >= 0 and events[ri].get("event") == "head-exit"
     sid, sev = head_session(events)
-    m = measure_head(sid)
+    m = measure_head(sid, events)
     # The same rule `handoff --final` carries, through the same helper: on a SEEDED record with
     # no --pid the seed's own run-open pid is taken and the parent walk is not run. The walk
     # must not substitute the attended caller for the launcher's explicitly recorded pid.
@@ -8134,7 +8559,7 @@ def cmd_successor(a):
             ri = last_index(fresh, START_EVENTS + ("head-exit",))
             if ri >= 0 and fresh[ri].get("event") == "head-exit":
                 have_exit = True
-            elif successors_left(fresh, a.run)["left"] <= 0:
+            elif no_successor_left(successors_left(fresh, a.run)):
                 # The call-time cap again, on the record as it stands under the lock.
                 refused = successors_left(fresh, a.run)
                 raced = newer_successor(fresh, count)
@@ -8221,11 +8646,23 @@ def wait_silent(transcript, quiet, limit):
 
 def start_guards(events, hi, gone=True, why="", run=None):
     """The starter's loop guards over the record's last head-exit (index hi): (reason, detail)
-    for a successor-aborted event, or (None, None) when the start may go ahead. The successor
-    cap is the run's own (successor_cap: the grants file, then AIMYTH_MAX_SUCCESSORS, then the
-    default), so a direct call of this script and a call through a wrapper read one number; the
-    count is successors_left's, the one `handoff --final`, `successor`, `gate` and the hard-band
-    hook read, so the call-time refusal and this backstop cannot disagree."""
+    for a successor-aborted event, or (None, None) when the start may go ahead. A successor limit
+    is the run's own where it has one (successor_cap: the grants file, then AIMYTH_MAX_SUCCESSORS;
+    with neither, no limit and this guard always passes), so a direct call of this script and a call
+    through a wrapper read one number; the count is successors_left's, the one `handoff --final`,
+    `successor`, `gate` and the hard-band hook read, so the call-time refusal and this guard cannot
+    disagree."""
+    # The head-model latch (DW-20261021-1), here because every successor start comes through
+    # this function, whichever path reached it (critic CR-T2a, M2's placement): in enforce mode
+    # an open model stop holds the run for the owner's release (cmd_release_model_stop).
+    stop = open_model_stop(events) if MODEL_CHECK_MODE == "enforce" else None
+    if stop is not None:
+        return "model-stop", (
+            "a confirmed head-model swap on session %s (the stop-condition at %s) holds the run "
+            "for the owner: no successor starts until he releases it from a shell outside the "
+            "run's head with `handsoff.py release-model-stop --run %s --session %s --reason …`"
+            % (stop.get("session"), stop.get("ts", "no ts"), run or events[-1].get("run", "<run>"),
+               stop.get("session")))
     if hi < 0:
         return "no-head-exit", "the record carries no head-exit to succeed"
     if any(e.get("event") == "head-successor" for e in events[hi + 1:]):
@@ -8245,8 +8682,8 @@ def start_guards(events, hi, gone=True, why="", run=None):
         gates cannot prove an attempt, and an earlier head's open items do not count.
         Accepted residual: repeatedly allowing multiple unfinished items, or re-allowing
         work and refusing an item never allowed in the window, can evade both repeat-exit
-        rules. The allowed gates prevent no_progress from catching those chains; only the
-        successor cap and the run's envelope bound them."""
+        rules. The allowed gates prevent no_progress from catching those chains; only the run's
+        envelope, and a successor limit where the run set one, bound them."""
         start = last_index(events[:idx], START_EVENTS)
         if start < 0:
             return None
@@ -8273,7 +8710,7 @@ def start_guards(events, hi, gone=True, why="", run=None):
             earlier[-1].get("band") == "unmetered":
         return "unmetered-loop", ("the previous head-exit was unmetered too: an unmetered "
                                   "fault buys at most one restart")
-    if count["left"] <= 0:
+    if no_successor_left(count):
         return "successor-cap", ("%d successors already started for this run, at its cap of %d "
                                  "(%s); `handsoff.py grants --run %s --max-successors N` raises it"
                                  % (count["used"], count["cap"], count["src"], run or "<run>"))
@@ -8318,9 +8755,9 @@ def no_progress(events, hi):
     """The pending item when the record's last two head-exits show no progress, else None
     (start_guards' second repeat-exit rule, beside the attempt comparison; the fix's second
     review, 2026-10-09). A refusal on an item never allowed in the head's window names no attempt,
-    so two heads in turn that are each refused at the same item would otherwise be bounded by the
-    successor cap alone. The rule holds when every part is read off the record: the two exits
-    (the last head-exit and the one before it) are by two different heads, the session each
+    so two heads in turn that are each refused at the same item would otherwise be bounded only by
+    the envelope and any successor limit the run set. The rule holds when every part is read off
+    the record: the two exits (the last head-exit and the one before it) are by two different heads, the session each
     exit's latest run-open, run-resume or head-successor names, both readable and unequal (a
     head resumed in place keeps its session and is the same head); both sit at band 80 or 90;
     each followed a refused gate on the same item (refused_exit); and between those two refusals
@@ -8406,6 +8843,425 @@ def head_model_fields(a, model=None, model_src=None, effort=None, effort_src=Non
     effort = effort or getattr(a, "effort", None) or None
     esrc = effort_src or getattr(a, "effort_src", None) or ("arg" if effort else "none")
     return {"model": model, "effort": effort, "model_src": src, "effort_src": esrc}
+
+
+def model_facts():
+    """(facts, None) or (None, reason): the `models` block of prices.json beside this script under
+    lane.py's premises (load_model_facts): aliases are bare words naming ids, helpers a non-empty
+    list of family substrings. A premise failure is a reason, never a guess."""
+    path = os.path.join(HERE, "prices.json")
+    try:
+        with open(path, encoding="utf-8") as handle:
+            table = json.load(handle)
+    except (OSError, ValueError) as exc:
+        return None, "prices.json unreadable or not JSON (%s)" % exc
+    block = table.get("models") if isinstance(table, dict) else None
+    aliases = block.get("aliases") if isinstance(block, dict) else None
+    helpers = block.get("helpers") if isinstance(block, dict) else None
+    if not isinstance(aliases, dict) or not aliases:
+        return None, "prices.json carries no `models.aliases` map"
+    for key, value in aliases.items():
+        if not isinstance(key, str) or not MODEL_ALIAS_RE.match(key) or not isinstance(
+                value, str) or not value.strip() or MODEL_ALIAS_RE.match(value.strip()):
+            return None, "prices.json `models.aliases` entry %r is not an alias naming an id" % (key,)
+    if not isinstance(helpers, list) or not helpers or any(
+            not isinstance(h, str) or not h.strip() for h in helpers):
+        return None, "prices.json `models.helpers` is missing, empty or carries a blank entry"
+    return {"aliases": dict((k, v.strip()) for k, v in aliases.items()),
+            "helpers": [h.strip().lower() for h in helpers]}, None
+
+
+def supervised_start(events, sid):
+    """The index of the first head-successor or head-resumed naming session sid, else -1. Only
+    the starter writes those, so a session none names is an attended head's, which the check
+    leaves alone: no aiMyth surface pins, enforces or warns about the owner's own model choice
+    in a conversation he holds (his ruling of 6 September 2026, critic CR-T2a finding M1)."""
+    for i, ev in enumerate(events):
+        if ev.get("event") in ("head-successor", "head-resumed") and start_session(ev) == sid:
+            return i
+    return -1
+
+
+def model_stops(events, sid=None):
+    """The record's model stops (stop-condition which=model), each naming its session; only
+    session sid's when given."""
+    return [e for e in events if e.get("event") == "stop-condition"
+            and e.get("which") == MODEL_STOP_WHICH and (sid is None or e.get("session") == sid)]
+
+
+def open_model_stop(events):
+    """The newest model stop no later release names, else None. While one is open the run holds
+    for the owner: no other-family head launcher exists to move the work to (design-rev2 E6)."""
+    pending = []
+    for e in events:
+        kind = e.get("event")
+        if kind == "stop-condition" and e.get("which") == MODEL_STOP_WHICH:
+            pending.append(e)
+        elif kind == "observation" and e.get("what") == MODEL_RELEASE_WHAT:
+            pending = [p for p in pending if p.get("session") != e.get("session")]
+    return pending[-1] if pending else None
+
+
+def model_found(events, sid):
+    """The first record of a confirmed swap for session sid, an enforced stop or a trial
+    observation, else None: once found it stays found (design-rev2 E1, "later missing files or
+    later expected-model messages cannot downgrade that finding")."""
+    for e in events:
+        if e.get("session") != sid:
+            continue
+        if (e.get("event") == "stop-condition" and e.get("which") == MODEL_STOP_WHICH) or (
+                e.get("event") == "observation" and e.get("what") == MODEL_TRIAL_WHAT):
+            return e
+    return None
+
+
+def model_epochs(events, sid, first):
+    """[(epoch seconds, model or None, label)] for every head start naming session sid from the
+    starter's first start of it (index first) on, in record order, or None when one carries no
+    readable time. Each primary record is judged against the latest epoch begun at or before it,
+    so an owner-requested change (head-resumed --model) opens a new epoch and never makes an
+    earlier record clean."""
+    out = []
+    for i in range(first, len(events)):
+        ev = events[i]
+        if ev.get("event") in START_EVENTS and start_session(ev) == sid:
+            t = parse_ts(ev.get("ts"))
+            if t is None:
+                return None
+            out.append((t, start_model(events, i)[0],
+                        "the %s at %s" % (ev.get("event"), ev.get("ts"))))
+    return out
+
+
+def alias_evidence(events, alias, expected, unexpected, since):
+    """("confirmed" | "stale" | None, why): whether the record shows `alias` still resolving to
+    `expected` after `since`, the first record of `unexpected` (design-rev2 E2 point 4). The
+    evidence is a Claude lane OPENED on the same alias at or after `since` whose lane-closed
+    reports fallback.expected `expected` and detected false; a lane opened earlier proves nothing
+    about what the alias served after `since` (critic CR-T2a, L6). A lane on the alias that was
+    served `unexpected` is a stale map or a lane fallback, never a head swap; it wins over any
+    confirming lane."""
+    opened, good, stale = {}, None, None
+    for e in events:
+        kind = e.get("event")
+        lane = e.get("lane")
+        if kind == "lane-open" and lane is not None and e.get("model") == alias and \
+                e.get("harness", "claude") == "claude":
+            t = parse_ts(e.get("ts"))
+            if t is not None and t >= since:
+                opened[str(lane)] = e
+        elif kind == "lane-closed" and lane is not None and str(lane) in opened:
+            del opened[str(lane)]
+            fb = e.get("fallback")
+            if not isinstance(fb, dict):
+                continue
+            served = fb.get("non_helper") if isinstance(fb.get("non_helper"), list) else []
+            if unexpected in served:
+                stale = stale or "lane %s on %s was served %s (closed %s)" % (
+                    lane, alias, unexpected, e.get("ts", "no ts"))
+            elif fb.get("detected") is False and fb.get("expected") == expected:
+                good = good or "lane %s on %s was served %s (closed %s)" % (
+                    lane, alias, expected, e.get("ts", "no ts"))
+    if stale:
+        return "stale", "stale map or a lane fallback: %s" % stale
+    if good:
+        return "confirmed", good
+    return None, ("the alias may have moved: no Claude lane opened on %s after %s was served %s"
+                  % (alias, time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(since)), expected))
+
+
+def head_model_check(events, sid, budget=None, root=None):
+    """The head-model check (decided line DW-20261021-1) for session sid at a gate or boundary:
+    a dict whose `verdict` is verified, unverified or confirmed-swap, with its evidence, or None
+    when the check does not apply (no session, or an attended one: supervised_start).
+
+    The served model is read from the head's own transcript: a primary record is a complete line
+    whose JSON is `type` assistant, not a sidechain, with a string `message.model` not starting
+    `<synthetic`. It is judged against its expectation epoch (model_epochs): an explicit id (a
+    digit or a dot, lane.py's rule) is matched exactly; an alias the prices.json map resolves to
+    X is matched against X, and another id confirms only with a lane's evidence (alias_evidence).
+    The verdict over the whole window (critic CR-T2a, H2): confirmed-swap when ANY record
+    confirms; else unverified when any record or premise is uncertain (a helper-family id, a
+    start with no model, an alias the map lacks, an alias mismatch without evidence, a malformed
+    or untimed record, the read over its budget, no primary record at all); verified only when
+    every primary record matches and at least one was read (`primary_n`). Read-only: it writes
+    nothing, and the transcript is never copied to the record."""
+    t0 = time.monotonic()
+    budget = MODEL_CHECK_BUDGET_S if budget is None else budget
+    if not sid:
+        return None
+    first = supervised_start(events, sid)
+    if first < 0:
+        return None
+    out = {"session": sid, "mode": MODEL_CHECK_MODE, "verdict": None, "reason": None,
+           "primary_n": 0, "unexpected_n": 0, "ids": {}, "first_unexpected": None,
+           "bytes_read": 0, "elapsed_s": None, "budget_s": budget}
+
+    def done(verdict, reason=None):
+        out["verdict"], out["reason"] = verdict, reason[:NOTE_CUT] if reason else None
+        out["elapsed_s"] = round(time.monotonic() - t0, 3)
+        return out
+
+    found = model_found(events, sid)
+    if found is not None:
+        out["durable"] = True
+        out["first_unexpected"] = found.get("first_unexpected")
+        return done("confirmed-swap", "a confirmed swap for this session is on the record (the %s "
+                                      "at %s): it stays found" % (found.get("event"),
+                                                                  found.get("ts", "no ts")))
+    facts, why = model_facts()
+    if facts is None:
+        return done("unverified", why)
+    epochs = model_epochs(events, sid, first)
+    if not epochs:
+        return done("unverified", "a start naming session %s carries no readable time" % sid)
+    expect = []   # (start, alias or None, expected id or None, gap reason or None)
+    for t, model, label in epochs:
+        if not model:
+            expect.append((t, None, None, "%s carries no readable model" % label))
+        elif model in facts["aliases"]:
+            expect.append((t, model, facts["aliases"][model], None))
+        elif not MODEL_ALIAS_RE.match(model):
+            expect.append((t, None, model, None))
+        else:
+            expect.append((t, model, None, "the alias %s is not in prices.json's map" % model))
+    tp = transcript_for(sid, root)
+    out["transcript"] = tp
+    try:
+        handle = open(tp, "rb")
+    except OSError as exc:
+        return done("unverified", "no readable transcript at %s (%s)" % (tp, exc.strerror or exc))
+    doubts = {}            # kind -> the first reason of that kind, in the order first met
+    confirm = None         # the first record that confirms on an explicit expectation
+    candidates = {}        # (id, alias, expected) -> (epoch seconds, first record) without evidence
+    malformed, late, n = 0, False, 0
+    with handle:
+        for raw in handle:
+            n += 1
+            out["bytes_read"] += len(raw)
+            if time.monotonic() - t0 > budget:
+                late = True
+                break
+            if b'"assistant"' not in raw:
+                continue
+            if not raw.endswith(b"\n"):
+                break      # an incomplete trailing record: coverage ends before it
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                malformed += 1
+                continue
+            if not isinstance(rec, dict) or rec.get("type") != "assistant" or \
+                    rec.get("isSidechain"):
+                continue
+            msg = rec.get("message")
+            model = msg.get("model") if isinstance(msg, dict) else None
+            if not isinstance(model, str) or not model or model.startswith("<synthetic"):
+                continue
+            t = parse_ts(rec.get("timestamp"))
+            if t is None:
+                doubts.setdefault("untimed", "a primary record with no readable timestamp "
+                                             "(line %d)" % n)
+                continue
+            if t < expect[0][0]:
+                continue   # before the starter's start of this session: outside the window
+            out["primary_n"] += 1
+            if model not in out["ids"]:
+                if len(out["ids"]) < MODEL_CHECK_MAX_IDS:
+                    out["ids"][model] = {"ts": rec.get("timestamp"), "line": n}
+                else:
+                    doubts.setdefault("ids", "more than %d distinct ids" % MODEL_CHECK_MAX_IDS)
+            _, alias, want, gap = [e for e in expect if e[0] <= t][-1]
+            if gap:
+                doubts.setdefault("gap:" + gap, gap)
+                continue
+            if model == want:
+                continue
+            out["unexpected_n"] += 1
+            first_rec = {"ts": rec.get("timestamp"), "id": model, "line": n, "expected": want}
+            if any(h in model.lower() for h in facts["helpers"]):
+                doubts.setdefault("helper", "a helper-family id in a primary record (%s, line %d)"
+                                  % (model, n))
+                continue
+            if alias is None:
+                confirm = confirm or first_rec
+            elif (model, alias, want) not in candidates:
+                # The same bound as `ids` (reviewer V-T2a, Claim 14): beyond it the read is
+                # unverified rather than growing, and an explicit confirmation still wins.
+                if len(candidates) < MODEL_CHECK_MAX_IDS:
+                    candidates[(model, alias, want)] = (t, first_rec)
+                else:
+                    doubts.setdefault("ids", "more than %d distinct ids" % MODEL_CHECK_MAX_IDS)
+    if confirm is not None:
+        out["first_unexpected"] = confirm
+        return done("confirmed-swap", "the head was served %s where %s was briefed (line %d)"
+                    % (confirm["id"], confirm["expected"], confirm["line"]))
+    for (model, alias, want), (t, rec) in sorted(candidates.items(), key=lambda kv: kv[1][0]):
+        state, why = alias_evidence(events, alias, want, model, t)
+        if state == "confirmed":
+            out["first_unexpected"] = rec
+            return done("confirmed-swap", "the head was served %s where %s (%s) was briefed, and "
+                                          "the alias still resolved so after it: %s"
+                        % (model, alias, want, why))
+        out["first_unexpected"] = out["first_unexpected"] or rec
+        doubts.setdefault("alias:" + model, why)
+    if malformed:
+        doubts.setdefault("malformed", "%d malformed record(s)" % malformed)
+    if late:
+        doubts.setdefault("late", "the read did not finish inside its %.1f s budget (%d bytes "
+                                  "read)" % (budget, out["bytes_read"]))
+    if doubts:
+        return done("unverified", "; ".join(doubts.values()))
+    if not out["primary_n"]:
+        return done("unverified", "no primary record in the window of %s" % tp)
+    return done("verified")
+
+
+def model_verdict(a, path, mc, where, what):
+    """Act on a check's verdict at a gate or boundary; the exit code when the caller must stop
+    now, else None. Unverified (both modes): one line, and the run carries on marked unverified
+    (the owner's choice of 21 October, read as the standing authorisation for unattended runs;
+    acceptance, meaning the run's own installs and his morning review, waits for him: the
+    run lead's provisional reading of 9 November 2026). A confirmed swap in trial: one
+    observation per session, nothing printed and nothing blocked (D6). In enforce: the
+    stop-condition, carrying the check, then the REFUSED line and EXIT_MODEL. A dry run
+    prints the verdict and writes nothing."""
+    verdict, reason = mc["verdict"], mc.get("reason")
+    enforced = verdict == "confirmed-swap" and MODEL_CHECK_MODE == "enforce"
+    if a.dry_run:
+        say("%s: dry run · model-check %s%s · mode %s%s" % (
+            where, verdict, " (%s)" % reason if reason else "", MODEL_CHECK_MODE,
+            " · would refuse %s (exit %d); nothing written" % (what, EXIT_MODEL)
+            if enforced else ""))
+        return 0 if enforced else None
+    if verdict == "unverified":
+        say("model-check: UNVERIFIED (%s) · carrying on marked unverified · until a later check "
+            "reads verified, the run installs none of this session's work and the close lists "
+            "it for the owner" % reason)
+        return None
+    if verdict != "confirmed-swap":
+        return None
+    first = mc.get("first_unexpected")
+    if not enforced:
+        if not mc.get("durable"):
+            append_record(path, event(
+                a.run, "observation", phase=getattr(a, "phase", None) or getattr(a, "from_", None),
+                what=MODEL_TRIAL_WHAT, session=mc["session"], first_unexpected=first,
+                note="%s, %s: %s (trial state: logged, nothing blocked)" % (where, what, reason)))
+        return None
+    append_record(path, event(
+        a.run, "stop-condition", which=MODEL_STOP_WHICH, lane="head", session=mc["session"],
+        first_unexpected=first, model_check=mc,
+        action="%s refused %s: %s" % (where, what, reason),
+        note="the run holds for the owner: no other-family head launcher exists (design-rev2 E6)"))
+    say("%s: model-check SWAP · REFUSED %s (stop-condition model, exit %d) → stop: open no item "
+        "and write no hand-off from this session; the run holds for the owner, since no "
+        "other-family head launcher exists · %s" % (where, what, EXIT_MODEL, reason))
+    return EXIT_MODEL
+
+
+def model_check_summary(events):
+    """(line, field) for the close, or (None, None) when the record carries no head-model check
+    and no completion marked done-unverified (completion_mark; a completion before any check is
+    held too): the checks' counts by verdict, and the items no later verified check of their own
+    session covers, held for the owner (the provisional reading of 9 November 2026: the run
+    installs none of them and closes none as done without him). A check reads its session's whole
+    window, so a verified check covers every completion before it; an item completed after its
+    session's last check is held as unchecked."""
+    checks = [(i, e["model_check"]) for i, e in enumerate(events)
+              if e.get("event") in ("gate", "phase-boundary", "stop-condition")
+              and isinstance(e.get("model_check"), dict)]
+    if not checks and not any(e.get("completion") == "done-unverified" for e in events):
+        return None, None
+    counts = {"verified": 0, "unverified": 0, "confirmed-swap": 0}
+    for _, mc in checks:
+        if mc.get("verdict") in counts:
+            counts[mc["verdict"]] += 1
+    held, named = [], set()
+    for j, e in enumerate(events):
+        kind = e.get("event")
+        if kind == "item-done":
+            names = [x for x in (e.get("items") or []) if isinstance(x, str)]
+        elif kind == "phase-boundary" and isinstance(e.get("from"), str):
+            names = [e["from"]]
+        else:
+            continue
+        sid = head_session(events[:j + 1])[0]
+        if not sid or supervised_start(events[:j + 1], sid) < 0:
+            continue
+        later = [mc.get("verdict") for i, mc in checks if i >= j and mc.get("session") == sid]
+        if "verified" in later:
+            continue
+        why = ("swap" if "confirmed-swap" in later else "unverified" if later
+               else "no check after it")
+        for name in names:
+            if name not in named:
+                named.add(name)
+                held.append({"item": name, "why": why})
+    field = {"verified": counts["verified"], "unverified": counts["unverified"],
+             "confirmed": counts["confirmed-swap"], "mode": MODEL_CHECK_MODE, "held": held}
+    line = "close: model checks: %d verified, %d unverified, %d confirmed swap(s)%s · held for " \
+           "the owner: %s" % (
+               counts["verified"], counts["unverified"], counts["confirmed-swap"],
+               " (trial state: logged, none blocked)" if MODEL_CHECK_MODE != "enforce" else "",
+               ", ".join("%s (%s)" % (h["item"], h["why"]) for h in held) or "none")
+    return line, field
+
+
+def completion_mark(events, mc=None):
+    """The fields a completion recorded now carries (DW-20261021-1; reviewer V-T2a, Fold H1), or
+    {} where the head-model check does not apply (no head session, or an attended one). `mc` is
+    the caller's own check (a boundary's); else the latest check of the head's session on the
+    record decides. Verified: `completion` done. Anything else, an unverified check, a confirmed
+    swap, or no check of the session yet (the cannot-decide case): `completion` done-unverified
+    with its `completion_why`. The console and the close count a completion no later verified
+    check of its session covers as held for the owner, never as done (model_check_summary's
+    rule), and the close itself still runs. The run lead's provisional acceptance reading of 9
+    November 2026: execution carries on, and nothing is accepted as done without the owner."""
+    if mc is not None:
+        sid, verdict = mc.get("session"), mc.get("verdict")
+    else:
+        sid = head_session(events)[0]
+        if not sid or supervised_start(events, sid) < 0:
+            return {}
+        verdicts = [e["model_check"].get("verdict") for e in events
+                    if e.get("event") in ("gate", "phase-boundary", "stop-condition")
+                    and isinstance(e.get("model_check"), dict)
+                    and e["model_check"].get("session") == sid]
+        verdict = verdicts[-1] if verdicts else None
+    if verdict == "verified":
+        return {"completion": "done", "completion_session": sid}
+    why = "swap" if verdict == "confirmed-swap" else "unverified" if verdict else \
+        "no check before it"
+    return {"completion": "done-unverified", "completion_session": sid, "completion_why": why}
+
+
+def cmd_release_model_stop(a):
+    """`release-model-stop --run R --session SID --reason TEXT`: the owner's release of a model
+    stop, from a shell outside the run's head (inside_head refuses it there, exit 2). It writes
+    one observation naming the session; a fresh session may then start on the briefed model,
+    and the stopped session itself is never resumed (design-rev2 E6). Who may release, and
+    whether a decisions-file line must name the incident too, is his question (Q3)."""
+    path = record_path(a.run)
+    events = require_record(path)
+    inside = inside_head(events)
+    if inside:
+        die("release-model-stop is refused inside the run's head (%s): a session never releases "
+            "its own stop; nothing written" % inside)
+    if not model_stops(events, a.session):
+        die("no model stop names session %s on %s: nothing to release; nothing written"
+            % (a.session, path))
+    reason = one_line(a.reason or "").strip()
+    if not reason:
+        die("--reason is empty: a release records why; nothing written")
+    ev = event(a.run, "observation", what=MODEL_RELEASE_WHAT, session=a.session, note=reason)
+    if a.dry_run:
+        say("release-model-stop: dry run · %s" % json.dumps(ev, ensure_ascii=False))
+        return 0
+    append_record(path, ev)
+    say("release-model-stop: session %s released on %s (%s): a fresh session may start on the "
+        "briefed model; the stopped session is never resumed" % (a.session, a.run, reason))
+    return 0
 
 
 def resolve_head_model(events, explicit=None):
@@ -8594,7 +9450,7 @@ def stop_class(events, start, out, offset, rc, transcript):
 def head_context(sid, events, start):
     """The head's context for the resume decision: its transcript through measure_head, else
     the last gate event of its session (the fallback D30 names), else unmetered."""
-    m = measure_head(sid)
+    m = measure_head(sid, events)
     if m.get("context") is not None:
         m["source"] = "transcript"
         return m
@@ -8666,6 +9522,227 @@ def run_on_limit(events, run):
     return value, src, path
 
 
+def run_limit_policy(events, run):
+    """The run's three limit settings, each with its source, from the grants file the head fence
+    and the status hook read (limit policy 1): `on_limit` (Claude's 5-hour action) as on_limit_of
+    reads it, so a file without the key reads stop; `claude_week_limit`; and the effective GPT
+    credits approval (usage_windows.credits_effective, the rule codex-lane.py reads too). A file
+    without `limit_policy_version` (a run opened before limit policy 1, or no file at all) reads
+    its on_limit, else stop, with stop and false for the two later keys."""
+    uw = import_usage_windows()
+    # on_limit through run_on_limit, the gate's one reader of the grants path (D42), so the
+    # 5-hour action and its source are read exactly as before this policy.
+    on_limit, osrc, path = run_on_limit(events, run)
+    path = path or grants_path(run)
+    payload = read_grants(path)
+    if payload.get("limit_policy_version") != LIMIT_POLICY_VERSION:
+        why = ("default (no grants file)" if not payload
+               else "default (no limit_policy_version: a run opened before limit policy %d)"
+               % LIMIT_POLICY_VERSION)
+        week, wsrc, gpt, gsrc = CLAUDE_WEEK_DEFAULT, why, False, why
+    else:
+        week = payload.get("claude_week_limit")
+        if week in CLAUDE_WEEK_VALUES:
+            wsrc = "grants"
+        else:
+            wsrc = ("default (key absent)" if week is None
+                    else "default (unknown value %r)" % (week,))
+            week = CLAUDE_WEEK_DEFAULT
+        gpt, gsrc = uw.credits_effective(payload, events)
+    return {"on_limit": on_limit, "on_limit_src": osrc, "claude_week_limit": week,
+            "claude_week_limit_src": wsrc, "gpt_credits_approved": gpt,
+            "gpt_credits_approved_src": gsrc, "grants_file": path}
+
+
+def policy_fields(policy):
+    """The policy as a stop-condition's or an observation's fields."""
+    return {k: policy[k] for k in ("on_limit", "on_limit_src", "claude_week_limit",
+                                   "claude_week_limit_src", "gpt_credits_approved",
+                                   "gpt_credits_approved_src", "grants_file")}
+
+
+def claude_limit_window(text):
+    """(window, source) from Claude's native stop text, case-insensitive on whole words:
+    `week`, `weekly`, `7-day` or `7-days` is the weekly window, `session`, `5-hour` or `5-hours`
+    the short one, and where both appear the weekly window wins; (None, why) for a text naming
+    neither. The reset's nearness never enters it: a weekly reset can be seconds away."""
+    m = CLAUDE_WEEK_RE.search(text or "")
+    if m:
+        return "week", "stop text (%r)" % m.group(0)
+    m = CLAUDE_SHORT_RE.search(text or "")
+    if m:
+        return "short", "stop text (%r)" % m.group(0)
+    return None, "the stop text names neither window"
+
+
+def usage_json(only):
+    """One limit-policy reading through the sibling read-usage.py --format json, under the 15 s
+    outer bound of usage_windows' one runner: (object or None, reason, elapsed seconds)."""
+    return import_usage_windows().read_json(HERE, only, warn=note)
+
+
+def figure_of_window(w):
+    if not isinstance(w, dict) or w.get("status") != "measured":
+        return None
+    used = w.get("used_pct")
+    return used if isinstance(used, (int, float)) and not isinstance(used, bool) else None
+
+
+def claude_window_reading():
+    """(window, source, reading) for a Claude stop whose text names neither window: ONE reading
+    of Claude's windows. A measured week of 100 % or more is the weekly window; a measured
+    5-hour window of 100 % or more beside a measured week under 100 % is the short one; anything
+    else is unknown (None) with its reason. On an account that shows no 5-hour window only the
+    weekly case can settle. The reading classifies the stop only: its reset never replaces the
+    stop text's."""
+    obj, reason, elapsed = usage_json("claude")
+    if obj is None:
+        return None, "unknown: the Claude reading failed (%s)" % reason, {"error": reason,
+                                                                          "elapsed_s": elapsed}
+    wins = obj["windows"]
+    five, week = figure_of_window(wins.get("claude_5h")), figure_of_window(wins.get("claude_week"))
+    reading = {"claude_5h": five, "claude_week": week, "elapsed_s": elapsed,
+               "reasons": {k: (wins.get(k) or {}).get("reason") for k in ("claude_5h", "claude_week")}}
+    if week is not None and week >= 100:
+        return "week", "reading: claude_week %s %%" % week, reading
+    if five is not None and five >= 100 and week is not None and week < 100:
+        return "short", "reading: claude_5h %s %%, claude_week %s %%" % (five, week), reading
+    return None, ("unknown: the reading names neither window exhausted (claude_5h %s, "
+                  "claude_week %s)" % ("%s %%" % five if five is not None else "unmeasured",
+                                       "%s %%" % week if week is not None else "unmeasured")), reading
+
+
+def open_codex_lanes(events):
+    return [lane for lane, opened, _ in open_lane_attempts(events) if lane_harness(opened) == "codex"]
+
+
+def kill_codex_lanes(run, lanes, reason):
+    """`codex-lane.py kill --run R --lane L --reason ...` for every lane together, bounded at
+    KILL_BATCH_S plus KILL_BATCH_GRACE_S: the wrapper checks identity, records the stop and lets
+    A3 close the pass as an explicit stop. Nothing here signals a lane's pid; a kill command past
+    the bound has its own process group ended. Returns [{lane, exit}]."""
+    wrapper = beat_wrapper("codex")
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", AIMYTH_VIEWER="none")
+    started, out = [], []
+    for lane in lanes:
+        try:
+            proc = subprocess.Popen([sys.executable, "-B", wrapper, "kill", "--run", run,
+                                     "--lane", lane, "--reason", reason],
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, env=env, start_new_session=True)
+            started.append((lane, proc))
+        except OSError as exc:
+            out.append({"lane": lane, "exit": None, "error": str(exc)})
+    deadline = time.monotonic() + KILL_BATCH_S + KILL_BATCH_GRACE_S
+    while any(p.poll() is None for _, p in started) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    for lane, proc in started:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)   # the kill command's own group, never the lane's
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            out.append({"lane": lane, "exit": None, "error": "the kill command passed its %d s bound"
+                        % (KILL_BATCH_S + KILL_BATCH_GRACE_S)})
+        else:
+            out.append({"lane": lane, "exit": proc.returncode})
+    return out
+
+
+def gpt_stop_decision(run, policy, targets, verdict, figure, where):
+    """The supervisor's GPT stop of open Codex lanes at a stand-down (N19), under
+    usage_windows.GPT_STOP_MODE and its one stop rule, gpt_stop_action, which each Codex lane's
+    own watch applies too. Where the rule says stop and lanes are open: the lanes are stopped
+    through codex-lane.py kill; where it says would_stop (trial), no kill is sent and the lanes
+    are returned as would_stop. Returns (mode, kills, would_stop, what)."""
+    uw = import_usage_windows()
+    mode = uw.GPT_STOP_MODE
+    kills, would = [], []
+    action, what = uw.gpt_stop_action(verdict, policy["gpt_credits_approved"], mode)
+    if action in ("stop", "would_stop") and not targets:
+        what = "no open Codex lane: nothing to stop"
+    elif action == "stop":
+        kills = kill_codex_lanes(run, targets, "GPT's weekly window reads %s %% and the run's "
+                                 "pre-flight approves no credits (N19): stopped %s"
+                                 % (figure, where))
+        what = "stopped through codex-lane.py kill"
+    elif action == "would_stop":
+        would = list(targets)
+        what = "would stop (trial state): no kill sent"
+    return mode, kills, would, what
+
+
+def codex_lanes_watched(events, lanes):
+    """The lanes of `lanes` whose latest attempt's lane-spawned or lane-respawned (after its
+    latest lane-open or lane-resumed) carries `gpt_watch.armed: true`: lanes whose own wrapper
+    reads GPT's week while they run. A lane started by a wrapper from before the watch has no
+    `gpt_watch` on its spawn line and is not listed."""
+    want = set(lanes)
+    out = []
+    for lane, _, spawned in open_lane_attempts(events):
+        watch = (spawned or {}).get("gpt_watch")
+        if lane in want and isinstance(watch, dict) and watch.get("armed") is True:
+            out.append(lane)
+    return out
+
+
+def check_gpt_at_stand_down(path, run):
+    """GPT's week read once at a stand-down (critic CR-T2b finding 1), while any Codex lane is
+    open: no supervisor is left after it. With no Codex lane open nothing is read and {} is
+    returned. Otherwise ONE reading, the record read again after it, and the stop rule under
+    usage_windows.GPT_STOP_MODE (gpt_stop_decision). The lane list is re-read, never carried
+    (review V-T2b, Claim 12): `codex_lanes_open` is the record's list after the reading, with no
+    fallback (empty where every lane closed during it), and after a kill batch the record is read
+    once more, so the list is the lanes still open after any stop; `codex_lanes_open_before`
+    (only where it differs) is the list read before the reading, `codex_lanes_stopped` the lanes
+    the kills closed, and `codex_lanes_watched` the listed lanes whose own GPT watch is armed. It
+    never blocks the stand-down: any failure is recorded with the last list read and its source,
+    and the stand-down goes on."""
+    t0 = time.monotonic()
+    before, targets = [], []
+    try:
+        events, _ = read_record(path)
+        before = targets = open_codex_lanes(events)
+        if not before:
+            return {}
+        obj, reason, elapsed = usage_json("astra")
+        events, _ = read_record(path)
+        policy = run_limit_policy(events, run)
+        targets = open_codex_lanes(events)
+        verdict, figure, evidence = import_usage_windows().gpt_verdict(obj)
+        reason = reason or ((((obj or {}).get("windows") or {}).get("gpt_week") or {}).get("reason"))
+        mode, kills, would, what = gpt_stop_decision(run, policy, targets, verdict, figure,
+                                                     "at the supervisor's stand-down")
+        after = targets
+        if kills:
+            events, _ = read_record(path)
+            after = open_codex_lanes(events)
+        out = {"codex_lanes_open": after,
+               "codex_lanes_watched": codex_lanes_watched(events, after),
+               "gpt_at_stand_down": {"verdict": verdict, "figure": figure, "reason": reason,
+                                     "evidence": evidence, "elapsed_s": elapsed, "mode": mode,
+                                     "kills": kills, "would_stop": would, "note": what,
+                                     "gpt_credits_approved": policy["gpt_credits_approved"],
+                                     "gpt_credits_approved_src": policy["gpt_credits_approved_src"],
+                                     "total_s": round(time.monotonic() - t0, 2)}}
+        if after != before:
+            out["codex_lanes_open_before"] = before
+        if kills:
+            out["codex_lanes_stopped"] = [lane for lane in targets if lane not in after]
+        return out
+    except (Exception, SystemExit) as exc:   # a stand-down is never blocked by this check
+        out = {"gpt_at_stand_down": {"verdict": "error", "reason": "%s: %s" % (
+            type(exc).__name__, exc), "total_s": round(time.monotonic() - t0, 2)}}
+        if targets:
+            out["codex_lanes_open"] = targets
+            out["codex_lanes_open_src"] = "read before the check failed: %s" % type(exc).__name__
+        return out
+
+
 class StandDown(object):
     """The limit wait's stand-down watch (D43): the head transcript's byte size and mtime,
     baselined AFTER the stop is classified (so the harness's own stop record sits inside the
@@ -8725,9 +9802,21 @@ def stand_down(path, run, reason, detail, on_limit, src, waited):
         ended = 0
         say("supervisor: the open holds could not be ended at the stand-down (%s: %s); they stay "
             "open on the record" % (type(exc).__name__, exc))
+    # The GPT check once at the stand-down, while a Codex lane is open (limit policy 1; critic
+    # CR-T2b finding 1): it lists the lanes left running and never blocks the stand-down.
+    gpt = check_gpt_at_stand_down(path, run)
     append_record(path, event(run, "supervisor-stood-down", reason=reason, on_limit=on_limit,
                               on_limit_src=src, waited_s=round(waited), note=detail,
-                              holds_ended=ended))
+                              holds_ended=ended, **gpt))
+    if gpt.get("codex_lanes_open") or gpt.get("codex_lanes_stopped"):
+        g = gpt.get("gpt_at_stand_down") or {}
+        say("supervisor: %d Codex lane(s) still open after the GPT reading, with no supervisor "
+            "(%s)%s · gpt week %s%s · %s"
+            % (len(gpt.get("codex_lanes_open") or []), ", ".join(gpt.get("codex_lanes_open") or [])
+               or "none", " · stopped %s" % ", ".join(gpt["codex_lanes_stopped"])
+               if gpt.get("codex_lanes_stopped") else "",
+               g.get("verdict"), " %s %%" % g["figure"] if g.get("figure") is not None else "",
+               g.get("note") or g.get("reason") or ""))
     say("supervisor: stood down (%s) — %s; the hand-off is the recovery%s"
         % (reason, detail, " (%d hold(s) ended)" % ended if ended else ""))
     return 0
@@ -8978,9 +10067,13 @@ def wait_for_reset(a, path, start, text, stopped_at, watch=None):
             "CLAUDE_CONFIG_DIR=%s" % a.config_dir if a.config_dir else "the same login")
     extra = ({"watch": watch.label(), "on_limit": watch.on_limit, "on_limit_src": watch.src}
              if watch is not None else {"watch": "unwatched (hand-run wait)"})
+    if watch is not None and getattr(watch, "window", None):
+        extra.update(window=watch.window, window_src=getattr(watch, "window_src", None))
     append_record(path, event(a.run, "stop-condition", which="limit", lane="head",
                               action=plan, note=one_line(text or "")[:NOTE_CUT], **extra))
     say("supervisor: limit — %s" % plan)
+    # The wait takes no GPT reading: each open Codex lane's own watch reads GPT's week while it
+    # runs (codex-lane.py Runner; line 2's replacement retired the per-tick check here).
 
     def closed():
         events, _ = read_record(path)
@@ -9035,8 +10128,10 @@ RESUME_NOTE = (
     "Before anything else run tail -8 on the run record and git status --short; then continue "
     "the item in flight from your own context. The hand-off document may be older than your "
     "last action: trust the record and your context, and refresh the hand-off at the next "
-    "boundary.\nLanes closed with exit class limit: resume each with lane.py resume before "
-    "anything else in that item, subject to D29 and lane.py advise. For a network close, check "
+    "boundary.\nLanes: resume each Claude lane (lane.py) that closed with exit class limit after "
+    "this head's last start before the stop, with lane.py resume, before anything else in that "
+    "item, subject to D29 and lane.py advise. A Codex lane's limit close is not resumed by this "
+    "note: it follows the GPT weekly rule. For a network close, check "
     "the saved work, then use lane.py advise: resume is the default; "
     "a fresh start is the head's judgement. Stop after two consecutive resumes with no new "
     "work while the provider answers; unreadable progress neither advances nor resets that count.\n")
@@ -9056,6 +10151,14 @@ def resume_head(a, path, sid, budget, bsrc, out, m, cls, waited, source, stopped
         else:
             abort(path, a.run, reason, detail)
 
+    # The head-model latch (DW-20261021-1), here because the supervisor's resume and
+    # `resume-head` both come through this function: in enforce mode a session with a model stop
+    # is never resumed, released or not (design-rev2 E6: never `--resume` of the affected
+    # conversation; a release starts a fresh session).
+    if MODEL_CHECK_MODE == "enforce" and model_stops(read_record(path)[0], sid):
+        refused("model-stop", "session %s carries a confirmed head-model swap: it is never "
+                              "resumed; the run holds for the owner" % sid)
+        return None
     if cls == "network":
         opening = ("RESUMED after a network failure; the API answers again (%s).\n"
                    "Read and check the unfinished work on disk before continuing.\n" % source)
@@ -9401,9 +10504,9 @@ def stop_pairs(cls, events=None, stop_i=None, pid=None):
     An unreadable exit pid or owner cannot prove pairing either. Without events this answers
     only the class rule, for callers inspecting the class list. Accepted residual: packed
     hand-overs without boundaries no longer pair; repeat-exit bounds such a chain where its
-    exits name one item at band 80 or 90, otherwise the successor cap and the envelope alone
-    bound it. Re-allowed work with multiple unfinished items or a refusal on an item never
-    allowed in the window can evade both repeat-exit rules."""
+    exits name one item at band 80 or 90, otherwise the envelope, and a successor limit where the
+    run set one, alone bound it. Re-allowed work with multiple unfinished items or a refusal on an
+    item never allowed in the window can evade both repeat-exit rules."""
     if cls == "network":
         return False
     if cls == "unsucceeded" and events is not None:
@@ -10357,13 +11460,13 @@ def supervise_loop(a, path, sid, proc, pid, out, offset, start, t0):
                               on_limit, osrc, time.time() - stopped_at)
         if cls == "classifier-missing":
             return abort(path, a.run, "classifier-missing", d["note"])
-        # Two stops in a row whose heads each made no progress end the loop, the successor cap
-        # being only the backstop (the repeat-stop design of 2026-10-11, Revision 2, after its
-        # design review): this stop and the previous recorded one both pair (stop_pairs, any mix
+        # Two stops in a row whose heads each made no progress end the loop, a successor limit,
+        # where a run sets one, being only the backstop (the repeat-stop design of 2026-10-11,
+        # Revision 2, after its design review): this stop and the previous recorded one both pair (stop_pairs, any mix
         # of classes; the previous one not stood down) and both read `progress: no`, a boundary by
         # neither head's own process. A head that recorded a boundary breaks the pair; `unknown`
         # on either side — and an observation written before the field existed reads unknown —
-        # leaves the start to the successor cap and the stop marker. An abort and a restart
+        # leaves the start to any successor limit and the stop marker. An abort and a restart
         # between the two reset nothing: a restarted head breaks the pair with a boundary.
         # An unsucceeded head's own packed exit also breaks the pair: its hand-over is on the
         # record, and the wait above already covered its missing successor call.
@@ -10412,17 +11515,52 @@ def supervise_loop(a, path, sid, proc, pid, out, offset, start, t0):
                 return abort(path, a.run, "network-no-progress",
                              "two network resumes did no new work while the provider answered")
         if cls == "limit":
-            on_limit, osrc, gpath = run_on_limit(events, a.run)
-            if on_limit != "resume":   # the gate's default (D42): stand down, no wait
+            # The limit policy (limit policy 1): on_limit governs Claude's 5-hour window alone,
+            # the weekly window has its own key, and the stop text is classified before any act.
+            policy = run_limit_policy(events, a.run)
+            on_limit, osrc, gpath = policy["on_limit"], policy["on_limit_src"], policy["grants_file"]
+            text = d["text"] or ""
+            window, wsrc, reading = None, None, None
+            if model_limit(text) is None:
+                # A model-scoped stop keeps its path unchanged: no classification, no reading.
+                window, wsrc = claude_limit_window(text)
+                if window is None:
+                    window, wsrc, reading = claude_window_reading()
+                fields = dict(policy_fields(policy), window=window or "unknown", window_src=wsrc,
+                              note=one_line(text)[:NOTE_CUT])
+                if reading is not None:
+                    fields["reading"] = reading
+                if window is None:
+                    append_record(path, event(a.run, "stop-condition", which="limit", lane="head",
+                                              action="stand-down: limit-unclassified", **fields))
+                    say("supervisor: limit — the stop names neither of Claude's windows and the "
+                        "reading does not settle it (%s): no wait, no resume" % wsrc)
+                    return stand_down(path, a.run, "limit-unclassified",
+                                      "the limit stop could not be classified (%s): the limit "
+                                      "ends this run's supervision" % wsrc, on_limit, osrc, 0.0)
+                if window == "week" and policy["claude_week_limit"] != "wait":
+                    append_record(path, event(a.run, "stop-condition", which="limit", lane="head",
+                                              action="stand-down: claude_week_limit stop",
+                                              **fields))
+                    say("supervisor: limit — Claude's weekly window (%s), claude_week_limit stop "
+                        "(%s): no wait, no resume" % (wsrc, policy["claude_week_limit_src"]))
+                    return stand_down(path, a.run, "limit-weekly",
+                                      "Claude's weekly limit (%s), claude_week_limit stop (%s): "
+                                      "the limit ends this run's supervision"
+                                      % (wsrc, policy["claude_week_limit_src"]),
+                                      on_limit, osrc, 0.0)
+            if window != "week" and on_limit != "resume":   # the 5-hour action: stand down, no wait
+                extra = {"window": window, "window_src": wsrc} if window else {}
                 append_record(path, event(a.run, "stop-condition", which="limit", lane="head",
                                           action="stand-down: on_limit stop", on_limit=on_limit,
                                           on_limit_src=osrc, grants_file=gpath,
-                                          note=one_line(d["text"] or "")[:NOTE_CUT]))
+                                          note=one_line(text)[:NOTE_CUT], **extra))
                 say("supervisor: limit — on_limit stop (%s): no wait, no resume" % osrc)
                 return stand_down(path, a.run, "limit-stop",
                                   "on_limit stop (%s): the limit ends this run's supervision"
                                   % osrc, on_limit, osrc, 0.0)
             watch = StandDown(a.run, transcript_for(sid) if sid else None, on_limit, osrc)
+            watch.window, watch.window_src = window, wsrc   # copied onto the wait's stop-condition
             status, source, waited = wait_for_reset(a, path, start, d["text"], stopped_at,
                                                     watch)
             if status == "stood-down":
@@ -10787,8 +11925,8 @@ def cmd_grants(a):
     name is carried from the file; --add-grant and --add-write add to the baseline's lists; and
     the shrink guard refuses any rewrite that would lose a path from either list unless the call
     passes --replace (register entries 2026-09-12 21:3x and 2026-09-29 20:49). --network rewrites
-    the network key and --max-successors the run's successor cap; without them the file's values
-    are carried."""
+    the network key and --max-successors the run's successor limit (`none` clears it); without them
+    the file's values are carried."""
     refuse_grants_file(a)
     check_grant_forms(a, "grants")
     path = record_path(a.run)
@@ -10809,8 +11947,12 @@ def cmd_grants(a):
                    writes=payload["writes"], session=sid, on_limit=on_limit, on_limit_src=osrc,
                    viewer=viewer, viewer_src=vsrc, network=network, network_src=nsrc,
                    grants_src=sources["grants"], writes_src=sources["writes"])
-        if cap is not None:
-            ev["max_successors"], ev["max_successors_src"] = cap, csrc
+        record_limit_choice(ev, cap, csrc)
+        if getattr(a, "gpt_credits_approved", None) == "no":
+            # The one way an approval changes after run-open: it is lowered, never raised (N4).
+            payload["gpt_credits_approved"] = False
+            ev["gpt_credits_approved"], ev["gpt_credits_approved_src"] = (
+                False, "--gpt-credits-approved no")
         return payload, sources, ev
 
     if a.dry_run:
@@ -10827,12 +11969,13 @@ def cmd_grants(a):
         write_pointer(a.run, sid)
         append_record(path, ev)
     say("grants: %s · %d grants (%s) · %d writes (%s) · on_limit %s (%s) · viewer %s (%s) · "
-        "network %s (%s)%s · pointer run-%s"
+        "network %s (%s)%s%s · pointer run-%s"
         % (ev["grants_file"], len(payload["grants"]), sources["grants"], len(payload["writes"]),
            sources["writes"], ev["on_limit"], ev["on_limit_src"], ev["viewer"],
            ev["viewer_src"], network_shown(ev["network"]), ev["network_src"],
-           " · max_successors %d (%s)" % (ev["max_successors"], ev["max_successors_src"])
-           if "max_successors" in ev else "", sid[:8]))
+           max_successors_shown(ev),
+           " · gpt_credits_approved false (--gpt-credits-approved no)"
+           if "gpt_credits_approved" in ev else "", sid[:8]))
     return 0
 
 
@@ -11085,7 +12228,7 @@ def report_stops_text(events):
         ": " + "; ".join(lanes) if lanes else "")
 
 
-def patch_report(text, events, meter):
+def patch_report(text, events, meter, windows=None):
     """(text, changed keys, problems) for the run report page (register entry 2026-09-10 17:43).
     One
     bullet under the page's first `## Spend…` heading carries the close's billed line and one
@@ -11123,6 +12266,13 @@ def patch_report(text, events, meter):
                 block = block + [""]        # and the next heading keeps its blank line
             lines[j:j] = block
         changed.append(key)
+    # The window meter's owned Spend bullets (package A2): readings and deltas only, replaced in
+    # place on a re-render, and one line per stand-down that left Codex lanes running (critic
+    # CR-T2b finding 1); no comparison or estimate reaches the report.
+    if windows:
+        i = heading_index(lines, REPORT_SPEND_HEADING)
+        if i >= 0:
+            changed += import_usage_windows().place_bullets(lines, i, section_end(lines, i), windows)
     return "\n".join(lines), changed, problems
 
 
@@ -11378,6 +12528,10 @@ def cmd_close(a):
         return close_plain(a, path, events, acked, seen)
     ro = run_open(events)
     ho = handoff_of(events, a.handoff)
+    # The window meter's close reading (package A2) starts before the dollar work and runs
+    # beside it; a dry run starts none.
+    usage_windows = import_usage_windows()
+    usage = None if a.dry_run else usage_windows.UsageRead(HERE).start()
     meter = meter_line(events, a.run, a.meter_line)
     report = None
     if a.report is not None:
@@ -11417,6 +12571,11 @@ def cmd_close(a):
         ev["parity"] = a.parity
     if per_item:
         ev["head_context_per_item"] = per_item
+    # The head-model checks' summary (DW-20261021-1): how "marked unverified" reaches the
+    # morning report, with the items held for the owner.
+    model_line, model_field = model_check_summary(events)
+    if model_field is not None:
+        ev["model_checks"] = model_field
     unresolved = items_unresolved(events)
     if unresolved:
         ev["items_unresolved"] = [item for item, _ in unresolved]
@@ -11424,13 +12583,48 @@ def cmd_close(a):
             "unresolved: %s. This close converts none: run `item-done <item>` first for each one "
             "that finished" % (len(unresolved), ", ".join(
                 "%s (started %s)" % row for row in unresolved)))
-    refreshed = refresh_figures(lines, ro, meter, run_text=run_spend_short(spend, envelope))
+    # The close reading joined after the dollar work. Its cutoff is the record's byte length,
+    # taken under the record lock; every close row is computed outside the lock from that prefix,
+    # and a line written after it is outside coverage (package A2). The comparisons, estimates
+    # and measured rates sit on run-close alone; a dry run shows readings and coverage only.
+    if usage is None:
+        ev.update(usage_windows.dry_run_reading())
+        ev["usage_coverage"] = usage_windows.coverage_only(
+            usage_windows.close_accounting(events, ro.get("usage_plan")))
+        windows = usage_windows.render_windows(events)
+        report_windows = windows + usage_windows.stand_down_bullets(events)
+    else:
+        reading = usage.join()
+        with record_lock(path):
+            cutoff = os.path.getsize(path)
+        with open(path, "rb") as handle:
+            data = handle.read(cutoff)
+        prefix = []
+        for raw in data.decode("utf-8", "replace").split("\n"):
+            try:
+                row = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and (row.get("event") != "lane-closed"
+                                          or a3_shared().a3_close_valid(row)):
+                prefix.append(row)
+        delta = usage_windows.sample_delta(usage_windows.previous_reading(prefix), reading)
+        ev.update(usage_reading=reading, usage_delta=delta, usage_cutoff_bytes=cutoff)
+        ev.update(usage_windows.close_accounting(prefix, ro.get("usage_plan"), reading, delta))
+        windows = usage_windows.render_windows(prefix + [ev])
+        report_windows = windows + usage_windows.stand_down_bullets(prefix)
+    # The run's backstop in points of the Claude week at the rate the record carries (decision
+    # E3): the owner's line reads points, never dollars; the dollars stay in this machine field.
+    backstop_text, ev["usage_backstop"] = usage_windows.backstop(
+        events, envelope, spend["usd"] if spend["measured"] else None, spend["floor"])
+    refreshed = refresh_figures(lines, ro, meter, run_text=run_spend_short(spend, envelope),
+                                windows=windows)
     report_text, report_changed, report_problems = None, [], []
     if report is not None:
         # The close's re-read (register entry 2026-09-10 17:43): the record as it stands at the
         # close, after the head wrote the report, and this close's own meter line.
         report_text, report_changed, report_problems = patch_report(
-            read_text(report, "run report"), events, meter)
+            read_text(report, "run report"), events, meter, windows=report_windows)
         ev["report"] = report
         ev["report_patched"] = report_changed
         if report_problems:
@@ -11459,7 +12653,11 @@ def cmd_close(a):
     if a.push:
         ev["push"] = push(vault_root())
     ev["holds_ended"] = end_open_holds(path, a.run, events, "close")   # every open hold ends first
-    append_record(path, ev)
+    with record_lock(path):
+        # The predecessor is the record's last reading as it stands at commit (package A2).
+        ev["usage_delta"] = usage_windows.sample_delta(
+            usage_windows.previous_reading(read_record(path)[0]), ev["usage_reading"])
+        append_record(path, ev)
     try:
         write_atomic(heartbeat_files(a.run)[1], now() + "\n")   # an armed heartbeat ends (D32)
         write_atomic(supervisor_stop_file(a.run), now() + "\n")  # a sleeping supervisor ends (D43)
@@ -11470,8 +12668,11 @@ def cmd_close(a):
         " · commit %s" % ev["commit"] if "commit" in ev else "",
         " · push %s" % ev["push"] if "push" in ev else "",
         "" if refreshed else " · morning report NOT refreshed (section missing)"))
+    if model_line:
+        say(model_line)
     say("meter: %s" % meter)
     say("run spend: %s" % run_spend_line(spend, envelope))
+    say(usage_windows.summary_line(ev["usage_reading"], ev["usage_delta"], backstop_text))
     say("decisions: %s" % ("the decisions file as read at the call (sha256 %s…, %d byte(s)) "
                            "unchanged at the cutoff %s; what arrives after it is not covered by "
                            "this close" % (fields["decisions_digest"][:12],
@@ -12346,10 +13547,24 @@ CROSS_SESSION_RE = re.compile(r"^\s*<(?:cross-session-message|session_message)\b
 CROSS_SESSION_SPAN_RE = re.compile(
     r"<(cross-session-message|session_message)\b.*?</\1>"
     r"(?:\s*Replying is optional\. If a response is needed, call \w+ with this session_id\.)?", re.S)
+# The relay listing (register entry 2026-11-07 02:23: relays that carried the owner's words were
+# dropped, so a close listed none of them). It reads only the opening tag of a record that
+# CROSS_SESSION_RE already matches, for its `from` attribute in either quote; it classifies
+# nothing, so no record's reading as the owner's changes (the relay change stopped on 12 November
+# 2026 had cut spans out of his records and misread his words three times).
+RELAY_TAG_RE = re.compile(r"^\s*<(?:cross-session-message|session_message)\b([^>]*)>")
+RELAY_FROM_RE = re.compile(r"""\bfrom\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+# The sender's readable name beside its `from`, which for a Claude Code relay is a socket path
+# (finding L3 of the review of 2026-11-14): listed as `name (from)` where the tag names both.
+RELAY_NAME_RE = re.compile(r"""\bfrom-name\s*=\s*(?:"([^"]*)"|'([^']*)')""")
+NO_SENDER = "(no sender named)"
 # The harness's compaction summary: a user record carrying the earlier context the harness wrote
 # itself, never a human turn (register entry 2026-09-13 03:53, the recurrence of 2026-10-02).
 COMPACT_SUMMARY_RE = re.compile(r"^\s*This session is being continued from a previous "
                                 r"conversation")
+# The extraction's stand-in for a human turn whose record holds no text block (an image alone):
+# never the owner's words, so the decisions file writes a note under that turn's heading instead.
+NO_TEXT_TURN = "(this record carries no text content)"
 
 
 # An assistant record's tool calls carried into the extraction (register entry 2026-09-07): the
@@ -12456,6 +13671,73 @@ def owner_text(text, extra):
     return "owner", left, left != text.strip()
 
 
+def owner_cuts(text):
+    """The kinds of harness text owner_text cuts from a record's text it reads as the owner's,
+    found with its own patterns in its own order: `reminder`, `notification` (a closed task
+    notification span) and `interrupt`. A relayed message cut from the opening is not among them:
+    its record is named by the relay listing, and the decisions file marks its turn."""
+    kinds = []
+    if REMINDER_RE.search(text):
+        kinds.append("reminder")
+    rest = REMINDER_RE.sub("", text)
+    if NOTIFICATION_SPAN_RE.search(rest):
+        kinds.append("notification")
+    left = NOTIFICATION_SPAN_RE.sub("", rest).strip()
+    if CROSS_SESSION_RE.match(left):
+        left = CROSS_SESSION_SPAN_RE.sub("", left).strip()
+    if INTERRUPT_ANY_RE.search(left):
+        kinds.append("interrupt")
+    return kinds
+
+
+def block_changes(lane, blocks):
+    """What turn_text does to a record's blocks on the way to its words: `joined` (two or more
+    text blocks joined by a space), `non_text` (a block of another kind beside them, an image or a
+    document, left out; a tool result is named apart) and `trimmed` (white space cut from the
+    joined text's ends). [] for a record with no text block, whose turn says it has none."""
+    texts = [lane.block_text(b) for b in blocks if b.get("type") == "text"]
+    if not texts:
+        return []
+    kinds = ["joined"] if len(texts) > 1 else []
+    if any(b.get("type") not in ("text", "tool_result") for b in blocks):
+        kinds.append("non_text")
+    joined = " ".join(texts)
+    if joined != joined.strip():
+        kinds.append("trimmed")
+    return kinds
+
+
+def relay_attribute(pattern, attributes):
+    """One attribute of a relay's opening tag (`pattern`, in either quote), unescaped and on one
+    line: every run of white space in it, every line break str.splitlines() knows among them,
+    joined to one space, so a sender cannot end the listing's heading line and open a turn heading
+    of its own (finding M1 of the review of 2026-11-14). "" where the tag does not name it."""
+    found = pattern.search(attributes)
+    if not found:
+        return ""
+    value = found.group(1) if found.group(1) is not None else found.group(2)
+    return " ".join(html.unescape(value).split())
+
+
+def relay_opening(text):
+    """(True, sender) when a record's text, with its system reminders and closed task-notification
+    spans cut as owner_text cuts them, opens with a relay tag (CROSS_SESSION_RE, anchored), else
+    (False, None). The sender is the opening tag's `from` attribute (relay_attribute), read as
+    `name (from)` where the tag also names a `from-name`, or NO_SENDER where the tag names no
+    `from`, names an empty one or is not closed (a `from-name` alone changes nothing). A reading
+    for the listing alone: owner_text's verdict on the same record is the extractor's, unchanged."""
+    left = NOTIFICATION_SPAN_RE.sub("", REMINDER_RE.sub("", text)).strip()
+    if not CROSS_SESSION_RE.match(left):
+        return False, None
+    tag = RELAY_TAG_RE.match(left)
+    attributes = tag.group(1) if tag else ""
+    sender = relay_attribute(RELAY_FROM_RE, attributes)
+    name = relay_attribute(RELAY_NAME_RE, attributes)
+    if sender and name:
+        return True, "%s (%s)" % (name, sender)
+    return True, sender or NO_SENDER
+
+
 def queued_text(lane, prompt):
     """The text a `queued_command` attachment carries in its `prompt`: a string as it is, or the
     text blocks of a content list joined by lane.py's own block reader; "" for anything else."""
@@ -12527,10 +13809,17 @@ def extract_turns(lane, path, extra, withheld=None):
     session (a `<cross-session-message>` or `<session_message>` span and nothing else) is
     `excluded.cross_session`, never the owner's; an interruption marker inside a text block is cut from the owner's text,
     and a text that is nothing but markers is `excluded.interrupt`. Notes are never buckets.
+    Every record whose text opens with a relay tag (relay_opening) is also kept whole, with its
+    sender, in `counts["relays"]` for the listing above the turns (notes.relays_listed), whatever
+    owner_text read it as; that reading, its bucket and every count stay as they were.
     `withheld`, the blind reflector's control texts (control_needles), is applied here, before
     any text is split into lines or cut (critic finding 5 of the review of 2026-10-11): each tool
     line is matched whole before its cut, and each turn's whole text across its line breaks
-    (redact_turns); the lines withheld are counted under `notes.controls_redacted`."""
+    (redact_turns); the lines withheld are counted under `notes.controls_redacted`. What the
+    extraction did to a human turn's record on the way to its words (block_changes, owner_cuts, a
+    tool result left out, a replay cut to its tail) is kept, in memory alone and by the turn's
+    place among the turns, in `counts["altered"]`, which the decisions file reads (decisions_append)
+    and no count or written extraction does."""
     controls = control_patterns(withheld) if withheld is not None else None
     turns = []
     counts = {"records": 0, "human_turns": 0, "assistant_turns": 0, "tool_call_turns": 0,
@@ -12539,13 +13828,31 @@ def extract_turns(lane, path, extra, withheld=None):
                            "compaction": 0, "cross_session": 0},
               "other_types": {},
               "notes": {"replay_trimmed": 0, "injections_cut": 0, "tool_result_with_text": 0,
-                        "queued_commands": 0, "controls_redacted": 0}}
+                        "queued_commands": 0, "controls_redacted": 0, "relays_listed": 0}}
     out = counts["excluded"]
     notes = counts["notes"]
+    relays = []   # (stamp, sender, whole text, his turn's number or None, turns before it)
+    altered = {}  # a human turn's place among the turns: what the extraction did to its record
+
+    def changed(kinds):
+        """Keep, against the human turn appended last, what was done to its record's text."""
+        if kinds:
+            altered[len(turns)] = kinds
 
     def other(kind):
         out["other"] += 1
         counts["other_types"][kind] = counts["other_types"].get(kind, 0) + 1
+
+    def relay_seen(text, stamp, verdict):
+        """List a record that opens with a relay tag, whole, after owner_text has read it and
+        before its turn (if any) is appended: an `owner` verdict keeps the text after the
+        relay's close as his next turn, whose number the listing names."""
+        opens, sender = relay_opening(text)
+        if not opens:
+            return
+        his = len(turns) + 1 if verdict == "owner" else None
+        relays.append((stamp, sender, text, his, len(turns)))
+        notes["relays_listed"] += 1
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
             if not line.strip():
@@ -12567,13 +13874,16 @@ def extract_turns(lane, path, extra, withheld=None):
                 text = turn_text(lane, blocks)
                 if record.get("toolUseResult") is not None or \
                         any(b.get("type") == "tool_result" for b in blocks):
-                    verdict, kept, _ = owner_text(text, extra) if text else ("empty", "", False)
+                    verdict, kept, cut = owner_text(text, extra) if text else ("empty", "", False)
+                    relay_seen(text, stamp, verdict)
                     if verdict != "owner":
                         out["tool_result"] += 1
                         continue
                     notes["tool_result_with_text"] += 1
                     counts["human_turns"] += 1
                     turns.append(("human", stamp, kept))
+                    changed(["tool_result"] + block_changes(lane, blocks)
+                            + (owner_cuts(text) if cut else []))
                     continue
                 if record.get("isCompactSummary") is True or COMPACT_SUMMARY_RE.match(text):
                     out["compaction"] += 1    # the harness's own summary, never the owner's words
@@ -12587,16 +13897,20 @@ def extract_turns(lane, path, extra, withheld=None):
                     continue
                 if replayed:
                     notes["replay_trimmed"] += 1
+                cuts = []
                 if text:
                     verdict, kept, cut = owner_text(text, extra)
+                    relay_seen(text, stamp, verdict)
                     if verdict != "owner":
                         out[verdict] += 1     # notification or interrupt
                         continue
                     if cut:
                         notes["injections_cut"] += 1
+                        cuts = owner_cuts(text)
                     text = kept
                 counts["human_turns"] += 1
-                turns.append(("human", stamp, text or "(this record carries no text content)"))
+                turns.append(("human", stamp, text or NO_TEXT_TURN))
+                changed((["replay"] if replayed else []) + block_changes(lane, blocks) + cuts)
             elif kind == "assistant":
                 if str(message.get("model") or "").startswith(SYNTHETIC_MODEL):
                     out["synthetic"] += 1   # the harness's stop record, never the head's prose
@@ -12621,8 +13935,10 @@ def extract_turns(lane, path, extra, withheld=None):
                 # shape confirmed 2026-09-30): no user record carries it, so an extractor keyed on
                 # user records dropped it. It is classified by its wrapper as a user record's text
                 # is: a task notification or a relay from another session is not the owner's.
-                text = queued_text(lane, record["attachment"].get("prompt")).strip()
+                prompt = record["attachment"].get("prompt")
+                text = queued_text(lane, prompt).strip()
                 verdict, kept, cut = owner_text(text, extra) if text else ("other", "", False)
+                relay_seen(text, stamp, verdict)
                 if verdict == "other":
                     other("attachment: queued_command with no text")
                     continue
@@ -12634,6 +13950,9 @@ def extract_turns(lane, path, extra, withheld=None):
                     notes["injections_cut"] += 1
                 counts["human_turns"] += 1
                 turns.append(("human", stamp, kept))
+                changed(block_changes(lane, [prompt] if isinstance(prompt, dict)
+                                      else blocks_of({"content": prompt}))
+                        + (owner_cuts(text) if cut else []))
             elif kind == "attachment":
                 att = record.get("attachment")
                 other("attachment: %s" % (att.get("type") or "untyped" if isinstance(att, dict)
@@ -12644,6 +13963,19 @@ def extract_turns(lane, path, extra, withheld=None):
     if withheld is not None:
         turns, spanned = redact_turns(turns, withheld)
         notes["controls_redacted"] += spanned
+        # A relay's text and its sender pass the same redaction as a turn's text (redact_text), so
+        # the listing never carries a control a turn would withhold.
+        listed = []
+        for stamp, sender, text, his, before in relays:
+            sender, n_sender = redact_text(sender, controls)
+            text, n_text = redact_text(text, controls)
+            notes["controls_redacted"] += n_sender + n_text
+            listed.append((stamp, sender, text, his, before))
+        relays = listed
+    # In memory only, for extraction_text and decisions_append: counts.json's payload names its
+    # keys, so no relay text and no turn's account reaches it.
+    counts["relays"] = relays
+    counts["altered"] = altered
     return turns, counts
 
 
@@ -12692,15 +14024,47 @@ def extraction_text(sid, path, turns, counts):
             counts["records"], reconciliation_text(counts)),
         "",
     ]
+    if counts.get("relays"):
+        head[-1:] = relay_lines(counts["relays"])
     body = []
     for n, (role, stamp, text) in enumerate(turns, 1):
         body += ["## turn %d · %s · %s" % (n, role, stamp), "", text, ""]
     return "\n".join(head + body) + "\n"
 
 
-def extraction_inputs(a):
+def relay_lines(relays):
+    """The relay listing, which closes the header: above the first turn heading, so a reader that
+    runs a turn's body to the next heading (experience-uses.py) never takes it for a turn's text.
+    One line saying what it is, then each record that opens with a relay tag, whole, under its own
+    heading with its sender (one line, relay_attribute) and its place among the turns. Every line
+    of a listed text is quoted (`> `), split at every line break str.splitlines() knows and not at
+    the newline alone, so a relay that quotes an extraction cannot open a turn heading of its own
+    for a reader that splits as experience-uses.py does (finding M1 of the review of 2026-11-14)."""
+    lines = ["Relays: %d record(s) open with a relay tag from another session "
+             "(`<session_message>` or `<cross-session-message>`), each listed whole under "
+             "`Relayed messages` below, apart from the owner's turns, with its sender or %s. The "
+             "listing reads no record as his and changes no count above (notes.relays_listed); "
+             "where the text after a relay's close is read as his, that text is also his turn, "
+             "named beside it." % (len(relays), NO_SENDER),
+             "",
+             "## Relayed messages (listed whole, apart from the owner's turns)",
+             ""]
+    for n, (stamp, sender, text, his, before) in enumerate(relays, 1):
+        place = "before turn 1" if before == 0 else "after turn %d" % before
+        lines += ["### relay %d · from %s · %s · %s" % (n, sender, stamp, place), ""]
+        if his is not None:
+            lines += ["The text after this relay's close is read as the owner's words: turn %d."
+                      % his, ""]
+        lines += [("> " + line) if line else ">" for line in text.splitlines()]
+        lines.append("")
+    return lines
+
+
+def extraction_inputs(a, events=None):
     """(lane module, session id, transcript path, extra notification patterns) for the two
-    commands that read the head's own transcript; every missing premise is a premise failure."""
+    commands that read the head's own transcript; every missing premise is a premise failure.
+    With the run's `events` (reflect-inputs) and no --projects-root, the transcript is looked for
+    under the head's own projects folder (head_projects_root; critic CR10A F8)."""
     lane, _, err = lane_module()
     if lane is None:
         die("the transcript helpers are lane.py's, never a second parser of the same shape: %s"
@@ -12716,9 +14080,14 @@ def extraction_inputs(a):
                 % (frozen, sid))
     else:
         root = os.path.realpath(os.path.expanduser(a.projects_root)) if a.projects_root else None
+        source = None
+        if root is None and events is not None:
+            root, source = head_projects_root(events, sid)
+            if root is None:
+                die("no transcript for session %s: %s" % (sid, source))
         path = transcript_for(sid, root)
         if not os.path.isfile(path):
-            die("no transcript for session %s at %s" % (sid, path))
+            die("no transcript for session %s at %s%s" % (sid, path, root_note(source)))
     try:
         extra = [re.compile(pattern) for pattern in (a.notification_re or [])]
     except re.error as exc:
@@ -12762,8 +14131,405 @@ def excluded_text(out):
                 out["compaction"], out["cross_session"]))
 
 
+# ----------------------------------------------- the owner's turns into a decisions file -----
+
+# One session to talk to (P4): the owner's words reach the sessions a main session runs through
+# its decisions file, listed there word for word with their clock time by this program, so no
+# session retypes or paraphrases them, and a session reads that file before a gated act. The turn
+# shape is the hand-built decisions files' own: `## Turn N · <UTC time>`, a blank line, then the
+# words quoted line by line (`> `, or a bare `>` for an empty line). N is the turn's place among
+# the transcript's human turns as extract_turns reads them, so a turn carries the same number on
+# every run. The file is only ever appended to, under an exclusive lock on the file itself, and a
+# turn it already holds (the same clock time and the same words) is never written twice.
+DECISIONS_TURN_RE = re.compile(r"^## Turn (\d+) · (.*)$")
+DECISIONS_HEADER = "# Decisions file of session %s"
+DECISIONS_HEADER_RE = re.compile(r"^# Decisions file of session \S+$")
+# A listed turn the extraction cannot show is the owner's (the delegate skill's decisions-file
+# line, decided 11 November 2026: a program copying the owner's words labels no harness record as
+# theirs, and a shape the extraction keeps without recognising it is read before it is labelled
+# theirs; finding S1 of the review of 2026-11-14). Its words are written quoted as any turn's, and
+# this note follows them, unquoted, so the words stay the turn's key and a reader sees which turns
+# are not yet his. UNREAD_REASONS names why, in this order: the words after a relayed message's
+# close in its record, words opening with a tag as a harness record's do (a command's output, a
+# notification of a kind the extraction does not know), a record carrying a tool result beside
+# its text, a resumed session's replay cut to its tail, and words opening with the start message
+# this program gives a head it starts (resume_instruction), which reaches that head's transcript
+# as a human turn though no one typed it (the fix's re-check, 2026-11-14).
+DECISIONS_UNREAD = ("(Not yet read as the owner's: %s. Read this turn in the session's "
+                    "transcript before it counts as his words.)")
+HARNESS_SHAPE_RE = re.compile(r"^\s*<[A-Za-z][\w-]*[\s/>]")
+# The first line of resume_instruction's message; a leg plants that function's own output as a
+# turn, so the text and this pattern cannot drift apart unseen.
+START_MESSAGE_RE = re.compile(r"^You are the next head of hands-off run \S+, started by "
+                              r"handsoff\.py\.\n")
+UNREAD_REASONS = (
+    ("relay", "its words follow a relayed message's close in the same record, the relayed text "
+              "cut from them"),
+    ("tag", "its words open with a tag, as a harness record does"),
+    ("tool_result", "its record carries a tool result beside the words, the result left out"),
+    ("replay", "its record is a resumed session's replay, cut to the text after its last turn "
+               "marker"),
+    ("start", "its words are the start message handsoff.py gives a head it starts"),
+)
+# What the extraction did to a written turn's record on the way to its words (counts["altered"]),
+# named in the run's output line, in this order (finding L4 of the review of 2026-11-14); a tool
+# result left out and a replay cut are named by the turn's mark instead.
+TURN_CHANGES = (
+    ("reminder", "a system reminder cut from the words"),
+    ("notification", "a task notification cut from the words"),
+    ("interrupt", "an interrupt marker cut from the words"),
+    ("joined", "two or more text blocks joined by a space"),
+    ("non_text", "a block other than text (an image, a document) left out beside the words"),
+    ("trimmed", "white space trimmed from the ends of the words"),
+)
+DECISIONS_NO_TEXT = ("(No text: this turn's record holds no text block, an image alone for "
+                     "instance, so nothing is quoted for it.)")
+ISO_STAMP_RE = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}:?\d{2})")
+NO_UTC = "no UTC clock time in the transcript"
+
+
+def utc_stamp(stamp):
+    """A record's clock time in UTC, as ISO 8601 closing with Z. A stamp already in that form (the
+    harness writes `2026-11-13T13:42:43.976Z`) is kept byte for byte; one carrying an offset is
+    moved to UTC, its fraction of a second kept as written. Anything else, a missing stamp
+    included, is named as such with what the transcript held, so the heading never invents one."""
+    found = ISO_STAMP_RE.fullmatch(stamp) if isinstance(stamp, str) else None
+    if found is not None and found.group(3) == "Z":
+        return stamp
+    if found is not None:
+        zone = found.group(3).replace(":", "")
+        shift = (int(zone[1:3]) * 60 + int(zone[3:5])) * 60 * (1 if zone[0] == "+" else -1)
+        try:
+            epoch = calendar.timegm(time.strptime(found.group(1), "%Y-%m-%dT%H:%M:%S")) - shift
+            return (time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(epoch))
+                    + (found.group(2) or "") + "Z")
+        except (ValueError, OverflowError):
+            pass
+    return "%s (%s)" % (NO_UTC, json.dumps(stamp)[:80])
+
+
+def decisions_block(number, stamp, words, unread=()):
+    """One turn in the decisions file's shape, opening with the blank line that parts it from
+    whatever stands above it. A turn with no words carries the no-text note, unquoted, so the
+    extraction's stand-in is never quoted as the owner's. A turn with `unread` reasons (keys of
+    UNREAD_REASONS) carries, after a blank line below its words, the note saying it is not yet
+    read as the owner's and why; unquoted, it is no part of the words decisions_turns reads."""
+    body = ([("> " + line) if line else ">" for line in words.split("\n")] if words
+            else [DECISIONS_NO_TEXT])
+    if unread:
+        body += ["", DECISIONS_UNREAD % "; ".join(text for key, text in UNREAD_REASONS
+                                                   if key in unread)]
+    return "\n" + "\n".join(["## Turn %d · %s" % (number, stamp), ""] + body) + "\n"
+
+
+def unread_reasons(number, words, after_relay, kinds):
+    """The keys of UNREAD_REASONS that hold for the owner's turn `number` (its `words`, the turns
+    after a relay's close, and what the extraction did to its record): [] for a turn the
+    extraction reads as his from a shape it knows."""
+    found = set(kinds)
+    if number in after_relay:
+        found.add("relay")
+    if HARNESS_SHAPE_RE.match(words):
+        found.add("tag")
+    if START_MESSAGE_RE.match(words):
+        found.add("start")
+    return [key for key, _ in UNREAD_REASONS if key in found]
+
+
+def decisions_turns(text):
+    """[(number, heading time, words)] for each turn heading in a decisions file, in file order.
+    A turn's words are the quoted lines below its heading and one blank line, each with its `> `
+    (or a bare `>`) taken off, up to the first line that is not quoted; a heading with none below
+    it (the no-text note) has empty words. A quoted line is never read as a heading."""
+    lines = text.split("\n")
+    found, i = [], 0
+    while i < len(lines):
+        heading = DECISIONS_TURN_RE.match(lines[i])
+        i += 1
+        if heading is None:
+            continue
+        if i < len(lines) and lines[i] == "":
+            i += 1
+        words = []
+        while i < len(lines) and (lines[i] == ">" or lines[i].startswith("> ")):
+            words.append(lines[i][2:])
+            i += 1
+        found.append((int(heading.group(1)), heading.group(2), "\n".join(words)))
+    return found
+
+
+def his_turns(turns, counts):
+    """([(number, UTC time, words)] for the transcript's human turns in order, [numbers of those
+    whose record opened with a relayed message], {number: what the extraction did to that turn's
+    record}). The second are the words after a relay's close that extract_turns reads as the
+    owner's; the relayed message itself is in no turn's words. The third is counts["altered"] by
+    the owner's turn numbers."""
+    his, place = [], {}
+    for index, (role, stamp, text) in enumerate(turns, 1):
+        if role == "human":
+            his.append((len(his) + 1, utc_stamp(stamp), "" if text == NO_TEXT_TURN else text))
+            place[index] = len(his)
+    after_relay = sorted(place[relay[3]] for relay in counts.get("relays") or ()
+                         if relay[3] in place)
+    altered = dict((place[index], kinds) for index, kinds in (counts.get("altered") or {}).items()
+                   if index in place)
+    return his, after_relay, altered
+
+
+def turn_list(numbers):
+    """`1-3, 5` for [1, 2, 3, 5]; `none` for an empty list."""
+    spans = []
+    for n in numbers:
+        if spans and n == spans[-1][1] + 1:
+            spans[-1][1] = n
+        else:
+            spans.append([n, n])
+    return ", ".join("%d" % a if a == b else "%d-%d" % (a, b) for a, b in spans) or "none"
+
+
+def read_all(fd):
+    """Every byte of the open file, from its start."""
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks = []
+    while True:
+        chunk = os.read(fd, 1 << 20)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def append_whole(fd, data, size, target):
+    """Append `data` to the open file in full. A failed write cuts the file back to the `size`
+    bytes it held under the lock, so no torn turn is left behind, and exits 2 naming it."""
+    try:
+        done = 0
+        while done < len(data):
+            wrote = os.write(fd, data[done:])
+            if wrote <= 0:
+                raise OSError(errno.EIO, "the write took no bytes")
+            done += wrote
+        os.fsync(fd)
+    except OSError as exc:
+        try:
+            os.ftruncate(fd, size)
+            state = "it was cut back to the %d bytes it held" % size
+        except OSError as cut:
+            state = "cutting it back to its %d bytes failed too (%s)" % (size, cut)
+        die("cannot append to the decisions file %s: %s; %s" % (target, exc, state))
+
+
+# Times the decisions file may be found replaced (a writer that renames a new copy over it) while a
+# run waits for its lock, before the run gives up: set by judgement, unmeasured.
+DECISIONS_REOPENS = 3
+# The longest a run waits for another writer to let go of the decisions file's lock, in seconds,
+# and how often it tries meanwhile (finding L3 of the review of 2026-11-14). Set by judgement: a
+# writer holds the lock for one read of the file, at most one extraction of the transcript (its
+# read again, about 0.04 s on the largest real transcript, measured 14 November 2026) and one
+# append with its fsync, so a minute is far past any working writer and short enough that a
+# stopped one is named while the session still waits on the run. Past it the run exits naming
+# the processes that hold the file open (lock_holders), nothing written.
+DECISIONS_LOCK_WAIT = 60
+DECISIONS_LOCK_POLL = 0.2
+# How long lock_holders lets lsof run: set by judgement (0.35 s measured on one macOS host).
+LSOF_WAIT = 10
+
+
+def lock_holders(target):
+    """Who holds the decisions file, for the line of a run that gave up waiting for its lock: the
+    other processes that have it open, `pid N (command)` as lsof lists them, since an flock names
+    no holder and the holder is among them. A phrase saying why where none can be named."""
+    tool = next((os.path.join(folder, "lsof") for folder
+                 in os.environ.get("PATH", "").split(os.pathsep) + ["/usr/sbin", "/usr/bin"]
+                 if folder and os.access(os.path.join(folder, "lsof"), os.X_OK)), None)
+    if tool is None:
+        return "the holder cannot be named: no lsof on this system"
+    try:
+        done = subprocess.run([tool, "-F", "pc", "--", target], stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=LSOF_WAIT)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "the holder cannot be named: lsof failed (%s)" % exc
+    found, pid = [], None
+    for line in done.stdout.splitlines():
+        if line.startswith("p"):
+            pid = line[1:]
+        elif line.startswith("c") and pid is not None and pid != str(os.getpid()):
+            found.append("pid %s (%s)" % (pid, line[1:]))
+            pid = None
+    if not found:
+        return "no other process has the file open now (lsof)"
+    return "the file is held open by %s" % ", ".join(found)
+
+
+def lock_within(fd, target, deadline):
+    """Take the exclusive lock on `fd`, trying every DECISIONS_LOCK_POLL seconds until `deadline`
+    (time.monotonic()); past it, exit 2 naming the holder, nothing written."""
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError as exc:
+            if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES, errno.EINTR):
+                os.close(fd)
+                die("cannot lock the decisions file %s: %s; nothing written" % (target, exc))
+        if time.monotonic() >= deadline:
+            holders = lock_holders(target)
+            os.close(fd)
+            die("another writer held the decisions file %s's lock past the %g s a run waits for "
+                "it; nothing written; %s" % (target, DECISIONS_LOCK_WAIT, holders))
+        time.sleep(DECISIONS_LOCK_POLL)
+
+
+def locked_decisions(target):
+    """An open descriptor on the decisions file, created if absent (mode 600), opened for append
+    and holding an exclusive lock (released when it is closed), awaited for DECISIONS_LOCK_WAIT
+    seconds at most. A file replaced while the lock was awaited is opened again, so the append
+    never lands in a copy no path names any more."""
+    deadline = time.monotonic() + DECISIONS_LOCK_WAIT
+    for _ in range(DECISIONS_REOPENS):
+        try:
+            fd = os.open(target, os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
+        except OSError as exc:
+            die("cannot open the decisions file %s: %s; nothing written" % (target, exc))
+        if fcntl is not None:
+            lock_within(fd, target, deadline)
+        try:
+            named = os.stat(target)
+            held = os.fstat(fd)
+            if (named.st_dev, named.st_ino) == (held.st_dev, held.st_ino):
+                return fd
+        except OSError:
+            pass
+        os.close(fd)
+    die("the decisions file %s was replaced %d times while this run waited for its lock; nothing "
+        "written" % (target, DECISIONS_REOPENS))
+
+
+def decisions_append(lane, sid, path, extra, named):
+    """Append to the decisions file `named` the owner's turns of session `sid` (its transcript at
+    `path`) that the file does not hold yet, and print one line. Reads that transcript and that
+    file, and writes that file alone: by append, under an exclusive lock on the file itself, never
+    rewritten whole. A file that does not exist, or is empty, opens with a one-line header naming
+    the session. Writes nothing, exit 2, on an unreadable transcript, a path that is not a regular
+    file, a file that is not UTF-8, a file holding no turn heading that does not open with that
+    header (no decisions file of this program's), or a file holding a turn that is not in this
+    transcript by its clock time and words (another session's file, or one edited by hand): left
+    as it stands, and named. A file holding a turn this run's first read lacks is judged on a
+    second read made under the lock, so a run that appended a newer turn meanwhile is never taken
+    for an edit. A turn the file lacks from before its last turn is appended after it, and named.
+    A turn the extraction cannot show is the owner's is written with the note saying so
+    (unread_reasons), what the extraction did to a written turn's record is named in the output
+    line (TURN_CHANGES), and a file appended to whose mode is not 600 is set to 600, and named."""
+    try:
+        turns, counts = extract_turns(lane, path, extra)
+    except OSError as exc:
+        die("cannot read the transcript %s: %s; the decisions file %s was not touched"
+            % (path, exc, named))
+    his, after_relay, altered = his_turns(turns, counts)
+    target = os.path.realpath(os.path.expanduser(named))
+    if os.path.lexists(target) and not os.path.isfile(target):
+        die("the decisions file %s is not a regular file; nothing written" % target)
+    fd = locked_decisions(target)
+    reread, mode_note = False, None
+    try:
+        raw = read_all(fd)
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            die("the decisions file %s is left as it stands: it is not UTF-8 (%s)" % (target, exc))
+        held = decisions_turns(text)
+        if raw and not held and not DECISIONS_HEADER_RE.match(text.split("\n", 1)[0]):
+            die("the file %s is left as it stands: it holds no `## Turn` heading and does not open "
+                "with this program's header line (`%s`), so it is not taken for a decisions file; "
+                "nothing written" % (target, DECISIONS_HEADER % "<id>"))
+        place = dict(((stamp, words), n) for n, stamp, words in his)
+        if any((turn[1], turn[2]) not in place for turn in held):
+            # A run that read the transcript before another run took the lock and appended a newer
+            # turn reads it again, now under the lock, before it judges the file (finding M1 of
+            # the review of 2026-11-14).
+            try:
+                turns, counts = extract_turns(lane, path, extra)
+            except OSError as exc:
+                die("cannot read the transcript %s again under the decisions file's lock: %s; the "
+                    "decisions file %s was not touched" % (path, exc, target))
+            his, after_relay, altered = his_turns(turns, counts)
+            place = dict(((stamp, words), n) for n, stamp, words in his)
+            reread = True
+        if held and (held[-1][1], held[-1][2]) not in place:
+            die("the decisions file %s is left as it stands: its last turn (Turn %d · %s) is not "
+                "in session %s's transcript %s by its clock time and words, so the file is "
+                "another session's or was changed after it was written"
+                % (target, held[-1][0], held[-1][1], sid, path))
+        stray = [turn for turn in held if (turn[1], turn[2]) not in place]
+        if stray:
+            die("the decisions file %s is left as it stands: turns before its last are not in "
+                "session %s's transcript %s by clock time and words (%d: Turn %s; the first, Turn "
+                "%d · %s), so the file was changed after they were written"
+                % (target, sid, path, len(stray), turn_list(sorted(set(t[0] for t in stray))),
+                   stray[0][0], stray[0][1]))
+        have = set((stamp, words) for _, stamp, words in held)
+        new = [turn for turn in his if (turn[1], turn[2]) not in have]
+        last = place[(held[-1][1], held[-1][2])] if held else 0
+        marks = dict((n, unread_reasons(n, words, after_relay, altered.get(n, ())))
+                     for n, _, words in new)
+        payload = ""
+        if not raw:
+            payload = DECISIONS_HEADER % sid + "\n"
+        elif not text.endswith("\n"):
+            payload = "\n"
+        payload += "".join(decisions_block(n, stamp, words, marks[n]) for n, stamp, words in new)
+        if new or not raw:
+            append_whole(fd, payload.encode("utf-8"), len(raw), target)
+            # The owner's words are kept from other users (finding L2 of the review of
+            # 2026-11-14): a file appended to is set to 600, whatever mode it was found with.
+            was = os.fstat(fd).st_mode & 0o7777
+            if was != 0o600:
+                try:
+                    os.fchmod(fd, 0o600)
+                    mode_note = "its mode set to 600 from %o" % was
+                except OSError as exc:
+                    mode_note = "its mode left at %o: setting 600 failed (%s)" % (was, exc)
+    finally:
+        os.close(fd)
+    numbers = [n for n, _, _ in new]
+    notes = []
+    if not raw:
+        notes.append("the file created with its one-line header")
+    if reread:
+        notes.append("the transcript read again under the file's lock, the file holding a turn "
+                     "the first read had not reached")
+    if mode_note:
+        notes.append(mode_note)
+    earlier = [n for n in numbers if n < last]
+    if earlier:
+        notes.append("%d turn(s) from before the file's last turn were missing from it and are "
+                     "appended after it (Turn %s)" % (len(earlier), turn_list(earlier)))
+    marked = [n for n in numbers if marks[n]]
+    if marked:
+        notes.append("%d turn(s) marked in the file as not yet read as the owner's (%s)"
+                     % (len(marked), "; ".join(
+                         "Turn %s: %s" % (turn_list([n for n in marked if key in marks[n]]), text)
+                         for key, text in UNREAD_REASONS
+                         if any(key in marks[n] for n in marked))))
+    for key, text in TURN_CHANGES:
+        with_it = [n for n in numbers if key in altered.get(n, ())]
+        if with_it:
+            notes.append("Turn %s: %s" % (turn_list(with_it), text))
+    clockless = [n for n, stamp, _ in new if stamp.startswith(NO_UTC)]
+    if clockless:
+        notes.append("Turn %s: %s" % (turn_list(clockless), NO_UTC))
+    say("extract-transcript: decisions file %s · session %s: %d human turn(s) in the transcript, "
+        "%d already in the file, %d appended%s; %d record(s) opening with a relayed message, "
+        "the message never written as a turn%s"
+        % (target, sid, len(his), len(his) - len(new), len(new),
+           " (Turn %s)" % turn_list(numbers) if numbers else "",
+           counts["notes"]["relays_listed"], "".join("; " + note for note in notes)))
+    return 0
+
+
 def cmd_extract_transcript(a):
     lane, sid, path, extra = extraction_inputs(a)
+    if getattr(a, "decisions_file", None):
+        return decisions_append(lane, sid, path, extra, a.decisions_file)
     out_dir = (os.path.realpath(os.path.expanduser(a.out)) if a.out
                else os.path.join("/tmp", "aimyth-extract-%s" % sid))
     counts = write_extraction(lane, sid, path, out_dir, extra)
@@ -13000,7 +14766,7 @@ def cmd_reflect_inputs(a):
     refuse_out_inside(out_dir, "run store", store_root(), carve=stage_reflect_dir(a.run))
     refuse_out_inside(out_dir, "projects root", projects_root())
     refuse_out_nonempty(out_dir)
-    lane, sid, tpath, extra = extraction_inputs(a)
+    lane, sid, tpath, extra = extraction_inputs(a, events)
     needles = control_needles(events)
     if a.dry_run:
         try:
@@ -13094,16 +14860,18 @@ def main():
                        help="the lists named with --grant/--write replace the run's even where "
                             "they lose a path (the delta on stderr): the explicit narrowing, and "
                             "the next call's baseline")
-        p.add_argument("--max-successors", type=int, default=None, metavar="N",
-                       help="the run's successor cap, written to the grants file and read by "
-                            "the starter before AIMYTH_MAX_SUCCESSORS and the default %d; "
-                            "absent, the file's own value is carried forward"
-                            % MAX_SUCCESSORS_DEFAULT)
+        p.add_argument("--max-successors", type=max_successors_arg, default=None, metavar="N",
+                       help="the run's successor limit, written to the grants file and read by "
+                            "the starter before AIMYTH_MAX_SUCCESSORS; a run has no limit "
+                            "otherwise; `none` clears the file's; absent, the file's own value is "
+                            "carried forward")
         p.add_argument("--on-limit", choices=ON_LIMIT_VALUES, default=None,
-                       help="the limit gate (D42, the pre-flight's class L): stop (the default: "
-                            "the supervisor stands down on a limit, the hand-off is the recovery) "
-                            "or resume (the pre-flight's limit-off: sleep to the reset, then "
-                            "resume); absent, the file's own value is carried forward")
+                       help="Claude's 5-hour limit (D42, the pre-flight's class L; limit policy "
+                            "1): resume (a new run's default: sleep to the reset the stop text "
+                            "names, then resume) or stop (the supervisor stands down, the "
+                            "hand-off is the recovery); it never reaches the weekly window, which "
+                            "run-open's --claude-week-limit sets; absent, the file's own value is "
+                            "carried forward, and a file without the key reads stop")
         p.add_argument("--viewer", choices=VIEWER_VALUES, default=None,
                        help="the console window (the pre-flight's viewer key): terminal (the "
                             "default: run-open opens a Terminal window on `watch --run R`, and "
@@ -13200,6 +14968,18 @@ def main():
                         "absent, <store>/stages/<run>/RUNBOOK.md is read when it is there")
     grants(p)
     network_flag(p)
+    p.add_argument("--claude-week-limit", choices=CLAUDE_WEEK_VALUES, default=None,
+                   help="Claude's weekly limit (limit policy 1): stop (the default: the run "
+                        "stands down) or wait (the pre-flight's opt-in: the ordinary reset wait, "
+                        "bounded by --max-wait-s); written to the grants file at run-open only")
+    p.add_argument("--gpt-credits-approved", choices=("yes", "no"), default=None,
+                   help="whether the run's pre-flight approves GPT credits past GPT's weekly "
+                        "limit (default no); accepted only here, at run-open: later calls carry "
+                        "it or lower it with `grants --gpt-credits-approved no`, never raise it")
+    p.add_argument("--preflight-data", default=None, metavar="PATH",
+                   help="the reviewed pre-flight's usage attachment (JSON, schema 1: per-window "
+                        "rates and planned helpers): validated before any write and stored on "
+                        "run-open as usage_plan with its sha256; the close's accounting reads it")
 
     p = common(sub.add_parser("run-resume", help="a later head records itself"), handoff=False)
     p.add_argument("--session", default="auto", help="session id, or auto (the last head-successor's)")
@@ -13400,6 +15180,9 @@ def main():
     p = common(sub.add_parser("grants", help="rewrite the run's grants file and run-<sid> pointer (N7)"), handoff=False)
     grants(p)
     network_flag(p)
+    p.add_argument("--gpt-credits-approved", choices=("no",), default=None,
+                   help="withdraw the run's GPT credits approval (writes false and records it); "
+                        "`no` is the only value, since nothing raises an approval after run-open")
 
     p = common(sub.add_parser("wait-reset", help="the reset wait as a command, for --dry-run checks and a hand-run "
                               "wait: blocks at most --max-block-s and re-issues on `still-running` (exit 8)"),
@@ -13434,8 +15217,13 @@ def main():
     p = sub.add_parser("extract-transcript", help="the head's own transcript extracted for a "
                        "reflector lane: human turns and assistant prose (D36)")
     p.add_argument("--session", required=True, metavar="SID")
-    p.add_argument("--out", default=None, metavar="DIR",
-                   help="default: /tmp/aimyth-extract-<sid>/")
+    where = p.add_mutually_exclusive_group()
+    where.add_argument("--out", default=None, metavar="DIR",
+                       help="default: /tmp/aimyth-extract-<sid>/")
+    where.add_argument("--decisions-file", default=None, metavar="PATH",
+                       help="append the session's human turns this decisions file does not hold "
+                       "yet, each verbatim under `## Turn N · <UTC time>`, a turn not shown to be "
+                       "the owner's marked so, and write nothing else (One session to talk to)")
     p.add_argument("--projects-root", default=None, metavar="P",
                    help="default: AIMYTH_PROJECTS_DIR, else ~/.claude/projects")
     p.add_argument("--notification-re", action="append", default=[], metavar="REGEX",
@@ -13463,7 +15251,9 @@ def main():
                         "projects root, which the lane is not granted, except the run's own "
                         "<store>/stages/<run>/reflect/ (the stage root's reflection directory)")
     p.add_argument("--projects-root", default=None, metavar="P",
-                   help="default: AIMYTH_PROJECTS_DIR, else ~/.claude/projects")
+                   help="default: the head's own projects folder (AIMYTH_PROJECTS_DIR, else the "
+                        "config_dir its head-successor records, else CLAUDE_CONFIG_DIR, each "
+                        "/projects, else ~/.claude/projects)")
     p.add_argument("--transcript", default=None, metavar="FILE",
                    help="a frozen copy of the session's transcript, read instead of the live "
                         "one: for a self-cross reflection, a copy taken before the controls "
@@ -13479,6 +15269,13 @@ def main():
                           "the console reads as done, for items worked side by side"), handoff=False))
     p.add_argument("items", nargs="+", metavar="ITEM", help="an item, as the pack or a gate names it")
     p.add_argument("--note", default="", help="one line on what finished it")
+
+    p = common(sub.add_parser(
+        "release-model-stop", help="the owner's release of a head-model stop, from a shell "
+                                   "outside the run's head (refused inside it, exit 2)"),
+        handoff=False)
+    p.add_argument("--session", required=True, help="the stopped head session the stop names")
+    p.add_argument("--reason", required=True, help="one line: why the owner releases it")
 
     p = common(sub.add_parser("close", help="final meter, run-close, commit and push on grant"))
     p.add_argument("--commit", default=None, metavar="MSG")
@@ -13620,7 +15417,7 @@ def main():
 
     a = ap.parse_args()
     handlers = {"run-open": cmd_run_open, "run-resume": cmd_run_resume, "boundary": cmd_boundary,
-                "item-done": cmd_item_done,
+                "item-done": cmd_item_done, "release-model-stop": cmd_release_model_stop,
                 "notices": cmd_notices, "ledger": cmd_ledger, "gate": cmd_gate, "handoff": cmd_handoff, "expect": cmd_expect,
                 "successor": cmd_successor, "_starter": cmd_starter,
                 "supervise": cmd_supervise, "_supervise": cmd_supervise_internal,

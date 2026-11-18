@@ -49,6 +49,10 @@ def main():
     wrappers.mkdir()
     for name in (args.adapter.name, "lane.py"):
         shutil.copy2(args.adapter.with_name(name), wrappers / name)
+    # The window meter's module (DW-20261021-2; package A2's finding N11): a lane-open reads the
+    # lane's item through usage_windows.py beside the wrapper, so the copy carries it where it exists.
+    if args.adapter.with_name("usage_windows.py").is_file():
+        shutil.copy2(args.adapter.with_name("usage_windows.py"), wrappers / "usage_windows.py")
     shutil.copy2(args.routing, wrappers / "routing.json")
     vault = root / "vault"
     definitions = vault / ".claude" / "agents"

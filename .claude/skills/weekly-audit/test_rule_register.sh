@@ -1469,6 +1469,279 @@ write_scan "$TOOL"; expect "the only write patterns in source sit inside write_a
 { cat "$TOOL"; printf 'def stray():\n    open("x", "w")\n'; } >"$WORK/planted3.py"; write_scan "$WORK/planted3.py"; expect "control: the scan catches a stray write" 1 "+elsewhere 1"
 grep -n 'write_atomic(' "$TOOL" | grep -v 'def write_atomic' | wc -l | tr -d ' ' >"$OUT"; rc=0; expect "three callers only: generate, record-audit and seed --out" 0 "+3"
 
+# ---- the write guard: two writers at once (2026-11-12) ---------------------------------------------
+# A driver runs the tool in process and lets another writer act at a chosen point: after the data's
+# load (record-audit), after the page's render (generate), after the seed's check for its out file,
+# or inside the write with the lock held (a pause, for two real processes). It also holds a lock
+# from outside, and takes flock or the folder's open away.
+cat >"$WORK/guard-driver.py" <<'GUARD_DRIVER_END'
+import contextlib, errno, fcntl, hashlib, importlib.util, io, json, os, sys, time
+
+
+def load(path):
+    spec = importlib.util.spec_from_file_location("rule_register_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def sha(path):
+    with open(path, "rb") as handle:
+        return hashlib.sha256(handle.read()).hexdigest()
+
+
+def call(module, argv):
+    out, code = io.StringIO(), 0
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+        try:
+            code = module.main(argv) or 0
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 2
+        except Exception as exc:
+            code = "EXC-" + type(exc).__name__
+    return code, out.getvalue()
+
+
+def wait_for(paths, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(os.path.exists(p) for p in paths):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def touch(path):
+    with open(path, "a"):
+        pass
+
+
+def temps(path):
+    name = "." + os.path.basename(path)
+    return sum(1 for n in os.listdir(os.path.dirname(os.path.abspath(path)))
+               if n.startswith(name) and n.endswith(".new"))
+
+
+tool, mode = sys.argv[1], sys.argv[2]
+if mode == "waitfor":
+    sys.exit(0 if wait_for(sys.argv[3].split(","), float(sys.argv[4])) else 1)
+target, argv = sys.argv[3], sys.argv[4:]
+module = load(tool)
+planted = []
+
+
+def plant_row():
+    data = json.load(open(target, encoding="utf-8"))
+    data["rows"].append(dict(data["rows"][0], id="G-PLANTED-ROW"))
+    with open(target + ".other", "w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=1)
+    os.replace(target + ".other", target)
+    planted.append(sha(target))
+
+
+before = sha(target) if os.path.exists(target) else "-"
+if mode == "row-at-load":
+    real_pages = module.read_pages
+
+    def read_pages(*args, **kwargs):
+        if not planted:
+            plant_row()
+        return real_pages(*args, **kwargs)
+
+    module.read_pages = read_pages
+elif mode == "data-at-render":
+    real_render = module.render_page
+
+    def render_page(*args, **kwargs):
+        text = real_render(*args, **kwargs)
+        if not planted:
+            plant_row()
+        return text
+
+    module.render_page = render_page
+elif mode == "out-at-read":
+    real_read = module.read_jsonl
+
+    def read_jsonl(*args, **kwargs):
+        if not planted:
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("planted by another writer\n")
+            planted.append(sha(target))
+        return real_read(*args, **kwargs)
+
+    module.read_jsonl = read_jsonl
+elif mode == "nofcntl":
+    module.fcntl = None
+elif mode == "lockdir":
+    real_open, folder = os.open, os.path.realpath(os.path.dirname(os.path.abspath(target)))
+
+    def refusing_open(path, flags, *args, **kwargs):
+        if os.path.realpath(path) == folder and flags == os.O_RDONLY:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+        return real_open(path, flags, *args, **kwargs)
+
+    os.open = refusing_open
+elif mode == "hold":
+    real_write = module.write_atomic
+
+    def write_atomic(*args, **kwargs):
+        touch(os.environ["DRIVE_PAUSED"])
+        if not wait_for([os.environ["DRIVE_RELEASE"]], 30):
+            os._exit(3)
+        return real_write(*args, **kwargs)
+
+    module.write_atomic = write_atomic
+elif mode == "contend":
+    real_flock = fcntl.flock
+
+    def flock(descriptor, operation):
+        try:
+            return real_flock(descriptor, operation)
+        except BlockingIOError:
+            touch(os.environ["DRIVE_BLOCKED"])
+            raise
+
+    fcntl.flock = flock
+elif mode == "lock":
+    module.LOCK_WAIT = 0.3
+    holder = os.open(os.environ["DRIVE_LOCK_DIR"], os.O_RDONLY)
+    fcntl.flock(holder, fcntl.LOCK_EX)
+    started = time.monotonic()
+    code, out = call(module, argv)
+    spent = time.monotonic() - started
+    print("RC=%s" % code)
+    print("UNCHANGED=%s" % ("yes" if (sha(target) if os.path.exists(target) else "-") == before else "no"))
+    print("WAITED=%s" % ("yes" if spent >= 0.25 else "no"))
+    sys.stdout.write(out)
+    os.close(holder)
+    code, out = call(module, argv)
+    print("AFTER=%s" % code)
+    sys.exit(0)
+code, out = call(module, argv)
+if mode == "contend":
+    touch(os.environ["DRIVE_DONE"])
+print("RC=%s" % code)
+print("PLANTED=%d" % len(planted))
+print("KEPT=%s" % ("yes" if planted and os.path.exists(target) and sha(target) == planted[0] else "no"))
+print("UNCHANGED=%s" % ("yes" if (sha(target) if os.path.exists(target) else "-") == before else "no"))
+print("TEMPS=%d" % temps(target))
+sys.stdout.write(out)
+GUARD_DRIVER_END
+guard_drive() { python3 -B "$WORK/guard-driver.py" "$TOOL" "$@" >"$OUT" 2>&1; rc=$?; }
+gfield() { sed -n "s/^$1=//p" "$OUT" | head -n 1; }
+gsha() { python3 -B -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"; }
+# gwant NAME GOT WANT [+must-hold]...: GOT equals WANT and $OUT holds each text.
+gwant() {
+  local name="$1" got="$2" want="$3" problem="" item
+  shift 3
+  [ "$got" = "$want" ] || problem="got '$got', wanted '$want'"
+  for item in "$@"; do
+    grep -qF -- "${item#+}" "$OUT" || problem="$problem; missing: ${item#+}"
+  done
+  verdict "$name" "$problem"
+}
+GDATA="$V/wiki/developments/rule-register-data.json"
+GPAGE="$V/wiki/developments/rule-register.md"
+
+fresh; guard_drive row-at-load "$GDATA" record-audit --vault "$V" --today 2020-07-01
+gwant "G1 a row planted between record-audit's load and its write refuses, the row kept, no temporary file" "$(gfield RC)$(gfield KEPT)$(gfield TEMPS)" "1yes0" "+wiki/developments/rule-register-data.json changed since this run read it (sha " "+; nothing written; re-run"
+gwant "G1c control: the plant landed during the run" "$(gfield PLANTED)$(grep -c 'G-PLANTED-ROW' "$GDATA")" "11"
+fresh; guard_drive none "$GDATA" record-audit --vault "$V" --today 2020-07-01
+gwant "G2 a clean record-audit through the same driver writes its audit block" "$(gfield RC)$(gfield UNCHANGED)" "0no" "+record-audit 2020-07-01:"
+fresh; guard_drive none "$GPAGE" generate --vault "$V" --today 2020-07-01
+gwant "G2b a clean generate through the same driver writes the page" "$(gfield RC)" "0" "+generate: wrote"
+fresh; run generate --vault "$V" --today 2020-07-01; page_before="$(gsha "$GPAGE")"
+guard_drive data-at-render "$GDATA" generate --vault "$V" --today 2020-07-02
+gwant "G3 generate with the data changed after its load writes no page, and says why" "$(gfield RC)$(gfield KEPT)$( [ "$(gsha "$GPAGE")" = "$page_before" ] && echo same)" "1yessame" "+wiki/developments/rule-register-data.json changed since this run read it"
+gwant "G3c control: the data change did land during the run" "$(gfield PLANTED)" "1"
+
+# Two real processes: the first paused inside its write with the lock held; the second loads the data
+# before the first's rename, waits for the lock, and must then refuse rather than replace the first's audit.
+fresh; rm -f "$WORK/g4.paused" "$WORK/g4.release" "$WORK/g4.blocked" "$WORK/g4.done"
+env DRIVE_PAUSED="$WORK/g4.paused" DRIVE_RELEASE="$WORK/g4.release" python3 -B "$WORK/guard-driver.py" "$TOOL" hold "$GDATA" record-audit --vault "$V" --today 2020-07-01 >"$WORK/g4a.out" 2>&1 &
+G4A=$!
+python3 -B "$WORK/guard-driver.py" "$TOOL" waitfor "$WORK/g4.paused" 20
+env DRIVE_BLOCKED="$WORK/g4.blocked" DRIVE_DONE="$WORK/g4.done" python3 -B "$WORK/guard-driver.py" "$TOOL" contend "$GDATA" record-audit --vault "$V" --today 2020-07-02 >"$WORK/g4b.out" 2>&1 &
+G4B=$!
+python3 -B "$WORK/guard-driver.py" "$TOOL" waitfor "$WORK/g4.blocked,$WORK/g4.done" 20
+G4W=$(test -e "$WORK/g4.blocked" && echo waited || echo nowait)
+touch "$WORK/g4.release"
+wait "$G4A"
+wait "$G4B"
+G4AT=$(python3 -B -c 'import json, sys; print(json.load(open(sys.argv[1]))["audit"]["at"])' "$GDATA")
+gwant "G4 two overlapping record-audits: the second waits, then refuses, and the first's audit block stands" "$(sed -n 's/^RC=//p' "$WORK/g4a.out")$(sed -n 's/^RC=//p' "$WORK/g4b.out")$G4W$G4AT$(grep -c 'REFUSED: .* changed since this run read it' "$WORK/g4b.out")" "01waited2020-07-011"
+gwant "G4c control: the first process did pause inside its write" "$(test -e "$WORK/g4.paused" && echo paused)" "paused"
+fresh; guard_drive none "$GDATA" record-audit --vault "$V" --today 2020-07-01; run record-audit --vault "$V" --today 2020-07-02
+G4AT=$(python3 -B -c 'import json, sys; print(json.load(open(sys.argv[1]))["audit"]["at"])' "$GDATA")
+gwant "G4d control: a second record-audit that loads after the first's write lands" "$rc$G4AT" "02020-07-02"
+
+fresh; DRIVE_LOCK_DIR="$V/wiki/developments" guard_drive lock "$GDATA" record-audit --vault "$V" --today 2020-07-01
+gwant "G5 a lock another writer holds past LOCK_WAIT refuses, writing nothing; once free the same run lands" "$(gfield RC)$(gfield UNCHANGED)$(gfield WAITED)$(gfield AFTER)" "1yesyes0" "+wiki/developments for 0.3 s; nothing written; re-run"
+fresh; rm -f "$WORK/g5.paused" "$WORK/g5.release"
+env DRIVE_PAUSED="$WORK/g5.paused" DRIVE_RELEASE="$WORK/g5.release" python3 -B "$WORK/guard-driver.py" "$TOOL" hold "$GDATA" record-audit --vault "$V" --today 2020-07-01 >"$WORK/g5a.out" 2>&1 &
+G5A=$!
+python3 -B "$WORK/guard-driver.py" "$TOOL" waitfor "$WORK/g5.paused" 20
+kill -9 "$G5A"
+wait "$G5A" 2>"$WORK/g5.wait"
+G5K=$?
+run record-audit --vault "$V" --today 2020-07-03
+G5AT=$(python3 -B -c 'import json, sys; print(json.load(open(sys.argv[1]))["audit"]["at"])' "$GDATA")
+gwant "G5b a writer killed while holding the lock releases it: the next record-audit writes at once" "$rc$G5AT$(test -e "$WORK/g5.paused" && echo paused)$G5K" "02020-07-03paused137"
+fresh; guard_drive nofcntl "$GDATA" record-audit --vault "$V" --today 2020-07-01
+gwant "G6 a platform without flock refuses before writing" "$(gfield RC)$(gfield UNCHANGED)$(gfield TEMPS)" "1yes0" "+REFUSED: this platform has no flock"
+fresh; guard_drive lockdir "$GDATA" record-audit --vault "$V" --today 2020-07-01
+gwant "G6b a folder that cannot be opened to lock refuses before writing" "$(gfield RC)$(gfield UNCHANGED)" "1yes" "+wiki/developments to lock it"
+
+fresh; mkdir -p "$WORK/elsewhere"; cp "$GDATA" "$WORK/elsewhere/data.json"
+DRIVE_LOCK_DIR="$V/wiki/developments" guard_drive lock "$WORK/elsewhere/data.json" record-audit --vault "$V" --data "$WORK/elsewhere/data.json" --today 2020-07-01
+gwant "G7 --data outside wiki/developments: a lock on wiki/developments does not hold it up" "$(gfield RC)$(gfield WAITED)" "0no"
+cp "$GDATA" "$WORK/elsewhere/data.json"
+DRIVE_LOCK_DIR="$WORK/elsewhere" guard_drive lock "$WORK/elsewhere/data.json" record-audit --vault "$V" --data "$WORK/elsewhere/data.json" --today 2020-07-01
+gwant "G7b it locks its own folder instead: a lock held there refuses it" "$(gfield RC)$(gfield UNCHANGED)$(gfield WAITED)" "1yesyes" "+REFUSED: another writer has held the lock on $WORK/elsewhere"
+DRIVE_LOCK_DIR="$WORK/elsewhere" guard_drive lock "$GPAGE" generate --vault "$V" --data "$WORK/elsewhere/data.json" --today 2020-07-01
+gwant "G7c generate locks the data's folder as well as the page's: a lock on the data's folder refuses it" "$(gfield RC)$(gfield WAITED)" "1yes" "+REFUSED: another writer has held the lock on $WORK/elsewhere"
+rm -rf "$WORK/elsewhere"
+
+seed_fixture; rm -f "$WORK/seed-out.json"
+guard_drive out-at-read "$WORK/seed-out.json" seed --map "$SEED/map.jsonl" --rules "$SEED/rules.jsonl" --tracing "$SEED/tracing.jsonl" --today 2020-01-01 --out "$WORK/seed-out.json"
+gwant "G8 seed --out with a file planted between its check and its write refuses, the planted file kept" "$(gfield RC)$(gfield PLANTED)$(gfield KEPT)" "11yes" "+REFUSED: $WORK/seed-out.json appeared since this run checked it"
+seed_fixture; rm -f "$WORK/seed-out.json"
+guard_drive none "$WORK/seed-out.json" seed --map "$SEED/map.jsonl" --rules "$SEED/rules.jsonl" --tracing "$SEED/tracing.jsonl" --today 2020-01-01 --out "$WORK/seed-out.json"
+gwant "G8c control: with nothing planted the same seed writes its file" "$(gfield RC)$(test -s "$WORK/seed-out.json" && echo written)" "0written" "+seed: wrote"
+rm -f "$WORK/seed-out.json"
+
+# The temporary copy write_atomic makes has a name unique to the write, made only where no file has
+# it, and a write that fails removes it (REG-TMP).
+fresh; RTSENT="$WORK/rt-sentinel.txt"; printf 'sentinel\n' >"$RTSENT"; RTSHA="$(gsha "$RTSENT")"
+RTOLD="$V/wiki/developments/.rule-register-data.json.new"
+ln -s "$RTSENT" "$RTOLD"
+run record-audit --vault "$V" --today 2020-07-01
+gwant "RT1 a link planted at the old fixed temporary name is left alone: the audit lands in the data file, the link and its target untouched" "$rc$( [ "$(gsha "$RTSENT")" = "$RTSHA" ] && echo same)$(test -L "$GDATA" && echo link || echo file)$(test -L "$RTOLD" && echo planted)" "0samefileplanted" "+record-audit 2020-07-01:"
+rm -f "$RTOLD" "$RTSENT"
+mkdir -p "$WORK/rt2/target.json"
+RT2="$(python3 -B - "$TOOL" "$WORK/rt2/target.json" <<'RT2_END'
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("rule_register_rt2", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+target = sys.argv[2]
+try:
+    module.write_atomic(target, "x\n")
+    outcome = "wrote"
+except OSError:
+    outcome = "raised"
+print(outcome + str(sum(1 for name in os.listdir(os.path.dirname(target)) if name.endswith(".new"))))
+RT2_END
+)"
+gwant "RT2 a write whose rename fails (the target is a folder) raises and leaves no temporary file beside it" "$RT2" "raised0"
+rm -rf "$WORK/rt2"
+fresh; chmod 640 "$GDATA"
+run record-audit --vault "$V" --today 2020-07-01
+gwant "RT3 control: a clean write leaves no temporary file and keeps the data file's mode" "$rc$(ls -a "$V/wiki/developments" | grep -c '\.new$')$(ls -l "$GDATA" | cut -c1-10)" "00-rw-r-----"
+
 echo
 if [ "$failed" -eq 0 ]; then
   echo "PASS $total/$total"

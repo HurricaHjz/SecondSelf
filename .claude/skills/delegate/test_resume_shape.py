@@ -22,6 +22,10 @@ sys.dont_write_bytecode = True
 from test_a3 import Fixture, events_for, rows
 from test_fix_c import Suite as BaseSuite, STOPS, LIMIT, MODEL_LIMIT, assistant, result, encoded, load, manifest, manifest_sees_a_changed_byte
 
+# A run has no default successor limit since 2026-11-04, so this suite's chain sets its own through
+# the environment to reach the successor-cap control; the number is the fixture's, set by judgement.
+FIXTURE_SUCCESSOR_LIMIT = 20
+
 
 class Suite(BaseSuite):
     def loop(self, f, sequence, outage=0, limit=False, cancel=None, inherited=None,
@@ -155,7 +159,7 @@ class Suite(BaseSuite):
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.dict(os.environ, f.env))
-            stack.enter_context(patch.dict(os.environ, {"AIMYTH_MAX_SUCCESSORS": str(h.MAX_SUCCESSORS_DEFAULT)}))
+            stack.enter_context(patch.dict(os.environ, {"AIMYTH_MAX_SUCCESSORS": str(FIXTURE_SUCCESSOR_LIMIT)}))
             if invalid_origin is not None:
                 stack.enter_context(patch.dict(os.environ, {"ANTHROPIC_BASE_URL": invalid_origin}))
             for name, replacement in {
@@ -167,6 +171,10 @@ class Suite(BaseSuite):
                 "meter_line": lambda *a: "fixture meter",
                 "open_console_if_dark": lambda *a: None, "remainder": lambda *a: (1, "fixture budget"),
                 "wait_head": wait_head, "run_on_limit": lambda *a: (on_limit, "fixture", None),
+                # Limit policy 1 (DW-20261021-2) classifies the stop text before it acts, and the
+                # fixture's LIMIT names neither window; these legs test the resume shape after a
+                # 5-hour stop, so the window is that one, as the seam above fixes on_limit.
+                "claude_limit_window": lambda *a: ("short", "fixture: the 5-hour window"),
                 **({"wait_for_reset": lambda *a: (resets.append("reset") or "ok", "fixture reset", 0)}
                    if model_text is None else {}),
                 "probe": usage_probe,
@@ -215,7 +223,7 @@ class Suite(BaseSuite):
                 "usage_probe_control": usage_probes[:1], "usage_probes": usage_probes[1:],
                 "held_at_start": held_at_start, "held_at_end": list(h.open_holds(record)),
                 "record": record, "turns": turn[0], "resume_cap": h.RESUME_CAP,
-                "successor_cap": h.MAX_SUCCESSORS_DEFAULT}
+                "successor_cap": FIXTURE_SUCCESSOR_LIMIT}
 
     def sequence(self, f, sequence, starts, aborted=False, successors=0, **kwargs):
         data = self.loop(f, sequence, **kwargs)
@@ -461,9 +469,9 @@ class Suite(BaseSuite):
         def real_chain(f):
             h = load(Path(self.args.wrappers) / "handsoff.py", "cap_constants")
             # Every session gets RESUME_CAP resumes then a successor; the final successor is refused.
-            stops = (h.MAX_SUCCESSORS_DEFAULT + 1) * (h.RESUME_CAP + 1)
+            stops = (FIXTURE_SUCCESSOR_LIMIT + 1) * (h.RESUME_CAP + 1)
             data = self.loop(f, ["text"] * stops + ["close"], real_successor=True, hold=True)
-            return (data["public_returncode"] == 1 and len(data["successors"]) == h.MAX_SUCCESSORS_DEFAULT
+            return (data["public_returncode"] == 1 and len(data["successors"]) == FIXTURE_SUCCESSOR_LIMIT
                     and len(data["starts"]) == stops - 1 and len(data["probes"]) == stops
                     and data["abort"][-1].get("reason") == "successor-cap"
                     and data["held_at_start"] == ["held-helper"] and not data["held_at_end"]

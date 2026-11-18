@@ -385,6 +385,7 @@ ledger**: `python3 .claude/skills/gather/run_ledger.py init --id <run-id> --budg
     alone, and the site's name cannot say which it is. The row stays on the menu, marked "paper or
     its review of <path>", for the owner to keep or drop (a review is never a duplicate, CLAUDE.md
     section 3).
+    A row is never recommended out only because the vault already covers its topic or aiMyth has its own design for it: a source on held ground is still read, to learn from it where it is better or to see what makes aiMyth's better. A row left out as a copy names the probe that found it so; one judged a copy by its title alone stays on the menu, marked as such.
 1.4 Present the **Discover gate** (contents per the envelope's reporting duties; never skipped,
     even with `--yes`). Approval per the pinned semantics; record it in the ledger (`add-gate`;
     every explicit drop → `add-drop`; the round's literal queries + shown rows → `add-round`,

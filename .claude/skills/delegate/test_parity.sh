@@ -421,6 +421,29 @@ has "judge-brief reports every slot filled" "slots: 8 filled, no placeholder lef
 for slot in TASK SCOPE REGISTRIES GRANTS DECISIONS VERIFICATION CONDUCT REPORT; do
   infile "the brief carries the $slot slot" "^$slot$" "$B"
 done
+# The GRANTS block opens with the delegate skill's five labelled lines, in order, each holding text
+# (an indented line continues the line above it). The same check on a copy with one line dropped
+# is its positive control.
+grants_five() {
+  python3 -B -c '
+import re, sys
+labels = ["Bounds", "Pushed", "Held by the reviewer", "Left out on purpose", "Second seat"]
+lines = open(sys.argv[1], encoding="utf-8").read().split("\n")
+if sys.argv[2:] == ["--drop-held"]:
+    lines = [line for line in lines if not line.startswith("- Held by the reviewer:")]
+at = [number for number, line in enumerate(lines) if line == "GRANTS"]
+if len(at) != 1:
+    print("GRANTS lines: %d" % len(at))
+    raise SystemExit
+heads = [line for line in lines[at[0] + 1:] if not line[:1].isspace()][:len(labels)]
+found = [re.match(r"- ([A-Za-z ]+): \S", line) for line in heads]
+print("ok" if [match.group(1) if match else None for match in found] == labels else "opens with %r" % heads[:2])
+' "$@"
+}
+g5=$(grants_five "$B")
+if [ "$g5" = ok ]; then ok "the GRANTS block opens with the five labelled lines"; else no "the GRANTS block lacks its five lines ($g5)"; fi
+g5ctl=$(grants_five "$B" --drop-held)
+if [ -n "$g5ctl" ] && [ "$g5ctl" != ok ]; then ok "the same check catches a dropped Held line (positive control)"; else no "the five-line check passed a dropped line ($g5ctl)"; fi
 infile "the brief states the score line format" 'SCORE ART-ID accuracy=N completeness=N citations=N' "$B"
 infile "the brief carries a positive-control line" 'CONTROL+: ' "$B"
 # D37 and D39: a bare rubric line the judge echoes, a bare control-plus line with nothing after the

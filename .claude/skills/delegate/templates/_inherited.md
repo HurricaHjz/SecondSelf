@@ -27,4 +27,5 @@ inherit CLAUDE.md in full — restatements in this brief mark load-bearing rules
 imply the rest is waived. Your report carries no status line and never claims the agent's
 name — that name belongs to the whole system, not a lane. UK English throughout.
 Your report is complete findings inward, concise and without waste: no status line, no style, role or register rule.
+Any browser or player you start runs muted and plays no video unless the playing is what you test, then briefly, closing it after; nothing you start holds the display awake or declares user activity, and you open no file in a desktop app.
 ```

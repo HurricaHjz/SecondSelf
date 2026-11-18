@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """vault-writes.py — the vault writes a head composes by hand, as primitives that cannot slip.
 
-Five writes recur in every run — a log entry, a defect-register entry, a register entry
-closed or annotated, an IDEAS bullet annotated — and each has been
-mis-composed by hand: a misplaced anchor, a doubled span, an entry inserted under the wrong
-heading, a whole-file rewrite that erased a line a concurrent writer had added. Each verb
-below makes one of them against an asserted anchor, prints one line, and refuses rather than
-guesses.
+Six writes recur in every run — a log entry, a defect-register entry, a register entry
+closed or annotated, an IDEAS bullet annotated, a decided-work line added, changed or
+closed — and each has been mis-composed by hand: a misplaced anchor, a doubled span, an entry
+inserted under the wrong heading, a whole-file rewrite that erased a line a concurrent writer
+had added. Each verb below makes one of them against an asserted anchor, prints one line, and
+refuses rather than guesses.
 
   log-append         append one entry to `wiki/log.md` under the vault root given.
   register add       insert one entry at the top of `## Open` in
@@ -14,6 +14,11 @@ guesses.
   register close     move one `## Open` entry to the top of `## Closed`, dating its Status.
   register annotate  append one dated, clock-stamped note to one `## Open` entry.
   ideas annotate     append ` *(agent DATE TIME: NOTE)*` to one numbered IDEAS bullet.
+  decided add        insert one line under `## To build` in `wiki/developments/decided-work.md`,
+                     with the next unused id for its date on that page and its closed page.
+  decided status     append one dated, clock-stamped status clause to one open line.
+  decided state      replace one open line's state, recording the earlier state in a status.
+  decided close      close one open line onto `wiki/developments/decided-work-done.md`.
 
 The catalogue, `wiki/index.md`, is updated by anchored edits (CLAUDE.md §5), with no verb here.
 
@@ -34,6 +39,14 @@ The clock, and why it is not an argument
     log-append         one further bullet, `- **Clock**: HH:MM ZONE`, written through the
                        `--extra` path between Changed and Conflicts. The `## [DATE] ACTION |
                        TITLE` heading is a schema surface and is not touched.
+    decided add        a last field `recorded by BY at HH:MM ZONE`, with ` on D Month YYYY`
+                       when the clock's date is not the decision's (`--date`).
+    decided status     ` · status D Month YYYY, HH:MM ZONE (BY): NOTE`, date and time both
+    decided state      the clock's (the state verb's clause adds the earlier state).
+    decided close      the closing clause `KIND D Month YYYY: EVIDENCE (closed HH:MM ZONE by BY)`.
+
+  In the decided verbs a time with seconds (`00:51:57`) is a citation of the owner's words
+  and is not scanned, and `--locator` is not scanned at all: it cites his words by definition.
 
   The zone is the clock's own (`%Z`), never a literal. And because a caller's free text may
   still name a time, every text argument is scanned for an `HH:MM` or `HH:Mx` token whose
@@ -93,10 +106,10 @@ The lines an entry owns (register close, register annotate)
   carries the field marker `**Status**:` itself (the register's lint reads that marker as a
   Status wherever it stands), so `register annotate` refuses one.
 
-Concurrent writers (every write except the log append)
+Concurrent writers
 
-  These writes replace their target whole, so a change another writer made after this run
-  read the file would be overwritten by it. Three measures bound that:
+  Every write but the log append replaces its target whole, so a change another writer made
+  after this run read the file would be overwritten by it. Three measures bound that:
 
     the lock     each writing run holds an advisory lock on the target's directory from
                  before its read until after its replace, so two runs of this tool never
@@ -117,6 +130,21 @@ Concurrent writers (every write except the log append)
                  there for any length of time, and a write another program makes inside it is
                  overwritten (the suite's late-writer leg shows it). Runs of this tool never
                  meet there, because each holds the lock across it.
+    premises     a write that depends on a second page it does not replace (the closed
+                 decided-work page, for an add or a close) checks that page's fact again
+                 after the target's re-read and before its last look, so the last look still
+                 ends the check. A premise is a fact, not the page's bytes: a `updated:` stamp
+                 patched by a hook elsewhere on that page stops nothing.
+
+  The log append holds the same lock on the log's folder from before its probe until after
+  its read-back, and it opens the log for appending before it probes, so the tail it reads
+  and the end it writes at are the same file's. An append never overwrites: another program
+  that appends in between pushes this entry later, and the read-back then reports `ok` at the
+  line where it landed, with one `readback:` line on stderr. Two outcomes are an `error`: an
+  entry absent from the log as it stands after the write (the log replaced or truncated under
+  the open), and then a re-run writes it once; and an entry pushed later behind bytes that end
+  mid-line, so its heading is glued to their line: it landed malformed, and the fix is a
+  correction entry, never a re-run.
 
 The payload, and what a shell may have done to it (log-append)
 
@@ -127,6 +155,29 @@ The payload, and what a shell may have done to it (log-append)
   carrying the text `command not found` (a substitution's own error captured into the
   payload). Each prints one stderr line, `payload: ARGUMENT carries …`, and the write
   proceeds either way; `--dry-run` prints the same warnings.
+
+Inside a helper (LLM_WIKI_LANE_WRITES)
+
+  A helper that lane.py spawns carries its write grants in LLM_WIKI_LANE_WRITES: the
+  os.pathsep-joined real paths of its --write grants, files or folders, and the empty string
+  for a helper with no write grant. Where that variable is present, every verb refuses unless
+  the grants cover each file it would change (log-append: the log; the register verbs: the
+  register; ideas annotate: the IDEAS file; decided add, status and state: the open page; decided
+  close: both pages), the file itself granted or a granted folder holding it, and none of those
+  files itself a symbolic link (a folder reached through one is followed) or a file with a
+  second hard link: one error line naming the target, exit 2, nothing read, locked or written.
+  `--dry-run` refuses the same way, so it stays the run it previews. Present but empty, or not
+  a list of absolute paths, every verb refuses. Absent while LLM_WIKI_LANE, LLM_WIKI_LANE_ID or
+  LLM_WIKI_LANE_GRANTS is set (names lane.py sets beside it), every verb refuses too: that is a
+  helper whose grants cannot be read. Absent with none of those set, as in a lead's
+  environment, nothing here applies. A refusal for want of a grant ends by asking the helper to
+  report the missing grant. The lane fence cannot see what a script writes, so the writer
+  bounds itself, as the ingest sanitiser does. This covers the headless Claude helpers lane.py
+  spawns while their environment is as lane.py set it: a helper that clears all four names
+  before the call is not seen as one. A Codex helper (codex-lane.py) sets LLM_WIKI_LANE and
+  LLM_WIKI_LANE_ID but no grant variable, so every verb refuses inside it, and its sandbox
+  bounds its other writes; an in-session helper, a subagent of the lead's own session, is not
+  bounded here.
 
 The contract every verb keeps
 
@@ -143,13 +194,62 @@ The contract every verb keeps
     rewrites it. Two bounded read-only probes support that append and neither holds the
     file in memory: its last two bytes (which decide the blank-line separator) and a
     chunked newline count (the line number the `ok` line reports). Neither alters a byte.
-  * Every text argument carrying a line break is refused. Wiki prose is one line per
-    paragraph or bullet (the schema line discipline), and a line break is also how a
-    caller text would forge a heading inside somebody else entry.
+    Both are taken through the descriptor the append writes with, under the lock, and the
+    read-back reads only from the probe's end onwards.
+  * Every text argument carrying a line break is refused, and so is one carrying any other
+    character a reader may split a line on (U+2028, U+2029, U+0085, VT, FF). Wiki prose is
+    one line per paragraph or bullet (the schema line discipline), and a line break is also
+    how a caller text would forge a heading inside somebody else entry. A decided-work field
+    may also not start or end with the field separator, and every composed decided-work line
+    is checked for the field count its template gives it before anything is written.
   * Refusal beats repair. A structural heading that does not appear exactly once, a match
     count that is not one, a missing or unreadable file, an entry with no Status bullet, a
-    lock that cannot be taken, a file changed since its read: `error`, exit 2, naming the
+    lock that cannot be taken, a file changed since its read, a target outside a helper's
+    write grants: `error`, exit 2, naming the
     count or the reason it actually found. Nothing is written on a refusal.
+
+Decided work (the decided verbs)
+
+  The rules are the open page's own section "How this page works": its line format, its
+  Shared writes span and its Closing rule. Every decided verb first reads the open page's
+  structure: `## To build`, `## Later on purpose` and `## How this page works` each exactly
+  once as a whole line, in that order, and no other heading between the first and the last.
+  The lines between To build and How this page works are the open range. A line belongs to
+  the id `DW-YYYYMMDD-n` it carries in bold: the line for an id opens `- [ ] **ID** · `, and
+  every line of the page carrying `**ID**` counts against its identity, as the Closing rule's
+  `grep -c -F` does. ` · ` separates a line's fields, so no one-field argument (`--work`,
+  `--locator`, `--state`, `--home`, `--note`, `--evidence`, `--by`) may carry it, nor `**`,
+  which would forge a bold id.
+
+    add      the next id for `--date` is one more than the highest `n` of any
+             `DW-<date>-<n>` on either page, bold or cited, so no closed or cited id is
+             reused. The anchor is the span from `## To build` through its first content
+             line (or the next heading when the section is empty), asserted once in the
+             file; it is replaced by the heading, the same blank lines, the new line and the
+             old first line (in an empty section, a blank line and the next heading). The
+             state is one the page lists, never `later:`. A pre-existing id on two lines is
+             named on stderr (`malformed:`) and stops nothing; the owner's quoted words
+             already on another line are named on stderr (`duplicate:`) and stop nothing.
+    status   appends one clause to the end of the one line for the id.
+    state    replaces the line's fourth field. It refuses a fourth field that is not a state
+             the page lists, `later:` on a To build line and anything else on a Later line:
+             moving a line between sections is not a state edit.
+    close    counts `**ID**` on the closed page first. On 0, the complete line with its box
+             changed (`[x]` built, `[-]` retired or dropped) and the closing clause is
+             appended at the end of the closed page, whose `## Closed` must be its last
+             heading, and then the open copy is removed. On 1, that closed line must be the
+             open line's body with the same box, kind and closing evidence (the rule's "the
+             same decision, work and closing evidence"), and then only the open copy is
+             removed; anything else there is a repair, refused. On 2 or more, it refuses.
+             Every edited, moved or closed line keeps its own line terminator. The two writes are two renames: if the open page changes
+             between them, or the run dies between them, the closed line stands and the open
+             copy stays, and the error says so; the same command run again takes the count-1
+             path and finishes. A dropped line's evidence is his words, `"…" (time and place)`.
+
+  Each decided write reads the page back after the rename and checks what its rule asks:
+  the new line once and first under To build, the edited line once, the closed line once on
+  the closed page and the id on no line of the open page. A failed read-back is an `error`
+  that says the write landed.
 
 Formats, and where they come from
 
@@ -163,7 +263,8 @@ Formats, and where they come from
   `- **Suspected cause**`, `- **Why not fixed now**`, `- **Status**`. `--status` is the
   caller's own words, prefixed on a close by the clock stamp above and otherwise untouched
   (`open — fix shape: …`); `--where` is optional and its bullet is omitted when it is absent
-  rather than filled with invented text.
+  rather than filled with invented text. `--cause-kind tested|observed` puts that one word and a
+  colon before the cause (`- **Suspected cause**: observed: …`); absent, the field is as before.
   `register close` dates the entry's Status field, so it dates both forms in live use: a
   `- **Status**: …` bullet, and a `- **Severity**: … **Status**: …` line.
 
@@ -173,11 +274,17 @@ Run
                              [--extra "Key: value"]... [--date D] [--dry-run]
   vault-writes.py register add --vault V --date D --surface S --symptom Y --cause C
                                --why-not-fixed-now R --severity minor --status T
-                               [--where W] [--dry-run]
+                               [--where W] [--cause-kind tested|observed] [--dry-run]
   vault-writes.py register close --vault V --match TEXT --date D --status TEXT [--dry-run]
   vault-writes.py register annotate --vault V --match TEXT --kind KIND --note TEXT
                                     [--by WHO] [--date D] [--dry-run]
   vault-writes.py ideas annotate --file IDEAS.md --item N --note TEXT [--date D] [--dry-run]
+  vault-writes.py decided add --vault V --date D --work W --locator L --state S
+                              [--home H]... --by WHO [--dry-run]
+  vault-writes.py decided status --vault V --id ID --note TEXT --by WHO [--dry-run]
+  vault-writes.py decided state --vault V --id ID --state S --note TEXT --by WHO [--dry-run]
+  vault-writes.py decided close --vault V --id ID --kind built|retired|dropped
+                                --evidence TEXT --by WHO [--dry-run]
 
 Suite: `test_vault_writes.sh` beside this file (last line PASS n/n or FAIL k/n).
 """
@@ -203,6 +310,9 @@ ACTIONS = ("ingest", "gather", "synthesis", "lint", "deep-lint", "framework",
 # The severities the register documents. Its format block offers "blocking · major · minor"
 # and its live entries also carry "medium", so all four are accepted and none is invented.
 SEVERITIES = ("blocking", "major", "medium", "minor")
+# The one word `register add --cause-kind` puts before a suspected cause: whether a test showed the
+# cause or it was only seen. Optional, so an entry written without it keeps the old field shape.
+CAUSE_KINDS = ("tested", "observed")
 # The kinds of dated note `register annotate` writes: the labels a register's hand-written dated
 # notes carry most, so a written note reads like those beside it; anything else is a typo.
 NOTE_KINDS = ("Status", "Recurrence", "Correction")
@@ -210,6 +320,45 @@ NOTE_KINDS = ("Status", "Recurrence", "Correction")
 # Paths are derived from the vault root the caller passes: no absolute path is written here.
 LOG_REL = os.path.join("wiki", "log.md")
 REGISTER_REL = os.path.join("wiki", "developments", "known-issues.md")
+DECIDED_REL = os.path.join("wiki", "developments", "decided-work.md")
+DONE_REL = os.path.join("wiki", "developments", "decided-work-done.md")
+
+# The decided-work pages: their structural headings, as the open page's reading note counts them.
+TO_BUILD_HEAD = "## To build"
+LATER_HEAD = "## Later on purpose"
+HOW_HEAD = "## How this page works"
+DONE_HEAD = "## Closed"
+FIELD_SEP = " · "                       # the field separator of a decided-work line
+BOLD = "**"
+OPEN_BOX = "- [ ] "
+# An id as a caller names one, and any id-shaped token on either page (bold or cited).
+DW_ID_RE = re.compile(r"^DW-([0-9]{8})-([1-9][0-9]*)$")
+DW_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])DW-([0-9]{8})-([0-9]+)(?![0-9])")
+# The closing kinds and their boxes, as the page's Closing rule writes them.
+CLOSE_BOX = {"built": "[x]", "retired": "[-]", "dropped": "[-]"}
+CLOSED_LINE_RE = re.compile(r"^- (\[(?:x|-)\]) \*\*(DW-[0-9]{8}-[0-9]+)\*\* · ")  # no two brackets together
+DROPPED_EVIDENCE_RE = re.compile(r'^".+" \(.+\)$')
+# The states the page lists, as this tool reads an existing one (STATE_READ_RE) and writes a new
+# one (STATE_NEW_RE). Reading admits a returned line's `to build: <reason>` and any text after
+# an `in` state's item; writing admits the shapes alone.
+STATE_READ_RE = re.compile(r"^(?:to build(?:: .+)?|in [^ ,]+, item [^ ,]+(?: .*)?|blocked: .+|"
+                           r"elsewhere: .+|later: .+)$")
+STATE_NEW_RE = {
+    "to build": re.compile(r"^to build(?:: .+)?$"),
+    "in": re.compile(r"^in [^ ,]+, item [^ ,]+$"),
+    "blocked": re.compile(r"^blocked: .+$"),
+    "elsewhere": re.compile(r"^elsewhere: .+ \(.+\)$"),
+    "later": re.compile(r'^later: .+ \(".+", .+\)$'),
+}
+# A time with seconds is how the vault cites the owner's words (`00:51:57 GMT`): a citation, so the
+# decided verbs leave it out of the clock check.
+SECONDS_CITE_RE = re.compile(r"(?<![0-9])[0-9]{2}:[0-5][0-9]:[0-5][0-9](?![0-9])")
+# The owner's quoted words inside a locator, for the duplicate notice: the first double-quoted run
+# at least this long. Twelve characters is set by judgement, unmeasured: it keeps a quoted one-word
+# label ("yes") from naming every line that quotes the same word.
+QUOTED_RE = re.compile(r'"([^"]{12,})"')
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August",
+          "September", "October", "November", "December")
 
 OPEN_HEAD = "## Open"
 CLOSED_HEAD = "## Closed"
@@ -311,12 +460,21 @@ def short(text):
     return text if len(text) <= SHORT else text[:SHORT - 1] + "…"
 
 
+# The other characters a reader may take for a line break: str.splitlines() splits on each, so a page
+# read that way would find a forged line (a second heading, another entry) inside one argument.
+OTHER_BREAKS = {" ": "U+2028 LINE SEPARATOR", " ": "U+2029 PARAGRAPH SEPARATOR",
+                "\u0085": "U+0085 NEXT LINE", "\x0b": "VT (vertical tab)", "\x0c": "FF (form feed)"}
+
+
 def check_text(verb, name, value, allow_empty=False):
     """A wiki line is one line: refuse any argument carrying a break, and refuse the blank."""
     if value is None:
         return None
     if "\n" in value or "\r" in value:
         die(verb, "%s carries a line break; a wiki bullet is one line" % name)
+    for char, label in OTHER_BREAKS.items():
+        if char in value:
+            die(verb, "%s carries %s, which a reader may split a line on; a wiki bullet is one line" % (name, label))
     if not allow_empty and not value.strip():
         die(verb, "%s is empty" % name)
     return value
@@ -333,6 +491,85 @@ def check_date(verb, value):
     except ValueError:
         die(verb, "--date %s is not a real date" % value)
     return value
+
+
+# ---------------------------------------------------------------- helper grants ---------
+
+# A helper (a lane that lane.py spawns) carries its write grants in its environment: lane.py sets this
+# variable to the os.pathsep-joined real paths of the lane's --write grants, files or folders, and to the
+# empty string for a lane with no write grant; a lead's environment does not carry it. Inside a helper
+# every write of this tool refuses unless those grants cover each file it would change: the lane fence
+# cannot see what a script writes, so the writer bounds itself, as the ingest sanitiser does.
+LANE_WRITES_VAR = "LLM_WIKI_LANE_WRITES"
+# Names lane.py sets beside the grant variable in every helper it spawns (codex-lane.py sets the first two
+# and no grant variable). Any of them present while the grant variable is absent is a helper whose grants
+# cannot be read, so it writes nothing; a lead's environment carries none of them.
+LANE_MARKERS = ("LLM_WIKI_LANE", "LLM_WIKI_LANE_ID", "LLM_WIKI_LANE_GRANTS")
+# The remedy a refusal for want of a grant names: the helper reports the gap to its head, rather than
+# changing its own environment.
+REPORT_GAP = "report the missing grant (`needs: <path> because <reason>`)"
+
+
+def lane_write_roots(verb, targets):
+    """None outside a helper (the variable absent and none of LANE_MARKERS set), else the helper's write
+    roots as real paths. Absent beside a marker, present but empty, or not a list of absolute paths,
+    refuses: a helper whose grants cannot be read writes nothing. The refusal names the files the write
+    would change, prints a value whole, as repr() gives it, so a stray separator or space shows, and ends
+    with REPORT_GAP."""
+    named = ", ".join(targets)
+    if LANE_WRITES_VAR not in os.environ:
+        if any(name in os.environ for name in LANE_MARKERS):
+            die(verb, "%s: this run is inside a helper whose %s is absent, so its grants cannot be read; "
+                      "nothing written; %s" % (named, LANE_WRITES_VAR, REPORT_GAP))
+        return None
+    raw = os.environ[LANE_WRITES_VAR]
+    roots = [part for part in raw.split(os.pathsep) if part.strip()]
+    if not roots:
+        die(verb, "%s: this run is inside a helper whose %s is empty (%r), so it holds no write grant; "
+                  "nothing written; %s" % (named, LANE_WRITES_VAR, raw, REPORT_GAP))
+    unreadable = [part for part in roots if part != part.strip() or not os.path.isabs(part)]
+    if unreadable:
+        die(verb, "%s: this run is inside a helper whose %s cannot be read as a list of absolute paths (%r); "
+                  "nothing written; %s" % (named, LANE_WRITES_VAR, raw, REPORT_GAP))
+    return [os.path.realpath(part) for part in roots]
+
+
+def check_lane_grants(verb, *targets):
+    """Inside a helper, refuse unless its write grants cover every file this write would change: the file
+    itself is granted, or a granted folder holds it. A target that is itself a symbolic link is refused
+    whatever it points to: every write here ends in a rename over the target's own path (or, for the log,
+    an append through the link), so a link in an ungranted folder that points into a granted one would be
+    replaced by a file in the ungranted folder, while its resolved path looked granted. A folder reached
+    through a link is followed, since a write through it lands in the folder itself. A granted target with a
+    second hard link is refused too: the other name may sit outside the grants, and the log append, which
+    writes into the file itself, would change it there as well. Outside a helper, nothing."""
+    roots = lane_write_roots(verb, targets)
+    if roots is None:
+        return
+    for target in targets:
+        if os.path.islink(target):
+            try:
+                points = os.readlink(target)
+            except OSError as exc:
+                points = "unreadable: %s" % (exc.strerror or exc)
+            die(verb, "%s is a symbolic link (to %s): inside a helper the writer refuses a linked target, whose "
+                      "write would land at the link's own path; the link is left as it is and nothing written"
+                % (target, points))
+        real = os.path.realpath(os.path.abspath(target))
+        if not any(real == root or real.startswith(root.rstrip(os.sep) + os.sep) for root in roots):
+            die(verb, "%s is outside this helper's write grants (%s); nothing written; %s"
+                % (target, os.environ[LANE_WRITES_VAR], REPORT_GAP))
+        try:
+            links = os.stat(target).st_nlink
+        except (FileNotFoundError, NotADirectoryError):
+            links = 1                       # no file there yet, so no other name for it either
+        except OSError as exc:
+            die(verb, "%s: inside a helper the writer cannot read this target's link count (%s); nothing written"
+                % (target, exc.strerror or exc))
+        if links > 1:
+            die(verb, "%s has %d hard links: inside a helper the writer refuses a target that another name shares, "
+                      "since the write could land in a file the grants do not name; the links are left as they "
+                      "are and nothing written" % (target, links))
 
 
 # ----------------------------------------------------------------------- clock ---------
@@ -551,12 +788,14 @@ def last_look(path):
     return os.stat(path)
 
 
-def changed_since(snap):
-    """None when the target still holds the bytes it was composed from, else the reason.
+def changed_since(snap, premises=()):
+    """None when the target still holds the bytes it was composed from and every premise still
+    holds, else the reason.
 
-    The re-read and its hash come first; last_look() ends this function, so no work of this
-    tool's own falls between it and the caller's rename. What lands after it is not seen
-    (the docstring's window)."""
+    The re-read and its hash come first, then each premise (a callable that returns None or a
+    reason naming its own page); last_look() ends this function, so no work of this tool's own
+    falls between it and the caller's rename. What lands after it is not seen (the docstring's
+    window)."""
     path = snap.path
     try:
         seen, data = reread(path)
@@ -568,6 +807,10 @@ def changed_since(snap):
     if now != snap.sha:
         return ("it changed on disk since this run read it (sha256 %s at the read, %s now)"
                 % (snap.sha[:12], now[:12]))
+    for premise in premises:
+        reason = premise()
+        if reason is not None:
+            return reason
     try:
         last = last_look(path)
     except FileNotFoundError:
@@ -580,9 +823,13 @@ def changed_since(snap):
     return None
 
 
-def atomic_write(verb, snap, text):
+def atomic_write(verb, snap, text, premises=(), refused=None):
     """Write beside the target, fsync, check, rename: the file is whole or untouched, and a
-    change another writer made before the last look is never overwritten (the window aside)."""
+    change another writer made before the last look is never overwritten (the window aside).
+
+    `premises` are checked inside the check (changed_since). `refused`, when given, is a callable
+    that turns the refusal's reason into the error line's text, for a write whose refusal leaves
+    something to say (the second write of a close)."""
     path = snap.path
     directory = os.path.dirname(os.path.abspath(path))
     try:
@@ -597,7 +844,7 @@ def atomic_write(verb, snap, text):
             os.fsync(handle.fileno())
         if mode is not None:
             os.chmod(tmp, mode)
-        reason = changed_since(snap)
+        reason = changed_since(snap, premises)
         if reason is None:
             os.replace(tmp, path)
     except BaseException:
@@ -611,6 +858,8 @@ def atomic_write(verb, snap, text):
             os.unlink(tmp)
         except OSError:
             pass
+        if refused is not None:
+            die(verb, refused(reason))
         die(verb, "%s: %s; it is left as the other writer left it and nothing was written; "
                   "re-run the command against the file as it now stands" % (path, reason))
     try:                            # the rename is durable only once the directory is
@@ -642,24 +891,26 @@ def line_terminator(line):
 
 # ------------------------------------------------------------------ log-append ---------
 
-def log_tail(path, count=2):
-    """The last bytes, by seek. The log is append-only and is never held in memory."""
-    size = os.path.getsize(path)
-    with open(path, "rb") as handle:
-        handle.seek(max(0, size - count))
-        return handle.read()
-
-
-def log_line_count(path):
-    """Newlines, counted in bounded chunks — again, never the whole file in memory."""
-    total = 0
-    with open(path, "rb") as handle:
-        while True:
-            chunk = handle.read(CHUNK)
-            if not chunk:
-                break
-            total += chunk.count(b"\n")
+def log_line_count(fd, upto):
+    """Newlines in the first `upto` bytes, counted in bounded chunks through the descriptor the
+    append writes with — again, never the whole file in memory."""
+    total, offset = 0, 0
+    while offset < upto:
+        chunk = os.pread(fd, min(CHUNK, upto - offset), offset)
+        if not chunk:
+            break
+        total += chunk.count(b"\n")
+        offset += len(chunk)
     return total
+
+
+def log_probe(fd):
+    """(size, tail, lines): the log as this run will append to it, read through the open
+    descriptor under the lock. The last two bytes decide the separator; the newline count, the
+    line the `ok` line reports."""
+    size = os.fstat(fd).st_size
+    tail = os.pread(fd, min(2, size), max(0, size - 2)) if size else b""
+    return size, tail, log_line_count(fd, size)
 
 
 def log_separator(tail):
@@ -676,9 +927,23 @@ def log_separator(tail):
     return "\n\n"
 
 
+def log_landed(path, size, data):
+    """Where `data` sits in the log at `path` at or after byte `size`: (offset, the file's newline
+    count between the probe's end and the offset, the byte just before the offset) or None. Only
+    what was appended since the probe is read."""
+    with open(path, "rb") as handle:
+        handle.seek(size)
+        grown = handle.read()
+    found = grown.find(data)
+    if found < 0:
+        return None
+    return size + found, grown[:found].count(b"\n"), grown[found - 1:found] if found else b""
+
+
 def cmd_log_append(args):
     verb = "log-append"
     path = os.path.join(args.vault, LOG_REL)
+    check_lane_grants(verb, path)
     if args.action not in ACTIONS:
         die(verb, "--action '%s' is none of: %s" % (args.action, " ".join(ACTIONS)))
     date = check_date(verb, args.date)
@@ -720,17 +985,54 @@ def cmd_log_append(args):
         block.append("- **%s**: %s" % (key, value))
     block.append("- **Conflicts**: %s" % conflicts)
 
-    separator = log_separator(log_tail(path))
-    payload = separator + "\n".join(block) + "\n\n"
-    heading_line = log_line_count(path) + separator.count("\n") + 1
+    # The lock, then the open, then the probe through the same descriptor: the tail this run
+    # reads and the end it appends at are the same file's, and no run of this tool falls between.
+    if not args.dry_run:
+        take_lock(verb, path)
+    try:
+        fd = os.open(path, os.O_RDONLY if args.dry_run else os.O_RDWR | os.O_APPEND)
+    except OSError as exc:
+        die(verb, "cannot open %s to append (%s); nothing written" % (path, exc.strerror or exc))
+    try:
+        size, tail, lines = log_probe(fd)
+        separator = log_separator(tail)
+        payload = (separator + "\n".join(block) + "\n\n").encode("utf-8")
+        heading_line = lines + separator.count("\n") + 1
+        if args.dry_run:
+            report(verb, path, heading_line, block, True)
+            return
+        written = 0
+        while written < len(payload):                   # append only, never a rewrite
+            written += os.write(fd, payload[written:])
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
-    if args.dry_run:
-        report(verb, path, heading_line, block, True)
-        return
-    with open(path, "a", encoding="utf-8") as handle:   # append only, never a rewrite
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
+    # The read-back: the entry where it landed. Later than the probe's end is another program's
+    # append in between, never an overwrite; absent is a log replaced or truncated under the open.
+    try:
+        landed = log_landed(path, size, payload)
+    except OSError as exc:
+        die(verb, "%s: the entry was written but the log cannot be read back (%s); check its tail "
+                  "before any re-run" % (path, exc.strerror or exc))
+    if landed is None:
+        die(verb, "%s: the entry is not in the log as it now stands (the log was replaced or "
+                  "truncated after this run opened it); re-run the command" % path)
+    offset, before, previous = landed
+    if offset != size and previous != b"\n":
+        # Another program's append ended mid-line, so this entry's separator, chosen for the tail
+        # this run read, glues the heading to their last line. The entry is in the append-only log:
+        # a re-run would add a second copy, so the fix is a correction entry, never a re-run.
+        real = lines + before + 1
+        die(verb, "%s: the entry landed but malformed: another writer appended %d bytes between this run's "
+                  "probe and its write, ending mid-line, so the heading is glued to their line %d; append a "
+                  "correction entry, never a re-run of this command" % (path, offset - size, real))
+    if offset != size:
+        real = lines + before + separator.count("\n") + 1
+        note("readback", "another writer appended %d bytes between this run's probe and its write; "
+                         "the entry landed at line %d, not %d, after their bytes; its separator was "
+                         "chosen for the tail this run read" % (offset - size, real, heading_line))
+        heading_line = real
     report(verb, path, heading_line, block, False)
 
 
@@ -910,6 +1212,7 @@ def unique_stamp(verb, lines, date, hm):
 def cmd_register_add(args):
     verb = "register-add"
     path = os.path.join(args.vault, REGISTER_REL)
+    check_lane_grants(verb, path)
     date = check_date(verb, args.date)
     surface = check_text(verb, "--surface", args.surface)
     tag = re.search(r"(\(\s*(?:%s|blocking\s*·\s*major\s*·\s*minor)\s*\))\s*\.?\s*$"
@@ -919,6 +1222,8 @@ def cmd_register_add(args):
             % tag.group(1))
     symptom = check_text(verb, "--symptom", args.symptom)
     cause = check_text(verb, "--cause", args.cause)
+    if args.cause_kind:
+        cause = "%s: %s" % (args.cause_kind, cause)
     if args.why_not_fixed_now is None:
         die(verb, "--why-not-fixed-now is missing: an entry parks a defect only for a named "
                   "reason that blocks the fix now (CLAUDE.md §12), so fix it now or name that reason")
@@ -957,6 +1262,7 @@ def cmd_register_add(args):
 def cmd_register_close(args):
     verb = "register-close"
     path = os.path.join(args.vault, REGISTER_REL)
+    check_lane_grants(verb, path)
     date = check_date(verb, args.date)
     match = check_text(verb, "--match", args.match)
     status = check_text(verb, "--status", args.status)
@@ -1008,6 +1314,7 @@ def cmd_register_close(args):
 def cmd_register_annotate(args):
     verb = "register-annotate"
     path = os.path.join(args.vault, REGISTER_REL)
+    check_lane_grants(verb, path)
     match = check_text(verb, "--match", args.match)
     if args.kind not in NOTE_KINDS:
         die(verb, "--kind '%s' is none of: %s" % (args.kind, " ".join(NOTE_KINDS)))
@@ -1046,6 +1353,7 @@ def cmd_register_annotate(args):
 def cmd_ideas_annotate(args):
     verb = "ideas-annotate"
     path = args.file
+    check_lane_grants(verb, path)
     if not ITEM_RE.match(args.item):
         die(verb, "--item '%s' is not a number" % short(args.item))
     text = check_text(verb, "--note", args.note)
@@ -1074,6 +1382,570 @@ def cmd_ideas_annotate(args):
         return
     atomic_write(verb, snap, "\n".join(lines))
     report(verb, path, at + 1, preview, False)
+
+
+# --------------------------------------------------------------------- decided ---------
+
+BOLD_ID_RE = re.compile(r"\*\*(DW-[0-9]{8}-[0-9]+)\*\*")
+NOTICE_MAX = 3                          # a notice names at most this many lines, then a count
+
+
+def long_date(iso):
+    """`12 November 2026`, the day unpadded, as the decided-work pages write a date."""
+    day = datetime.date.fromisoformat(iso)
+    return "%d %s %d" % (day.day, MONTHS[day.month - 1], day.year)
+
+
+def clock_date(now):
+    """The clock's own date, from the same reading as its time."""
+    return time.strftime("%Y-%m-%d", now)
+
+
+def check_field(verb, name, value):
+    """One field of a decided-work line: one line, not blank, and neither the field separator
+    nor the bold marker, either of which would make another field or another identity."""
+    value = check_text(verb, name, value)
+    if value is None:
+        return None
+    if FIELD_SEP in value:
+        die(verb, "%s carries the field separator ' · ', which would make another field of the "
+                  "line; nothing written" % name)
+    # At a value's edge the separator needs only the space the template puts beside it to become
+    # one (`--by 'x ·'` writes `recorded by x · at …`), so a value may not start or end with it.
+    if value.strip().startswith(FIELD_SEP.strip()) or value.strip().endswith(FIELD_SEP.strip()):
+        die(verb, "%s starts or ends with the field separator '%s', which the line around it would make "
+                  "another field; nothing written" % (name, FIELD_SEP.strip()))
+    if BOLD in value:
+        die(verb, "%s carries '**', which could forge a bold id on the line; nothing written" % name)
+    return value
+
+
+def check_fields(verb, line, want, what):
+    """The composed line has exactly the fields its template gives it: the last guard against an
+    argument that made another field however it was spelled."""
+    got = len(line.rstrip("\r").split(FIELD_SEP))
+    if got != want:
+        die(verb, "the %s would have %d fields, not the %d its template gives it: an argument made another "
+                  "field; nothing written" % (what, got, want))
+
+
+def check_id(verb, value):
+    """An id as the page writes one: DW-YYYYMMDD-n, n a positive integer with no leading zero."""
+    if not DW_ID_RE.match(value or ""):
+        die(verb, "--id '%s' is not DW-YYYYMMDD-n" % short(value or ""))
+    return value
+
+
+def state_kind(state):
+    """Which of the page's states `state` is written as, or None."""
+    for kind, pattern in STATE_NEW_RE.items():
+        if pattern.match(state):
+            return kind
+    return None
+
+
+def check_state(verb, value, section=None):
+    """A state the page lists; with `section`, one that the section admits. A line moves under
+    Later only on his quoted word, which is a move, never a state edit, so a To build line takes
+    no `later:` state and a Later line takes nothing else."""
+    state = check_field(verb, "--state", value)
+    kind = state_kind(state)
+    if kind is None:
+        die(verb, "--state '%s' is none of the page's states: 'to build' (or 'to build: REASON'), "
+                  "'in RUN, item K', 'blocked: REASON', 'elsewhere: HOLDER (WORD OR RULE)', and under "
+                  "Later only 'later: TRIGGER (\"HIS WORDS\", TIME AND PLACE)'" % short(state))
+    if section == "to build" and kind == "later":
+        die(verb, "--state '%s' is a Later state: a line goes under '%s' only on his quoted word, and "
+                  "this line stands under '%s'; nothing written" % (short(state), LATER_HEAD, TO_BUILD_HEAD))
+    if section == "later" and kind != "later":
+        die(verb, "--state '%s' is not a Later state, and the line stands under '%s': moving it back "
+                  "is not a state edit; nothing written" % (short(state), LATER_HEAD))
+    return state
+
+
+def decided_scan(values):
+    """The text the clock check reads in a decided verb: a time with seconds is a citation."""
+    return [SECONDS_CITE_RE.sub(" ", value) if value else value for value in values]
+
+
+def read_text(path):
+    """A page read again whole, for a premise or a read-back."""
+    with open(path, "rb") as handle:
+        return handle.read().decode("utf-8")
+
+
+def read_lines_quiet(path):
+    """A page's lines for a message only, or None when it cannot be read."""
+    try:
+        return read_text(path).split("\n")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def heading_once(verb, lines, heading, name):
+    """The one line that IS the heading; any other count refuses."""
+    hits = [i for i, line in enumerate(lines) if line == heading]
+    if len(hits) != 1:
+        die(verb, "'%s' is %d lines of %s, not 1; nothing written" % (heading, len(hits), name))
+    return hits[0]
+
+
+def open_structure(verb, lines, path):
+    """(To build, Later on purpose, How this page works): each heading once, in that order, and
+    no other heading between the first and the last."""
+    name = os.path.basename(path)
+    to_at = heading_once(verb, lines, TO_BUILD_HEAD, name)
+    later_at = heading_once(verb, lines, LATER_HEAD, name)
+    how_at = heading_once(verb, lines, HOW_HEAD, name)
+    if not to_at < later_at < how_at:
+        die(verb, "the headings of %s are out of order ('%s' line %d, '%s' line %d, '%s' line %d); "
+                  "nothing written" % (name, TO_BUILD_HEAD, to_at + 1, LATER_HEAD, later_at + 1,
+                                       HOW_HEAD, how_at + 1))
+    for index in range(to_at + 1, how_at):
+        if index != later_at and ENTRY_END_RE.match(lines[index]):
+            die(verb, "line %d of %s is a heading inside the open range ('%s'); nothing written"
+                % (index + 1, name, short(lines[index])))
+    return to_at, later_at, how_at
+
+
+def done_structure(verb, lines, path):
+    """`## Closed` once, and the closed page's last heading: a closed line appended at the end of
+    the page lands under it."""
+    name = os.path.basename(path)
+    closed_at = heading_once(verb, lines, DONE_HEAD, name)
+    for index in range(closed_at + 1, len(lines)):
+        if ENTRY_END_RE.match(lines[index]):
+            die(verb, "line %d of %s is a heading below '%s', which must be the page's last heading; "
+                      "nothing written" % (index + 1, name, DONE_HEAD))
+    return closed_at
+
+
+def bold_lines(lines, ident):
+    """Every line carrying `**ident**`: the Closing rule's `grep -c -F` count, as indices."""
+    marker = BOLD + ident + BOLD
+    return [i for i, line in enumerate(lines) if marker in line]
+
+
+def duplicate_ids(lines):
+    """The ids carried in bold by two or more lines of a page, sorted."""
+    counts = {}
+    for line in lines:
+        for ident in set(BOLD_ID_RE.findall(line)):
+            counts[ident] = counts.get(ident, 0) + 1
+    return sorted(ident for ident, count in counts.items() if count > 1)
+
+
+def highest_n(texts, stamp):
+    """The highest n of any `DW-<stamp>-<n>` in the texts, bold or cited; 0 when none."""
+    found = [int(m.group(2)) for text in texts for m in DW_TOKEN_RE.finditer(text) if m.group(1) == stamp]
+    return max(found) if found else 0
+
+
+def open_line(verb, lines, ident, rng, done_lines):
+    """(index, section) of the one line for `ident` in the open range; any other count, shape or
+    place refuses, and an id absent from the open page names its closed copy when there is one."""
+    to_at, later_at, how_at = rng
+    hits = bold_lines(lines, ident)
+    if not hits:
+        closed = bold_lines(done_lines, ident) if done_lines is not None else []
+        where = ": it is closed at %s:%d" % (os.path.basename(DONE_REL), closed[0] + 1) if closed else ""
+        die(verb, "%s is on no line of the open page%s; nothing written" % (ident, where))
+    if len(hits) > 1:
+        die(verb, "%s is carried by %d lines of the open page (lines %s): two identities, a repair under "
+                  "the page's Malformed rule; nothing written"
+            % (ident, len(hits), ", ".join(str(i + 1) for i in hits)))
+    at = hits[0]
+    if not lines[at].startswith(OPEN_BOX + BOLD + ident + BOLD + FIELD_SEP):
+        die(verb, "line %d carries %s but is not its open line ('%s'); nothing written"
+            % (at + 1, ident, short(lines[at])))
+    if not to_at < at < how_at:
+        die(verb, "the line for %s (line %d) stands outside the open range between '%s' and '%s': "
+                  "misplaced, for the pre-flight read to move first; nothing written"
+            % (ident, at + 1, TO_BUILD_HEAD, HOW_HEAD))
+    return at, ("to build" if at < later_at else "later")
+
+
+def status_clause(now, by, text):
+    """` · status D Month YYYY, HH:MM ZONE (BY): TEXT`, date and time from one clock reading."""
+    return "%sstatus %s, %s %s (%s): %s" % (FIELD_SEP, long_date(clock_date(now)), clock_hm(now),
+                                           clock_zone(now), by, text)
+
+
+def remove_line(lines, at):
+    """The lines without lines[at]; when that leaves two blank lines together, one goes too, so
+    an emptied section keeps one blank line before its next heading."""
+    out = lines[:at] + lines[at + 1:]
+    if 0 < at < len(out) and not out[at - 1].strip() and not out[at].strip():
+        del out[at]
+    return out
+
+
+def read_back(verb, path):
+    """The page as it stands after the write; unreadable, the error says the write landed."""
+    try:
+        return read_text(path).split("\n")
+    except (OSError, UnicodeDecodeError) as exc:
+        die(verb, "%s: the write landed, but the page cannot be read back (%s); check it" % (path, exc))
+
+
+def back_failed(verb, path, problems):
+    die(verb, "%s: the write landed, but the read-back found %s; check the page against its rule"
+        % (path, "; ".join(problems)))
+
+
+def back_moved(path, lines, text):
+    """One stderr line when the page holds other bytes than this write left, its checks holding."""
+    if "\n".join(lines) != text:
+        note("readback", "%s changed again after this write (another writer); the read-back checks "
+                         "hold" % path)
+
+
+def premise_ids(path, stamp, n):
+    """An add's premise on the closed page: no id of its date at or above the one chosen."""
+    def check():
+        try:
+            text = read_text(path)
+        except FileNotFoundError:
+            return "its premise %s is gone since this run read it" % path
+        except (OSError, UnicodeDecodeError) as exc:
+            return "its premise %s cannot be read again (%s)" % (path, exc)
+        top = highest_n([text], stamp)
+        if top >= n:
+            return ("its premise %s now carries DW-%s-%d, at or above the id this run chose (DW-%s-%d); "
+                    "nothing was written: a fresh read and a fresh id choice" % (path, stamp, top, stamp, n))
+        return None
+    return check
+
+
+def premise_identity(path, ident, line):
+    """A close's first premise: the open page still carries the line for `ident` as read, once."""
+    def check():
+        try:
+            lines = read_text(path).split("\n")
+        except (OSError, UnicodeDecodeError) as exc:
+            return "its premise %s cannot be read again (%s)" % (path, exc)
+        if [other for other in lines if BOLD + ident + BOLD in other] != [line]:
+            return ("its premise %s no longer carries the line for %s once, as this run read it; nothing "
+                    "was written" % (path, ident))
+        return None
+    return check
+
+
+def premise_line_once(path, line, what):
+    """A premise that a page carries `line` exactly once (the closed line, for the open write)."""
+    def check():
+        try:
+            count = read_text(path).split("\n").count(line)
+        except (OSError, UnicodeDecodeError) as exc:
+            return "its premise %s cannot be read again (%s)" % (path, exc)
+        if count != 1:
+            return "its premise %s carries %s %d times now, not once" % (path, what, count)
+        return None
+    return check
+
+
+def cmd_decided_add(args):
+    verb = "decided-add"
+    path = os.path.join(args.vault, DECIDED_REL)
+    done = os.path.join(args.vault, DONE_REL)
+    check_lane_grants(verb, path)            # the closed page is read for its ids, never written
+    date = check_date(verb, args.date)
+    work = check_field(verb, "--work", args.work)
+    locator = check_field(verb, "--locator", args.locator)
+    state = check_state(verb, args.state, "to build")
+    homes = [check_field(verb, "--home", home) for home in args.home or []]
+    by = check_field(verb, "--by", args.by)
+    now = clock_now()
+    today = clock_date(now)
+    if date > today:
+        die(verb, "--date %s is after the clock's date, %s: a decision is dated when it was given; "
+                  "nothing written" % (date, today))
+    # `--locator` cites his words and their time, so it is not scanned for a clock slip.
+    warn_clock(now, decided_scan([work, state] + homes + [by]))
+    warn_payload([("--work", work), ("--locator", locator), ("--state", state), ("--by", by)]
+                 + [("--home", home) for home in homes])
+
+    if not args.dry_run:
+        take_lock(verb, path)
+    snap = read_snapshot(verb, path)
+    done_snap = read_snapshot(verb, done)
+    lines = snap.text.split("\n")
+    done_lines = done_snap.text.split("\n")
+    rng = open_structure(verb, lines, path)
+    to_at, later_at = rng[0], rng[1]
+    stamp = date.replace("-", "")
+    n = highest_n([snap.text, done_snap.text], stamp) + 1
+    ident = "DW-%s-%d" % (stamp, n)
+    recorded = "recorded by %s at %s %s%s" % (by, clock_hm(now), clock_zone(now),
+                                              "" if today == date else " on " + long_date(today))
+    line = FIELD_SEP.join([OPEN_BOX + BOLD + ident + BOLD, work,
+                           "decided %s (%s)" % (long_date(date), locator), state] + homes + [recorded])
+    check_fields(verb, line, 5 + len(homes), "new line")
+
+    dupes = duplicate_ids(lines)
+    for twice in dupes:
+        note("malformed", "%s is carried by %d lines of %s, a repair under the page's Malformed rule; "
+                          "this add goes ahead" % (twice, len(bold_lines(lines, twice)), os.path.basename(path)))
+    quoted = QUOTED_RE.search(locator)
+    if quoted:
+        seen = [(page, index) for page, page_lines in ((path, lines), (done, done_lines))
+                for index, other in enumerate(page_lines) if quoted.group(1) in other]
+        for page, index in seen[:NOTICE_MAX]:
+            note("duplicate", "his words \"%s\" already stand on %s:%d: if this is the same decision and "
+                              "work, add this locator to that line instead; this add goes ahead"
+                 % (short(quoted.group(1)), os.path.basename(page), index + 1))
+        if len(seen) > NOTICE_MAX:
+            note("duplicate", "and on %d more lines" % (len(seen) - NOTICE_MAX))
+
+    # The anchor: the span from the heading through its first content line (the next heading when
+    # the section is empty), asserted once in the file.
+    first = first_body_index(lines, to_at)
+    span = "\n".join(lines[to_at:first + 1]) + "\n"
+    found = ("\n" + snap.text).count("\n" + span)
+    if found != 1:
+        die(verb, "the anchor span from '%s' through line %d occurs %d times in %s, not 1; nothing written"
+            % (TO_BUILD_HEAD, first + 1, found, os.path.basename(path)))
+    insert = [line, ""] if first == later_at else [line]
+    text = "\n".join(lines[:first] + insert + lines[first:])
+    if args.dry_run:
+        report(verb, path, first + 1, [line], True)
+        return
+    atomic_write(verb, snap, text, premises=[premise_ids(done, stamp, n)])
+
+    back = read_back(verb, path)
+    problems = []
+    if back.count(line) != 1:
+        problems.append("the new line %d times, not once" % back.count(line))
+    elif back.count(TO_BUILD_HEAD) != 1 or first_body_index(back, back.index(TO_BUILD_HEAD)) != back.index(line):
+        problems.append("the new line not first under '%s'" % TO_BUILD_HEAD)
+    if len(bold_lines(back, ident)) != 1:
+        problems.append("%s on %d lines" % (ident, len(bold_lines(back, ident))))
+    if duplicate_ids(back) != dupes:
+        problems.append("ids on two lines %s, where this run read %s" % (duplicate_ids(back) or "none", dupes or "none"))
+    done_back = read_lines_quiet(done)
+    if done_back is None or bold_lines(done_back, ident):
+        problems.append("%s on the closed page, or the closed page unreadable" % ident)
+    if problems:
+        back_failed(verb, path, problems)
+    back_moved(path, back, text)
+    print("ok %s %s:%d %s" % (verb, path, back.index(line) + 1, ident))
+
+
+def cmd_decided_status(args):
+    verb = "decided-status"
+    path = os.path.join(args.vault, DECIDED_REL)
+    check_lane_grants(verb, path)
+    ident = check_id(verb, args.id)
+    text_note = check_field(verb, "--note", args.note)
+    by = check_field(verb, "--by", args.by)
+    now = clock_now()
+    warn_clock(now, decided_scan([text_note, by]))
+    warn_payload([("--note", text_note), ("--by", by)])
+
+    if not args.dry_run:
+        take_lock(verb, path)
+    snap = read_snapshot(verb, path)
+    lines = snap.text.split("\n")
+    rng = open_structure(verb, lines, path)
+    at, _ = open_line(verb, lines, ident, rng, read_lines_quiet(os.path.join(args.vault, DONE_REL)))
+    clause = status_clause(now, by, text_note)
+    # The line keeps its own terminator: a CR closing it stays its last byte, never mid-line.
+    tail = line_terminator(lines[at])
+    own = lines[at][:len(lines[at]) - len(tail)]
+    edited = own + clause + tail
+    check_fields(verb, edited, len(own.split(FIELD_SEP)) + 1, "edited line")
+    if args.dry_run:
+        report(verb, path, at + 1, [short(lines[at]), clause.lstrip(" ·")], True)
+        return
+    text = "\n".join(lines[:at] + [edited] + lines[at + 1:])
+    atomic_write(verb, snap, text)
+
+    back = read_back(verb, path)
+    problems = []
+    if back.count(edited) != 1:
+        problems.append("the edited line %d times, not once" % back.count(edited))
+    if len(bold_lines(back, ident)) != 1:
+        problems.append("%s on %d lines" % (ident, len(bold_lines(back, ident))))
+    if problems:
+        back_failed(verb, path, problems)
+    back_moved(path, back, text)
+    report(verb, path, back.index(edited) + 1, [], False)
+
+
+def cmd_decided_state(args):
+    verb = "decided-state"
+    path = os.path.join(args.vault, DECIDED_REL)
+    check_lane_grants(verb, path)
+    ident = check_id(verb, args.id)
+    check_state(verb, args.state)
+    text_note = check_field(verb, "--note", args.note)
+    by = check_field(verb, "--by", args.by)
+    now = clock_now()
+    warn_clock(now, decided_scan([args.state, text_note, by]))
+    warn_payload([("--state", args.state), ("--note", text_note), ("--by", by)])
+
+    if not args.dry_run:
+        take_lock(verb, path)
+    snap = read_snapshot(verb, path)
+    lines = snap.text.split("\n")
+    rng = open_structure(verb, lines, path)
+    at, section = open_line(verb, lines, ident, rng, read_lines_quiet(os.path.join(args.vault, DONE_REL)))
+    tail = line_terminator(lines[at])           # the line keeps its own terminator
+    fields = lines[at][:len(lines[at]) - len(tail)].split(FIELD_SEP)
+    old = fields[3] if len(fields) > 3 else ""
+    if not STATE_READ_RE.match(old):
+        die(verb, "field 4 of line %d reads '%s', not a state the page lists, so this verb cannot tell "
+                  "what it replaces: a repair by hand under the page's Malformed rule; nothing written"
+            % (at + 1, short(old)))
+    state = check_state(verb, args.state, section)
+    if state == old:
+        die(verb, "the state of %s already reads '%s'; nothing written" % (ident, short(old)))
+    fields[3] = state
+    edited = (FIELD_SEP.join(fields) + status_clause(now, by, "%s; its earlier state read \"%s\"" % (text_note, old))
+              + tail)
+    check_fields(verb, edited, len(fields) + 1, "edited line")
+    if args.dry_run:
+        report(verb, path, at + 1, ["state: %s" % state, "earlier: %s" % old], True)
+        return
+    text = "\n".join(lines[:at] + [edited] + lines[at + 1:])
+    atomic_write(verb, snap, text)
+
+    back = read_back(verb, path)
+    problems = []
+    if back.count(edited) != 1:
+        problems.append("the edited line %d times, not once" % back.count(edited))
+    if len(bold_lines(back, ident)) != 1:
+        problems.append("%s on %d lines" % (ident, len(bold_lines(back, ident))))
+    if problems:
+        back_failed(verb, path, problems)
+    back_moved(path, back, text)
+    report(verb, path, back.index(edited) + 1, [], False)
+
+
+def cmd_decided_close(args):
+    verb = "decided-close"
+    path = os.path.join(args.vault, DECIDED_REL)
+    done = os.path.join(args.vault, DONE_REL)
+    check_lane_grants(verb, path, done)      # a close writes both pages
+    ident = check_id(verb, args.id)
+    kind = args.kind
+    evidence = check_field(verb, "--evidence", args.evidence)
+    by = check_field(verb, "--by", args.by)
+    if kind == "dropped" and not DROPPED_EVIDENCE_RE.match(evidence):
+        die(verb, "a dropped line's --evidence is his words and where they are: '\"HIS WORDS\" (TIME AND "
+                  "PLACE)', as the Closing rule writes it; nothing written")
+    now = clock_now()
+    warn_clock(now, decided_scan([evidence, by]))
+    warn_payload([("--evidence", evidence), ("--by", by)])
+
+    # Both pages sit in one folder, so the one lock covers both writes.
+    if not args.dry_run:
+        take_lock(verb, path)
+    snap = read_snapshot(verb, path)
+    done_snap = read_snapshot(verb, done)
+    lines = snap.text.split("\n")
+    done_lines = done_snap.text.split("\n")
+    rng = open_structure(verb, lines, path)
+    done_structure(verb, done_lines, done)
+    at, _ = open_line(verb, lines, ident, rng, done_lines)
+    # The line keeps its own terminator: the closed copy is the same line moved, so a CR closing the
+    # open line closes the closed one, and none is written mid-line.
+    tail = line_terminator(lines[at])
+    body = lines[at][len(OPEN_BOX):len(lines[at]) - len(tail)]
+    box = CLOSE_BOX[kind]
+    head = "- %s %s%s" % (box, body, FIELD_SEP)
+    closed_line = "%s%s %s: %s (closed %s %s by %s)%s" % (head, kind, long_date(clock_date(now)), evidence,
+                                                         clock_hm(now), clock_zone(now), by, tail)
+    check_fields(verb, closed_line, len(body.split(FIELD_SEP)) + 1, "closed line")
+    open_text = "\n".join(remove_line(lines, at))
+    hits = bold_lines(done_lines, ident)
+    done_name = os.path.basename(done)
+    if len(hits) > 1:
+        die(verb, "%s is carried by %d lines of %s (lines %s): a repair by the Closing rule; nothing written"
+            % (ident, len(hits), done_name, ", ".join(str(i + 1) for i in hits)))
+
+    if hits:
+        # Count 1: the closed line must be this line's, closed as this run asks; then only the
+        # open copy goes.
+        existing = done_lines[hits[0]]
+        mine_line = existing[:len(existing) - len(line_terminator(existing))]
+        shape = CLOSED_LINE_RE.match(mine_line)
+        if not shape or shape.group(2) != ident:
+            die(verb, "%s:%d carries %s but is not its closed line ('%s'): a repair by the Closing rule; "
+                      "nothing written" % (done_name, hits[0] + 1, ident, short(existing)))
+        if shape.group(1) != box:
+            die(verb, "%s:%d closes %s with %s, not the %s that --kind %s writes: a repair by the Closing "
+                      "rule; nothing written" % (done_name, hits[0] + 1, ident, shape.group(1), box, kind))
+        if not mine_line.startswith(head):
+            mine = "- %s %s" % (box, body)
+            differ = next((i for i, (a, b) in enumerate(zip(mine_line, mine)) if a != b),
+                          min(len(mine_line), len(mine)))
+            die(verb, "%s:%d holds %s with a body that differs from the open copy at character %d: not the "
+                      "same decision and work, a repair by the Closing rule; nothing written"
+                % (done_name, hits[0] + 1, ident, differ + 1))
+        rest = mine_line[len(head):]
+        # The closing clause is the field after the body: KIND DATE: EVIDENCE, the date as the page
+        # writes it now or in the ISO form its older closed lines carry, and the tool's own stamp
+        # `(closed HH:MM ZONE by WHO)` after the evidence when the tool wrote it.
+        clause = re.match(r"^%s (?:[0-9]{1,2} [A-Z][a-z]+ [0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2}): (.*?)"
+                          r"(?: \(closed [0-9]{2}:[0-9]{2} [^ ()]+ by [^()]*\))?$" % kind, rest.split(FIELD_SEP)[0])
+        if not clause:
+            die(verb, "%s:%d closes %s with '%s', not '%s DATE: …' as --kind asks: a repair by the Closing "
+                      "rule; nothing written" % (done_name, hits[0] + 1, ident, short(rest), kind))
+        # The Closing rule's count 1 confirms "the same decision, work and closing evidence": other
+        # evidence on the closed line is not the same close, so it is a repair, never a silent keep.
+        if clause.group(1) != evidence:
+            die(verb, "%s:%d closes %s with the evidence '%s', not this run's '%s': not the same closing "
+                      "evidence, a repair by the Closing rule; nothing written"
+                % (done_name, hits[0] + 1, ident, short(clause.group(1)), short(evidence)))
+        if args.dry_run:
+            report(verb, path, at + 1, ["confirmed: %s:%d" % (done_name, hits[0] + 1),
+                                        "removes the open copy, line %d" % (at + 1)], True)
+            return
+        atomic_write(verb, snap, open_text,
+                     premises=[premise_line_once(done, existing, "the closed line for %s" % ident)])
+        landed = existing
+    else:
+        # Count 0: append the closed line, then remove the open copy.
+        base = done_snap.text
+        done_text = base + ("" if not base or base.endswith("\n") else "\n") + closed_line + "\n"
+        if args.dry_run:
+            report(verb, done, done_text.split("\n").index(closed_line) + 1,
+                   [short(closed_line), "removes the open copy, %s:%d" % (os.path.basename(path), at + 1)], True)
+            return
+        atomic_write(verb, done_snap, done_text, premises=[premise_identity(path, ident, lines[at])])
+        landed_at = done_text.split("\n").index(closed_line) + 1
+
+        def half(reason):
+            return ("%s: the closed line landed at %s:%d, but %s, so the open copy stays at %s:%d. Re-run the "
+                    "same command: while the open line stands as this run read it, the re-run confirms the "
+                    "closed line and removes only the open copy; if the open line itself has changed since "
+                    "(a status added, say), the re-run refuses as a repair by the Closing rule, and the two "
+                    "lines are reconciled by hand"
+                    % (path, done, landed_at, reason, path, at + 1))
+
+        atomic_write(verb, snap, open_text,
+                     premises=[premise_line_once(done, closed_line, "the closed line for %s" % ident)],
+                     refused=half)
+        landed = closed_line
+
+    open_back = read_back(verb, path)
+    done_back = read_back(verb, done)
+    problems = []
+    if done_back.count(landed) != 1 or len(bold_lines(done_back, ident)) != 1:
+        problems.append("%s on %d lines of %s, the closed line %d times"
+                        % (ident, len(bold_lines(done_back, ident)), done_name, done_back.count(landed)))
+    if bold_lines(open_back, ident):
+        problems.append("%s still on the open page (line %d)" % (ident, bold_lines(open_back, ident)[0] + 1))
+    if problems:
+        back_failed(verb, path, problems)
+    back_moved(path, open_back, open_text)
+    print("ok %s %s:%d (open copy removed from %s:%d)"
+          % (verb, done, done_back.index(landed) + 1, path, at + 1))
+
+
+DECIDED_VERBS = {"add": cmd_decided_add, "status": cmd_decided_status, "state": cmd_decided_state,
+                 "close": cmd_decided_close}
 
 
 # ----------------------------------------------------------------------- entry ---------
@@ -1110,6 +1982,8 @@ def build_parser():
     add.add_argument("--severity", required=True, help="one of: %s" % " ".join(SEVERITIES))
     add.add_argument("--status", required=True, help="verbatim, the leading 'open — ' too")
     add.add_argument("--where", help="omitted entirely when absent")
+    add.add_argument("--cause-kind", dest="cause_kind", choices=CAUSE_KINDS,
+                     help="the one word put before the cause: tested or observed; omitted when absent")
     add.add_argument("--dry-run", action="store_true", help="print the block, write nothing")
 
     close = register_verbs.add_parser("close", help="move one entry to the Closed section")
@@ -1140,6 +2014,44 @@ def build_parser():
     annotate.add_argument("--date", help="YYYY-MM-DD; today when absent")
     annotate.add_argument("--dry-run", action="store_true",
                           help="print the line, write nothing")
+
+    decided = verbs.add_parser("decided", help="the decided-work pages")
+    decided_verbs = decided.add_subparsers(dest="decided_verb", required=True)
+    d_add = decided_verbs.add_parser("add", help="a new line under To build, with the next unused id")
+    d_add.add_argument("--vault", required=True)
+    d_add.add_argument("--date", required=True, help="the decision's date, YYYY-MM-DD")
+    d_add.add_argument("--work", required=True, help="the work, in one sentence")
+    d_add.add_argument("--locator", required=True,
+                       help="where his words are; written inside the decided field's parentheses")
+    d_add.add_argument("--state", required=True, help="one of the page's states, never later:")
+    d_add.add_argument("--home", action="append", metavar="POINTER",
+                       help="a pointer to another home of the work; repeatable, one field each")
+    d_add.add_argument("--by", required=True, help="who records the line")
+    d_add.add_argument("--dry-run", action="store_true", help="print the line, write nothing")
+
+    d_status = decided_verbs.add_parser("status", help="append one status clause to one open line")
+    d_status.add_argument("--vault", required=True)
+    d_status.add_argument("--id", required=True, help="DW-YYYYMMDD-n")
+    d_status.add_argument("--note", required=True)
+    d_status.add_argument("--by", required=True)
+    d_status.add_argument("--dry-run", action="store_true", help="print the clause, write nothing")
+
+    d_state = decided_verbs.add_parser("state", help="replace one open line's state")
+    d_state.add_argument("--vault", required=True)
+    d_state.add_argument("--id", required=True, help="DW-YYYYMMDD-n")
+    d_state.add_argument("--state", required=True)
+    d_state.add_argument("--note", required=True, help="why the state changes, with its evidence")
+    d_state.add_argument("--by", required=True)
+    d_state.add_argument("--dry-run", action="store_true", help="print the change, write nothing")
+
+    d_close = decided_verbs.add_parser("close", help="close one open line onto the closed page")
+    d_close.add_argument("--vault", required=True)
+    d_close.add_argument("--id", required=True, help="DW-YYYYMMDD-n")
+    d_close.add_argument("--kind", required=True, choices=sorted(CLOSE_BOX))
+    d_close.add_argument("--evidence", required=True,
+                         help="what shows it built or retired; for dropped, '\"HIS WORDS\" (TIME AND PLACE)'")
+    d_close.add_argument("--by", required=True)
+    d_close.add_argument("--dry-run", action="store_true", help="print the change, write nothing")
     return parser
 
 
@@ -1154,6 +2066,8 @@ def main(argv=None):
             cmd_log_append(args)
         elif args.verb == "register":
             REGISTER_VERBS[args.register_verb](args)
+        elif args.verb == "decided":
+            DECIDED_VERBS[args.decided_verb](args)
         else:
             cmd_ideas_annotate(args)
     finally:

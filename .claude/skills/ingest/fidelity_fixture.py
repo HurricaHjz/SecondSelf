@@ -220,6 +220,14 @@ def slot_values(root, raw_path, run, lane, model, effort):
             "the run's decisions": "none",
             "headless lanes:": grants,
             "propose-don't-write:": "propose-don't-write: return index/log entries as ready-to-apply diffs",
+            # The GRANTS block's five lines and the owner's comments (v0.10.3): a fixture lane has none.
+            "the job page's Bounds": "none: no job page; the hard limits are the grants below (the lead's own choice)",
+            "lesson ids or grants": "none",
+            "lesson ids (not shown": "none",
+            "what, and why": "none",
+            "none, or the rule that earns it": "none",
+            "this seat is one:": "none",
+            "the owner's comments": "none",
         },
     }
 

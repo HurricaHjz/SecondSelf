@@ -31,6 +31,16 @@
 # tolerated. Legs marked (fold2) fail on the guard as the first fold left it; legs marked (fold2
 # control) pass there and must keep passing, so the fix takes no ask away.
 #
+# Fold 3 (review RV-B5 finding 1): (j) the independent reviewer's held-out cases, which only bite where
+# the settings bind the optional classifier. Ten commands that really discard working-tree changes
+# must ask: a carriage return before `#` (H1); a group whose output reaches sh through a
+# backslash-newline (H2 to H4); a pipe into a group (H25, H26); an option before git's subcommand
+# (H5, H6, H27); a commit after a write its hooks may run (H8). Each stayed silent on the classifier
+# as first staged. Six shapes it must still prove inert stay silent where it is bound (H10, H18 to
+# H21, H24), and ask with the existing text where it is not (no classifier: the baseline). The
+# fixtures are built at run time from character codes, and a leg asserts the bytes each label names;
+# the two /tmp names in H3 and H19 are renamed from the review's, which no classifier rule reads.
+#
 # Run:  sh test_git_guard.sh [--settings PATH]
 #       default PATH: settings.json one level above this hooks folder, where it lives once installed.
 #       Last line: PASS n/n or FAIL k/n. A broken premise prints PROBE FAILED and exits 2.
@@ -77,7 +87,22 @@ if first != found[0]:
     print("PROBE FAILED: the guard is not the first PreToolUse Bash entry")
     sys.exit(2)
 with open(sys.argv[2], "w", encoding="utf-8") as fh:
-    fh.write(found[0])
+    # Bind only the allocated optional helper to this settings copy; all
+    # baseline logic and the first-entry identity checks above remain intact.
+    from pathlib import Path
+    import shlex
+    helper = Path(sys.argv[1]).resolve().parent / "hooks/git-guard.sh"
+    marker = '"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/git-guard.sh"'
+    command = found[0]
+    if marker in command:
+        if command.count(marker) != 1 or not helper.is_file():
+            print("PROBE FAILED: staged classifier supervisor is missing or ambiguous")
+            sys.exit(2)
+        if bash[0]["hooks"][0].get("onFailure") != "block":
+            print("PROBE FAILED: staged guard requires onFailure block")
+            sys.exit(2)
+        command = command.replace(marker, shlex.quote(str(helper)))
+    fh.write(command)
 print("  the guard: the first PreToolUse Bash entry, %d characters" % len(found[0]))
 EXTRACT_END
 [ $? -eq 0 ] || exit 2
@@ -134,6 +159,40 @@ for name, first in (("longbranch", "git checkout -b x"), ("longreset", "git rese
         fh.write(json.dumps(ev, separators=(",", ":")))
 LONG_FIXTURES_END
 [ $? -eq 0 ] || { echo "PROBE FAILED: cannot build the long fixtures"; exit 2; }
+# the reviewer's held-out cases for leg j (review RV-B5 finding 1), built before the manifest below
+"$PY" -B - "$F/p" <<'HELD_FIXTURES_END'
+import json, os, sys
+NL, CR, TAB, BS = chr(10), chr(13), chr(9), chr(92)
+GC = "git checkout -- ."
+P = "printf '%s" + BS + "n' "  # printf '%s\n' with a literal backslash-n inside the quotes
+held = [
+    ("H1", "ask", "printf %s x" + CR + "# ; " + GC),
+    ("H2", "ask", "( " + P + "'" + GC + "' ) " + BS + NL + "| sh"),
+    ("H3", "ask", "( " + P + "'" + GC + "' ) " + BS + NL + "> /tmp/held-x.sh; sh /tmp/held-x.sh"),
+    ("H4", "ask", "( cat <<'EOF'" + NL + GC + NL + "EOF" + NL + ") " + BS + NL + "| sh"),
+    ("H5", "ask", P + "'git checkout'; git --no-pager checkout -- ."),
+    ("H6", "ask", "grep -E 'git restore' notes.md; git -c core.quotepath=off restore ."),
+    ("H8", "ask", P + "'" + GC + "' >> .git/hooks/pre-commit; git commit -m note"),
+    ("H25", "ask", P + "'" + GC + "' | ( ls; sh )"),
+    ("H26", "ask", P + "'" + GC + "' | ( ls && sh )"),
+    ("H27", "ask", P + "'git reset --hard'" + NL + "git --work-tree=. reset --hard"),
+    ("H10", "pass", "printf %s x # ; " + GC),
+    ("H18", "pass", "git -C /tmp/elsewhere commit -m 'about git restore'"),
+    ("H19", "pass", "cat > /tmp/held-doc.md <<'EOF'" + NL + "Use git reset --hard only in /tmp." + NL + "EOF"),
+    ("H20", "pass", "ls -la 'git checkout notes'"),
+    ("H21", "pass", "head -n 3 'git clean notes.md'"),
+    ("H24", "pass", "printf %s x" + TAB + "# ; " + GC),
+]
+with open(os.path.join(sys.argv[1], "held.list"), "w", encoding="utf-8") as listing:
+    for ident, want, command in held:
+        ev = {"session_id": "sid-g", "transcript_path": "/t/x.jsonl", "cwd": "/w", "permission_mode": "default",
+              "hook_event_name": "PreToolUse", "tool_name": "Bash",
+              "tool_input": {"command": command, "description": "d"}}
+        with open(os.path.join(sys.argv[1], "held-" + ident + ".json"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(ev, separators=(",", ":")))
+        listing.write(ident + " " + want + chr(10))
+HELD_FIXTURES_END
+[ $? -eq 0 ] || { echo "PROBE FAILED: cannot build the held-out fixtures"; exit 2; }
 : > "$F/p/empty.json"
 printf '  \n\t \n' > "$F/p/blank.json"
 printf 'planted\n' > "$F/cwd/planted.txt"
@@ -322,6 +381,45 @@ if [ -x /bin/dash ] && ! env -i /bin/dash -c 'command set +o pipefail' 2>"$F/err
 else
   ok "(premise) no /bin/dash lacking pipefail on this machine, so the switch's tolerance is not exercised here"
 fi
+
+echo "== j. held-out cases (review RV-B5 finding 1): ten must ask; six must pass where the classifier is bound =="
+held_shapes(){ "$PY" -B -c 'import json, os, sys
+d = sys.argv[1]
+rows = [l.split() for l in open(os.path.join(d, "held.list"), encoding="utf-8") if l.strip()]
+c = dict((i, json.load(open(os.path.join(d, "held-" + i + ".json"), encoding="utf-8"))["tool_input"]["command"]) for i, w in rows)
+NL, CR, TAB, BS = chr(10), chr(13), chr(9), chr(92)
+def ids(test, want=None): return ",".join(i for i, w in rows if (want is None or w == want) and test(c[i])) or "-"
+print("%d ask %d pass|CR before #:%s|backslash-newline after ):%s|pipe into (:%s|option before the subcommand:%s|git --work-tree on its own line:%s|tab before #:%s|must-pass with a CR, a backslash-newline or a (:%s" % (
+    sum(w == "ask" for i, w in rows), sum(w == "pass" for i, w in rows),
+    ids(lambda s: CR + "#" in s), ids(lambda s: ") " + BS + NL in s), ids(lambda s: "| (" in s),
+    ids(lambda s: "git --no-pager " in s or "git -c " in s or "git --work-tree=" in s),
+    ids(lambda s: NL + "git --work-tree=" in s), ids(lambda s: TAB + "#" in s),
+    ids(lambda s: CR in s or BS + NL in s or "(" in s, "pass")))' "$F/p"; }
+check "(fixture) the held-out payloads carry the bytes their labels name" "$(held_shapes)" \
+      "10 ask 6 pass|CR before #:H1|backslash-newline after ):H2,H3,H4|pipe into (:H25,H26|option before the subcommand:H5,H6,H27|git --work-tree on its own line:H27|tab before #:H24|must-pass with a CR, a backslash-newline or a (:-"
+case "$CMD" in *git-guard.sh*) BOUND=yes ;; *) BOUND=no ;; esac
+echo "  premise: the classifier is bound: $BOUND (where it is not, the must-pass legs expect the baseline's existing ask)"
+ask_leg(){ leg full "$F/p/held-$1.json"
+  check "(held-out, must ask) $1 $2: asks" "$(printf '%s' "$D" | cut -d'|' -f1,2)" "PreToolUse|ask"; }
+pass_leg(){ leg full "$F/p/held-$1.json"
+  if [ "$BOUND" = yes ]; then check "(held-out, must pass) $1 $2: stays silent (proved inert)" "$D" "(silent)"
+  else check "(held-out, must pass) $1 $2: asks with the existing text (no classifier bound)" "$D" "$STD"; fi; }
+ask_leg H1 "a carriage return before # is no comment break to the shell, so the git checkout after it runs"
+ask_leg H2 "a group's output piped to sh across a backslash-newline"
+ask_leg H3 "a group's output written to a file across a backslash-newline, then run by sh"
+ask_leg H4 "a heredoc inside a group, piped to sh across a backslash-newline"
+ask_leg H5 "git --no-pager checkout -- . beside a quoted mention"
+ask_leg H6 "git -c core.quotepath=off restore . beside a grep pattern"
+ask_leg H8 "a write into .git/hooks, then git commit, which may run that hook"
+ask_leg H25 "a pipe into a group whose second command is sh"
+ask_leg H26 "a pipe into a group joined by && to sh"
+ask_leg H27 "git --work-tree=. reset --hard on its own line beside a quoted mention"
+pass_leg H10 "a comment after a space: printf %s x # ; git checkout -- ."
+pass_leg H18 "git -C <repo> commit -m with a quoted mention"
+pass_leg H19 "a quoted heredoc written to a file only"
+pass_leg H20 "ls -la of a quoted name holding git checkout"
+pass_leg H21 "head -n 3 of a quoted name holding git clean"
+pass_leg H24 "a comment after a tab"
 
 echo "== h. every run exits 0; the guard and this suite wrote nothing =="
 check "every guard run exited 0 (the decision travels in the JSON)" "$NONZERO" "0"

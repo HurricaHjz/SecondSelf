@@ -98,9 +98,11 @@ failed>)` and skip.
   beside it — else `unmeasured`, never a bare number. Its fix lands in exactly one of: a phase of a named
   plan of record, a `known-issues` entry (the register's format, written with `vault-writes.py register add`
   and its required `--why-not-fixed-now`), an IDEAS todo (a proposal — nothing enters
-  IDEAS.md unless the owner says "queue it", Step 8), or `accepted` (a cost of the shape, or a fix
-  already shipped, named). No waste found → one row saying so and naming what was searched (the billed
-  line's `rewrites` and reason tally, the trace's idle minutes and denials), since a zero-findings claim
+  IDEAS.md unless the owner says "queue it", Step 8), `accepted` (a cost of the shape, or a fix
+  already shipped, named), `fixed` (made by this run where the fix is certain and the run may make it:
+  CLAUDE.md §12, "Act now if you can") or `handed` (a certain fix it may not make, handed by name:
+  Step 7). No waste found → one row saying so and naming what was searched (the billed line's
+  `rewrites` and reason tally, the trace's idle minutes and denials), since a zero-findings claim
   needs its control (§11).
 - **The waste fields are read, not recalled (2026-09-05).** Each `phase-boundary` event carries
   `idle_min`, `over_cap_reports`, `denials`, `respawn_cost_usd` and `rewrites`; list each as its own
@@ -110,9 +112,17 @@ failed>)` and skip.
   context at each item, so context per item is read off them as the delta between consecutive gates
   rather than estimated; a run with no `gate` events says so and drops that column.
 - **A candidate like any other.** The table takes Step 3's bar, the 5b critique and the Step 6 preview,
-  and its destination is the run's record page in `wiki/developments/` (Step 4). The `--yes` rules below
-  apply unchanged: that page is never written under `--yes`, so an auto-approved run reports the table
-  and says it waits for the owner.
+  and its destination is the run's record page in `wiki/developments/` (Step 4), where it is written as
+  the run's record of its waste, `--yes` included. Each fix the run may make (Step 6's duty, the `--yes`
+  bounds, his approval) is made in the pass, and a certain fix it may not make is handed (Step 7). The
+  rows reach the owner as his approved words of 24 October 2026 set out, kept word for word ("you" is
+  the owner; the five groups are the Handback's, CUSTOMISATION.md, "Five groups"):
+  > The table stays as the run's record of what was wasted and how much. What reaches you is its rows, sorted into the five groups:
+  > - **Decide:** a fix that changes a plan's direction or one of your rules.
+  > - **Approve:** a recommended fix that needs only your yes, such as an entry in IDEAS.md.
+  > - **Your to-dos:** anything only you can do, such as an account setting.
+  > - **Undo if you disagree:** certain fixes aiMyth already made, each one reversible.
+  > - **Done:** blocked fixes registered with their reasons, and costs accepted as part of the design.
 
 ### Step 3 — Apply the bar, then keep only what matters
 **The bar is deliberately narrow: the unrecorded essentials, not everything noticed.** A long session
@@ -178,10 +188,10 @@ In priority order. Say which rule sent it there.
 |---|---|---|
 | A **rule** — `CLAUDE.md`, `CUSTOMISATION.md` or a skill | The lesson generalises, **and** it can tighten or replace an existing line | Contracts and skills are the surfaces actually read. But a rule that only *adds* a line feeds the always-on ratchet: report the byte delta and prefer a tightening. In a user's copy the core is read-only (CLAUDE.md §12): a rule for it goes to a skill of the user's own (a `my-` name) or to `CUSTOMISATION.md`, and a lesson for the core becomes a suggestion (the `suggest` skill) |
 | An **experience page** — `wiki/experience/<feature>.md` | A lesson about how one feature should decide next time, applied case by case | A checked `lesson` entry on an existing page, within the bound (`--yes` section). No page yet: one Approve line carrying the page and its pointer together, never a page alone (Step 7). An `owner` entry changes under CLAUDE.md §12, never here. In a user's copy the pointer goes in a skill of the user's own or `CUSTOMISATION.md`, since the core is read-only |
-| A **wiki page** (`concepts/`, `entities/`, `tools/`, `models/`, `benchmarks/`, `user/`) | Domain or research knowledge | New page or an addition to an existing one. `user/` is the owner's to curate — propose, never auto-write |
+| A **wiki page** (`concepts/`, `entities/`, `tools/`, `models/`, `benchmarks/`, `user/`) | Domain or research knowledge | New page or an addition to an existing one. `user/` is the owner's to curate — propose, never auto-write, except a record of his own words on an existing page, which it keeps current, where the `--yes` bounds admit records |
 | A **`notes-*` synthesis** | A reusable procedure or a cross-page conclusion | `type: synthesis`, kebab-case, `notes-` prefix, `## Sources Used`, and `sources:` in frontmatter |
 | `known-issues.md` | A framework defect that a named reason blocks from being fixed now (CLAUDE.md §12: fix it now if you can) | The register's own entry format |
-| The run's record page in `developments/` | The Step 2b usage-and-waste table of a development run | An append to the page holding the run's trace or design; owner-approved, never under `--yes` |
+| The run's record page in `developments/` | The Step 2b usage-and-waste table of a development run | An append to the page holding the run's trace or design; written as the run's waste record, including under `--yes` |
 | **Discard** | Fails the bar, or is already recorded | Report it as discarded and why — a silent drop reads as "nothing found" |
 
 **Reaches.** Each lesson about doing something names the reader and step that read its destination at
@@ -250,9 +260,12 @@ bare verdict in a column and never absent; a style's `Test:` bounds content, nev
 presence (CUSTOMISATION `## Output styles`). The Stop-hook check that logs its absence, warn-only,
 is recorded on the per-reply contract enforcement page (`reflect-preview`).
 The owner approves per item ("1 and 3", "all but 2"). **Nothing is written without approval**, except
-under `--yes` below and the experience bound. One exception is a duty, not a licence: a defect the run itself finds is registered
-under CLAUDE.md §12 with the pass whatever else is approved, listed in the preview as `register (§12)` so
-the owner can strike it (owner-approved, cross-reflection XR-2, written 2026-09-05 20:27 BST).
+under `--yes` below and the experience bound. One exception is a duty, not a licence: a defect the run itself finds is handled
+under CLAUDE.md §12 with the pass whatever else is approved — fixed where the fix is certain, inside
+`wiki/` and outside the `--yes` section's never-list, else handed by name (Step 7), else registered
+with the reason that blocks it — and listed in the preview as `fix (§12)`, `hand (§12)` or
+`register (§12)` so the owner can strike it (owner-approved, cross-reflection XR-2, written 2026-09-05
+20:27 BST; fix before register under CLAUDE.md §12, "Act now if you can").
 
 **Experience pages.** A lesson changes by aiMyth's judgement once a reflection found it and its
 independent checker failed to refute it, so the head applies it within the experience bound (`--yes`
@@ -263,7 +276,7 @@ head is unsure of goes under Decide instead. What each mode admits:
 |---|---|---|
 | Attended `/reflect`, with its critic | Checked lessons, within the bound | Preview and approval as above |
 | An attended session's own cross-reflection with `--yes`, or its eligible successor | Checked lessons, within the bound | The reflector proposes; the head re-verifies and writes |
-| A hands-off close with `--yes` | Checked lessons, within the bound | Its `wiki/syntheses/` append bound stands beside it; checked lessons are listed in the morning report under Undo if you disagree, what the bound excludes waits there under Approve with its exact edit, and a hands-off close records a waiting lesson there, not in the register |
+| A hands-off close with `--yes` | Checked lessons, within the bound | Its other writes stay inside the `--yes` bounds beside it (delegate skill §5); checked lessons are listed in the morning report under Undo if you disagree, what the bound excludes waits there under Approve with its exact edit, and a hands-off close records a waiting lesson there, not in the register |
 | A hands-off close without `--yes` | None | The whole table goes to the morning report, each lesson under Approve with its exact edit, and a waiting lesson is recorded there, not in the register |
 | Any other run, such as another session's cross run, a read-only reflector lane, a headless head without `--yes`, or a run with `--no-critic` | None | Findings and exact proposals, which prevents applying a lesson without its required authority or check |
 
@@ -272,7 +285,7 @@ grant or input): one entry per feature, in the same pass, listed as `register (�
 only in a reply (widened to waiting lessons on 7 November 2026, provisional).
 
 ### Step 7 — Write, log, report
-- Write the approved items and what Step 6's modes admit, reading each write back. Every new page gets `## Related` and an `index.md` entry (§4.4, §5).
+- Write the approved items, what Step 6's modes admit and, under `--yes`, what its bounds admit, reading each write back. Every new page gets `## Related` and an `index.md` entry (§4.4, §5).
 - **Log by what changed, never by which command ran**: `synthesis` for knowledge written into the wiki,
   `framework` for a contract or `developments/` change, nothing for a register append (§12 exempts it).
   A run that changes nothing logs nothing.
@@ -289,20 +302,33 @@ only in a reply (widened to waiting lessons on 7 November 2026, provisional).
   bound creates neither a page nor a pointer.
 - **Experience writes.** One anchored edit inside `## Rules`, by the bound. Re-judge `confidence:`, stamp
   `audited:`, and keep `sources:` and `## Sources Used` to the evidence the remaining entries cite. An
-  addition moves `entry added` and `last label`, and a label is never reused. A retirement removes the
+  addition moves `entry added` and `last label`, and a label is never reused. A new lesson's bracket gives, after its date, the model that learnt it and the kind of evidence behind it (a fault aiMyth made, the owner's request, others' practice, or it worked in use), in the template's order; an older entry without them reads as `model not recorded`. A retirement removes the
   entry and keeps its complete text, date and reason in the log entry. Log a lesson change as
   `synthesis`. An `owner` change is outside this step: its exact text goes to him (CLAUDE.md §12).
 - **Repeats and uses.** A repeat the checker confirms adds one to `repeats` on the `Measures` line in the
   same pass, as a records-only edit, which changes no claim and stamps neither `confidence:` nor
   `audited:`. Uses are counted monthly by deep-lint (Step 4a), never here.
-- Report what was written, where, at what tier, and what was discarded.
+- Report what was written, where, at what tier, and what was discarded. Under `--yes` the report lists
+  every write on its own line (path, anchor, class — record, fix, knowledge, register or correction — its
+  evidence, clock time, and for an in-place repair or update the text it replaced) so the owner can strike
+  any one; each item held for his yes with its exact proposed wording; and each handed fix with its taker,
+  as pending.
 - **Every write carries its clock time** (owner instruction 2026-09-05): beside the date, the local time of the
   write and the run or lane id — on a register entry's `Where observed` line, in a rule addition's dated note,
-  in an appended block's heading — so a parallel session's earlier fix or later edit can be ordered against it;
+  in an appended block's heading, in a dated owner note's recording line (apart from the date of his words,
+  CLAUDE.md §4.7), in the dated note on a change that keeps a page current — so a parallel session's
+  earlier fix or later edit can be ordered against it;
   an agent that finds the item already fixed reads the two stamps and keeps the later state.
-- **A fix handed to another session** is recorded on its register entry with the taking run and that
-  run's gate state, clock-stamped; if that gate later refuses, the entry reverts to open with the refusal
-  dated, so a claimed-but-gated fix never reads as done (cross-reflection XR-2, written 2026-09-05 20:27 BST).
+- **A certain fix this run may not make** (it lies outside `wiki/` and is no correction the `--yes`
+  section admits, or would oblige such a change) **is handed by name**: to the session itself once the
+  run ends, where its own rules let it make the fix now (CLAUDE.md §12), else to its successor or the
+  next run, written into the hand-off the taker reads before any work with its target, the check that proves it and why this run could not make it. The
+  report lists it as handed, never as done. Where it has an open register entry, the entry records the
+  taking run and that run's gate state, clock-stamped; if that gate later refuses, or the taker cannot
+  make the fix, the entry reverts to open with the refusal dated, or the taker registers it with its
+  named reason, so a claimed-but-gated fix never reads as done (cross-reflection XR-2, written
+  2026-09-05 20:27 BST; handing by name, the agent's step under the owner's reflection rule of 23
+  October 2026).
 
 ### Step 8 — Recommend, don't queue (owner-added 2026-08-27)
 Close the report with next-action recommendations derived ONLY from what this run shipped, corrected or
@@ -325,12 +351,12 @@ alone, because the live file keeps growing while the lane reads it. The timing o
 copy and any follow-up reflection follows CUSTOMISATION.md's closing rule in
 "Session hand-off after a queue item". The close's follow-up check lists the owner turns with
 `handsoff.py extract-transcript --session <id>`, once for each session the close covers; its extraction
-reads both carriers, typed user records and `queued_command` attachments.
+reads both carriers, typed user records and `queued_command` attachments. It also reads the relayed messages the extraction lists apart from the owner's turns, each under its sender or "(no sender named)": a relay is its sender's message, never the owner's words, and is neither counted nor quoted as an owner turn.
 
 **Mechanism.** The head agent spawns a READ-ONLY reflector lane (delegate skill,
 `templates/brief-reflector.md`) that applies Steps 1–5, except 2b (head-only), to the target transcript. The lane extracts
 the transcript's human turns and assistant prose (tool-result records excluded) to /tmp and reads
-that extraction in full, reporting "read k of N turns". **Horizon control** (replaces Step 2's
+that extraction in full, reporting "read k of N turns"; a message the transcript program lists as a relay (`handsoff.py extract-transcript`) is its sender's, never a human turn of the owner's. **Horizon control** (replaces Step 2's
 nonce, which only proves one's *own* session): target file exists and is non-zero; human-turn count
 verified against the extraction; coverage declared, never claimed complete.
 
@@ -342,14 +368,15 @@ conduct faults become recordable.
 embedded in it. **Output:** findings, never writes — the FULL named candidate table including every
 discard with the page that killed it (an aggregate count hides the dedup evidence). Step 5b is not
 re-run on cross output — duplicative cost, since the head's re-verify widens instead: dedup checks
-AND a re-read of each cited transcript span before the preview, done by a read-only checking helper that quotes each span's deciding line, under CUSTOMISATION.md's Transcripts rule, using a helper independent of the reflection; that helper also answers Step 5b's experience questions, and a lesson it has not answered is not applied; before applying an item the head lists
+AND a re-read of each cited transcript span before the preview, done by a read-only checking helper that quotes each span's deciding line, under CUSTOMISATION.md's Transcripts rule, using a helper independent of the reflection, and only where the reflection proposes a write: a reflection that proposes none takes no such helper (owner ruling 2026-11-13; it returns once a reflection with no proposed write is found to have missed a fault or a lesson, one case being enough, as the closing reflection's row of `wiki/developments/check-lifecycle.md` records); that helper also answers Step 5b's experience questions, and a lesson it has not answered is not applied; before applying an item the head lists
 the fresh dedup probe it ran for it and the span it re-read, and a correction to an existing line is
 logged as its own synthesis entry. Owner approval stays line-by-line for what needs it;
-the head writes approved items and what the experience bound admits under Step 7, each write clock-stamped. **`--yes` never applies to cross runs.** **Qualified 2026-09-06 (owner ruling):** it does apply to the hands-off boundary form, where a reflector lane reads the head's OWN session at the head's request — the lane proposes, the head re-verifies each proposal (dedup, evidence) and writes only within the `--yes` path bounds (design D36). **Qualified 2026-10-01 (owner ruling), with its reach settled on 10 October 2026 (a provisional choice under the owner's rule on provisional choices):** an attended session's own cross-reflection may run with `--yes` under the same path bounds, and so may that cross-reflection when the session's successor runs it over the session's transcript (for example because the session's context was full); the head re-verifies each proposal as above, and every register entry it writes under CLAUDE.md §12 is listed in its report so the owner can strike it.
+the head writes approved items and what the experience bound admits under Step 7, each write clock-stamped. **`--yes` never applies to cross runs.** **Qualified 2026-09-06 (owner ruling):** it does apply to the hands-off boundary form, where a reflector lane reads the head's OWN session at the head's request — the lane proposes, the head re-verifies each proposal (dedup, evidence) and writes only within the `--yes` bounds (design D36). **Qualified 2026-10-01 (owner ruling), with its reach settled on 10 October 2026 (a provisional choice under the owner's rule on provisional choices):** an attended session's own cross-reflection may run with `--yes` under the same bounds, and so may that cross-reflection when the session's successor runs it over the session's transcript (for example because the session's context was full); the head re-verifies each proposal as above, and every write it makes is listed in its report so the owner can strike any one (owner ruling 23 October 2026, as the agent read it).
 
 **Hands-off boundaries (2026-09-05, hands-off design D36; `--yes` admitted for this form by owner
-ruling 2026-09-06).** At every phase boundary of a hands-off run the head does not run this skill in
-its own context. It builds the lane's inputs with `handsoff.py reflect-inputs --run R --session SID
+ruling 2026-09-06).** A hands-off run reflects once, at its close (owner ruling 2026-09-19), and the
+head does not run this skill's sweep in its own context. It builds the lane's inputs with
+`handsoff.py reflect-inputs --run R --session SID
 --out DIR` (a directory outside the store): the extraction of its own transcript (the human turns and
 the assistant prose, a count file beside them), Step 2b's table rendered from the run record alone
 (every figure read from a field, none recalled, so Step 2b's head-only rule is satisfied by the
@@ -358,12 +385,12 @@ reflector lane (headless, `lane.py`, fenced
 Bash, the routing's model) granted DIR alone beside the wiki and this skill, and it receives the full
 named candidate table including every discard. Before applying any item the head re-verifies it
 exactly as this section prescribes: the dedup checks and a re-read of the cited transcript span. With
-`--yes` the head then writes the items that pass, inside the `--yes` path bounds below and nowhere
-else (create-and-append inside `wiki/`, the experience bound's lesson edits, plus the corrections of aiMyth's own working records the
-bounds name; never `developments/`, `known-issues.md` or any other file outside the wiki), logging
-each write as `synthesis`; every item the bounds exclude, and every item that
-fails re-verification, goes to the run's morning report with the full named table for the owner's
-line-by-line approval. With `--yes` the experience bound applies to this form as Step 6's table sets it: checked lessons are applied and listed in the morning report under Undo if you disagree; what the bound excludes goes to the morning
+`--yes` the head then writes the items that pass, inside the `--yes` bounds below and nowhere else
+(their classes inside `wiki/`, the experience bound's lesson edits, plus the corrections of aiMyth's own
+working records the bounds name), logging each write by Step 7's rule; the run's morning report lists
+every write so the owner can strike any one, names each certain fix the bounds leave to another session
+as handed (Step 7), and carries every item the bounds exclude, and every item that fails
+re-verification, with the full named table for the owner's line-by-line approval. With `--yes` the experience bound applies to this form as Step 6's table sets it: checked lessons are applied and listed in the morning report under Undo if you disagree; what the bound excludes goes to the morning
 report under Approve, each with its exact edit, for the session that walks it to apply on his yes.
 Without `--yes` the head applies nothing and the whole table goes to the
 morning report. An ineligible cross run has no automatic experience grant, which prevents applying
@@ -371,12 +398,37 @@ another session's lessons without its required authority. Any other cross run ov
 
 ## `--yes` — opt-in auto-approval (off by default)
 Set per run (`/reflect --yes`) or as a standing owner setting. It means **writing without waiting, never
-writing without telling**: the step 6 table and the step 7 report still appear.
+writing without telling**: the step 6 table and the step 7 report still appear, and the report lists
+every write so the owner can strike any one.
 
-Bounded **by path, and on experience pages by label and field**, never by judgement:
-- **May**: create pages in `wiki/concepts/`, `wiki/entities/`, `wiki/tools/`, `wiki/models/`,
-  `wiki/benchmarks/`, `wiki/syntheses/`; **append** to an existing wiki page outside `wiki/experience/`,
-  or to `index.md`;
+Bounded **by path, then by class, and on experience pages by label and field** (the agent's bounds; the
+records, fixes and register classes carry the owner's reflection rule of 23 October 2026, as the agent
+read it): inside `wiki/` only these classes, and outside it only the corrections below, each write
+listed with the evidence that admitted it. It may write:
+- **Records of the owner's own words and decisions, at once, wherever they belong.** A record missing
+  from the page or register entry that waits for it is written in this run, `wiki/developments/` pages
+  and `known-issues.md` included: a dated owner note (CLAUDE.md §4.7) or a dated decision status line.
+  His words are quoted verbatim from their record, and a reading of them is a named, dated reading,
+  never his ruling (CLAUDE.md §1, "Recording the owner"). Every page that states a current state,
+  including an existing `wiki/user/` page, is kept current by judgement, not only appended to (the
+  owner's answer of 24 October 2026, as the agent read it): text his later words overtake, judged as
+  §4.7's "Later words" sets, is brought up to date, replaced where nothing still needs it or kept beside
+  the new where it may, and each change carries a dated note citing the owner note it rests on, as §4.7
+  asks of text built on the notes; the dated owner notes themselves stay as written. Records (the log,
+  the issue register, dated notes, decisions files) keep their history. Where no page waits, Step 4
+  routes the record. Step 2b's waste table is also written as the run's record of its waste.
+- **Certain fixes inside `wiki/`**, made rather than registered (CLAUDE.md §12, "Act now if you can;
+  park only with a reason"): a fix whose target is resolved and whose effect is checked, such as a stale
+  claim marked superseded by a dated status fact or a `flagged:` line (§6), a broken link, path, index
+  line or frontmatter value repaired, or a register entry closed on its fix. A fix that rests on a guess
+  stays a finding; a certain fix these bounds leave out is handed by name (Step 7).
+- **Knowledge**: new pages in `wiki/concepts/`, `wiki/entities/`, `wiki/tools/`, `wiki/models/`,
+  `wiki/benchmarks/`, `wiki/syntheses/`; **appends** to an existing wiki page outside `wiki/user/`,
+  `wiki/developments/` and `wiki/experience/`, or to `index.md`.
+- **The register, through its writer only** (`vault-writes.py register add`, `annotate`, `close`): a new
+  entry only for what a named reason blocks, its `--why-not-fixed-now` naming that reason; a status line
+  on an open entry for the owner's decision on it or for a fix handed.
+- **Corrections outside the wiki**:
   **correct** aiMyth's own working records outside the wiki (a hand-off, a run's stage or status file)
   where a checked finding shows them wrong, each correction listed in the report for the owner to undo.
 - **The experience bound** (in the modes of Step 6): on an existing page in `wiki/experience/`,
@@ -385,12 +437,42 @@ Bounded **by path, and on experience pages by label and field**, never by judgem
   write creates a page or a pointer, edits an `owner` entry, changes the fixed preamble, removes a section
   or retires a page's last entry, which goes to the owner as the page's joint retirement with its
   pointer. A contradiction takes CLAUDE.md §4.4's block through his word, never this bound.
-- **Never**: `wiki/user/` (the owner curates it, CLAUDE.md §1) · `wiki/developments/` and
-  `known-issues.md` (a framework surface, and a register append logs nothing, so an unapproved one would
-  leave no trace at all) · `CLAUDE.md`, `.claude/**`, `CUSTOMISATION.md`, `MANUAL.md`, `README.md` ·
-  anything else outside `wiki/` · **rewriting** any existing page — appends only, the experience bound
-  apart.
-- Every auto-approved write **is logged**, so it is always traceable.
+
+**Witness.** An own-session run writes the records, fixes and register classes only when its Step 5b
+critic ran; under `--no-critic` or "critic: unavailable" it holds them for his yes (the agent's bound; a
+cross run keeps its own re-verification).
+
+**Precedence.** Step 6's duty takes precedence over the holds above: a defect the run itself finds is
+fixed, handed or registered with the pass as Step 6 says, whether or not the run is a closing one and
+whether or not its critic ran. The holds bind only what the records, fixes and register classes add
+beyond that duty: every record of his words and decisions, and each fix or register line the duty
+does not make.
+
+It never writes, whatever the class:
+- **Rule text or a design's direction**: `CLAUDE.md`, `CUSTOMISATION.md` and its definitions file, a
+  skill line that states the owner's ruling, a wiki passage those files name as a rule's home (the
+  experience bound's `lesson` entries apart), or `wiki/developments/owner-rulings-history.md`, which takes
+  replaced rule text only in the pass of a rule change he approved (CLAUDE.md §12); a design's approach,
+  scope, requirements or plan, or an open choice his words do not settle (recording his decision is not
+  revising the design). Each goes to the report with its exact wording, for his yes.
+- **`wiki/user/` beyond the records class**: no fix, knowledge append or new page, and no change but
+  keeping a page current with his own words; a certain fix there goes to the report.
+- **A deletion**: no file, page, section, dated record or quotation of the owner is removed or moved (a
+  register close moves its entry only within the register, and an experience retirement removes only its
+  `lesson` entry, its text kept in the log); a repair replaces only the faulty token, and a page kept
+  current only the text his later words overtake, its old text listed in the report.
+- **Outside `wiki/`, beyond the corrections above** (`.claude/**`, `MANUAL.md` and `README.md` included). A
+  wiki write that would oblige a change outside it, such as a page whose maintained derivative in
+  `output/` must follow (CLAUDE.md §2), is handed by name with that change, never split. The session's own
+  surfaces (its report, its hand-off, a line passed to a live run through that run's decisions file) are
+  the session's writes under its own rules, never `--yes` writes.
+- **A file a live run or another live session owns**: the item is passed to that run or session by
+  name, or waits with that ownership as its named reason.
+- **A rewrite** of an existing page's other text: beyond the records, fixes and experience bound above,
+  appends only.
+
+Every write is logged by what changed (Step 7; a register line is exempt from `log.md` and carries its
+own stamp), clock-stamped, and listed in the report, so it is always traceable.
 
 > **One stated judgement call.** `wiki/syntheses/` also carries `query` Step 5's ask. The owner's standing
 > opt-in *is* the consent that ask exists to collect, given in advance, and it binds **only reflect's own
@@ -407,6 +489,15 @@ Bounded **by path, and on experience pages by label and field**, never by judgem
   while working, file it then, exactly as now.
 - **Approval terminates at the owner.** A subagent may propose; it may never approve. A `lesson` needs
   the independent check and the head's judgement within the experience bound; an `owner` entry changes
-  only under CLAUDE.md §12, which protects his rule text from an automatic rewrite.
+  only under CLAUDE.md §12, which protects his rule text from an automatic rewrite. Under `--yes` the
+  owner's standing opt-in is that approval, given in advance and only for what the bounds admit; rule
+  text and a design's direction always wait for his yes on their exact wording.
+- **Records at once, certain fixes now, the register last** (owner ruling 23 October 2026, as the agent
+  read it). Wherever the `--yes` bounds admit records, fixes and register lines, a record of the owner's
+  own words or decisions is written in the run, a certain fix is made inside `wiki/` or handed by name,
+  the register takes only what a named reason blocks, and every write is listed so he can strike any
+  one. The agent's bounds hold in every `--yes` run: outside `wiki/` it writes only the corrections of
+  aiMyth's own working records its section names, and no file, page, section, dated record or quotation
+  of his is deleted.
 - Write in British/UK English.
 

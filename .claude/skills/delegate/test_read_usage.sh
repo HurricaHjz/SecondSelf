@@ -13,7 +13,9 @@
 # (`x-7%`), a whole token above 100 after a valid window, an Astra window whose used percent is
 # absent, null, a string or out of range) prints `could not read` and exits 1, while valid figures at the
 # edges (0, 100, a decimal, a dash with a space before a figure) with the live text's trailing notes,
-# and a real `4% used` whose line says its reset time is unavailable, are read; a bad bound is a
+# and a real `4% used` whose line says its reset time is unavailable, are read, as is a reading
+# ending in the activity footer (`Last 24h · N requests · 1 session`), though a footer-shaped line
+# carrying a per-cent figure is a window line, so a bare heading above it refuses; a bad bound is a
 # usage error (exit 2);
 # the head-role fence clears the reader's own command and still denies the `claude -p '/usage'` form
 # it replaces (the control); and the last legs prove the suite and the reader wrote nothing beside
@@ -457,6 +459,94 @@ run "$PY" -B "$R" --timeout-s 0
 if [ "$RC" = 2 ] && grep -q '^PROBE FAILED: --timeout-s must be positive$' "$W/out"; then
   ok "a bound of zero is a usage error (exit 2, PROBE FAILED), never a reading"
 else no "the zero bound  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+# ------------------------------- the activity footer (known-issues 2026-11-13 05:03 b) ----
+# A live reading ended "Last 24h · 105 requests · 1 session". Its "1 session" named a window to the
+# old check, which then waited for a figure the footer never carries, so a sound reading was refused.
+# The footer is no window line, whether it counts one session or two; a real window heading with no
+# figure still refuses, with the footer after it or alone.
+cat > "$W/bin/claude-footer" <<'CLAUDE_FOOTER_END'
+#!/bin/sh
+[ "$1" = "-p" ] && [ "$2" = "/usage" ] || { echo "stand-in: unexpected arguments: $*" >&2; exit 9; }
+printf 'Current session: 34%% used · resets Oct 5 at 8pm (Europe/London)\nCurrent week (all models): 67%% used · resets Oct 8 at 7am (Europe/London)\nLast 24h · %s\n' "$USAGE_FOOTER"
+CLAUDE_FOOTER_END
+cat > "$W/bin/claude-footer-pending" <<'CLAUDE_FOOTER_PENDING_END'
+#!/bin/sh
+printf 'Current session\nLast 24h · 105 requests · 1 session\nCurrent week (all models): 67%% used · resets Oct 8\n'
+CLAUDE_FOOTER_PENDING_END
+cat > "$W/bin/claude-footer-alone" <<'CLAUDE_FOOTER_ALONE_END'
+#!/bin/sh
+printf 'Last 24h · 105 requests · 1 session\n'
+CLAUDE_FOOTER_ALONE_END
+cat > "$W/bin/claude-footer-figure" <<'CLAUDE_FOOTER_FIGURE_END'
+#!/bin/sh
+[ "$1" = "-p" ] && [ "$2" = "/usage" ] || { echo "stand-in: unexpected arguments: $*" >&2; exit 9; }
+printf 'Current session\nLast 24h · 105 requests · 1 session · 4%% used\n'
+CLAUDE_FOOTER_FIGURE_END
+chmod 755 "$W/bin/claude-footer" "$W/bin/claude-footer-pending" "$W/bin/claude-footer-alone" "$W/bin/claude-footer-figure"
+FOOTER_HEAD='claude-usage: Current session: 34% used · resets Oct 5 at 8pm (Europe/London) / Current week (all models): 67% used · resets Oct 8 at 7am (Europe/London) / Last 24h · '
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-footer" USAGE_FOOTER='105 requests · 1 session' "$PY" -B "$R" --only claude
+if [ "$RC" = 0 ] && [ "$(cat "$W/out")" = "${FOOTER_HEAD}105 requests · 1 session" ]; then
+  ok "footer: 'Last 24h · 105 requests · 1 session' after real windows is no window, and both figures read (exit 0)"
+else no "the one-session footer  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-footer" USAGE_FOOTER='100 requests · 2 sessions' "$PY" -B "$R" --only claude
+if [ "$RC" = 0 ] && [ "$(cat "$W/out")" = "${FOOTER_HEAD}100 requests · 2 sessions" ]; then
+  ok "footer control: the two-session footer reads as before (exit 0)"
+else no "the two-session footer  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-footer" USAGE_FOOTER='105 requests · 1 session' "$PY" -B "$R" --only claude --format json
+JSON_FOOTER=$("$PY" -B -c 'import json, sys
+w = json.load(open(sys.argv[1]))["windows"]
+print(w["claude_5h"]["status"], w["claude_5h"]["used_pct"], w["claude_week"]["status"], w["claude_week"]["used_pct"], w["gpt_week"]["status"])' "$W/out" 2>&1)
+if [ "$RC" = 0 ] && [ "$JSON_FOOTER" = "measured 34 measured 67 not_requested" ]; then
+  ok "footer --format json: both Claude windows measured past the one-session footer (exit 0)"
+else no "the one-session footer in json  [exit $RC: $JSON_FOOTER]"; fi
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-footer-pending" "$PY" -B "$R" --only claude
+if [ "$RC" = 1 ] && [ "$(cat "$W/out")" = 'claude-usage: could not read (a window with no figure: Current session)' ]; then
+  ok "footer: a heading with no figure still refuses, the footer after it filling nothing (exit 1)"
+else no "the heading before the footer  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-footer-alone" "$PY" -B "$R" --only claude
+if [ "$RC" = 1 ] && [ "$(cat "$W/out")" = 'claude-usage: could not read (no usage window (no line names a session or a week): Last 24h · 105 requests · 1 session)' ]; then
+  ok "footer alone: a reading with no window but the footer is unread (exit 1)"
+else no "the footer alone  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+# A line shaped like the footer that carries a per-cent figure is no footer (review RV-B3b finding 3):
+# it stays a window line, so its `4% used` never fills the heading above it, which refuses.
+run USAGE_CLAUDE_BIN="$W/bin/claude-footer-figure" "$PY" -B "$R" --only claude
+if [ "$RC" = 1 ] && [ "$(cat "$W/out")" = 'claude-usage: could not read (a window with no figure: Current session)' ]; then
+  ok "footer look-alike: 'Last 24h · … · 1 session · 4% used' under a bare heading is a window line, and the heading refuses (exit 1)"
+else no "the footer look-alike carrying a figure  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
+
+# ------------------------------------------------- the JSON form (DW-20261021-2) ----
+# The window meter's reading route: --format json on the same stand-ins. Text mode above is
+# unchanged, which is the proof that the default form did not move.
+run USAGE_CLAUDE_BIN="$W/bin/claude-ok" USAGE_CODEX_BIN="$W/bin/codex-ok" "$PY" -B "$R" --format json
+JSON_ONE=$("$PY" -B -c 'import json, sys
+o = json.load(open(sys.argv[1])); w = o["windows"]
+print(o["schema"], w["claude_5h"]["status"], w["claude_5h"]["used_pct"], w["claude_5h"]["source"],
+      w["claude_week"]["used_pct"], repr(w["claude_week"]["reset_text"]), w["gpt_week"]["status"],
+      w["gpt_week"]["used_pct"], len(o["gpt_week_evidence"]))' "$W/out" 2>&1)
+if [ "$RC" = 0 ] && [ "$(grep -c '' "$W/out")" = 1 ] \
+   && [ "$JSON_ONE" = "1 measured 4 claude_5h 17 'resets Oct 15' measured 19 1" ]; then
+  ok "--format json: one object, the three windows measured with canonical sources, the reset kept as text, exit 0"
+else no "--format json  [exit $RC: $JSON_ONE]"; fi
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-fail" USAGE_CODEX_BIN="$W/bin/codex-ok" "$PY" -B "$R" --format json
+JSON_TWO=$("$PY" -B -c 'import json, sys
+w = json.load(open(sys.argv[1]))["windows"]
+print(w["claude_5h"]["status"], w["claude_week"]["status"], w["claude_week"]["reason"], w["gpt_week"]["status"])' "$W/out" 2>&1)
+if [ "$RC" = 1 ] && [ "$JSON_TWO" = "unmeasured unmeasured exit 1; stand-in: not logged in measured" ]; then
+  ok "--format json with a failed claude reading: both Claude windows unmeasured with text mode's reason, the object still printed, exit 1"
+else no "--format json, failed claude reading  [exit $RC: $JSON_TWO]"; fi
+
+run USAGE_CLAUDE_BIN="$W/bin/claude-ok" "$PY" -B "$R" --format yaml
+if [ "$RC" = 2 ] && [ ! -s "$W/out" ]; then
+  ok "an unknown --format is a usage error, exit 2, nothing on stdout (control for the two legs above)"
+else no "--format yaml  [exit $RC: $(tr '\n' '|' < "$W/out")]"; fi
 
 # ------------------------------------------------------------- the head-role fence ----
 # The head fence imports lane-fence.py's checker in head mode; the shell form is the same check.

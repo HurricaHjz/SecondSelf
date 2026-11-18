@@ -1000,6 +1000,12 @@ class Run:
         # close-out produces this shape).
         self.boundary_only = set()
         self.close_items = None                        # the run-close event's own `items` text
+        # The head-model check's holds (DW-20261021-1; reviewer V-T2a, Fold H1): {item: why} for
+        # each completed item no later verified check of its own session covers, which reads
+        # `held` (for the owner), never done. handsoff.py's model_check_summary rule on the
+        # completions that carry `completion_session`; at the close, the close's own list.
+        self.held_items = {}
+        checks, completions, close_held = [], {}, None
         # Every item a gate or a lane's --item opened before the close: with no end it reads
         # running, not only the latest gate's item (register 2026-09-20 20:0x, the recurrence of
         # 22 September: an item gated earlier and worked in parallel read pending for hours).
@@ -1009,7 +1015,7 @@ class Run:
         self.stopped_at = None
         current, wait_open = None, None
         orientation_seen, before_first_work_gate = False, True
-        for e in events:
+        for idx, e in enumerate(events):
             ev, ts = e.get("event"), parse_ts(e.get("ts"))
             lane = self.lanes.get(e.get("lane"))
             # Once a run-close exists, the items' verdicts are read from the events before it
@@ -1017,6 +1023,22 @@ class Run:
             # changes no item's state, and the run-close's own `items` text stays the quoted
             # authority. The lanes panel and the feed still take every event.
             settled = self.closed_at is not None
+            if not settled:
+                mc = e.get("model_check")
+                if ev in ("gate", "phase-boundary", "stop-condition") and isinstance(mc, dict):
+                    checks.append((idx, mc.get("session"), mc.get("verdict")))
+                if ev in ("item-done", "phase-boundary"):
+                    names = (e.get("items") or []) if ev == "item-done" else [e.get("from")]
+                    for key in filter(None, (item_key(x) for x in names if isinstance(x, str))):
+                        if e.get("completion_session"):
+                            completions[key] = (idx, e["completion_session"])
+                        else:
+                            completions.pop(key, None)       # a completion the check left alone
+                if ev == "run-close" and isinstance(e.get("model_checks"), dict):
+                    close_held = dict(
+                        (item_key(h["item"]), h.get("why") or "held") for h in
+                        e["model_checks"].get("held") or []
+                        if isinstance(h, dict) and isinstance(h.get("item"), str))
             # item0 is the orientation row; item1 is the first work item. A measured orientation
             # (including zero tokens), or explicit work on phase item0, is evidence until the
             # first allowed work gate. Admission to item0 itself does not end orientation.
@@ -1163,6 +1185,13 @@ class Run:
             lane_obj.probe_liveness()
         if wait_open:
             self.waits.append((wait_open, None))               # a wait still open ends at "now"
+        for key, (at, sid) in completions.items():
+            later = [verdict for i, s, verdict in checks if i >= at and s == sid]
+            if "verified" not in later:
+                self.held_items[key] = ("swap" if "confirmed-swap" in later else
+                                        "unverified" if later else "no check after it")
+        if close_held is not None:
+            self.held_items = close_held                       # the close's own word wins
         if self.closed_at:
             # The close reports and converts nothing: only an explicit completion ends an item. One
             # that started (a gate, a boundary or a lane of its own) and was worked, with none,
@@ -1187,9 +1216,10 @@ class Run:
         end yet, so items worked in parallel all read running. At the close a started item with no
         completion is `unresolved` and any other is `skipped`. item0 is the orientation row, which
         the first work gate settles rather than a boundary (rebuild), so it is running only while
-        it is the item in hand."""
+        it is the item in hand. `held` is a completion the head-model check has not accepted
+        (held_items): it is held for the owner and never counts as done."""
         if item in self.item_end:
-            return "done"
+            return "held" if item in self.held_items else "done"
         if self.closed_at:
             return "unresolved" if item in self.unresolved else "skipped"
         if item == self.current or (item in self.gated and item != "item0"):
@@ -1379,10 +1409,12 @@ def items_summary(run):
         return NO_ITEMS_HEADER
     n = len(run.item_order)
     states = [run.state(it) for it in run.item_order]
-    done_n, open_n = states.count("done"), states.count("unresolved")
-    parts = ["%d unresolved" % open_n] if open_n else []
-    if n - done_n - open_n:
-        parts.append("%d skipped" % (n - done_n - open_n))
+    done_n, open_n, held_n = states.count("done"), states.count("unresolved"), states.count("held")
+    parts = ["%d held for the owner" % held_n] if held_n else []
+    if open_n:
+        parts.append("%d unresolved" % open_n)
+    if n - done_n - open_n - held_n:
+        parts.append("%d skipped" % (n - done_n - open_n - held_n))
     return "%d/%d items done · %s" % (done_n, n, " · ".join(parts) or "all done")
 
 
@@ -1465,6 +1497,8 @@ def render_items(run, width):
         lanes = [l for l in run.lanes.values() if l.item == it]
         if st == "done":
             f, done_n = 1.0, done_n + 1
+        elif st == "held":
+            f = 0.9                    # finished, never full: held for the owner (Fold H1)
         elif st in ("running", "unresolved"):
             # a running item's bar is its closed lanes over its lanes, held between 0.05 and 0.9
             # so that no item reads as full before its completion record says so
@@ -1476,7 +1510,7 @@ def render_items(run, width):
         start, end = run.item_start.get(it), run.item_end.get(it)
         # a pending or a skipped item shows no clock: a record that skipped a boundary can leave
         # a start behind, and a boundary's never-worked target has a start and no work
-        dur = span(((end or now) - start).total_seconds()) if start and st in ("done", "running", "unresolved") else ""
+        dur = span(((end or now) - start).total_seconds()) if start and st in ("done", "held", "running", "unresolved") else ""
         marks = " ".join(("●" if l.exit == "running" else "◐" if l.is_held() else
                           "✓" if l.exit == "completed" else "✗")
                          + l.name + ("~" if l.item_inferred else "")
@@ -1487,11 +1521,14 @@ def render_items(run, width):
             c("%-*s" % (iw, it), colour, bold=st == "running"),
             c("%-*s" % (ITEM_NAME_W, fit(run.names.get(it, ""), ITEM_NAME_W)), colour),
             c(bar(f, bw), colour), c("%-10s" % st, GREEN if st == "done" else
-                                     YELLOW if st in ("running", "unresolved") else DIM),
+                                     YELLOW if st in ("held", "running", "unresolved") else DIM),
             c("%7s" % dur, GREY), c(fit(marks, max(0, width - 4 - used)), WHITE))
         lines.append(row(coloured, width))
     total = len(run.item_order) or 1
     summary, tone = " %d/%d items done" % (done_n, total), GREY
+    held_n = sum(1 for it in run.item_order if run.state(it) == "held")
+    if held_n:
+        summary += " · %d held for the owner" % held_n
     if not run.item_order:
         summary, tone = " " + NO_ITEMS_HEADER, YELLOW     # never `0/1 items done` on an empty list
     if run.closed_at:

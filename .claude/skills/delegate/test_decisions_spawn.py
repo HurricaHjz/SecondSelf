@@ -20,6 +20,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_a3 import Fixture, events_for, rows  # noqa: E402
 
 MODE_LINE = 'DECISIONS_HOLD_MODE = "trial"'
+SUMMARY = "lane.py: summary: "
+
+
+def summary_of(text):
+    """(the number of summary lines, the last line) of a call's joined output: the detached caller's
+    closing summary (register 2026-11-12 09:13) must be one line, and the last."""
+    lines = text.rstrip("\n").split("\n")
+    return sum(1 for line in lines if line.startswith(SUMMARY)), lines[-1]
+
+
 STATE = """import json, sys
 sys.dont_write_bytecode = True
 sys.path.insert(0, sys.argv[1])
@@ -115,6 +126,36 @@ raise SystemExit(handsoff.main())
 """
 
 
+AUTHORED = """import json, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import handsoff
+events = handsoff.read_record(sys.argv[2])[0]
+pending = handsoff.decisions_pending(events, None)[0]
+owner = [line for line in handsoff.derive_inflight(events).split("\\n") if line.startswith("- Owner")]
+print(json.dumps({"pending": len(pending), "owner": owner}))
+"""
+
+MESSAGE = """import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, sys.argv[1])
+import handsoff
+sys.stdout.write(handsoff.resume_instruction(sys.argv[2], sys.argv[3]))
+"""
+
+
+def message_steps(text):
+    """The two steps of a successor's start message that the spawn hold reads, in the message's own
+    order, and the `run-resume` command it carries as an argv: (["resume", "ack"] or the reverse,
+    argv), or None when the message lacks either step, which no leg reads as a pass."""
+    found = re.search(r"then run `([^`]*\srun-resume\s[^`]*)`", text)
+    ack = text.find("`decisions-ack`")
+    if not found or ack < 0:
+        return None
+    order = [name for _, name in sorted([(found.start(1), "resume"), (ack, "ack")])]
+    return order, shlex.split(found.group(1))
+
+
 def stamp(offset=0):
     return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() + offset))
 
@@ -189,6 +230,28 @@ class Case:
         command = self.f.command(family, "resume", extra=list(extra))
         command[command.index("--lane") + 1] = lane
         return self.f.run(command, timeout=60)
+
+    def joined(self, family, operation, lane, extra=(), scenario=True):
+        """A call with its two streams joined, as a launch script writes them: (exit code, text)."""
+        if scenario:
+            self.f.scenario(family, events_for(family, "clean"))
+        command = self.f.command(family, operation, extra=list(extra))
+        command[command.index("--lane") + 1] = lane
+        result = subprocess.run(command, env=self.f.env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, timeout=60)
+        return result.returncode, result.stdout
+
+    def closes(self, lane):
+        return sum(1 for r in self.rows() if r.get("lane") == lane and r.get("event") == "lane-closed")
+
+    def await_close(self, lane, count, bound=30):
+        """Whether the lane's closes pass `count` within `bound` seconds (a detached worker's)."""
+        end = time.time() + bound
+        while time.time() < end:
+            if self.closes(lane) > count:
+                return True
+            time.sleep(0.25)
+        return False
 
     def rows(self):
         return rows(self.f.record)
@@ -296,6 +359,17 @@ def part_lane(s):
                                            "--home", str(c.f.root / "lane-home")])
         s.check("I02 resume --detach holds in the caller, with no worker",
                 worker.returncode == 7 and c.f.record.read_bytes() == before, worker.stderr)
+        held_lane = c.lane()
+        rc_s, text_s = c.joined("claude", "spawn", held_lane, ["--detach", "--no-wait"], scenario=False)
+        rc_r, text_r = c.joined("claude", "resume", "L1", ["--brief", str(c.f.brief), "--detach", "--no-wait",
+                                                          "--home", str(c.f.root / "lane-home")], scenario=False)
+        (n_s, last_s), (n_r, last_r) = summary_of(text_s), summary_of(text_r)
+        s.check("SH01 enforcing, a held detached spawn and a held detached resume (exit 7) each end their joined "
+                "output with one summary line, decisions HOLD (held, exit 7), naming the call and the lane",
+                rc_s == 7 and rc_r == 7 and n_s == 1 and n_r == 1 and last_s.startswith(SUMMARY)
+                and "decisions HOLD (held, exit 7): spawn of lane %s: " % held_lane in last_s
+                and "decisions HOLD (held, exit 7): resume of lane L1: " in last_r
+                and c.f.record.read_bytes() == before, "%s %s | %s | %s" % (rc_s, rc_r, last_s, last_r))
         beat = c.resume("claude", "L1", ["--beat", "--home", str(c.f.root / "lane-home")])
         s.check("G48 a no-work beat is not held", beat.returncode != 7 and "HOLD" not in beat.stderr, beat.stderr)
         moved = c.spawn(extra=["--source-pass", "0" * 32, "--source-disposition", "fixture"], scenario=False)
@@ -340,6 +414,12 @@ def part_lane(s):
         s.check("G25 a bound file gone exits 2 enforcing, with what clears it",
                 gone.returncode == 2 and "cannot be read" in gone.stderr and "put it back" in gone.stderr
                 and "HOLD" not in gone.stderr, gone.stderr)
+        rc_g, text_g = c.joined("claude", "spawn", c.lane(), ["--detach", "--no-wait"], scenario=False)
+        n_g, last_g = summary_of(text_g)
+        s.check("SH02 enforcing, a detached spawn the check cannot decide (exit 2) ends with one summary line "
+                "naming the refusal, refused (exit 2): the decisions check: …, and no HOLD",
+                rc_g == 2 and n_g == 1 and last_g.startswith(SUMMARY + "refused (exit 2): the decisions check: ")
+                and "HOLD" not in last_g, "%s | %s" % (rc_g, last_g))
     finally:
         c.close()
 
@@ -417,6 +497,41 @@ def part_lane(s):
         s.check("G25t trial: the same unknown logs once a head", len(t.trials()) == logged + 1, len(t.trials()))
     finally:
         t.close()
+    t = Case(s)     # the closing summary under trial, on a fixture of its own (the F5 counts above stay whole)
+    try:
+        t.bound()
+        t.ack()
+        first = t.lane()
+        rc0, text0 = t.joined("claude", "spawn", first, [])
+        with t.dec.open("a") as handle:
+            handle.write("a line the summary names\n")
+        lane = t.lane()
+        rc1, text1 = t.joined("claude", "spawn", lane, ["--detach", "--no-wait"])
+        n1, last1 = summary_of(text1)
+        went = t.await_close(lane, 0)
+        s.check("SH03 trial: a detached spawn the trial would hold goes on (exit 0, its lane closes) and ends its "
+                "joined output with one summary line, decisions HOLD (trial), naming the lane and why",
+                rc0 == 0 and rc1 == 0 and n1 == 1 and last1.startswith(SUMMARY) and went
+                and "decisions HOLD (trial): spawn of lane %s: content no accepted ack covers" % lane in last1
+                and "trial, nothing held" in text1, "%s %s %s | %s" % (rc0, rc1, went, last1))
+        waited = t.lane()
+        rc2, text2 = t.joined("claude", "spawn", waited, ["--detach"])
+        n2, last2 = summary_of(text2)
+        closes = t.closes(first)
+        rc3, text3 = t.joined("claude", "resume", first, ["--brief", str(t.f.brief), "--detach", "--no-wait",
+                                                         "--home", str(t.f.root / "lane-home"),
+                                                         "--projects-root", str(t.f.root / "projects")])
+        n3, last3 = summary_of(text3)
+        resumed = t.await_close(first, closes)
+        s.check("SH04 trial: a waiting --detach spawn and a detached resume each end with one summary line naming "
+                "the trial HOLD of their own call (the waiting one after its close and beside its own warning)",
+                rc2 == 0 and n2 == 1 and "decisions HOLD (trial): spawn of lane %s: " % waited in last2
+                and "--detach without --no-wait" in last2 and last2.startswith(SUMMARY)
+                and rc3 == 0 and n3 == 1 and last3.startswith(SUMMARY) and resumed
+                and "decisions HOLD (trial): resume of lane %s: " % first in last3,
+                "%s %s %s | %s | %s" % (rc2, rc3, resumed, last2, last3))
+    finally:
+        t.close()
     t = Case(s, s.wrapper_copy("trial-broken", broken_state))
     try:
         t.bound()
@@ -474,14 +589,14 @@ def part_handsoff(s):
     c = Case(s)
     try:
         c.dec.write_text("the first line\n")
-        made = c.hands("run-open", "--run", "bind", "--session", "sid-bind", "--head", "fixture head",
+        made = c.hands("run-open", "--envelope-usd", "1000", "--run", "bind", "--session", "sid-bind", "--head", "fixture head",
                        "--regime", "single", "--regime-src", "owner", "--handoff", str(c.ho),
                        "--detail", "fixture", "--viewer", "none", "--decisions-file", str(c.dec))
         opened = rows(c.f.store / "spawn-records" / "bind.jsonl")
         s.check("H01 run-open --decisions-file binds the canonical path",
                 made.returncode == 0 and opened and opened[-1].get("decisions_file") == os.path.realpath(c.dec),
                 made.stderr)
-        missing = c.hands("run-open", "--run", "bind2", "--session", "sid-bind2", "--head", "fixture head",
+        missing = c.hands("run-open", "--envelope-usd", "1000", "--run", "bind2", "--session", "sid-bind2", "--head", "fixture head",
                           "--regime", "single", "--regime-src", "owner", "--handoff", str(c.ho),
                           "--detail", "fixture", "--viewer", "none", "--decisions-file", str(c.f.root / "absent.md"))
         s.check("H02 run-open with a missing file is refused and writes nothing",
@@ -579,6 +694,68 @@ def part_handsoff(s):
     finally:
         c.close()
 
+    # The successor's start message, driven in its own order (review V-T8-G2b, change 1: the clause
+    # asking for the ack stood before the run-resume step, and the hold counts only an ack made after
+    # the head's own run-resume, so a head that followed the text in order was held at its first
+    # spawn). Each case is a record shaped like a hand-over: the old head's ack, its head-exit and the
+    # starter's head-successor for the new head. G61 runs the message's two steps in the order the
+    # message under test gives them, its run-resume being the command the message carries, run as
+    # written; its controls are the review's: the other order holds, and no new ack holds.
+    def handed_over():
+        c = Case(s)
+        c.dec.write_text("the first line\n")
+        c.record(c.opened())
+        c.ack("the old head's read")
+        c.add({"event": "head-exit", "band": "80", "context": "80 %", "pack": True, "session": "sid-fixture"})
+        c.add({"event": "head-successor", "session_id": "sid-next", "pid": 1, "model": "fixture",
+               "effort": "max"})
+        return c
+
+    def drive(c, order, argv):
+        codes = []
+        for step in order:
+            done = c.f.run(argv) if step == "resume" else c.ack("the new head's read")
+            codes.append("%s %d%s" % (step, done.returncode,
+                                      "" if done.returncode == 0 else " " + (done.stdout + done.stderr)[-200:]))
+        return codes
+
+    argv = []
+    c = handed_over()
+    try:
+        shown =c.f.run([sys.executable, "-B", "-c", MESSAGE, str(c.f.wrappers), "fixture", str(c.ho)])
+        steps = message_steps(shown.stdout)
+        s.check("G60 the start message carries both steps, its run-resume through the script under test",
+                steps is not None and str(c.f.wrappers / "handsoff.py") in " ".join(steps[1]),
+                shown.stdout[-400:] + shown.stderr[-200:])
+        order, argv = steps if steps else (["ack", "resume"], [])
+        codes = drive(c, order, argv) if argv else ["no run-resume command in the message"]
+        got = c.state()
+        s.check("G61 a successor that follows its start message in order is clear at its first spawn",
+                got["state"] == "clear" and all(code.split()[1:2] == ["0"] for code in codes)
+                and [r.get("event") for r in c.rows()].count("run-resume") == 1,
+                ["the order read from the message: " + " then ".join(order), codes, got])
+    finally:
+        c.close()
+
+    c = handed_over()
+    try:
+        codes = drive(c, ["ack", "resume"], argv) if argv else ["no run-resume command"]
+        got = c.state()
+        s.check("G61 control (the review's): the ack first, then run-resume, holds",
+                got["state"] == "hold" and "acknowledged nothing yet" in got["why"]
+                and all(code.split()[1:2] == ["0"] for code in codes), [codes, got])
+    finally:
+        c.close()
+
+    c = handed_over()
+    try:
+        codes = drive(c, ["resume"], argv) if argv else ["no run-resume command"]
+        got = c.state()
+        s.check("G61 control (the review's): run-resume with no new ack holds",
+                got["state"] == "hold" and all(code.split()[1:2] == ["0"] for code in codes), [codes, got])
+    finally:
+        c.close()
+
     c = Case(s)
     try:
         c.dec.write_text("the first line\n")
@@ -631,6 +808,45 @@ def part_handsoff(s):
         acked = c.hands("decisions-ack", "--run", "fixture", "--ack", "read the relay")
         s.check("G28 an ack with no digest clears a no-file relay",
                 acked.returncode == 0 and c.state()["state"] == "clear", acked.stderr)
+    finally:
+        c.close()
+
+    # A run's own parked question is never his word (his item 57 of 2026-11-09; review V-T8-G2b,
+    # point 5 (iii)): an `AUTHOR-QUESTION:` observation, the tag runs once wrote, holds no spawn, no
+    # gate or close (decisions_pending) and is no owner line in a derived pack; a relay of his words
+    # on the same record still holds and is still listed (the control, the same probes).
+    c = Case(s)
+    try:
+        c.record(c.opened(bound=False))
+        for what in ("AUTHOR-QUESTION: shall the run install tonight?", "author-question: the same, lower case"):
+            c.add({"event": "observation", "phase": "", "what": what})
+        asked = c.state()
+        seen = json.loads(c.f.run([sys.executable, "-B", "-c", AUTHORED, str(c.f.wrappers),
+                                   str(c.f.record)]).stdout or "{}")
+        s.check("G29 a run's own AUTHOR-QUESTION observation holds no spawn, no gate or close, and is no owner line",
+                asked["state"] == "clear" and seen.get("pending") == 0 and seen.get("owner") == [],
+                [asked, seen])
+        c.add({"event": "observation", "phase": "", "what": "AUTHOR: yes, install tonight"})
+        relay = c.state()
+        seen = json.loads(c.f.run([sys.executable, "-B", "-c", AUTHORED, str(c.f.wrappers),
+                                   str(c.f.record)]).stdout or "{}")
+        s.check("G29 with a relay after the questions, the relay alone holds and is the one owner line",
+                relay["state"] == "hold" and seen.get("pending") == 1 and len(seen.get("owner", [])) == 1
+                and "install tonight" in seen["owner"][0] and "QUESTION" not in seen["owner"][0].upper(),
+                [relay, seen])
+    finally:
+        c.close()
+
+    c = Case(s)
+    try:
+        c.record(c.opened(bound=False))
+        c.add({"event": "observation", "phase": "", "what": "AUTHOR: yes, install tonight"})
+        relay = c.state()
+        seen = json.loads(c.f.run([sys.executable, "-B", "-c", AUTHORED, str(c.f.wrappers),
+                                   str(c.f.record)]).stdout or "{}")
+        s.check("G29 control: a relay of his words alone holds, is pending at a gate and is his owner line",
+                relay["state"] == "hold" and seen.get("pending") == 1 and len(seen.get("owner", [])) == 1
+                and "install tonight" in seen["owner"][0], [relay, seen])
     finally:
         c.close()
 

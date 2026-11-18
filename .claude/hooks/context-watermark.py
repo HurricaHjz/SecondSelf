@@ -49,7 +49,8 @@ Knobs (env):
                          descending pair or a bad token falls back to the default, on stderr.
   AIMYTH_WATERMARK_LOG   default ~/.aimyth/logs/context-watermark.log (the hook logs' own folder,
                          apart from the hand-offs; directory created)
-  AIMYTH_PROJECTS_DIR    default ~/.claude/projects — the root a transcript must sit under; a
+  AIMYTH_PROJECTS_DIR    default <CLAUDE_CONFIG_DIR>/projects or ~/.claude/projects, either —
+                         the root a transcript must sit under (the harness's own folder); a
                          path elsewhere is a stale or foreign transcript and is reported as
                          unmetered rather than measured (tests point this at a fixture)
   AIMYTH_HANDSOFF        "1" selects the legacy texts, as does an armed-<session_id> marker
@@ -136,17 +137,38 @@ def bands():
     return DEFAULT_BANDS
 
 
+def projects_dirs():
+    """The roots a transcript may sit under. AIMYTH_PROJECTS_DIR alone when it is set; else
+    <CLAUDE_CONFIG_DIR>/projects and ~/.claude/projects, either one (critic CR10A F2: a head
+    started under a login folder writes its transcript beneath that folder's projects, so the
+    default alone read it as foreign and the bands failed open; independent check V10A finding 5:
+    the login folder alone then read a transcript under the default as foreign)."""
+    given = os.environ.get("AIMYTH_PROJECTS_DIR")
+    if given:
+        return [given]
+    roots = []
+    config = os.environ.get("CLAUDE_CONFIG_DIR")
+    if config:
+        roots.append(os.path.join(config, "projects"))
+    roots.append(os.path.join("~", ".claude", "projects"))
+    return roots
+
+
 def projects_dir():
-    return os.environ.get("AIMYTH_PROJECTS_DIR") or os.path.join("~", ".claude", "projects")
+    """The first root projects_dirs() names: the one a caller that needs a single folder uses."""
+    return projects_dirs()[0]
 
 
 def under_projects(path):
-    root = os.path.realpath(os.path.expanduser(projects_dir()))
     p = os.path.realpath(os.path.expanduser(path))
-    try:
-        return os.path.commonpath([root, p]) == root
-    except ValueError:
-        return False
+    for root in projects_dirs():
+        root = os.path.realpath(os.path.expanduser(root))
+        try:
+            if os.path.commonpath([root, p]) == root:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def last_usage(path):

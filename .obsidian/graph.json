@@ -87,6 +87,13 @@
         "a": 1,
         "rgb": 8359053
       }
+    },
+    {
+      "query": "path:wiki/experience/",
+      "color": {
+        "a": 1,
+        "rgb": 1752220
+      }
     }
   ],
   "showArrow": false,

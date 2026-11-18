@@ -46,10 +46,20 @@ The flags. Each comes up once, when it is due: a dated flag once its date has pa
   after that a flag is only counted, unless its text changes or 28 days pass since it was last
   listed, so a pending event is not lost. --all-flags lists every one.
 
+Two writers at once. Each of the three writes (generate, record-audit, seed --out) runs inside
+  guarded_write: a flock on the folder of the file it writes and of the file it was composed from,
+  held from a check of that file against the hash taken when it was read (for a seed, a check that
+  the target is still absent) through the rename, and never across the load or the vault read. A
+  change found there refuses: one line, `REFUSED: <path> changed since this run read it (sha a, now
+  b); nothing written; re-run`, exit 1, and nothing is written. Writers that take no lock, such as a
+  hand edit of the data file, are seen only when they land before the check.
+
 Exit codes.
   0  the command ran. Misses outside an install are listed and exit 0; so does the weekly pass.
   1  wording-check inside an install with the trial state off: a just-placed text missed, or its
      home was refused unread. seed: an anomaly was left; the document is still produced, each listed.
+     A guarded write refused (REFUSED): its file changed since this run read it, appeared since it
+     was checked, or its folder could not be locked; nothing was written.
   2  PROBE FAILED: a broken premise, "could not check" among them; never reported as clean.
 
 Fingerprints are sha256 of content, recorded at each audit. Neither file dates nor git are used.
@@ -66,6 +76,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 DATA_REL = "wiki/developments/rule-register-data.json"
@@ -74,6 +85,19 @@ ALWAYS_ON = ("CLAUDE.md", "CUSTOMISATION.md")
 MARKER_FILE = "CUSTOMISATION.md"
 LOAD_MARKER = "CUSTOMISATION-LOADED-v1"
 SCHEMA_VERSION = 1
+# Imported here, apart from the imports above, so that no edit of those lines (package A's REG-TMP
+# set anchors on `import sys` and `import time`) meets this one.
+try:
+    import fcntl                        # the write guard's lock (guarded_write). Where it is missing,
+except ImportError:                     # every guarded write refuses rather than writing unlocked.
+    fcntl = None
+# The write guard (guarded_write). LOCK_WAIT is how long a write waits for another writer of the
+# same folder before it refuses; LOCK_POLL is how often it asks. They are the values the delegate
+# skill's vault-writes.py sets for the same folder and derives there (a write holds the lock for
+# milliseconds, so ten seconds waits out hundreds queued ahead); unmeasured for this tool's own
+# writes, which fsync a file of up to a few megabytes.
+LOCK_WAIT = 10.0
+LOCK_POLL = 0.05
 
 # Dated records. The wording check never searches them and refuses a row that names one as a home.
 DATED_FILES = ("wiki/log.md", "wiki/developments/owner-rulings-history.md",
@@ -438,20 +462,109 @@ def store_root():
 
 
 def write_atomic(path, text, keep_mode=True):
-    """The one place this tool writes: a new copy beside the file, swapped in by one rename."""
+    """The one place this tool writes: a new copy beside the file, swapped in by one rename. The
+    copy's name is unique to this write and made only where no file has it (tempfile.mkstemp), so two
+    writers of one file never share it; a write that fails removes it."""
     mode = os.stat(path).st_mode & 0o777 if keep_mode and os.path.exists(path) else 0o600
-    temporary = os.path.join(os.path.dirname(path) or ".", "." + os.path.basename(path) + ".new")
-    with open(temporary, "w", encoding="utf-8") as stream:
-        stream.write(text)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.chmod(temporary, mode)
-    os.replace(temporary, path)
+    handle, temporary = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", suffix=".new",
+                                         dir=os.path.dirname(path) or ".")
+    try:
+        with open(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    except BaseException:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+        raise
 
 
 def probe_failed(what):
     print("PROBE FAILED: " + what)
     return 2
+
+
+class Refused(Exception):
+    """A guarded write that must not go ahead; its text is the one line the command prints."""
+
+
+class guarded_write(object):
+    """The guard around each of this tool's three writes (generate, record-audit, seed --out): each
+    write's one call of write_atomic sits inside `with guarded_write(target, same=(path, sha256 at
+    the read))`, or `with guarded_write(target, absent=True)` for a seed's new file.
+
+    On entry it locks every folder the write depends on (the target's, and the folder of the
+    file it was composed from), in sorted order, with an advisory flock on the folder itself,
+    so no lock file is ever created and a killed writer releases its lock. Then it checks the
+    premise again: the file the text was composed from still hashes to what was read, or the
+    target is still absent. Only then does the caller's unchanged write_atomic run, and the
+    locks are released on exit. Any failure raises Refused before anything is written, so no
+    temporary file exists at a refusal.
+
+    The lock is held from the check through the rename, never across the load or a read of the
+    vault. Writers that take it never meet inside a write. A writer that takes no lock (a hand
+    edit of the data file, another tool) is seen if it lands before the check; between the check
+    and the rename (write_atomic's temporary write and fsync) it is not."""
+
+    def __init__(self, target, same=None, absent=False):
+        self.target, self.same, self.absent, self.fds = target, same, absent, []
+
+    def release(self):
+        while self.fds:
+            try:
+                os.close(self.fds.pop())
+            except OSError:
+                pass
+
+    def refuse(self, text):
+        self.release()
+        raise Refused("REFUSED: " + text)
+
+    def __enter__(self):
+        paths = [self.target] + ([self.same[0]] if self.same else [])
+        folders = sorted({os.path.dirname(os.path.abspath(path)) for path in paths})
+        if fcntl is None:
+            self.refuse("this platform has no flock, so this run cannot keep other writers of %s out "
+                        "while it writes; nothing written" % folders[0])
+        for folder in folders:
+            try:
+                descriptor = os.open(folder, os.O_RDONLY)
+            except OSError as error:
+                self.refuse("cannot open %s to lock it (%s); nothing written" % (folder, error.strerror or error))
+            self.fds.append(descriptor)
+            deadline = time.monotonic() + LOCK_WAIT
+            while True:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        self.refuse("another writer has held the lock on %s for %g s; nothing written; "
+                                    "re-run" % (folder, LOCK_WAIT))
+                    time.sleep(LOCK_POLL)
+                except OSError as error:
+                    self.refuse("cannot lock %s (%s); nothing written" % (folder, error.strerror or error))
+        if self.absent and os.path.exists(self.target):
+            self.refuse("%s appeared since this run checked it; nothing written; re-run" % self.target)
+        if self.same:
+            path, expected = self.same
+            try:
+                with open(path, "rb") as stream:
+                    now = hashlib.sha256(stream.read()).hexdigest()
+            except FileNotFoundError:
+                self.refuse("%s is gone since this run read it; nothing written; re-run" % path)
+            except OSError as error:
+                self.refuse("%s cannot be read again (%s); nothing written" % (path, error.strerror or error))
+            if now != expected:
+                self.refuse("%s changed since this run read it (sha %s, now %s); nothing written; re-run"
+                            % (path, expected[:12], now[:12]))
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
 
 
 def vault_root(args):
@@ -465,11 +578,15 @@ class Context:
         self.data_path = args.data or os.path.join(self.vault.root, DATA_REL)
         self.page_path = getattr(args, "page", None) or os.path.join(self.vault.root, PAGE_REL)
         self.today = args.today or datetime.date.today().isoformat()
-        self.data, self.problem = None, None
+        self.data, self.problem, self.data_sha = None, None, None
         if os.path.exists(self.data_path):
             try:
-                with open(self.data_path, encoding="utf-8") as stream:
-                    self.data = json.load(stream)
+                # Read as bytes and hashed before they are parsed: the hash is what a guarded write
+                # checks the data file against before it replaces anything (guarded_write).
+                with open(self.data_path, "rb") as stream:
+                    raw = stream.read()
+                self.data_sha = hashlib.sha256(raw).hexdigest()
+                self.data = json.loads(raw.decode("utf-8"))
                 if not (isinstance(self.data, dict) and isinstance(self.data.get("rows"), list)):
                     self.problem, self.data = "the data file holds no list of rows", None
             except (OSError, ValueError) as error:
@@ -1118,9 +1235,15 @@ def list_copies(ctx, report):
     files = forward_files(ctx)
     copies, carrier_lines, home_hits = [], [], 0
     carriers_by_row = {}
+    # A carrier written {"file", "wordings"} carries only the approved wordings it names, by index in the
+    # row's approved list; a carrier written as a path, or with no "wordings", carries them all.
+    carried = {}
     for row in ctx.rows:
         carriers_by_row[row.get("id")] = {ctx.vault.canonical(c if isinstance(c, str) else c.get("file", ""))
                                           for c in row.get("carriers") or []}
+        for c in row.get("carriers") or []:
+            if isinstance(c, dict) and isinstance(c.get("wordings"), list):
+                carried[(row.get("id"), ctx.vault.canonical(c.get("file", "")))] = set(c["wordings"])
 
     def consider(rel, row, needle, hay):
         nonlocal home_hits
@@ -1147,7 +1270,10 @@ def list_copies(ctx, report):
     declared = 0
     for row in ctx.rows:
         for carrier in sorted(carriers_by_row.get(row.get("id"), ())):
-            for wording in approved_of(row):
+            only = carried.get((row.get("id"), carrier))
+            for index, wording in enumerate(approved_of(row)):
+                if only is not None and index not in only:
+                    continue
                 declared += 1
                 needle = needle_of(wording.get("text") or "")
                 hay = ctx.vault.text(carrier)
@@ -1360,7 +1486,12 @@ def cmd_record_audit(args):
     if not (audit["rule_files"] or audit["sources"]):
         return probe_failed("nothing to fingerprint, so no baseline is recorded")
     ctx.data["audit"] = audit
-    write_atomic(ctx.data_path, json.dumps(ctx.data, ensure_ascii=False, indent=1) + "\n")
+    try:
+        with guarded_write(ctx.data_path, same=(ctx.data_path, ctx.data_sha)):
+            write_atomic(ctx.data_path, json.dumps(ctx.data, ensure_ascii=False, indent=1) + "\n")
+    except Refused as refusal:
+        print(refusal)
+        return 1
     print("record-audit %s: %d rule-holding files, %d cited or named files, %d dated rulings, %d flags "
           "recorded" % (ctx.today, len(audit["rule_files"]), len(audit["sources"]),
                         sum(audit["rulings"].values()), len(flags)))
@@ -1736,7 +1867,12 @@ def cmd_seed(args):
         print("  " + item, file=out)
     text = json.dumps(document, ensure_ascii=False, indent=1) + "\n"
     if args.out:
-        write_atomic(args.out, text, keep_mode=False)
+        try:
+            with guarded_write(args.out, absent=True):
+                write_atomic(args.out, text, keep_mode=False)
+        except Refused as refusal:
+            print(refusal)
+            return 1
         print("seed: wrote %s" % args.out)
     else:
         sys.stdout.write(text)
@@ -2111,7 +2247,13 @@ def cmd_generate(args):
     if not os.path.exists(ctx.data_path):
         print("generate: not applicable (no data file, as in a fresh public copy); no page written")
         return 0
-    write_atomic(ctx.page_path, render_page(ctx.data, ctx.today))
+    page = render_page(ctx.data, ctx.today)
+    try:
+        with guarded_write(ctx.page_path, same=(ctx.data_path, ctx.data_sha)):
+            write_atomic(ctx.page_path, page)
+    except Refused as refusal:
+        print(refusal)
+        return 1
     print("generate: wrote %s from %d rows" % (ctx.page_path, len(ctx.rows)))
     return 0
 

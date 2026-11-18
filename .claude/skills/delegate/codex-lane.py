@@ -20,7 +20,8 @@ What a spawn does, in order
    2026-09-23 18:0x: such a lane spawned read-only by default could do none of its work), and
    `--read-only` beside either is refused; the class has a definition in
    `.claude/agents/<class>.md`; the brief exists, is non-empty, its declarations parse
-   (`lane.parse_declarations`, the one grammar lane.py documents: CONTROL+, READ+, RUBRIC+, WEB+)
+   (`lane.parse_declarations`, the one grammar lane.py documents: CONTROL+, READ+, RUBRIC+, WEB+,
+   HOST+)
    and no line carries a doubled root (`lane.refuse_doubled_root`: a root path embedding
    a second absolute path, or the vault root twice in one path; register 2026-09-09 19:03); its
    controls hit, its declared inputs exist with content (a zero-byte file refuses with its path)
@@ -33,13 +34,31 @@ What a spawn does, in order
    is the grant. A control's file `<<REPORT>>` names this pass's report: recorded as
    `controls_pending` and checked at the close on the response this pass returned
    (`controls_deferred`: checked, failed or unverified, on the record and the summary line; a
-   process that never starts closes them unverified, on the record and stderr).
+   process that never starts closes them unverified, on the record and stderr). The host guard
+   (DW-20261024-2, `network_decision`) reads the lane's shell network from the resolved `-c` list
+   (`--network`, or a `--config` extra that opens or may open the sandbox's network) and the
+   brief's HOST+ hosts: shell network with no hosts, hosts with no shell network, a malformed
+   host, a host outside a hands-off run's network grant, and on a resume a new host or added
+   network, are each refused in lane.py's `enforce` mode and logged as `would refuse` in its
+   `trial` mode (`NETWORK_GUARD_MODE`, as shipped). Only a lane with shell network gets
+   `LLM_WIKI_LANE_NETWORK`, holding only hosts that pass; the inherited one is never passed on.
+   The sandbox's network is all or nothing, so such a lane is held to its hosts only by the tools
+   that read the variable: its lane-open says `network_enforcement: cooperative …`, and one
+   stderr line at the start says so. Every spawn, resume or beat with shell network also prints
+   (whatever the path: a detached call's caller, or a worker started directly)
+   one plain line (`NETWORK_LIMIT`: the fence is one only cooperating tools respect, and the
+   helper's own commands can still reach any address) and writes the same as `network_limit` on
+   its lane-open, lane-resumed or hold-beat line (owner's choice (a) of 9 November 2026).
 2. The prompt: the class definition's body (Codex has no `--agents`), the lane core the Claude
    lanes carry, a Codex addendum naming what differs (the sandbox is the fence, the final message
    is the report, no progress file, no web search unless granted), then the brief. It goes to
    Codex on stdin (`codex exec -`) and a copy sits in the run store.
 3. The `lane-open` line, then the process (`start_new_session`, so a kill reaches the whole
-   group), then `lane-spawned` with the pid, then `lane-awake` for the keep-awake process started
+   group), then `lane-spawned` with the pid and the group id (`pgid`) every stop signals: SIGTERM,
+   the grace, then SIGKILL to the whole group, after the leader has exited too, and each only once
+   the group is proven the lane's own (the leader still unreaped, or a member seen in the group
+   while it was, still there); the close's `stop_group` lists each signal and its proof (review
+   V-T8-G2 point 8). Then `lane-awake` for the keep-awake process started
    beside it (`lane.start_awake`: `/usr/bin/caffeinate -i -w <pid>`, `started` with its pid or
    `skipped` with the why, never a failed spawn; lane.py's "Keeping the host awake", owner
    decision of 2026-10-09; a beat starts one too, its state on its one `hold-beat` line, Beat
@@ -293,6 +312,7 @@ CORE_NAME = "lane-core.md"
 # its beats hash alike when they run the model under one configuration.
 CONFIG_DROP_PAIRS = ("-o", "resume")
 TURN_USAGE_KEEP = 8             # per-turn usage figures kept on a record line (critic F7, 2026-09-17): a beat is one turn and a resume a handful, so eight entries hold every case seen while bounding the line; set by judgement, unmeasured
+WATCH_KEEP = 8                  # GPT watch reading times kept on a lane-closed's gpt_watch: the last eight, as TURN_USAGE_KEEP; set by judgement, unmeasured
 ERRORS_KEEP = 5                 # error texts kept on a close line: the LAST five, where the decisive one sits (register 2026-09-26 00:16); five as before, set by judgement, unmeasured
 WRITE_CLASSES = ("verifier", "builder")   # classes whose work needs a write scope: a spawn gives one, or says --read-only (register 2026-09-23 18:0x)
 # The stage lock (review CR-B4L2 finding 1): how long a call waits for another to finish putting a
@@ -930,10 +950,159 @@ def recorded_config_extra(opened):
     probe = argparse.Namespace(effort=opened.get("effort") or LEGACY_RESUME_EFFORT,
                                search=bool(opened.get("search")), context_window=CONTEXT_WINDOW,
                                compact_limit=COMPACT_LIMIT, config=None)
-    keys = [pair.split("=", 1)[0] for pair in config_overrides(probe, bool(opened.get("network")))]
+    # The default block holds the network pair only for the --network flag: `network_flag` where the
+    # lane-open records it (DW-20261024-2 made `network` the resolved value), else `network`, which
+    # recorded the flag before that line.
+    flag = opened.get("network_flag") if "network_flag" in opened else opened.get("network")
+    keys = [pair.split("=", 1)[0] for pair in config_overrides(probe, bool(flag))]
     if [pair.split("=", 1)[0] for pair in recorded[:len(keys)]] != keys:
         return [], "none: the lane-open's config_overrides do not start with the default block"
     return list(recorded[len(keys):]), "lane-open config_overrides after the default block"
+
+
+# ------------------------------------------------------------------ the host guard -----------
+# DW-20261024-2: a helper reaches only the web addresses its brief names, as far as this launcher
+# can hold it. The Codex sandbox's network switch is all or nothing: once open, the lane's own
+# commands can reach any host, and no fence runs here, so a lane with shell network is held to its
+# named hosts only by the tools that read LLM_WIKI_LANE_NETWORK (the capture tool among them).
+# That limit is recorded on every such lane-open and printed at every such start, and never called
+# enforced (question 2's option (a), provisional, the lead's: option (b), refusing every start with
+# shell network, would be a change to rule 1 alone). The mode is lane.py's one constant.
+NETWORK_KEY = "sandbox_workspace_write.network_access"
+# Keys that may open the sandbox's network: whether such a -c pair can override the `-s` this
+# adapter passes (build_command) is not known offline, so each counts as open, with its reason.
+NETWORK_UNDECIDED_KEYS = ("sandbox_mode", "sandbox_workspace_write")
+NETWORK_COOPERATIVE = ("cooperative: the Codex sandbox opens every host; only tools that read "
+                       "LLM_WIKI_LANE_NETWORK refuse an unnamed one")
+# The limit in plain words, stated at every start or resume with shell network (a spawn, a resume
+# and a beat; a detached call's caller prints it and its worker records it, and a worker started
+# directly prints it too, NETWORK_STATED_VAR) and written on that call's
+# record line as `network_limit`: the owner's choice (a) of 9 November 2026, 23:29:59 GMT, to his
+# walk-through's Part 4, item 48 ("accept this as a fence that only cooperating tools respect, state
+# that limit at every such start, and search for a stronger fence").
+NETWORK_LIMIT = ("the network fence on this helper is one only cooperating tools respect: the "
+                 "helper's own commands can still reach any address")
+WEB_SEARCH_CODEX = "server-side (web_search = live), not bound to named hosts"
+NETWORK_CARRIED = "carried from lane-open"
+# The caller's verdict, handed to its detached worker so the worker can say in its detach log when
+# the grants changed between the two reads; never passed on to the lane.
+NETWORK_SEEN_VAR = "CODEX_LANE_NETWORK_SEEN"
+# Set to "1" by a caller that printed NETWORK_LIMIT for the worker it detaches, so that worker
+# leaves it out of its detach log; any other worker start (a direct `--as-worker` call) prints it
+# itself (review V-T8-G2 point 2). Never passed on to the lane.
+NETWORK_STATED_VAR = "CODEX_LANE_LIMIT_STATED"
+
+
+def network_seen(prep):
+    """The caller's export as its detached worker compares it (comma-separated, "" for nothing),
+    or None where the guard did not run for this call."""
+    if "network_guard" not in (prep.get("network") or {}):
+        return None
+    return ",".join(prep.get("network_export") or [])
+
+
+def shell_network(args, overrides):
+    """(open, source) of the lane's shell network, read from the resolved -c list, since the guard
+    keys on the property it tests, not on one flag: the --network flag (the pair config_overrides
+    adds), a --config extra on NETWORK_KEY whose value is not the TOML literal false, or a key in
+    NETWORK_UNDECIDED_KEYS, which counts as open and says it cannot decide. A resume that carried
+    the lane-open's network or extras reads `carried from lane-open`. (False, None) otherwise."""
+    if getattr(args, "network", False):
+        found = "--network"
+    else:
+        found = undecided = None
+        for pair in overrides or []:
+            key, _, value = pair.partition("=")
+            key, value = key.strip(), value.strip()
+            if key == NETWORK_KEY and value != "false":
+                found = "--config %s" % NETWORK_KEY
+                break
+            if key in NETWORK_UNDECIDED_KEYS and undecided is None:
+                undecided = "cannot decide: --config %s may open the sandbox's network" % key
+        found = found or undecided
+    if found is None:
+        return False, None
+    return True, (NETWORK_CARRIED if getattr(args, "network_carried", False) else found)
+
+
+def network_decision(args, declared, net_open, net_src, rows, opened=None, quiet=False,
+                     limit_stated=False):
+    """The host guard at a Codex start: rules 1 to 5 at a spawn, the resume rules against the
+    lane-open (`opened`), and the export. Every reason names the brief line, the host and the grant
+    it was checked against. In enforce any reason refuses here (exit 2, before any record line, in
+    the caller before any detach); in trial each is one stderr line (none from a detached worker,
+    `quiet`) and an entry on the record. What is exported never depends on the mode: only a lane
+    with shell network gets LLM_WIKI_LANE_NETWORK, and only hosts that pass the host rule and, on a
+    hands-off run, the run grant. The limit line (NETWORK_LIMIT) is printed at every start with
+    shell network, a worker's included, unless `limit_stated`: the caller that detached this worker
+    printed it already (NETWORK_STATED_VAR). Returns the record's fields and the export ([]: unset)."""
+    policy = lane.run_network_policy(args.run, rows)
+    declared = declared or {}
+    named = bool(declared.get("hosts"))
+    hosts, malformed, none_declared = lane.network_host_items(declared, policy["host_re"], policy["unread"])
+    grant, grant_src = policy["grant"], policy["grant_src"]
+    verb = "resume" if opened is not None else "spawn"
+    reasons = []
+    for bad in malformed:        # rule 3
+        reasons.append("brief line %d: HOST+ item %r is %s, and is never exported"
+                       % (bad["line"], bad["item"], bad["why"]))
+    lines = ", ".join(str(n) for n in sorted({e["line"] for e in declared.get("hosts") or []}))
+    if hosts and not net_open:   # rule 2
+        reasons.append("brief line %s names hosts (%s), and this %s grants no shell network "
+                       "(--network, with --write): nothing is exported" % (lines, ", ".join(hosts), verb))
+    was_open, carried = None, None
+    if opened is not None:
+        was_open = bool(opened.get("network"))
+        recorded = opened.get("network_hosts")
+        carried = [h for h in recorded if isinstance(h, str)] if isinstance(recorded, list) else None
+        if net_open and not was_open:     # adding shell network on a resume
+            reasons.append("a resume adds no shell network to a lane spawned without it (%s): spawn "
+                           "a fresh lane" % net_src)
+    candidates, cand_src = [], "none"
+    if net_open:
+        if named:
+            candidates, cand_src = list(hosts), "HOST+ (brief line %s)" % lines
+        elif opened is not None and carried:
+            candidates, cand_src = list(carried), NETWORK_CARRIED
+        if not candidates and (not named or none_declared) and not malformed:   # rule 1
+            reasons.append("the lane has shell network (%s) and its brief names no hosts (HOST+: "
+                           "host, …)%s" % (net_src, "; HOST+: none declares the empty set"
+                                           if none_declared else ""))
+            if not named and grant:
+                # trial with no HOST+: the run grant's hosts (the 2026-10-25 08:20 fix shape)
+                candidates, cand_src = list(grant), "the run grant (the brief names no hosts)"
+    export = []
+    for host in candidates:
+        if named and opened is not None and carried is not None and not lane.host_granted(host, carried):
+            reasons.append("brief line %s: host %s widens the lane's hosts (%s, on its lane-open): a "
+                           "resume names no new host" % (lines, host, ", ".join(carried) or "none"))
+            continue
+        if grant is not None and not lane.host_granted(host, grant):    # rule 4
+            reasons.append("%s: host %s is outside the run's network grant (%s; %s)"
+                           % ("brief line %s" % lines if named else cand_src, host,
+                              ", ".join(grant) or "none", grant_src))
+            continue
+        if host not in export:
+            export.append(host)
+    mode, mode_src, would = lane.network_guard_apply(reasons, "codex-lane.py", verb, quiet=quiet,
+                                                     refuse=die)
+    fields = {"network": bool(net_open), "network_src": net_src,
+              "network_hosts": export, "network_hosts_src": cand_src if export else "none"}
+    if net_open:
+        fields["network_enforcement"] = NETWORK_COOPERATIVE
+        fields["network_limit"] = NETWORK_LIMIT
+    if net_open or named or reasons:
+        fields["network_guard"] = {"mode": mode, "mode_src": mode_src, "would_refuse": would,
+                                   "grant": grant, "grant_src": grant_src}
+    if net_open and not quiet:
+        sys.stderr.write("codex-lane.py: network %s (%s); exported LLM_WIKI_LANE_NETWORK: %s\n"
+                         % (NETWORK_COOPERATIVE, net_src, ",".join(export) or "nothing"))
+    if net_open and not limit_stated:
+        # The limit in plain words, its own line (owner's choice (a) of 9 November 2026, item 48),
+        # whatever the path: a worker started directly has no caller to state it (V-T8-G2 point 2).
+        sys.stderr.write("codex-lane.py: lane %s/%s has shell network: %s.\n"
+                         % (getattr(args, "run", None), getattr(args, "lane", None), NETWORK_LIMIT))
+    return fields, export
 
 
 def build_command(codex, args, cwd, sandbox, add_dirs, overrides, report_path, resume_id=None):
@@ -1247,9 +1416,10 @@ def decisive_error(parsed, exit_class):
     return None
 
 
-def classify(killed_by, parsed, returncode, report_text):
+def classify(killed_by, parsed, returncode, report_text, stop_text=None):
     """The execution outcome. A task outcome (complete, partial, blocked) is the report's and
-    the head verifies it on disk."""
+    the head verifies it on disk. `stop_text` is the GPT watch's own error text for a lane it
+    stopped (killed_by "gpt-watch"), which names the figure."""
     if parsed.get("refusal_count"):
         continued = lane.a3_final_success("codex", parsed, returncode, stopped=bool(killed_by))
         return ("refusal-continued" if continued else "refusal"), None
@@ -1259,6 +1429,9 @@ def classify(killed_by, parsed, returncode, report_text):
         return "stall", "silence past the bound"
     if killed_by == "signal":
         return "killed", "wrapper signalled"
+    if killed_by == "gpt-watch":
+        return "killed", stop_text or ("stopped by the lane's GPT watch: GPT's week at 100 % or more "
+                                       "without approved credits (N19)")
     terminal = parsed.get("terminal_error") or ""
     if not (parsed.get("terminal_failure") or returncode not in (0, None) or not parsed["turns_completed"]):
         terminal = ""
@@ -1280,9 +1453,52 @@ def classify(killed_by, parsed, returncode, report_text):
 
 # ------------------------------------------------------------------------ run --------------
 
+GROUP_LIST_MAX = 4096   # pids read per group listing; set by judgement, unmeasured: a lane's group holds tens
+
+
+def group_members(pgid):
+    """The pids in process group `pgid` (a list, empty when the group has none), or None where this
+    platform gives no listing; a stop then proves its group by the unreaped leader alone
+    (Runner._own_group). Darwin: libproc's proc_listpids with type 2, PROC_PGRP_ONLY in that ABI
+    (a zombie is listed too); Linux: the pgrp field of each /proc/<pid>/stat."""
+    try:
+        if sys.platform == "darwin":
+            import ctypes
+            library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            buf = (ctypes.c_int * GROUP_LIST_MAX)()
+            got = library.proc_listpids(2, int(pgid), buf, ctypes.sizeof(buf))
+            if got < 0:
+                return None
+            return sorted(p for p in buf[:got // ctypes.sizeof(ctypes.c_int)] if p > 0)
+        if sys.platform.startswith("linux"):
+            out = []
+            for name in os.listdir("/proc"):
+                if not name.isdigit():
+                    continue
+                try:
+                    with open("/proc/%s/stat" % name, encoding="ascii", errors="replace") as handle:
+                        fields = handle.read().rsplit(")", 1)[1].split()
+                except (OSError, IndexError):
+                    continue
+                if len(fields) > 2 and fields[2] == str(pgid):   # state, ppid, pgrp after the name
+                    out.append(int(name))
+            return sorted(out)
+    except (OSError, ValueError, AttributeError):
+        return None
+    return None
+
+
 class Runner:
     """Starts the process, streams its events to the events file, watches for silence and the
     deadline, and returns what the close line needs."""
+
+    # A stop's group (review V-T8-G2 point 8), as class defaults so a runner built without
+    # __init__ (the suites build such) reads them too: the group id recorded at the start
+    # (_group_at_start), the members seen while the leader was unreaped (_census_group), and each
+    # stop signal with its proof (_signal_group), which the close carries as stop_group.
+    pgid = None
+    _group_seen = None
+    stop_group = None
 
     def __init__(self, ctx):
         self.ctx = ctx
@@ -1297,6 +1513,24 @@ class Runner:
         self.reader_errors = []
         self.streams_complete = False
         self.threads = []
+        # The GPT watch (line 2's replacement design; owner decision N19): decided before the spawn
+        # line (_watch_arm), read in its own daemon thread (_watch_loop, _watch_tick), acted on only
+        # in the once-a-second loop (_watch_take), ended with the lane (_watch_end, end_watch).
+        self.watch = None              # the spawn line's gpt_watch object, once decided
+        self._watch_uw = None          # usage_windows, loaded in the main thread when armed
+        self._watch_end = threading.Event()
+        self._watch_slot = None        # the latest tick's result, under _lock
+        self._watch_thread = None
+        self._watch_in_flight = False
+        self._watch_counts = {"readings": 0, "skipped_credits": 0, "unreadable": 0, "errors": 0,
+                              "discarded": 0}
+        self._watch_reading_s = []     # each reading's seconds, the last WATCH_KEEP
+        self._watch_last_line = None   # the (verdict, action) of the last line written
+        self._watch_last = None        # the last result taken: verdict, figure, time
+        self._watch_stopped = None
+        self._watch_stop_text = None
+        self._watch_at_end = {"in_flight_at_end": False, "ended_early": False}
+        self._watch_died = None
         if self.owner is not None:
             self.owner.stream_settler = self.settle_failure
 
@@ -1377,18 +1611,364 @@ class Runner:
         except BaseException as exc:
             self.reader_errors.append("%s: %s" % (reader.__name__, exc))
 
-    def _kill(self, why):
+    def _kill(self, why, explicit=None, reason=None):
+        """Stop the codex process group: SIGTERM, KILL_GRACE_S, then SIGKILL, with the stop's cause
+        in the A3 journal first. With neither optional argument, as before (an explicit stop only
+        for a signal); the GPT watch passes explicit=True and its reason, so A3 seals the pass
+        killed and held with that reason, as a `codex-lane.py kill` does."""
+        if explicit is None:
+            explicit = why == "signal"
+            reason = "wrapper signalled" if why == "signal" else None
         if self.owner and self.owner.journal:
-            self.owner.stop("explicit-stop" if why == "signal" else why,
-                            explicit=why == "signal", reason="wrapper signalled" if why == "signal" else None)
+            self.owner.stop("explicit-stop" if explicit else why, explicit=explicit, reason=reason)
         self.killed_by = why
-        lane.signal_group(self.process.pid, signal.SIGTERM)
+        self._stop_group()
+
+    def _stop_group(self):
+        """SIGTERM, up to KILL_GRACE_S for the leader, then SIGKILL, each to the lane's whole group
+        by the id recorded at the start, each after _own_group's proof (review V-T8-G2 point 8). The
+        SIGKILL goes whether or not the leader is still there: a member that ignores SIGTERM
+        outlives a leader that exits on it, and the wait below reaps that leader, after which its
+        pid no longer leads anything. A runner whose start recorded no id (one built by hand)
+        records it here by the same read, while the leader is still unreaped."""
+        if self.pgid is None and self.process.returncode is None:
+            self.pgid = self._group_at_start()
+        self._census_group()
+        self._signal_group(signal.SIGTERM)
         waited = 0.0
         while waited < KILL_GRACE_S and self.process.poll() is None:
             time.sleep(0.5)
             waited += 0.5
-        if self.process.poll() is None:
-            lane.signal_group(self.process.pid, signal.SIGKILL)
+        self._signal_group(signal.SIGKILL)
+
+    def _group_at_start(self):
+        """The lane's process group id, read as soon as the process exists: start_new_session makes
+        the child a session and group leader before it runs codex, so the id is its pid, read back
+        with os.getpgid. An exited leader is still unreaped here (nothing has waited on it), so its
+        id is its pid; any other answer records None and a stop then signals the leader alone."""
+        pid = self.process.pid
+        try:
+            return pid if os.getpgid(pid) == pid else None
+        except ProcessLookupError:
+            return pid
+        except OSError:
+            return None
+
+    def _census_group(self):
+        """While the leader is unreaped, so the group is provably the lane's: each live member's
+        birth identity (lane.a3_process_identity), kept where it is still in the lane's session and
+        group. _own_group's proof once the leader has been reaped. Taken each tick of the loop and
+        as a stop begins; a platform without a listing (group_members None) leaves the proof to the
+        unreaped leader alone."""
+        if self.pgid is None or self.process.returncode is not None:
+            return
+        seen = {}
+        for pid in group_members(self.pgid) or []:
+            identity = lane.a3_process_identity(pid)
+            try:
+                inside = os.getsid(pid) == self.pgid and os.getpgid(pid) == self.pgid
+            except OSError:
+                inside = False
+            if identity and inside:
+                seen[pid] = identity
+        if seen:
+            self._group_seen = seen
+
+    def _own_group(self):
+        """(proven, why): the group self.pgid names is still this lane's, checked before every
+        signal to it, so a group whose id may have been reused is never signalled.
+        (a) The leader is unreaped (Popen sets returncode only when it reaps): alive or a zombie,
+            it holds its pid, so no new process can be given that id and no other group carry it.
+        (b) Once it is reaped: a member _census_group saw is the same process (birth identity
+            unchanged) and still in the lane's session and in the group. A process enters a
+            session only by being born in it and leaves only by starting its own, so every process
+            in the lane's session descends from the lane, and so does every member of any group in
+            it: the group this id names is the lane's own.
+        The check and the signal are two calls apart: between them the group would have to empty
+        and its id be given to a new process, which takes the pid space turning over."""
+        if self.pgid is None:
+            return False, "no group id recorded at the start"
+        if self.process.returncode is None:
+            return True, "the leader is unreaped"
+        for pid, identity in sorted((self._group_seen or {}).items()):
+            if lane.a3_process_identity(pid) != identity:
+                continue
+            try:
+                if os.getsid(pid) == self.pgid and os.getpgid(pid) == self.pgid:
+                    return True, ("the leader is reaped; member %d, seen in the group while it was "
+                                  "unreaped, is still in it" % pid)
+            except OSError:
+                continue
+        return False, ("the leader is reaped and no member seen before that is still in the "
+                       "lane's session: not signalled")
+
+    def _signal_group(self, sig):
+        """One stop signal to the lane's whole group by its recorded id, sent only once _own_group
+        proves the group the lane's; each attempt is kept for the close's stop_group."""
+        proven, why = self._own_group()
+        sent = False
+        if proven:
+            try:
+                os.killpg(self.pgid, sig)
+                sent = True
+            except ProcessLookupError:
+                why += "; the group was already empty"
+            except PermissionError:
+                # Darwin answers EPERM for a group whose one member is the unreaped leader's zombie.
+                why += "; nothing in the group but the leader's exit status"
+        elif self.pgid is None and self.process.returncode is None:
+            sent = lane.signal_pid(self.process.pid, sig)
+            why += "; the leader alone was signalled"
+        self.stop_group = (self.stop_group or []) + [
+            {"signal": signal.Signals(sig).name, "pgid": self.pgid, "sent": sent,
+             "leader_reaped": self.process.returncode is not None, "proof": why}]
+        return sent
+
+    # ---------------------------------------------------------------- the GPT watch -------
+    def _watch_arm(self):
+        """The lane's gpt_watch object, decided before its spawn line: armed where the record holds
+        a run-open (a hands-off run, check_gpt_start's scope), else not armed with the reason. An
+        armed watch records its mode, its interval, and the reading bound and reader binary in
+        effect (critic CR-T2b2 advice 6), so an environment that could blind it is on the record."""
+        try:
+            rows = lane.load_record(self.ctx["record"])
+        except (Exception, SystemExit) as exc:
+            return {"armed": False, "reason": "the record could not be read at the spawn (%s: %s)"
+                    % (type(exc).__name__, exc), "alert": True}
+        if not any(row.get("event") == "run-open" for row in rows):
+            return {"armed": False, "reason": "no run-open on the record (a plain lane run)"}
+        try:
+            uw = self._watch_uw = usage_windows_module()
+            read_s, reap_s = uw.usage_check_bounds()
+            every, mode = uw.GPT_WATCH_EVERY_S, uw.GPT_STOP_MODE
+        except (Exception, SystemExit) as exc:
+            self._watch_uw = None
+            return {"armed": False, "reason": "usage_windows.py could not be loaded (%s: %s)"
+                    % (type(exc).__name__, exc), "alert": True}
+        binary = os.environ.get("USAGE_CODEX_BIN") or None
+        return {"armed": True, "every_s": every, "mode": mode, "read_s": read_s,
+                "reap_s": reap_s, "read_bound_s": read_s + reap_s,
+                "read_bound_src": ("default" if read_s == uw.USAGE_CHECK_READ_S else "%s=%s" % (
+                    uw.USAGE_CHECK_ENV, os.environ.get(uw.USAGE_CHECK_ENV))),
+                "reader_bin": binary or "codex on PATH",
+                "reader_bin_src": "USAGE_CODEX_BIN" if binary else "default"}
+
+    def _watch_config_alert(self):
+        """One alert line at the arming, only where the watch could be blind from the start: not
+        armed on a hands-off record, or armed with a read bound or an app-server that is not the
+        default (critic CR-T2b2 advice 6)."""
+        w, lane_id = self.watch, self.ctx["lane"]
+        if not w.get("armed"):
+            if w.get("alert"):
+                self._record({"event": "observation", "watch_line": "config",
+                              "by": "codex-lane.py watch", "gpt_watch": w,
+                              "what": "warning: gpt weekly watch not armed for lane %s: %s; nothing "
+                                      "stops this lane at GPT's weekly limit while it runs"
+                                      % (lane_id, w.get("reason"))})
+            return
+        odd = []
+        if w["read_bound_src"] != "default":
+            odd.append("read bound %g s from %s (default %d s)" % (
+                w["read_s"], w["read_bound_src"], self._watch_uw.USAGE_CHECK_READ_S))
+        if w["reader_bin_src"] != "default":
+            odd.append("app-server %s from USAGE_CODEX_BIN (default: the codex on PATH)"
+                       % w["reader_bin"])
+        if odd:
+            self._record({"event": "observation", "watch_line": "config",
+                          "by": "codex-lane.py watch", "gpt_watch": w,
+                          "what": "warning: gpt weekly watch for lane %s reads with a non-default "
+                                  "reader: %s; a reading that cannot answer inside its bound reads "
+                                  "unreadable and stops nothing" % (lane_id, "; ".join(odd))})
+
+    def _watch_loop(self):
+        """The watch thread: one tick every every_s seconds until the lane ends (_watch_end wakes
+        it at once). The first tick falls one interval after the process starts, since the start
+        check has just read GPT's week. A tick's result goes to the one slot the loop takes."""
+        try:
+            every = self.watch["every_s"]
+            while not self._watch_end.wait(every):
+                result = self._watch_tick()
+                with self._lock:
+                    if self._watch_slot is not None:
+                        self._watch_counts["discarded"] += 1   # replaced before the loop took it
+                    self._watch_slot = result
+        except BaseException as exc:   # named on the close as ended_early, never silent
+            self._watch_died = "%s: %s" % (type(exc).__name__, exc)
+
+    def _watch_tick(self):
+        """One tick, in the watch thread: the run's credits approval (credits_approval, the start
+        check's own rule); with credits approved, no reading. Otherwise ONE bounded reading of GPT's
+        week (usage_windows.read_json, cancelled when the lane ends), the approval read again as it
+        stands after the reading (so a withdrawal during the reading counts; under a true run-open a
+        grants file lowered and raised again by hand reads approved again, by credits_effective's
+        rule), the verdict, and the shared stop rule (usage_windows.gpt_stop_action under
+        GPT_STOP_MODE). It never signals a process and never writes a file. Anything it raises,
+        SystemExit included (lane.load_record's die), comes back as verdict `error`."""
+        uw = self._watch_uw
+        t0 = time.monotonic()
+        out = {"ts": now(), "verdict": "error", "figure": None, "action": "none"}
+        try:
+            rows = lane.load_record(self.ctx["record"])
+            approved, src = credits_approval(self.ctx["run"], rows)
+            if approved:
+                out.update(verdict="skipped", credits=True, credits_src=src,
+                           note="credits approved at run-open: no reading taken")
+                with self._lock:
+                    self._watch_counts["skipped_credits"] += 1
+                return out
+            with self._lock:
+                self._watch_in_flight = True
+            try:
+                obj, reason, elapsed = uw.read_json(HERE, "astra", cancel=self._watch_end)
+            finally:
+                with self._lock:
+                    self._watch_in_flight = False
+            if self._watch_end.is_set():
+                out.update(verdict="cancelled", reason=reason, reading_s=elapsed,
+                           note="the lane ended during the reading: its result is not used")
+                return out
+            rows = lane.load_record(self.ctx["record"])
+            approved, src = credits_approval(self.ctx["run"], rows)
+            verdict, figure, evidence = uw.gpt_verdict(obj)
+            week = ((obj or {}).get("windows") or {}).get("gpt_week") or {}
+            hot = [e for e in evidence if e.get("used_pct") == figure] if verdict == "exhausted" else []
+            action, note = uw.gpt_stop_action(verdict, approved, uw.GPT_STOP_MODE)
+            out.update(verdict=verdict, figure=figure, evidence=evidence,
+                       source=(hot[0].get("source") if hot else None) or week.get("source"),
+                       reset_text=(hot[0].get("reset_text") if hot else None) or week.get("reset_text"),
+                       reason=reason or week.get("reason"), reading_s=elapsed, credits=approved,
+                       credits_src=src, mode=uw.GPT_STOP_MODE, action=action, note=note)
+            with self._lock:
+                self._watch_counts["readings"] += 1
+                if verdict == "unreadable":
+                    self._watch_counts["unreadable"] += 1
+                self._watch_reading_s = (self._watch_reading_s + [elapsed])[-WATCH_KEEP:]
+            return out
+        except (Exception, SystemExit) as exc:   # critic CR-T2b2 finding 2: die() is SystemExit
+            out.update(verdict="error", action="none", reason="%s: %s" % (type(exc).__name__, exc),
+                       note="the tick raised: nothing stopped; the next tick reads again")
+            with self._lock:
+                self._watch_counts["errors"] += 1
+            return out
+        finally:
+            out["elapsed_s"] = round(time.monotonic() - t0, 2)
+
+    def _watch_line(self, result):
+        """The observation line for a change of (verdict, action). A stop says "held" and a change
+        to unreadable or error says "warning", both alert words of the console (watch.py
+        ALERT_WORDS), so a stop and a blind watch are raised, not only fed."""
+        lane_id, verdict, fig = self.ctx["lane"], result["verdict"], result.get("figure")
+        action = result.get("action")
+        if action == "stop":
+            what = ("gpt weekly watch: lane %s stopped and held — GPT's week %s %% without approved "
+                    "credits (N19)" % (lane_id, fig))
+        elif action == "would_stop":
+            what = ("gpt weekly watch: lane %s would be stopped (trial state) — GPT's week %s %% "
+                    "without approved credits (N19); nothing sent" % (lane_id, fig))
+        elif verdict == "unreadable":
+            what = ("warning: gpt weekly watch blind — lane %s: GPT's week is unreadable (%s); "
+                    "nothing is stopped while it stays unreadable" % (lane_id, result.get("reason")))
+        elif verdict == "error":
+            what = ("warning: gpt weekly watch error — lane %s: %s; nothing stopped, the next tick "
+                    "reads again" % (lane_id, result.get("reason")))
+        elif verdict == "exhausted":
+            what = ("gpt weekly watch: lane %s · GPT's week %s %% · observed continuation on approved "
+                    "credits (no debit claimed)" % (lane_id, fig))
+        else:
+            what = "gpt weekly watch: lane %s · GPT's week %s %% · below 100 %%" % (lane_id, fig)
+        line = {"event": "observation", "what": what, "watch_line": "verdict",
+                "by": "codex-lane.py watch", "session_id": self.session_id}
+        for key in ("verdict", "figure", "source", "reset_text", "reason", "evidence", "reading_s",
+                    "credits_src", "mode", "action", "note"):
+            line[key] = result.get(key)
+        line["credits"] = "approved at run-open" if result.get("credits") else "not approved"
+        line["read_at"] = result.get("ts")
+        return line
+
+    def _watch_take(self):
+        """In the once-a-second loop (the main thread): take the watch's latest result; write one
+        observation whenever its (verdict, action) differs from the last line written for this
+        lane; on `stop`, while the process runs and nothing else has begun to stop it, stop the lane
+        through _kill with an explicit stop intent and the watch's reason. Returns True when it
+        stopped the lane. A result after the process exited, after any stop began, or from a
+        reading the lane's end cancelled, is discarded: no line, no second stop."""
+        with self._lock:
+            result, self._watch_slot = self._watch_slot, None
+        if result is None:
+            return False
+        if (self.process.poll() is not None or self.killed_by is not None
+                or result["verdict"] == "cancelled"):
+            with self._lock:
+                self._watch_counts["discarded"] += 1
+            return False
+        if result["verdict"] == "skipped":
+            return False
+        self._watch_last = {"verdict": result["verdict"], "figure": result.get("figure"),
+                            "action": result.get("action"), "ts": result["ts"]}
+        key = (result["verdict"], result.get("action"))
+        if key != self._watch_last_line:
+            self._watch_last_line = key
+            self._record(self._watch_line(result))
+        if result.get("action") != "stop":
+            return False
+        fig = result.get("figure")
+        self._watch_stop_text = ("stopped by the lane's GPT watch: GPT's week %s %% without approved "
+                                 "credits (N19)" % fig)
+        self._watch_stopped = {"figure": fig, "source": result.get("source"),
+                               "credits_src": result.get("credits_src"), "mode": result.get("mode"),
+                               "read_at": result["ts"], "ts": now()}
+        sys.stderr.write("codex-lane.py: gpt weekly watch: lane %s/%s stopped and held — GPT's week "
+                         "%s %% without approved credits (N19)\n" % (self.ctx["run"], self.ctx["lane"], fig))
+        self._kill("gpt-watch", explicit=True,
+                   reason="%s (%s; credits %s)" % (self._watch_stop_text,
+                                                   result.get("source") or "source unrecorded",
+                                                   result.get("credits_src")))
+        return True
+
+    def _watch_finish(self):
+        """At the loop's end, on every path (run_process's finally): what stood at the end is kept
+        for the close, then the watch's end is set, which wakes the thread and cancels a reading in
+        flight. Called once at the loop's end and again by run_process's finally; only the first
+        call counts."""
+        if self._watch_end.is_set():
+            return
+        thread = self._watch_thread
+        with self._lock:
+            self._watch_at_end = {"in_flight_at_end": bool(self._watch_in_flight),
+                                  "ended_early": bool(thread is not None and not thread.is_alive()
+                                                      and not self._watch_end.is_set())}
+        self._watch_end.set()
+
+    def watch_summary(self):
+        """The lane-closed's gpt_watch: the arming, the counts, the last result taken, the stop
+        (null, or its figure, source, credits source and times), and what stood at the end."""
+        w = self.watch or {}
+        if not w.get("armed"):
+            return {"armed": False, "reason": w.get("reason")}
+        with self._lock:
+            counts = dict(self._watch_counts)
+            seconds = list(self._watch_reading_s)
+            at_end = dict(self._watch_at_end)
+        out = {"armed": True, "every_s": w.get("every_s"), "mode": w.get("mode"),
+               "read_bound_s": w.get("read_bound_s"), "reading_s": seconds,
+               "reading_s_max": max(seconds) if seconds else None,
+               "last": self._watch_last, "stopped": self._watch_stopped}
+        out.update(counts)
+        out.update(at_end)
+        if self._watch_died:
+            out["ended_early"] = True
+            out["ended_early_reason"] = self._watch_died
+        return out
+
+    def end_watch(self):
+        """At the wrapper's end (run_lane's finally): the watch's end set, and its thread joined for
+        at most usage_windows.GPT_WATCH_JOIN_S, so a reading cancelled at the lane's end has its
+        process group reaped before the wrapper returns. The thread is a daemon: it never outlives
+        the wrapper."""
+        self._watch_end.set()
+        thread = self._watch_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=getattr(self._watch_uw, "GPT_WATCH_JOIN_S", 6))
 
     def run_process(self):
         """Returns the duration in seconds; raises OSError when the process cannot start."""
@@ -1398,19 +1978,24 @@ class Runner:
         # them) out of the close.
         if self.owner is None or self.owner.journal is None:
             raise lane.A3Premise("process start requires a lifetime owner")
+        # The GPT watch is decided before the process starts, so its state rides on the spawn line.
+        self.watch = self._watch_arm()
         self.owner.prelaunch()
         self.owner.process = self.process = subprocess.Popen(self.ctx["command"], cwd=self.ctx["cwd"], env=self.ctx["env"],
                                         text=True, encoding="utf-8", errors="replace",
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                         stderr=subprocess.PIPE, start_new_session=True)
+        # The group id every stop signals (review V-T8-G2 point 8), on the spawn line beside the pid.
+        self.pgid = self._group_at_start()
         if self.owner and self.owner.journal:
             self.owner.record_child(self.process)
         self._record({"event": self.ctx.get("spawn_event", "lane-spawned"),
                       "session_id": self.ctx.get("session_id"), "pid": self.process.pid,
-                      "wrapper_pid": os.getpid(), "class": self.ctx["cls"],
+                      "pgid": self.pgid, "wrapper_pid": os.getpid(), "class": self.ctx["cls"],
                       "detached": bool(self.ctx.get("detached")),
                       "mechanism": "codex-lane.py headless, model %s, effort %s"
-                                   % (self.ctx["model"], self.ctx["effort"])})
+                                   % (self.ctx["model"], self.ctx["effort"]),
+                      "gpt_watch": self.watch})
         # The keep-awake process beside the codex process (owner decision of 2026-10-09;
         # lane.start_awake), recorded before the readers start so lane-session follows it.
         self.awake, awake_fields = lane.start_awake(self.process.pid)
@@ -1419,12 +2004,24 @@ class Runner:
                       "detached": bool(self.ctx.get("detached"))}
         awake_line.update(awake_fields)
         self._record(awake_line)
+        self._watch_config_alert()
         threads = self.threads = [threading.Thread(target=self._drain, args=(self._read_stdout,), daemon=True),
                    threading.Thread(target=self._drain, args=(self._read_stderr,), daemon=True),
                    threading.Thread(target=self._feed_stdin, daemon=True)]
         for thread in threads:
             thread.start()
+        if self.watch.get("armed"):
+            self._watch_thread = threading.Thread(target=self._watch_loop, daemon=True,
+                                                  name="gpt-watch")
+            self._watch_thread.start()
+        try:
+            return self._watch_run(threads, started)
+        finally:
+            self._watch_finish()
 
+    def _watch_run(self, threads, started):
+        """run_process's loop, with the GPT watch's slot taken once a second (run_process's
+        finally ends the watch on every path out of it)."""
         def on_signal(signum, frame):
             if self.killed_by is None:
                 self._kill("signal")
@@ -1433,13 +2030,20 @@ class Runner:
 
         deadline, silence = self.ctx["deadline"], self.ctx["silence"]
         tick = 1.0        # a poll a second: cheap, and a finished or signalled lane closes within it
-        while self.process.poll() is None:
+        while True:
+            # The group's members, noted before the poll that may reap the leader: the proof a
+            # later stop needs once it has been (_own_group (b)).
+            self._census_group()
+            if self.process.poll() is not None:
+                break
             time.sleep(tick)
             if self.owner and self.owner.journal:
                 request = self.owner.stop_request()
                 if request:
                     self._kill("signal" if request.get("explicit") else request["cause"])
             if self.killed_by:
+                break
+            if self.watch.get("armed") and self._watch_take():
                 break
             elapsed = time.time() - started
             with self._lock:
@@ -1453,6 +2057,11 @@ class Runner:
                               "reason": "silent", "by": "spawn"})
                 self._kill("stall")
                 break
+        if self.killed_by is None and self.owner and self.owner.journal and self.owner.stop_request():
+            # A stop whose own SIGTERM (`codex-lane.py kill` signals the group) ended the leader
+            # before this loop saw the request: the members that outlived it get the same stop.
+            self._stop_group()
+        self._watch_finish()   # the loop's end: the watch's reading in flight, if any, is cancelled
         for thread in threads[:2]:
             thread.join(timeout=KILL_GRACE_S)
         self.streams_complete = not self.reader_errors and all(not thread.is_alive() for thread in threads[:2])
@@ -1493,6 +2102,15 @@ def run_lane(ctx):
     if owner is None or owner.journal is None:
         raise lane.A3Premise("task execution requires a lifetime owner")
     runner = Runner(ctx)
+    try:
+        return _run_lane_pass(ctx, owner, runner)
+    finally:
+        # Beside lane.reap_awake: the GPT watch's thread joined, bounded by GPT_WATCH_JOIN_S.
+        runner.end_watch()
+
+
+def _run_lane_pass(ctx, owner, runner):
+    """run_lane's pass: the process, the events, the close line, the summary."""
     started_ts = now()
     try:
         duration = runner.run_process()
@@ -1526,7 +2144,8 @@ def run_lane(ctx):
     parsed["process_exit"] = runner.process.returncode
     parsed["native_stderr"] = "".join(runner.stderr_chunks)
     parsed["native_exit_class"] = classify(runner.killed_by, parsed, runner.process.returncode,
-                                           parsed.get("report_text") or parsed["last_message"])[0]
+                                           parsed.get("report_text") or parsed["last_message"],
+                                           stop_text=runner._watch_stop_text)[0]
     _, boundary_error = lane.a3_suffix(owner.refresh().get("boundary"))
     if boundary_error and boundary_error.startswith("final-message, boundary unknown"):
         # Captured stdout still proves this process's refusal. A damaged persisted boundary
@@ -1542,7 +2161,8 @@ def run_lane(ctx):
     # output file cannot supply a response, even when the CLI leaves -o untouched (critic F1).
     report_text = parsed.get("report_text") or parsed["last_message"]
     response_text = report_text
-    exit_class, error = classify(runner.killed_by, parsed, runner.process.returncode, report_text)
+    exit_class, error = classify(runner.killed_by, parsed, runner.process.returncode, report_text,
+                                 stop_text=runner._watch_stop_text)
     if exit_class in ("failed", "limit", "network"):
         # The close leads with the decisive error, the last one, never the first retries
         # (register 2026-09-26 00:16); the beat keeps classify's own text (parse_events).
@@ -1593,6 +2213,13 @@ def run_lane(ctx):
         "stderr_tail": stderr_text.strip()[-400:] or None, "wrapper_pid": os.getpid(),
         "started": started_ts}
     close.update(ctx.get("close_extra") or {})
+    if runner.stop_group:
+        # Each stop signal to the lane's group, with whether it went and the proof it rested on.
+        close["stop_group"] = runner.stop_group
+    if runner.watch is not None:
+        # The GPT watch's summary, merged from the runner: a spawn's context carries no
+        # close_extra (critic CR-T2b2 finding 8).
+        close["gpt_watch"] = runner.watch_summary()
     if ctx.get("controls_pending"):
         # The controls this pass declared on its own report, checked against the response this
         # pass returned — never the -o file, an earlier pass's report or the wrapper's own text
@@ -1889,6 +2516,23 @@ def prepare(args, resume_id=None, beat=False):
         if args.network and not writes:
             die("--network needs --write: shell network is a workspace-write setting")
         overrides = config_overrides(args, args.network)
+        # The host guard (DW-20261024-2), on the resolved configuration: refusals before any record
+        # line and, for a detached call, in the caller before the detach; the export either way.
+        net_open, net_src = shell_network(args, overrides)
+        opened_line = getattr(args, "network_opened", None)
+        network_fields, network_export = {"network": False, "network_src": None}, []
+        if net_open or (declared or {}).get("hosts") or \
+                (opened_line is not None and (opened_line.get("network") or opened_line.get("network_hosts"))):
+            rows = lane.load_record(paths["record"]) if os.path.isfile(paths["record"]) else []
+            network_fields, network_export = network_decision(
+                args, declared, net_open, net_src, rows, opened=opened_line, quiet=bool(args.as_worker),
+                limit_stated=bool(args.as_worker) and os.environ.get(NETWORK_STATED_VAR) == "1")
+            seen = os.environ.get(NETWORK_SEEN_VAR) if args.as_worker else None
+            if seen is not None and seen != ",".join(network_export):
+                sys.stderr.write("codex-lane.py: the run's grants changed between the caller's read "
+                                 "and this worker's: the caller would export %s, this worker exports "
+                                 "%s, and the record holds this worker's\n"
+                                 % (seen or "nothing", ",".join(network_export) or "nothing"))
         command = build_command(codex, args, cwd, sandbox, add_dirs, overrides, report, resume_id)
         # `<<STAGED_COPY>>` in the brief becomes the copy's path (register 2026-09-25 04:3x): the
         # actual stage after staging, or a resumed pass's recorded copy. With no copy the text stays
@@ -1915,8 +2559,15 @@ def prepare(args, resume_id=None, beat=False):
         prompt = (lane.BEAT_PROMPT + "\n" if beat
                   else compose_prompt(definition_body, core, cwd, writes, args.search, brief))
         env = dict(os.environ)
+        # [provisional] the inherited grant never reaches the lane (both modes); the guard's export
+        # alone sets the variable, and the caller's verdict meant for its worker goes no further.
+        network_dropped = lane.drop_inherited_network(env)
+        env.pop(NETWORK_SEEN_VAR, None)
+        env.pop(NETWORK_STATED_VAR, None)
         env.update({"LLM_WIKI_LANE": "1", "LLM_WIKI_LANE_RUN": args.run, "LLM_WIKI_LANE_ID": args.lane,
                     "LLM_WIKI_LANE_HARNESS": HARNESS})
+        if network_export:
+            env[lane.NETWORK_VAR] = ",".join(network_export)
         global_path, global_bytes = global_instructions_bytes()
     except BaseException:
         release_or_say(stage)         # a refusal, an interrupt or a crash: the attempt's copy goes
@@ -1933,7 +2584,112 @@ def prepare(args, resume_id=None, beat=False):
             "sandbox": sandbox, "add_dirs": add_dirs, "mode": (mode, mode_src, mode_from),
             "codex": codex, "version": version, "definition": (definition_path, definition_sha),
             "core_path": core_path, "paths": paths, "overrides": overrides, "command": command,
-            "prompt": prompt, "env": env}
+            "prompt": prompt, "env": env, "network": network_fields,
+            "network_export": network_export, "network_dropped": network_dropped}
+
+
+# ------------------------------------------------------------------ the GPT start check ------
+
+def usage_windows_module():
+    """The sibling usage_windows.py (the limit policy's shared parts and the window meter), loaded
+    by path from this script's own directory, leaving no __pycache__; one instance per process."""
+    want = os.path.realpath(os.path.join(HERE, "usage_windows.py"))
+    mod = sys.modules.get("usage_windows")
+    if mod is not None and os.path.realpath(getattr(mod, "__file__", "") or "") == want:
+        return mod
+    import importlib.util
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location("usage_windows", want)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["usage_windows"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def credits_approval(run, rows):
+    """(approved, source): the rule handsoff.py's run_limit_policy applies (one copy, in
+    usage_windows.credits_effective), read here from the same two places: the grants file the
+    head fence reads and the run's run-open event."""
+    path = os.path.join(lane.store_root(), "spawn-records", "%s-grants.json" % run)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        payload = {}
+    return usage_windows_module().credits_effective(payload, rows)
+
+
+def check_gpt_start(args, record):
+    """The GPT start check (limit policy 1; owner decision N19) for a spawn, a real resume and a
+    beat, before the lane-open: in the worker, and for a detached spawn or resume in its caller
+    too, before the detach (review V-T2b, Claim 8), so a refusal there opens no detach log and
+    starts no worker. None on a plain lane run (no run-open on the record: no reading, no field).
+    With credits approved at run-open, no reading. Otherwise ONE bounded reading of GPT's week
+    (usage_windows.read_json: 10 s to read plus 5 s to reap), no record lock held, and the
+    approval re-read after it:
+    - a weekly figure at 100 % or more (raw evidence, read before the window) without approval is
+      his decided default: refused through die() (exit 2) under usage_windows.GPT_LIMIT_MODE
+      "enforce" (the lead's provisional reading of plan D6); in its trial state the start proceeds
+      and records `would_refuse`. A caller or a foreground start writes nothing; a detached
+      worker's refusal says what it leaves (its detach log and the lane's A3 gate lock);
+    - an unreadable reading (no weekly evidence at 100 % and no measured week) without approval
+      is the cannot-decide case, question 2: its built default, provisional and the owner's to
+      choose, is option (b), refuse, under usage_windows.GPT_UNREADABLE_MODE, which starts in
+      trial (the start proceeds and records `would_refuse: unreadable`);
+    - below 100 the start proceeds.
+    The returned dictionary rides the start as `usage_start_check`."""
+    rows = lane.load_record(record) if os.path.isfile(record) else []
+    if not any(row.get("event") == "run-open" for row in rows):
+        return None
+    uw = usage_windows_module()
+    t0 = time.monotonic()
+    approved, approval_src = credits_approval(args.run, rows)
+    if approved:
+        return {"verdict": "proceed", "credits": "approved at run-open", "figure": None,
+                "source": None, "reset_text": None, "status": "not read",
+                "reason": "credits approved at run-open: no reading taken",
+                "approval_src": approval_src, "elapsed_s": 0.0}
+    obj, reason, _ = uw.read_json(HERE, "astra",
+                                  warn=lambda m: sys.stderr.write("codex-lane.py: %s\n" % m))
+    rows = lane.load_record(record) if os.path.isfile(record) else []
+    approved, approval_src = credits_approval(args.run, rows)
+    verdict, figure, evidence = uw.gpt_verdict(obj)
+    week = ((obj or {}).get("windows") or {}).get("gpt_week") or {}
+    hot = [e for e in evidence if e.get("used_pct") == figure] if verdict == "exhausted" else []
+    source = (hot[0].get("source") if hot else None) or week.get("source")
+    out = {"verdict": "proceed", "credits": "approved at run-open" if approved else "not approved",
+           "gpt_verdict": verdict, "figure": figure, "source": source,
+           "reset_text": (hot[0].get("reset_text") if hot else None) or week.get("reset_text"),
+           "status": week.get("status") or "unmeasured", "reason": reason or week.get("reason"),
+           "approval_src": approval_src, "elapsed_s": round(time.monotonic() - t0, 2)}
+    if approved or verdict == "below":
+        return out
+    if verdict == "exhausted":
+        mode, why = uw.GPT_LIMIT_MODE, ("GPT's weekly window reads %s %% (%s) and the run's "
+                                        "pre-flight approves no credits (N19)" % (figure, source))
+    else:
+        mode, why = uw.GPT_UNREADABLE_MODE, ("GPT's weekly window is unreadable (%s) and the run's "
+                                             "pre-flight approves no credits (N19; question 2, "
+                                             "option (b), provisional)" % (out["reason"] or "no figure"))
+    out["mode"] = mode
+    if mode == "enforce":
+        if getattr(args, "as_worker", False):
+            # A detached worker has already opened its detach log and taken the lane's A3 gate
+            # (review V-T2b, Claim 8): its refusal says what it leaves, never "nothing written".
+            die("%s: no GPT start; no %s written; this worker's detach log (which holds this line) "
+                "and the lane's A3 gate lock remain%s"
+                % (why, "lane-resumed" if getattr(args, "command", None) == "resume" else "lane-open",
+                   "" if getattr(args, "command", None) == "resume" else
+                   ", and a later detached spawn under this lane id is refused while the log stays"))
+        if getattr(args, "detach", False):
+            die("%s: no GPT start; nothing written" % why)   # a detached caller holds no A3 gate
+        # A start in the foreground takes the lane's A3 gate (lane.a3_entry) before this check, so
+        # the gate's empty lock file can be new; the record and the A3 journals are unchanged.
+        die("%s: no GPT start; nothing written (the lane's empty A3 gate lock file aside, which "
+            "this start took before the check)" % why)
+    out["would_refuse"] = {"verdict": verdict, "figure": figure, "reason": why}
+    sys.stderr.write("codex-lane.py: would refuse (trial state): %s; the start proceeds\n" % why)
+    return out
 
 
 def open_line(args, prep, event="lane-open", extra=None):
@@ -1958,7 +2714,7 @@ def open_line(args, prep, event="lane-open", extra=None):
         "routing_path": os.path.abspath(args.routing) if args.routing else None,
         "reads": "unrestricted (codex sandbox; the brief's reading list is the grant)",
         "stage": prep.get("stage"), "global_instructions": prep.get("global_instructions"),
-        "search": bool(args.search), "network": bool(args.network),
+        "search": bool(args.search), "network_flag": bool(args.network),
         "config_overrides": prep["overrides"], "config_extra": list(args.config or []),
         "ignore_user_config": True,
         "executable": prep["codex"], "codex_version": prep["version"],
@@ -1979,12 +2735,29 @@ def open_line(args, prep, event="lane-open", extra=None):
         "budget_usd": None, "total_cost_usd": None, "cost_src": "codex-plan",
         "mechanism": "codex-lane.py headless (codex exec --json, --ignore-user-config, "
                      "sandbox %s, -a never, silence watch on the event stream)" % prep["sandbox"]}
+    # The host guard's record (DW-20261024-2): `network` is the resolved shell network (the flag, a
+    # --config extra, a key that may open it, or the lane-open's, carried) with its source, the
+    # hosts exported and why, the cooperative limit where the sandbox's network is open, and the
+    # guard's verdict; `network_flag` keeps what --network itself said.
+    line.update(prep.get("network") or {"network": bool(args.network), "network_src": None})
+    if args.search:
+        line["web_search"] = WEB_SEARCH_CODEX
+    if prep.get("network_dropped") is not None:
+        line["network_inherited_dropped"] = prep["network_dropped"]
     if prep.get("staged_declarations"):
         # each declaration of a source path, as written and as delivered: the copy's path (review
         # CR-B4L finding 2)
         line["staged_declarations"] = prep["staged_declarations"]
     if getattr(args, "item", None) and event == "lane-open":
         line["item"] = args.item
+    if event == "lane-open":
+        # The lane's item for the window meter (package A2), read from the record as it stands
+        # now, after the GPT start check's reading: --item, else the latest preceding boundary's
+        # `to`, else unassigned, under usage_item*; a resume or a beat keeps the lane's first item.
+        uw = usage_windows_module()
+        line.update(uw.item_at_open(uw.record_events(prep["paths"]["record"]),
+                                    getattr(args, "item", None),
+                                    source_pass=getattr(args, "source_pass", None)))
     if extra:
         line.update(extra)
     return line
@@ -2009,9 +2782,18 @@ def detach(args):
     argv = [sys.executable, os.path.abspath(__file__)] + [a for a in sys.argv[1:]
                                                           if a not in ("--detach", "--no-wait")]
     argv += ["--viewer", "none", "--as-worker"]
+    # The caller's host-guard export, for the worker's comparison (DW-20261024-2); prepare removes
+    # it from the lane's own environment.
+    worker_env = dict(os.environ)
+    worker_env.pop(NETWORK_SEEN_VAR, None)
+    worker_env.pop(NETWORK_STATED_VAR, None)
+    if getattr(args, "network_seen", None) is not None:
+        worker_env[NETWORK_SEEN_VAR] = args.network_seen
+    if getattr(args, "network_stated", False):
+        worker_env[NETWORK_STATED_VAR] = "1"   # this caller printed the limit line (network_decision)
     with open(paths["detach_log"], "a", encoding="utf-8") as log:
         worker = subprocess.Popen(argv, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-                                  start_new_session=True)
+                                  start_new_session=True, env=worker_env)
     code = lane.await_ack(
         worker, paths["record"], since,
         lambda row, pid: (row.get("lane") == args.lane and row.get("event") == event
@@ -2109,6 +2891,10 @@ def cmd_spawn(args):
         if not args.as_worker and not getattr(args, "source_pass", None):
             lane.item_warning(paths["record"], args.item, who="codex-lane.py")
         if args.detach and not args.dry_run:
+            # The GPT start check in the caller too, before the detach (review V-T2b, Claim 8): a
+            # refusal exits 2 here, inside this try, so the staged copy is released, and no detach
+            # log, worker or A3 gate exists. The worker still runs its own check, the authority.
+            check_gpt_start(args, paths["record"])
             # Every premise ran in the caller's terminal, the staged copy's included, on a real copy.
             # That copy is the caller's: it goes before the worker starts, and the worker makes and
             # checks its own, so no copy is ever owned by two processes.
@@ -2116,9 +2902,14 @@ def cmd_spawn(args):
             left = stage.release() if stage is not None else None
             if left:
                 die("before the worker starts, %s" % leftover_text(stage, left))
+            args.network_seen = network_seen(prep)
+            args.network_stated = bool((prep.get("network") or {}).get("network_limit"))
             return detach(args)
         paths = prep["paths"]
-        line = open_line(args, prep)
+        # The GPT start check, after the detach and before the lane-open (limit policy 1): a
+        # refusal exits 2 here, inside this try, so the staged copy is released and nothing is written.
+        check = None if args.dry_run else check_gpt_start(args, paths["record"])
+        line = open_line(args, prep, extra={"usage_start_check": check} if check else None)
         if args.dry_run:
             print_dry_run(prep, line)
             # The dry run checked the real copy; it leaves nothing behind it. An emptied stage whose
@@ -2302,6 +3093,31 @@ def cmd_resume(args):
         if source.startswith("none:"):
             sys.stderr.write("codex-lane.py: %s; no --config carried onto the resume\n"
                              % source[len("none:"):].strip())
+    # The lane-open's shell network and hosts are carried as the model is (DW-20261024-2): a
+    # resume or a beat with no --network of its own runs with the lane's network (the flag, or the
+    # extras carried above), so its -c pairs and a beat's configuration hash match the lane-open's;
+    # the hosts it may export are the lane-open's `network_hosts` (network_decision).
+    args.network_opened = opened
+    if not args.network:
+        flag = opened.get("network_flag") if "network_flag" in opened else opened.get("network")
+        if flag:
+            args.network = True
+            carried["network"] = True
+        kept = []
+        if not flag and "config" not in carried and opened.get("network") is True:
+            # Fold F5 (review V-T2c): a resume with --config extras of its own replaced the
+            # lane-open's, and with them the pair that opened its shell network, so an unrelated
+            # override dropped the network and its hosts. The lane-open's network pairs (NETWORK_KEY
+            # and NETWORK_UNDECIDED_KEYS) go first; the resume's own pair on the same key wins.
+            recorded, _source = recorded_config_extra(opened)
+            own = {pair.partition("=")[0].strip() for pair in args.config or []}
+            kept = [pair for pair in recorded
+                    if pair.partition("=")[0].strip() in (NETWORK_KEY,) + NETWORK_UNDECIDED_KEYS
+                    and pair.partition("=")[0].strip() not in own]
+            if kept:
+                args.config = kept + list(args.config or [])
+                carried["network_config"] = kept
+        args.network_carried = bool(flag) or bool(kept) or ("config" in carried and bool(opened.get("network")))
     # The delegation pair is re-declared like the model and the effort (register 2026-09-30 18:22;
     # the beat's carry of 2026-09-17, now every resume's): with neither flag, the lane-open's regime
     # and its source travel together, so an old source is never joined to a new regime; a complete
@@ -2375,21 +3191,34 @@ def cmd_resume(args):
             print("prompt: %r on stdin · config_sha256 %s (%s) · no report, no pass file"
                   % (lane.BEAT_PROMPT, config_sha, config_src))
             return 0
+        # The GPT start check before the beat claims the session (limit policy 1): a refusal exits
+        # 2 with nothing written, so the supervisor's stand-in hold-beat reads harness_may_survive
+        # false and a later resume passes a3_entry.
+        check = check_gpt_start(args, record)
         with lane.hold_beat_marker(beat_marker):
             return run_beat(context_for(args, prep, {
                 "session_id": session, "config_sha256": config_sha, "config_src": config_src,
                 "config_match": config_match, "age_s": age_s, "age_src": age_src,
-                "carried_from_open": carried,
+                "carried_from_open": carried, "usage_start_check": check,
+                "network_limit": (prep.get("network") or {}).get("network_limit"),
                 "beat_n": 1 + sum(1 for r in lane.load_record(record)
                                   if r.get("lane") == args.lane and r.get("event") == "hold-beat")}))
     if args.detach and not args.dry_run:
+        # The caller's GPT start check before the detach (review V-T2b, Claim 8), as in cmd_spawn:
+        # a refusal opens no detach log and starts no worker; the worker checks again.
+        check_gpt_start(args, record)
+        args.network_seen = network_seen(prep)
+        args.network_stated = bool((prep.get("network") or {}).get("network_limit"))
         return detach(args)
+    check = None if args.dry_run else check_gpt_start(args, record)
     paths = prep["paths"]
-    line = open_line(args, prep, event="lane-resumed",
-                     extra={"session_id": session, "resumed_from": session,
-                            "carried_from_open": carried, "report": paths["report"],
-                            "config_match": config_match, "config_src": config_src,
-                            "read_only": bool(opened.get("read_only"))})
+    extra = {"session_id": session, "resumed_from": session,
+             "carried_from_open": carried, "report": paths["report"],
+             "config_match": config_match, "config_src": config_src,
+             "read_only": bool(opened.get("read_only"))}
+    if check:
+        extra["usage_start_check"] = check
+    line = open_line(args, prep, event="lane-resumed", extra=extra)
     if args.dry_run:
         print_dry_run(prep, line)
         return 0
@@ -2428,6 +3257,10 @@ def run_beat(ctx):
             "config_match": ctx["config_match"], "last_call_age_s": ctx["age_s"],
             "last_call_src": ctx["age_src"], "carried_from_open": ctx.get("carried_from_open"),
             "total_cost_usd": None, "cost_src": "codex-plan", "wrapper_pid": os.getpid()}
+    if ctx.get("usage_start_check"):
+        base["usage_start_check"] = ctx["usage_start_check"]   # the GPT start check (limit policy 1)
+    if ctx.get("network_limit"):
+        base["network_limit"] = ctx["network_limit"]   # a beat with shell network states its limit too
     try:
         owner.process = process = subprocess.Popen(ctx["command"], cwd=ctx["cwd"], env=ctx["env"], text=True,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -2664,10 +3497,15 @@ def add_common(parser, spawn=True):
     parser.add_argument("--effort", default=None, help="%s (on spawn, the class's anchor in "
                         "routing.json; on resume, the lane-open's effort)" % "|".join(EFFORTS))
     parser.add_argument("--search", action="store_true", help="web_search = live (default disabled)")
-    parser.add_argument("--network", action="store_true", help="shell network inside workspace-write")
+    parser.add_argument("--network", action="store_true", help="shell network inside workspace-write; the "
+                        "brief names its hosts (HOST+: host, …), exported as LLM_WIKI_LANE_NETWORK for the "
+                        "tools that read it (the sandbox itself opens every host); on resume the "
+                        "lane-open's network, carried")
     parser.add_argument("--schema", help="a JSON Schema file for the final message (--output-schema)")
     parser.add_argument("--config", action="append", help="an extra -c key=value override "
-                        "(repeatable); on resume the lane-open's extras unless any is given")
+                        "(repeatable); on resume the lane-open's extras unless any is given; one that "
+                        "opens the sandbox's network (or may: sandbox_mode, sandbox_workspace_write) "
+                        "counts as shell network for the host guard")
     parser.add_argument("--context-window", type=int, default=CONTEXT_WINDOW)
     parser.add_argument("--compact-limit", type=int, default=COMPACT_LIMIT)
     parser.add_argument("--codex", help="the codex executable (default: `codex` on PATH)")

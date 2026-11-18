@@ -17,6 +17,12 @@ S="$HERE/vault-writes.py"
 PY="${PYTHON:-python3}"
 PYTHONDONTWRITEBYTECODE=1
 export PYTHONDONTWRITEBYTECODE
+# A helper carries its write grants in LLM_WIKI_LANE_WRITES, and the writer then bounds every write by them.
+# Every leg below runs as the lead, the variable absent, unless it sets the variable itself. The lead is
+# also without the names lane.py sets beside it (LANE_MARKERS in the writer), since the variable absent
+# beside any of them is a helper whose grants cannot be read; a run of this suite inside a helper
+# therefore clears them too.
+unset LLM_WIKI_LANE_WRITES LLM_WIKI_LANE LLM_WIKI_LANE_ID LLM_WIKI_LANE_GRANTS
 PASS=0
 FAIL=0
 # Updated 2026-10-12 (Batch 10): `register add` requires --why-not-fixed-now, so every existing
@@ -915,7 +921,10 @@ eq "X7 (must not fire) bold and a dash inside the value are the caller's text an
 # probe can fire; one named `guard:` pins a behaviour the code before these checks already had (it
 # passes there too); one named `limit:` shows a documented limit that holds before and after.
 # Every other leg here fails on the code before these checks.
-next_hm() { "$PY" -B -c 'import datetime; print((datetime.datetime.now() + datetime.timedelta(minutes=1)).strftime("%H:%M"))'; }
+# minute_pair: the clock's minute and the next one, as `HH:MM HH:MM`, read in ONE call. Read in two
+# calls, a minute boundary between them gave M0 and M0+2, and an add landing in M0+1 found no
+# planted stamp (S7 and S7b failed once in five runs of the same text).
+minute_pair() { "$PY" -B -c 'import datetime; n = datetime.datetime.now(); print(n.strftime("%H:%M"), (n + datetime.timedelta(minutes=1)).strftime("%H:%M"))'; }
 inopen() { awk '/^## Open/{f=1} /^## Closed/{f=0} f' "$REG" | grep -cF -- "$1" || true; }
 inclosed() { awk '/^## Closed/{f=1} f' "$REG" | grep -cF -- "$1" || true; }
 stamp_of() { grep -F -- "] $1" "$REG" | sed -n 's/^### \[\([^]]*\)\].*/\1/p' | head -n 1; }
@@ -981,11 +990,29 @@ cp "$REG" "$W/reg.wdry"
 vw register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "why dry" --symptom "s" --cause "c" --severity minor --status "open" --dry-run
 eq "W7 a dry run shows the reason's bullet and writes nothing" "$RC$(grep -cF -- "| - **Why not fixed now**: $WN" "$OUT")$(unchanged "$W/reg.wdry" "$REG")" "01same"
 
+echo "== register add: the cause-kind word, tested or observed (2026-11-14) =="
+fixture "$W/fix"
+vw register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "kind observed" --symptom "s" --cause "a guess from the log" --cause-kind observed --severity minor --status "open"
+eq "CK1 --cause-kind observed puts the one word before the cause" "$RC$(count "$REG" '- **Suspected cause**: observed: a guess from the log')" "01"
+fixture "$W/fix"
+vw register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "kind tested" --symptom "s" --cause "a rerun showed it" --cause-kind tested --severity minor --status "open"
+eq "CK2 --cause-kind tested puts that word instead" "$RC$(count "$REG" '- **Suspected cause**: tested: a rerun showed it')" "01"
+fixture "$W/fix"
+vw register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "kind absent" --symptom "s" --cause "plain cause" --severity minor --status "open"
+eq "CK3 control: without --cause-kind the field keeps its old shape, with no kind word in the file" "$RC$(count "$REG" '- **Suspected cause**: plain cause')$(grep -cE -- '^- \*\*Suspected cause\*\*: (tested|observed): ' "$REG")" "010"
+fixture "$W/fix"; cp "$REG" "$W/reg.ck4"
+vw register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "kind guessed" --symptom "s" --cause "c" --cause-kind guessed --severity minor --status "open"
+eq "CK4 a kind other than tested or observed is refused, writing nothing" "$RC$(grep -c -- '--cause-kind: invalid choice' "$OUT")$(unchanged "$W/reg.ck4" "$REG")" "21same"
+fixture "$W/fix"; cp "$REG" "$W/reg.ck5"
+vw register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "kind dry" --symptom "s" --cause "c" --cause-kind observed --severity minor --status "open" --dry-run
+eq "CK5 a dry run shows the cause with its word and writes nothing" "$RC$(grep -cF -- '- **Suspected cause**: observed: c' "$OUT")$(unchanged "$W/reg.ck5" "$REG")" "01same"
+vw register add --help
+eq "CK6 the help names the option and its two words" "$(grep -c -- '^  --cause-kind {tested,observed}' "$OUT")" "1"
+
 echo "== register add: one stamp, one entry (K7c56f8cc) =="
 
 fixture "$W/fix"
-M0=$(now_hm)
-M1=$(next_hm)
+MM=$(minute_pair); M0=${MM% *}; M1=${MM#* }
 plant_heads 7 "2026-09-05 $M0" "2026-09-05 $M1"
 vws register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "sigma surface" --symptom "s" --cause "c" --severity minor --status "open"
 eq "S1 an add in a minute whose stamp another heading carries is written" "$RC" "0"
@@ -996,14 +1023,12 @@ eq "S2 two entries added in one minute carry two different stamps" "$(test -n "$
 eq "S2b the four stamps of that date (two planted, two added) are four, and none repeats" "$(sed -n 's/^### \[\(2026-09-05 [^]]*\)\].*/\1/p' "$REG" | wc -l | tr -d ' ')$(sed -n 's/^### \[\(2026-09-05 [^]]*\)\].*/\1/p' "$REG" | sort | uniq -d | wc -l | tr -d ' ')" "40"
 
 fixture "$W/fix"
-M0=$(now_hm)
-M1=$(next_hm)
+MM=$(minute_pair); M0=${MM% *}; M1=${MM#* }
 plant_heads 30 "2026-09-05 $M0" "2026-09-05 $M1"
 vws register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "upsilon surface" --symptom "s" --cause "c" --severity minor --status "open"
 eq2 "S3 a stamp carried only under Closed counts too" "$(awk 'NR==7' "$REG")" "### [2026-09-05 $M0 b] upsilon surface (minor)" "### [2026-09-05 $M1 b] upsilon surface (minor)"
 fixture "$W/fix"
-M0=$(now_hm)
-M1=$(next_hm)
+MM=$(minute_pair); M0=${MM% *}; M1=${MM#* }
 plant_heads 7 "2026-09-05 $M0" "2026-09-05 $M1"
 cp "$REG" "$W/reg.sdry"
 vws register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "phi surface" --symptom "s" --cause "c" --severity minor --status "open" --dry-run
@@ -1061,8 +1086,7 @@ T1=$(now_hm)
 eq2 "S6 an unrelated historical stamp shared by two headings stops nothing: the add takes the bare stamp" "$RC$(awk 'NR==7' "$REG")" "0### [2026-09-05 $T0] chi surface — beside an old shared stamp (minor)" "0### [2026-09-05 $T1] chi surface — beside an old shared stamp (minor)"
 
 fixture "$W/fix"
-M0=$(now_hm)
-M1=$(next_hm)
+MM=$(minute_pair); M0=${MM% *}; M1=${MM#* }
 plant_heads 7 "2026-09-05 $M0" "2026-09-05 $M1"
 vws register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "omega surface" --symptom "s" --cause "c" --severity minor --status "open"
 STAMP=$(stamp_of 'omega surface')
@@ -1075,22 +1099,19 @@ eq "S7b --match with the suffixed stamp names the suffixed entry" "$RC$(inclosed
 echo "== register add: what the stamp check does when it cannot tell =="
 
 fixture "$W/fix"
-M0=$(now_hm)
-M1=$(next_hm)
+MM=$(minute_pair); M0=${MM% *}; M1=${MM#* }
 plant_heads 7 "2026-09-05 $M0" "2026-09-05 $M0" "2026-09-05 $M1" "2026-09-05 $M1"
 cp "$REG" "$W/reg.doubled"
 vw register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "chi surface" --symptom "s" --cause "c" --severity minor --status "open"
 eq "U4 an add into a minute whose stamp already heads two entries is refused (it names none of them), writing nothing" "$RC$(grep -c 'already heads 2 entries, so it names none of them' "$OUT")$(unchanged "$W/reg.doubled" "$REG")" "21same"
 fixture "$W/fix"
-M0=$(now_hm)
-M1=$(next_hm)
+MM=$(minute_pair); M0=${MM% *}; M1=${MM#* }
 plant_heads 7 "2026-09-05 ${M0}b" "2026-09-05 ${M1}b"
 cp "$REG" "$W/reg.glued"
 vw register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "psi surface" --symptom "s" --cause "c" --severity minor --status "open"
 eq "U5 a heading carrying the same minute in a form the check cannot read refuses the add, writing nothing" "$RC$(grep -c 'this check cannot read' "$OUT")$(unchanged "$W/reg.glued" "$REG")" "21same"
 fixture "$W/fix"
-M0=$(now_hm)
-M1=$(next_hm)
+MM=$(minute_pair); M0=${MM% *}; M1=${MM#* }
 plant_lines 7 "### [2026-09-05 $M0 unfinished heading" "- **Status**: open" "" "### [2026-09-05 $M1 unfinished heading" "- **Status**: open" ""
 cp "$REG" "$W/reg.unclosed"
 vw register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "psi surface" --symptom "s" --cause "c" --severity minor --status "open"
@@ -1588,6 +1609,107 @@ elif mode == "contend":
     touch(done)
     print("RC=%s" % code)
     sys.stdout.write(out)
+elif mode == "second-replace":
+    # Another writer changes text of DRIVE_PLANT_PATH (DRIVE_PLANT_OLD to DRIVE_PLANT_NEW, by its own
+    # rename) as this run makes its second temporary file: the open line changed between a close's renames.
+    plant_path = os.environ["DRIVE_PLANT_PATH"]
+    old_text, new_text = os.environ["DRIVE_PLANT_OLD"].encode("utf-8"), os.environ["DRIVE_PLANT_NEW"].encode("utf-8")
+    calls, planted, real = [], [], tempfile.mkstemp
+
+    def mkstemp(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2 and not planted:
+            with open(plant_path, "rb") as handle:
+                data = handle.read()
+            if data.count(old_text) == 1:
+                with open(plant_path + ".other", "wb") as handle:
+                    handle.write(data.replace(old_text, new_text))
+                REAL_REPLACE(plant_path + ".other", plant_path)
+                planted.append(1)
+        return real(*args, **kwargs)
+
+    tempfile.mkstemp = mkstemp
+    code, out = call(module, argv)
+    print("RC=%s" % code)
+    print("PLANTED=%d" % len(planted))
+    sys.stdout.write(out)
+elif mode in ("appendto", "second"):
+    # Another writer appends DRIVE_PLANT_TEXT to DRIVE_PLANT_PATH as this run makes its first
+    # (appendto) or its second (second: the second write of a close) temporary file.
+    plant_path, plant_text = os.environ["DRIVE_PLANT_PATH"], os.environ["DRIVE_PLANT_TEXT"].encode("utf-8")
+    calls, planted, real = [], [], tempfile.mkstemp
+    before = sha(target)
+
+    def mkstemp(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == (1 if mode == "appendto" else 2) and not planted:
+            with open(plant_path, "ab") as handle:
+                handle.write(plant_text)
+            planted.append(1)
+        return real(*args, **kwargs)
+
+    tempfile.mkstemp = mkstemp
+    code, out = call(module, argv)
+    with open(plant_path, "rb") as handle:
+        kept = plant_text in handle.read()
+    print("RC=%s" % code)
+    print("PLANTED=%d" % len(planted))
+    print("UNCHANGED=%s" % ("yes" if sha(target) == before else "no"))
+    print("PLANTKEPT=%s" % ("yes" if kept else "no"))
+    print("TEMPS=%d" % temps(target))
+    sys.stdout.write(out)
+elif mode == "crash":
+    # The run dies right after its first rename, as a kill between a close's two writes would.
+    def crash_replace(src, dst, *args, **kwargs):
+        REAL_REPLACE(src, dst, *args, **kwargs)
+        os._exit(9)
+
+    os.replace = crash_replace
+    call(module, argv)
+    sys.exit(0)
+elif mode in ("log-between", "log-noeol", "log-replace", "hold-log"):
+    # A point inside the log append, after its probe through the open descriptor (the lock held):
+    # another writer appends there (log-between), replaces the log by rename (log-replace), or
+    # the run pauses until released (hold-log).
+    real_probe = module.log_probe
+    marker = b"## [2026-09-06] lint | appended meanwhile by another writer\n\n"
+    if mode == "log-noeol":
+        marker = b"a fragment another writer left with no newline"
+    acted = []
+
+    def probe(fd):
+        found = real_probe(fd)
+        if not acted:
+            acted.append(1)
+            if mode in ("log-between", "log-noeol"):
+                with open(target, "ab") as handle:
+                    handle.write(marker)
+            elif mode == "log-replace":
+                with open(target, "rb") as handle:
+                    data = handle.read()
+                with open(target + ".other", "wb") as handle:
+                    handle.write(data)
+                REAL_REPLACE(target + ".other", target)
+            else:
+                touch(os.environ["DRIVE_PAUSED"])
+                if not wait_for([os.environ["DRIVE_RELEASE"]], 30):
+                    os._exit(3)
+        return found
+
+    module.log_probe = probe
+    out, err, code = io.StringIO(), io.StringIO(), 0
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = module.main(argv) or 0
+        except SystemExit as exc:
+            code = exc.code if isinstance(exc.code, int) else 2
+    with open(target, "rb") as handle:
+        data = handle.read()
+    print("RC=%s" % code)
+    print("ACTED=%d" % len(acted))
+    print("KEPT=%s" % ("yes" if marker in data else "no"))
+    print("READBACK=%d" % err.getvalue().count("readback:"))
+    sys.stdout.write(out.getvalue())
 DRIVER_PY_END
 drive() { "$PY" -B "$W/driver.py" "$S" "$@" >"$OUT" 2>&1; RC=$?; }
 field() { sed -n "s/^$1=//p" "$OUT" | head -n 1; }
@@ -1847,6 +1969,768 @@ raise SystemExit(0 if inside > 0 and stray == 0 and control_inside == 0 and cont
 PY_WRITE_SITES
 if [ "$?" -eq 0 ]; then ok "E19 write-pattern sweep finds only sanctioned sites; the planted stray control hits"
 else no "E19 write-pattern sweep: $(cat "$W/write-sites.txt")"; fi
+
+echo "== decided work: the fixture pages (2026-11-12) =="
+
+# The two decided-work pages, shaped as the vault's own: frontmatter, an intro, To build with a
+# blank line inside it, Later on purpose, How this page works carrying the format's own example
+# line, and a closed page with a misplaced closed line above Sources Used and `## Closed` last.
+dfixture() {
+	fixture "$1"
+	cat > "$1/vault/wiki/developments/decided-work.md" <<'DW_END'
+---
+title: "Decided work"
+type: development
+updated: 2026-09-05
+---
+
+# Decided work
+
+One line for each decision leaving work to build; a closed line moves to the closed page.
+
+## To build
+
+- [ ] **DW-20260905-1** · alpha work · decided 5 September 2026 ("go with alpha and all the rest", 10:00:00 GMT, fixture session) · to build
+- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · blocked: a fixture reason · other homes: the fixture register
+
+- [ ] **DW-20260904-1** · gamma work, after a blank line · decided 4 September 2026 (fixture decision 3) · in run-fixture, item 2
+
+## Later on purpose
+
+- [ ] **DW-20260901-1** · delta work · decided 1 September 2026 (fixture decision 4) · later: v9 ("not before v9", 09:00:00 GMT, fixture session)
+
+## How this page works
+
+- **A line.** Example: `- [ ] **DW-29991231-1** · rename a test file · decided 31 December 2999 (fixture decision 1) · to build`.
+- **Closing.** First count the id on the closed page.
+
+## Sources Used
+
+- the fixture
+
+## Related
+
+- the closed page
+DW_END
+	cat > "$1/vault/wiki/developments/decided-work-done.md" <<'DONE_END'
+---
+title: "Decided work: closed lines"
+---
+
+# Decided work: closed lines
+
+Append-only closing history.
+
+- [x] **DW-20260801-1** · a misplaced closed line · decided 1 August 2026 (fixture) · to build · built 2 August 2026: done
+
+## Sources Used
+
+- the open page
+
+## Related
+
+- the open page
+
+## Closed
+- [x] **DW-20260905-3** · epsilon work · decided 5 September 2026 (fixture decision 5) · to build · built 6 September 2026: done (closed 10:00 GMT by fixture)
+- [-] **DW-20260902-1** · zeta work · decided 2 September 2026 (fixture) · to build · retired 3 September 2026: its purpose is gone
+DONE_END
+}
+DW="$VAULT/wiki/developments/decided-work.md"
+DONE="$VAULT/wiki/developments/decided-work-done.md"
+DEV="$VAULT/wiki/developments"
+NL=$(printf '\nx'); NL=${NL%x}
+fsha() { "$PY" -B -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"; }
+both_sha() { echo "$(fsha "$DW")$(fsha "$DONE")"; }
+today_long() { "$PY" -B -c 'import time; t = time.localtime(); m = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"); print("%d %s %d" % (t.tm_mday, m[t.tm_mon - 1], t.tm_year))'; }
+tomorrow() { "$PY" -B -c 'import datetime; print((datetime.date.today() + datetime.timedelta(days=1)).isoformat())'; }
+oks() { sed 's#[^ (]*/##g' "$SOUT"; }
+bold_count() { grep -c -F -- "**$2**" "$1" || true; }
+# prepl FILE OLD NEW: an exact replacement that must find its text exactly once.
+prepl() {
+	"$PY" -B - "$1" "$2" "$3" <<'PREPL_END'
+import sys
+path, old, new = sys.argv[1:4]
+text = open(path, encoding="utf-8").read()
+if text.count(old) != 1:
+    sys.exit("prepl: %r found %d times in %s" % (old, text.count(old), path))
+open(path, "w", encoding="utf-8").write(text.replace(old, new))
+PREPL_END
+	[ $? -eq 0 ] || no "fixture edit: '$2' was not found exactly once"
+}
+# dref NAME WANT -- ARGS...: a decided call that must refuse, exit 2, one stdout line saying WANT,
+# and leave both pages byte for byte as they were.
+dref() {
+	name="$1"; want="$2"; shift 3
+	before=$(both_sha)
+	vws decided "$@"
+	if [ "$RC" = 2 ] && [ "$(nlines "$SOUT")" = 1 ] && grep -qF -- "$want" "$SOUT" && [ "$(both_sha)" = "$before" ]; then ok "$name"
+	else no "$name (rc $RC, stdout '$(head -c 300 "$SOUT")', pages $( [ "$(both_sha)" = "$before" ] && echo same || echo CHANGED))"; fi
+}
+
+dfixture "$W/fix"
+[ "$(grep -c '^## To build$' "$DW")$(grep -c '^## Closed$' "$DONE")$(bold_count "$DONE" DW-20260905-3)$(awk 'NR==13' "$DW" | cut -c1-23)" = "111- [ ] **DW-20260905-1**" ] || { echo "PROBE FAILED: the decided-work fixture pages are not as written"; echo "FAIL 1/1"; exit 2; }
+
+echo "== decided add =="
+
+dfixture "$W/fix"; cp "$DW" "$W/dw.orig"; cp "$DONE" "$W/done.orig"
+T0=$(now_hm); Z=$(now_zone); TL=$(today_long)
+vws decided add --vault "$VAULT" --date 2026-09-05 --work "omega work" --locator "fixture decision 9" --state "to build" --by run-suite
+T1=$(now_hm)
+eq "DA1 an add takes the next id over both pages (1 and 2 open, 3 closed, so 4) and names it with the line" "$RC$(oks)" "0ok decided-add decided-work.md:13 DW-20260905-4"
+eq "DA1b and prints no notice for a clean page and a locator with no quoted words" "$(nlines "$SERR")" "0"
+eq2 "DA2 the line: id, work, the decided date with its locator, the state, and the clock's recorded stamp with today's date" "$(awk 'NR==13' "$DW")" "- [ ] **DW-20260905-4** · omega work · decided 5 September 2026 (fixture decision 9) · to build · recorded by run-suite at $T0 $Z on $TL" "- [ ] **DW-20260905-4** · omega work · decided 5 September 2026 (fixture decision 9) · to build · recorded by run-suite at $T1 $Z on $TL"
+eq "DA3 the page gains exactly one line, the first under To build, its heading and blank line kept above it" "$(diff "$W/dw.orig" "$DW" | grep -c '^>')$(diff "$W/dw.orig" "$DW" | grep -c '^<')|$(awk 'NR==11' "$DW")|$(awk 'NR==12' "$DW")|$(awk 'NR==14' "$DW" | cut -c1-23)" "10|## To build||- [ ] **DW-20260905-1**"
+eq "DA3b the closed page is untouched and no temporary file is left" "$(cmp -s "$W/done.orig" "$DONE" && echo same)$(temps_in "$DEV")" "same0"
+dfixture "$W/fix"; grep -v -F -- '**DW-20260905-3**' "$DONE" > "$W/done.cut"; cp "$W/done.cut" "$DONE"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work "omega work" --locator "fixture decision 9" --state "to build" --by run-suite
+eq "DA1c control: with the closed page's id 3 removed the same add takes 3, so the closed page was read" "$RC$(oks)" "0ok decided-add decided-work.md:13 DW-20260905-3"
+dfixture "$W/fix"; prepl "$DW" "· blocked: a fixture reason" "· blocked: a fixture reason, as DW-20260905-9 says"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work "omega work" --locator "fixture decision 9" --state "to build" --by run-suite
+eq "DA4 an id cited on another line (DW-20260905-9) is never reused: the add takes 10" "$RC$(oks)" "0ok decided-add decided-work.md:13 DW-20260905-10"
+dfixture "$W/fix"; T0=$(now_hm)
+vws decided add --vault "$VAULT" --date "$(date +%Y-%m-%d)" --work "today's work" --locator "fixture decision 10" --state "blocked: his word" --home "other homes: the suite" --by run-suite
+T1=$(now_hm); TODAY_ID="DW-$(date +%Y%m%d)-1"
+eq2 "DA5 a decision of today takes id 1 of its date and no date in its recorded stamp; a --home is its own field" "$(awk 'NR==13' "$DW")" "- [ ] **$TODAY_ID** · today's work · decided $TL (fixture decision 10) · blocked: his word · other homes: the suite · recorded by run-suite at $T0 $Z" "- [ ] **$TODAY_ID** · today's work · decided $TL (fixture decision 10) · blocked: his word · other homes: the suite · recorded by run-suite at $T1 $Z"
+
+# What it refuses, each with both pages left byte for byte as they were.
+dfixture "$W/fix"; printf '\n## To build\n' >> "$DW"
+dref "DA6a two '## To build' headings refuse" "'## To build' is 2 lines of decided-work.md, not 1" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by b
+dfixture "$W/fix"; prepl "$DW" "## To build" "## To make"
+dref "DA6b no '## To build' heading refuses" "'## To build' is 0 lines of decided-work.md" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by b
+dfixture "$W/fix"; prepl "$DW" "## To build" "## SWAP"; prepl "$DW" "## Later on purpose" "## To build"; prepl "$DW" "## SWAP" "## Later on purpose"
+dref "DA6c Later on purpose above To build refuses" "are out of order" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by b
+dfixture "$W/fix"; prepl "$DW" "- [ ] **DW-20260904-1**" "### a stray heading${NL}- [ ] **DW-20260904-1**"
+dref "DA6d another heading inside the open range refuses" "is a heading inside the open range" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by b
+dfixture "$W/fix"
+dref "DA6e a Later state refuses: a line goes under Later only on his quoted word" "is a Later state" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state 'later: v9 ("not yet", 09:00:00 GMT, fixture)' --by b
+dref "DA6f a state the page does not list refuses" "is none of the page's states" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "whenever" --by b
+dref "DA6g ' · ' in --work refuses: it would make another field" "--work carries the field separator" -- add --vault "$VAULT" --date 2026-09-05 --work "a · b" --locator l --state "to build" --by b
+dref "DA6h '**' in --work refuses: it could forge a bold id" "--work carries '**'" -- add --vault "$VAULT" --date 2026-09-05 --work "a **DW-20260905-9** b" --locator l --state "to build" --by b
+dref "DA6i a line break in --work refuses" "--work carries a line break" -- add --vault "$VAULT" --date 2026-09-05 --work "a${NL}b" --locator l --state "to build" --by b
+dref "DA6j a decision dated after the clock's date refuses" "is after the clock's date" -- add --vault "$VAULT" --date "$(tomorrow)" --work w --locator l --state "to build" --by b
+dref "DA6k ' · ' in --by refuses (finding 4)" "--by carries the field separator" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by "run · x"
+dref "DA6l '**' in --by refuses (finding 4)" "--by carries '**'" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by "**DW-20260905-9**"
+dref "DA6m ' · ' in --locator refuses" "--locator carries the field separator" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator "a · b" --state "to build" --by b
+dref "DA6n ' · ' in a --home refuses" "--home carries the field separator" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --home "a · b" --by b
+dfixture "$W/fix"; "$PY" -B -c 'import sys
+path = sys.argv[1]
+data = open(path, "rb").read().replace(b"\n", b"\r\n")
+open(path, "wb").write(data)' "$DW"
+dref "DA6p a page with CRLF line endings refuses: the structure check compares whole lines (finding 9)" "'## To build' is 0 lines of decided-work.md" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by b
+dfixture "$W/fix"; rm "$DONE"; cp "$DW" "$W/dw.orig"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by b
+eq "DA6o a missing closed page refuses: its ids are a premise of the choice, and none is created" "$RC$(grep -c "no file at $DONE" "$SOUT")$(cmp -s "$W/dw.orig" "$DW" && echo same)$(test -e "$DONE" && echo created || echo absent)" "21sameabsent"
+
+dfixture "$W/fix"
+"$PY" -B - "$DW" <<'EMPTY_END'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+start, end = text.index("## To build\n"), text.index("## Later on purpose\n")
+open(path, "w", encoding="utf-8").write(text[:start] + "## To build\n\n" + text[end:])
+EMPTY_END
+vws decided add --vault "$VAULT" --date 2026-09-05 --work "first of an empty section" --locator l --state "to build" --by b
+eq "DA7 an empty To build section: the heading, its blank line, the new line, one blank line, the next heading" "$RC|$(awk 'NR==11' "$DW")|$(awk 'NR==12' "$DW")|$(awk 'NR==13' "$DW" | cut -c1-23)|$(awk 'NR==14' "$DW")|$(awk 'NR==15' "$DW")" "0|## To build||- [ ] **DW-20260905-4**||## Later on purpose"
+
+dfixture "$W/fix"; prepl "$DW" "- [ ] **DW-20260901-1**" "- [ ] **DW-20260904-1** · a second copy · decided 4 September 2026 (f) · to build${NL}- [ ] **DW-20260901-1**"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by b
+eq "DA8 an id already on two lines is named on stderr and stops nothing (the page's Malformed rule makes it a repair)" "$RC$(grep -c '^malformed: DW-20260904-1 is carried by 2 lines' "$SERR")" "01"
+dfixture "$W/fix"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work w --locator '"go with alpha and all the rest", 10:00:00 GMT, fixture session' --state "to build" --by b
+eq "DA9 his quoted words already on a line are named on stderr, the add going ahead (a later recorder adds a locator instead)" "$RC$(grep -c '^duplicate: his words "go with alpha and all the rest" already stand on decided-work.md:13' "$SERR")" "01"
+dfixture "$W/fix"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work w --locator '"words that stand on no line at all", 11:00:00 GMT' --state "to build" --by b
+eq "DA9c control: quoted words found on no line name nothing" "$RC$(grep -c '^duplicate' "$SERR" || true)" "00"
+
+PLANT="$(plant_hour):3x"
+dfixture "$W/fix"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work "filed at $PLANT" --locator l --state "to build" --by b
+eq "DA10 a wrong clock in --work warns once, and the add goes ahead" "$RC$(grep -c '^clock:' "$SERR")" "01"
+dfixture "$W/fix"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work w --locator "his words at $PLANT" --state "to build" --by b
+eq "DA10b --locator is a citation and is not scanned" "$RC$(grep -c '^clock:' "$SERR" || true)" "00"
+dfixture "$W/fix"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work "his words of $(plant_hour):41:07 GMT" --locator l --state "to build" --by b
+eq "DA10c a time with seconds is a citation and is not scanned (finding 10)" "$RC$(grep -c '^clock:' "$SERR" || true)" "00"
+dfixture "$W/fix"
+vws decided add --vault "$VAULT" --date 2026-09-05 --work "his words of $(plant_hour):41 GMT" --locator l --state "to build" --by b
+eq "DA10d control: the same time without seconds is scanned and warns" "$RC$(grep -c '^clock:' "$SERR")" "01"
+
+dfixture "$W/fix"; before=$(both_sha)
+vws decided add --vault "$VAULT" --date 2026-09-05 --work "omega work" --locator "fixture decision 9" --state "to build" --by run-suite --dry-run
+eq "DA11 a dry run writes nothing and shows the line at its place" "$RC$( [ "$(both_sha)" = "$before" ] && echo same)$(sed -n '1p' "$SOUT" | sed 's#.*/##')$(grep -c '^| - \[ \] \*\*DW-20260905-4\*\* · omega work' "$SOUT")" "0samedecided-work.md:131"
+
+echo "== decided status =="
+
+dfixture "$W/fix"; cp "$DW" "$W/dw.orig"; T0=$(now_hm)
+vws decided status --vault "$VAULT" --id DW-20260905-2 --note "a fixture note" --by run-suite
+T1=$(now_hm)
+eq "DS1 a status lands on the one line for its id" "$RC$(oks)" "0ok decided-status decided-work.md:14"
+eq2 "DS1b the clause closes that line: the clock's date, time and zone, who, the note" "$(awk 'NR==14' "$DW")" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · blocked: a fixture reason · other homes: the fixture register · status $TL, $T0 $Z (run-suite): a fixture note" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · blocked: a fixture reason · other homes: the fixture register · status $TL, $T1 $Z (run-suite): a fixture note"
+eq "DS1c exactly one line changed" "$(diff "$W/dw.orig" "$DW" | grep -c '^>')$(diff "$W/dw.orig" "$DW" | grep -c '^<')" "11"
+dfixture "$W/fix"
+vws decided status --vault "$VAULT" --id DW-20260901-1 --note "still later" --by run-suite
+eq "DS2 a Later line takes a status too" "$RC$(oks)" "0ok decided-status decided-work.md:20"
+dfixture "$W/fix"
+dref "DS3a an id on no line refuses" "DW-20260905-9 is on no line of the open page; nothing written" -- status --vault "$VAULT" --id DW-20260905-9 --note n --by b
+dref "DS3b a closed id refuses, naming its closed copy" "DW-20260905-3 is on no line of the open page: it is closed at decided-work-done.md:20" -- status --vault "$VAULT" --id DW-20260905-3 --note n --by b
+dref "DS3c a misplaced closed line counts too (the closed page is read whole)" "it is closed at decided-work-done.md:9" -- status --vault "$VAULT" --id DW-20260801-1 --note n --by b
+dref "DS3d ' · ' in --note refuses" "--note carries the field separator" -- status --vault "$VAULT" --id DW-20260905-2 --note "a · b" --by b
+dref "DS3e '**' in --note refuses" "--note carries '**'" -- status --vault "$VAULT" --id DW-20260905-2 --note "see **DW-20260905-9**" --by b
+dref "DS3f ' · ' in --by refuses (finding 4)" "--by carries the field separator" -- status --vault "$VAULT" --id DW-20260905-2 --note n --by "run · x"
+dref "DS3g '**' in --by refuses (finding 4)" "--by carries '**'" -- status --vault "$VAULT" --id DW-20260905-2 --note n --by "**DW-20260905-9**"
+dref "DS3h an id with a leading zero is no id" "is not DW-YYYYMMDD-n" -- status --vault "$VAULT" --id DW-20260905-02 --note n --by b
+dfixture "$W/fix"; prepl "$DW" "- [ ] **DW-20260901-1**" "- [ ] **DW-20260905-2** · a second copy · decided 5 September 2026 (f) · to build${NL}- [ ] **DW-20260901-1**"
+dref "DS3i an id on two lines refuses: two identities" "DW-20260905-2 is carried by 2 lines of the open page (lines 14, 20)" -- status --vault "$VAULT" --id DW-20260905-2 --note n --by b
+dfixture "$W/fix"; prepl "$DW" "- **Closing.** First count the id on the closed page." "- **Closing.** First count the id on the closed page.${NL}- [ ] **DW-20260801-2** · a misplaced open line · decided 1 August 2026 (f) · to build"
+dref "DS3j a line outside the open range refuses as misplaced" "stands outside the open range" -- status --vault "$VAULT" --id DW-20260801-2 --note n --by b
+dfixture "$W/fix"; prepl "$DW" "- [ ] **DW-20260905-2**" "- [x] **DW-20260905-2**"
+dref "DS3k a line carrying the id that is not its open line refuses" "carries DW-20260905-2 but is not its open line" -- status --vault "$VAULT" --id DW-20260905-2 --note n --by b
+dfixture "$W/fix"; before=$(both_sha)
+vws decided status --vault "$VAULT" --id DW-20260905-2 --note n --by b --dry-run
+eq "DS4 a dry run writes nothing" "$RC$( [ "$(both_sha)" = "$before" ] && echo same)$(grep -c '^dry-run decided-status ' "$SOUT")" "0same1"
+
+echo "== decided state (finding 5) =="
+
+dfixture "$W/fix"; cp "$DW" "$W/dw.orig"; T0=$(now_hm)
+vws decided state --vault "$VAULT" --id DW-20260905-2 --state "in run-suite, item 4" --note "taken by the plan of record" --by run-suite
+T1=$(now_hm)
+eq "DS5 a state edit lands on the one line for its id" "$RC$(oks)" "0ok decided-state decided-work.md:14"
+eq2 "DS5b field 4 is replaced and a status clause records the earlier state" "$(awk 'NR==14' "$DW")" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · in run-suite, item 4 · other homes: the fixture register · status $TL, $T0 $Z (run-suite): taken by the plan of record; its earlier state read \"blocked: a fixture reason\"" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · in run-suite, item 4 · other homes: the fixture register · status $TL, $T1 $Z (run-suite): taken by the plan of record; its earlier state read \"blocked: a fixture reason\""
+eq "DS5c exactly one line changed" "$(diff "$W/dw.orig" "$DW" | grep -c '^>')$(diff "$W/dw.orig" "$DW" | grep -c '^<')" "11"
+dfixture "$W/fix"
+vws decided state --vault "$VAULT" --id DW-20260904-1 --state "to build: released by run-suite's close" --note "released at the close" --by run-suite
+eq "DS6 a returned line takes 'to build: REASON'" "$RC$(awk 'NR==16' "$DW" | grep -c ' · to build: released by run-suite.s close · status ')" "01"
+dfixture "$W/fix"
+vws decided state --vault "$VAULT" --id DW-20260901-1 --state 'later: v10 ("not before v10", 09:30:00 GMT, fixture session)' --note "his trigger moved" --by run-suite
+eq "DS7 a Later line takes a new Later state" "$RC$(awk 'NR==20' "$DW" | grep -c ' · later: v10 ')" "01"
+dfixture "$W/fix"
+dref "DS7b a Later line refuses any other state: moving it back is not a state edit" "is not a Later state" -- state --vault "$VAULT" --id DW-20260901-1 --state "to build" --note n --by b
+dref "DS7c a To build line refuses a Later state" "is a Later state" -- state --vault "$VAULT" --id DW-20260905-2 --state 'later: v9 ("x y z", 09:00:00 GMT, f)' --note n --by b
+dref "DS7d the same state again refuses" "already reads 'in run-fixture, item 2'" -- state --vault "$VAULT" --id DW-20260904-1 --state "in run-fixture, item 2" --note n --by b
+dref "DS7e an elsewhere state without its word or rule refuses" "is none of the page's states" -- state --vault "$VAULT" --id DW-20260905-2 --state "elsewhere: a holder" --note n --by b
+dref "DS7f '**' in --by refuses (finding 4)" "--by carries '**'" -- state --vault "$VAULT" --id DW-20260905-2 --state "to build" --note n --by "**DW-20260905-9**"
+dfixture "$W/fix"; prepl "$DW" "· blocked: a fixture reason" "· planned for 8 September"
+dref "DS7g a field 4 the page does not list refuses: the verb cannot tell what it replaces" "field 4 of line 14 reads 'planned for 8 September'" -- state --vault "$VAULT" --id DW-20260905-2 --state "to build" --note n --by b
+dfixture "$W/fix"; before=$(both_sha)
+vws decided state --vault "$VAULT" --id DW-20260905-2 --state "to build" --note n --by b --dry-run
+eq "DS8 a dry run writes nothing" "$RC$( [ "$(both_sha)" = "$before" ] && echo same)$(grep -c '^dry-run decided-state ' "$SOUT")" "0same1"
+
+echo "== decided close =="
+
+dfixture "$W/fix"; cp "$DW" "$W/dw.orig"; cp "$DONE" "$W/done.orig"; T0=$(now_hm)
+vws decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence "built and tested by the suite" --by run-suite
+T1=$(now_hm)
+eq "DC1 a close (count 0) lands the closed line last on the closed page and names where the open copy was" "$RC$(oks)" "0ok decided-close decided-work-done.md:22 (open copy removed from decided-work.md:14)"
+eq2 "DC1b the closed line: the complete open line, boxed [x], then the closing clause with the clock's stamp" "$(tail -n 1 "$DONE")" "- [x] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · blocked: a fixture reason · other homes: the fixture register · built $TL: built and tested by the suite (closed $T0 $Z by run-suite)" "- [x] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · blocked: a fixture reason · other homes: the fixture register · built $TL: built and tested by the suite (closed $T1 $Z by run-suite)"
+eq "DC1c the closed page gains one line and loses none; the open page loses the one line and gains none" "$(diff "$W/done.orig" "$DONE" | grep -c '^>')$(diff "$W/done.orig" "$DONE" | grep -c '^<')$(diff "$W/dw.orig" "$DW" | grep -c '^<')$(diff "$W/dw.orig" "$DW" | grep -c '^>')" "1010"
+eq "DC1d the id is on the closed page once, on the open page never, and no temporary file is left" "$(bold_count "$DONE" DW-20260905-2)$(bold_count "$DW" DW-20260905-2)$(temps_in "$DEV")" "100"
+dfixture "$W/fix"; cp "$DW" "$W/dw.orig"
+vws decided close --vault "$VAULT" --id DW-20260904-1 --kind built --evidence e --by run-suite
+eq "DC2 a line between two blank lines goes with one of them, so no double blank is left" "$RC$(diff "$W/dw.orig" "$DW" | grep -c '^<')$(diff "$W/dw.orig" "$DW" | grep -c '^>')|$(awk 'NR==15' "$DW")|$(awk 'NR==16' "$DW")" "020||## Later on purpose"
+dfixture "$W/fix"
+vws decided close --vault "$VAULT" --id DW-20260905-1 --kind retired --evidence "its purpose is met by DW-20260905-2's work" --by run-suite
+eq "DC3 a retired line is boxed [-]" "$RC$(tail -n 1 "$DONE" | grep -c "^- \[-\] \*\*DW-20260905-1\*\* · alpha work · .* · retired $TL: its purpose is met")" "01"
+dfixture "$W/fix"
+vws decided close --vault "$VAULT" --id DW-20260901-1 --kind dropped --evidence '"drop it now" (12:00:00 GMT, fixture session)' --by run-suite
+eq "DC3b a Later line closes, and a dropped line carries his words, boxed [-]" "$RC$(tail -n 1 "$DONE" | grep -c "^- \[-\] \*\*DW-20260901-1\*\* · delta work .* · dropped $TL: \"drop it now\" (12:00:00 GMT, fixture session) (closed ")$(bold_count "$DW" DW-20260901-1)" "010"
+dfixture "$W/fix"
+dref "DC3c a dropped close without his quoted words refuses" "a dropped line's --evidence is his words" -- close --vault "$VAULT" --id DW-20260901-1 --kind dropped --evidence "no longer wanted" --by b
+
+# Count 1: the closed line is there already (a half-close, or a close written by hand).
+BODY=$(awk 'NR==14' "$W/dw.orig" | cut -c7-)
+dfixture "$W/fix"; printf -- '- [x] %s · built 7 September 2026: earlier evidence (closed 10:00 GMT by fixture)\n' "$BODY" >> "$DONE"; cp "$DONE" "$W/done.one"; cp "$DW" "$W/dw.orig"
+dref "DC4 (FX5) count 1 with other closing evidence refuses as a repair: the Closing rule confirms the same decision, work and closing evidence" "closes DW-20260905-2 with the evidence 'earlier evidence', not this run's 'other evidence'" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence "other evidence" --by run-suite
+dfixture "$W/fix"; cp "$W/done.one" "$DONE"
+vws decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence "earlier evidence" --by run-suite
+eq "DC4c (FX5 control) count 1 with the same box, kind and evidence: only the open copy goes, the closed page untouched, nothing on stderr" "$RC$(cmp -s "$W/done.one" "$DONE" && echo same)$(bold_count "$DW" DW-20260905-2)$(diff "$W/dw.orig" "$DW" | grep -c '^<')$(nlines "$SERR")" "0same010"
+dfixture "$W/fix"; printf -- '- [-] %s · retired 7 September 2026: gone\n' "$BODY" >> "$DONE"
+dref "DC5 count 1 with another box refuses as a repair (finding 3)" "closes DW-20260905-2 with [-], not the [x] that --kind built writes" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by b
+dref "DC6 count 1 with the same box but another kind refuses as a repair (finding 3)" "not 'dropped DATE: …' as --kind asks" -- close --vault "$VAULT" --id DW-20260905-2 --kind dropped --evidence '"drop" (12:00:00 GMT, f)' --by b
+dfixture "$W/fix"; printf -- '- [x] %s · built 7 September 2026: e\n' "$(printf '%s' "$BODY" | sed 's/beta work/beta works/')" >> "$DONE"
+dref "DC7 count 1 with another body refuses: not the same decision and work" "with a body that differs from the open copy at character" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by b
+dfixture "$W/fix"; printf -- '- [x] %s · built 7 September 2026: e\n- [x] %s · built 7 September 2026: e\n' "$BODY" "$BODY" >> "$DONE"
+dref "DC8 count 2 refuses as a repair" "DW-20260905-2 is carried by 2 lines of decided-work-done.md" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by b
+dfixture "$W/fix"; prepl "$DONE" "## Closed" "## Shut"
+dref "DC9a a closed page without '## Closed' refuses" "'## Closed' is 0 lines of decided-work-done.md" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by b
+dfixture "$W/fix"; printf '\n## Closed\n' >> "$DONE"
+dref "DC9b '## Closed' twice refuses" "'## Closed' is 2 lines of decided-work-done.md" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by b
+dfixture "$W/fix"; printf '\n## Notes\n' >> "$DONE"
+dref "DC9c a heading below '## Closed' refuses: the append would land under it" "is a heading below '## Closed'" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by b
+dfixture "$W/fix"
+dref "DC10 an id already closed refuses, naming its closed copy" "it is closed at decided-work-done.md:20" -- close --vault "$VAULT" --id DW-20260905-3 --kind built --evidence e --by b
+dref "DC11a ' · ' in --by refuses (finding 4)" "--by carries the field separator" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by "run · x"
+dref "DC11b '**' in --by refuses (finding 4)" "--by carries '**'" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by "**DW-20260905-9**"
+dref "DC11c ' · ' in --evidence refuses" "--evidence carries the field separator" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence "a · b" --by b
+dfixture "$W/fix"; before=$(both_sha)
+vws decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by b --dry-run
+eq "DC12 a dry run writes nothing to either page" "$RC$( [ "$(both_sha)" = "$before" ] && echo same)$(grep -c '^dry-run decided-close ' "$SOUT")" "0same1"
+
+echo "== decided writes beside another writer, and the race (D21 (a), extended) =="
+
+dfixture "$W/fix"
+drive replace "$DW" decided add --vault "$VAULT" --date 2026-09-05 --work "q work" --locator q --state "to build" --by run-suite
+eq "DQ1 decided add: a change between the read and the replace refuses, keeps that change, leaves no temporary file" "$(field RC)$(field KEPT)$(field TEMPS)$(field PLANTED)$(grep -c 'changed on disk since this run read it' "$OUT")" "2yes011"
+dfixture "$W/fix"
+drive none "$DW" decided add --vault "$VAULT" --date 2026-09-05 --work "q work" --locator q --state "to build" --by run-suite
+eq "DQ1c control: the same driver with no other writer lets the add through" "$(field RC)$(field PLANTED)$(bold_count "$DW" DW-20260905-4)" "001"
+dfixture "$W/fix"
+DRIVE_PLANT_PATH="$DONE"; DRIVE_PLANT_TEXT="- [x] **DW-20260905-7** · closed meanwhile · decided 5 September 2026 (f) · to build · built 6 September 2026: x${NL}"; export DRIVE_PLANT_PATH DRIVE_PLANT_TEXT
+drive appendto "$DW" decided add --vault "$VAULT" --date 2026-09-05 --work "q work" --locator q --state "to build" --by run-suite
+eq "DQ2 decided add: an id of its date landing on the closed page before the last look refuses, the open page untouched (finding 9)" "$(field RC)$(field UNCHANGED)$(field PLANTKEPT)$(field TEMPS)$(grep -c 'now carries DW-20260905-7, at or above the id this run chose (DW-20260905-4)' "$OUT")" "2yesyes01"
+dfixture "$W/fix"
+DRIVE_PLANT_TEXT="a line with no id, written meanwhile${NL}"; export DRIVE_PLANT_TEXT
+drive appendto "$DW" decided add --vault "$VAULT" --date 2026-09-05 --work "q work" --locator q --state "to build" --by run-suite
+eq "DQ2c control: another change of the closed page stops nothing: the premise is a fact, not its bytes" "$(field RC)$(field PLANTED)$(bold_count "$DW" DW-20260905-4)" "011"
+dfixture "$W/fix"
+drive append "$DW" decided status --vault "$VAULT" --id DW-20260905-2 --note n --by b
+eq "DQ3 decided status: an append in place by another writer refuses and is kept, leaving no temporary file" "$(field RC)$(field KEPT)$(field TEMPS)" "2yes0"
+dfixture "$W/fix"
+drive verify-replace "$DW" decided state --vault "$VAULT" --id DW-20260905-2 --state "to build" --note n --by b
+eq "DQ3b decided state: a replace inside the check refuses and is kept" "$(field RC)$(field KEPT)$(field TEMPS)$(field HOOK)" "2yes0last_look"
+
+# The half-close: the open page changes between the close's two renames.
+dfixture "$W/fix"
+DRIVE_PLANT_PATH="$DW"; DRIVE_PLANT_TEXT="written between the two renames${NL}"; export DRIVE_PLANT_PATH DRIVE_PLANT_TEXT
+drive second "$DW" decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by run-suite
+eq "DQ4 a close whose open page changes after its first rename: exit 2, the closed line kept, the open copy kept, and the error says how to finish" "$(field RC)$(field PLANTED)$(bold_count "$DONE" DW-20260905-2)$(bold_count "$DW" DW-20260905-2)$(grep -c 'the closed line landed at .*decided-work-done.md:22, but .* so the open copy stays at .*decided-work.md:14. Re-run the same command' "$OUT")" "21111"
+vws decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by run-suite
+eq "DQ4b the same command run again converges: one closed copy, no open copy, the other writer's line kept" "$RC$(bold_count "$DONE" DW-20260905-2)$(bold_count "$DW" DW-20260905-2)$(count "$DW" 'written between the two renames')$(temps_in "$DEV")" "01010"
+
+# The crash: the run dies right after its first rename (finding 3).
+dfixture "$W/fix"
+"$PY" -B "$W/driver.py" "$S" crash "$DW" decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by run-suite >"$OUT" 2>&1
+CRASH=$?
+eq "DQ5c control: the run died after its first rename (exit 9), the closed line landed and the open copy stayed" "$CRASH$(bold_count "$DONE" DW-20260905-2)$(bold_count "$DW" DW-20260905-2)" "911"
+vws decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by run-suite
+eq "DQ5 after the crash the same command converges: one closed copy, no open copy, no temporary file" "$RC$(bold_count "$DONE" DW-20260905-2)$(bold_count "$DW" DW-20260905-2)$(temps_in "$DEV")" "0100"
+
+# Two real processes: two adds of one date, the first paused inside its write with the lock held.
+dfixture "$W/fix"
+rm -f "$W/dr1.paused" "$W/dr1.release" "$W/dr1.blocked" "$W/dr1.done"
+env DRIVE_PAUSED="$W/dr1.paused" DRIVE_RELEASE="$W/dr1.release" "$PY" -B "$W/driver.py" "$S" hold "$DW" decided add --vault "$VAULT" --date 2026-09-05 --work "first of two" --locator q --state "to build" --by run-suite >"$W/dr1a.out" 2>&1 &
+DR1A=$!
+"$PY" -B "$W/driver.py" "$S" waitfor "$W/dr1.paused" 20
+env DRIVE_BLOCKED="$W/dr1.blocked" DRIVE_DONE="$W/dr1.done" "$PY" -B "$W/driver.py" "$S" contend "$DW" decided add --vault "$VAULT" --date 2026-09-05 --work "second of two" --locator q --state "to build" --by run-suite >"$W/dr1b.out" 2>&1 &
+DR1B=$!
+"$PY" -B "$W/driver.py" "$S" waitfor "$W/dr1.blocked,$W/dr1.done" 20
+DR1W=$(test -e "$W/dr1.blocked" && echo waited || echo nowait)
+touch "$W/dr1.release"
+wait "$DR1A"
+wait "$DR1B"
+eq "DR1 two overlapping adds of one date: the second waits, then both land with ids 4 and 5, each once" "$(sed -n 's/^RC=//p' "$W/dr1a.out")$(sed -n 's/^RC=//p' "$W/dr1b.out")$DR1W$(grep -c -F '**DW-20260905-4** · first of two' "$DW")$(grep -c -F '**DW-20260905-5** · second of two' "$DW")" "00waited11"
+eq "DR1c control: the first process did pause inside its write" "$(test -e "$W/dr1.paused" && echo paused)" "paused"
+
+# Two real processes closing one id: the first lands, the second reads it closed and refuses.
+dfixture "$W/fix"
+rm -f "$W/dr2.paused" "$W/dr2.release" "$W/dr2.blocked" "$W/dr2.done"
+env DRIVE_PAUSED="$W/dr2.paused" DRIVE_RELEASE="$W/dr2.release" "$PY" -B "$W/driver.py" "$S" hold "$DW" decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence first --by run-suite >"$W/dr2a.out" 2>&1 &
+DR2A=$!
+"$PY" -B "$W/driver.py" "$S" waitfor "$W/dr2.paused" 20
+env DRIVE_BLOCKED="$W/dr2.blocked" DRIVE_DONE="$W/dr2.done" "$PY" -B "$W/driver.py" "$S" contend "$DW" decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence second --by run-suite >"$W/dr2b.out" 2>&1 &
+DR2B=$!
+"$PY" -B "$W/driver.py" "$S" waitfor "$W/dr2.blocked,$W/dr2.done" 20
+DR2W=$(test -e "$W/dr2.blocked" && echo waited || echo nowait)
+touch "$W/dr2.release"
+wait "$DR2A"
+wait "$DR2B"
+eq "DR2 two overlapping closes of one id: the first lands, the second waits and refuses, and the closed page carries the id once" "$(sed -n 's/^RC=//p' "$W/dr2a.out")$(sed -n 's/^RC=//p' "$W/dr2b.out")$DR2W$(grep -c 'is on no line of the open page: it is closed at decided-work-done.md:22' "$W/dr2b.out")$(bold_count "$DONE" DW-20260905-2)" "02waited11"
+eq "DR2c control: the first process did pause, and the line closed is the first's" "$(test -e "$W/dr2.paused" && echo paused)$(grep -c -F ': first (closed ' "$DONE")$(grep -c -F ': second (closed ' "$DONE" || true)" "paused10"
+
+dfixture "$W/fix"
+drive late "$DW" decided add --vault "$VAULT" --date 2026-09-05 --work "late" --locator q --state "to build" --by run-suite
+eq "DL1 limit: a write landing after the last look, inside the rename's window, is overwritten and the add reports ok (the window the docstring states)" "$(field RC)$(field LANDED)$(field LOST)" "01yes"
+dfixture "$W/fix"; done_before=$(fsha "$DONE")
+drive lock "$DW" decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by b
+eq "DL2 a lock another run holds past LOCK_WAIT refuses a close, writing neither page; once free it goes through" "$(field RC)$(field UNCHANGED)$(field WAITED)$( [ "$(sed -n 's/^AFTER=//p' "$OUT")" = 0 ] && echo after)" "2yesyesafter"
+eq "DL2b it says another run holds the lock" "$(grep -c 'another run of this tool has held the lock on' "$OUT")" "1"
+dfixture "$W/fix"
+drive nofcntl "$DW" decided status --vault "$VAULT" --id DW-20260905-2 --note n --by b
+eq "DL3 a platform without flock refuses a decided write before reading or writing" "$(field RC)$(grep -c 'this platform has no flock' "$OUT")$(field UNCHANGED)$(field TEMPS)" "21yes0"
+dfixture "$W/fix"
+rm -f "$W/dl4.paused" "$W/dl4.release"
+env DRIVE_PAUSED="$W/dl4.paused" DRIVE_RELEASE="$W/dl4.release" "$PY" -B "$W/driver.py" "$S" hold "$DW" decided add --vault "$VAULT" --date 2026-09-05 --work "never written" --locator q --state "to build" --by b >"$W/dl4a.out" 2>&1 &
+DL4A=$!
+"$PY" -B "$W/driver.py" "$S" waitfor "$W/dl4.paused" 20
+kill -9 "$DL4A"
+wait "$DL4A" 2>"$W/dl4.wait"
+DL4K=$?
+vws decided add --vault "$VAULT" --date 2026-09-05 --work "after the holder died" --locator q --state "to build" --by b
+eq "DL4 a decided run killed while holding the lock releases it: the next add writes at once, the killed one left nothing" "$RC$(count "$DW" 'never written')$(grep -c -F '**DW-20260905-4** · after the holder died' "$DW")$(temps_in "$DEV")" "0010"
+eq "DL4c control: the holder was paused inside its write and then killed (wait status 137)" "$(test -e "$W/dl4.paused" && echo paused)$DL4K" "paused137"
+
+echo "== log-append: the lock, the probe through the open descriptor, the read-back (finding 2) =="
+
+fixture "$W/fix"
+drive log-between "$LOG" log-append --vault "$VAULT" --action lint --title "logged beside another writer" --changed c --conflicts none --date 2026-09-05
+REAL=$(grep -n -F '## [2026-09-05] lint | logged beside another writer' "$LOG" | cut -d: -f1)
+FOREIGN=$(grep -n -F 'appended meanwhile by another writer' "$LOG" | cut -d: -f1)
+eq "LG1 another program's append between the probe and the write: the entry lands after it, nothing lost, ok at the real line with one readback line, exit 0" "$(field RC)$(field ACTED)$(field KEPT)$(field READBACK)$(count "$LOG" '| logged beside another writer')$( [ "$FOREIGN" -lt "$REAL" ] && echo after)$(grep -c "^ok log-append .*log.md:$REAL\$" "$OUT")" "01yes11after1"
+fixture "$W/fix"
+vws log-append --vault "$VAULT" --action lint --title "logged alone" --changed c --conflicts none --date 2026-09-05
+eq "LG1c control: alone, the append reports the line it landed on and prints nothing on stderr" "$RC$(nlines "$SERR")$(grep -c "log.md:$(grep -n -F '| logged alone' "$LOG" | cut -d: -f1)\$" "$SOUT")" "001"
+fixture "$W/fix"
+drive log-replace "$LOG" log-append --vault "$VAULT" --action lint --title "logged into a replaced log" --changed c --conflicts none --date 2026-09-05
+eq "LG2 a log replaced after the open: the entry is not in the log as it stands, and the error says so" "$(field RC)$(field ACTED)$(count "$LOG" '| logged into a replaced log')$(grep -c 'the entry is not in the log as it now stands' "$OUT")" "2101"
+vws log-append --vault "$VAULT" --action lint --title "logged into a replaced log" --changed c --conflicts none --date 2026-09-05
+eq "LG2b the re-run it asks for writes the entry once" "$RC$(count "$LOG" '| logged into a replaced log')" "01"
+
+fixture "$W/fix"
+rm -f "$W/lg3.paused" "$W/lg3.release" "$W/lg3.blocked" "$W/lg3.done"
+env DRIVE_PAUSED="$W/lg3.paused" DRIVE_RELEASE="$W/lg3.release" "$PY" -B "$W/driver.py" "$S" hold-log "$LOG" log-append --vault "$VAULT" --action lint --title "first of two appends" --changed c --conflicts none --date 2026-09-05 >"$W/lg3a.out" 2>&1 &
+LG3A=$!
+"$PY" -B "$W/driver.py" "$S" waitfor "$W/lg3.paused" 20
+env DRIVE_BLOCKED="$W/lg3.blocked" DRIVE_DONE="$W/lg3.done" "$PY" -B "$W/driver.py" "$S" contend "$LOG" log-append --vault "$VAULT" --action lint --title "second of two appends" --changed c --conflicts none --date 2026-09-05 >"$W/lg3b.out" 2>&1 &
+LG3B=$!
+"$PY" -B "$W/driver.py" "$S" waitfor "$W/lg3.blocked,$W/lg3.done" 20
+LG3W=$(test -e "$W/lg3.blocked" && echo waited || echo nowait)
+touch "$W/lg3.release"
+wait "$LG3A"
+wait "$LG3B"
+L1=$(grep -n -F '| first of two appends' "$LOG" | cut -d: -f1)
+L2=$(grep -n -F '| second of two appends' "$LOG" | cut -d: -f1)
+eq "LG3 two overlapping appends: the second waits for the first's lock, both land whole, each ok line names its own line" "$(sed -n 's/^RC=//p' "$W/lg3a.out")$(sed -n 's/^RC=//p' "$W/lg3b.out")$LG3W$(grep -c "log.md:$L1\$" "$W/lg3a.out")$(grep -c "log.md:$L2\$" "$W/lg3b.out")$(sed -n 's/^READBACK=//p' "$W/lg3a.out")" "00waited110"
+eq "LG3b one blank line between the first entry's Conflicts bullet and the second heading" "$(awk -v a="$L2" 'NR==a-2 || NR==a-1' "$LOG" | tr '\n' '|')" "- **Conflicts**: none||"
+eq "LG3c control: the first process did pause inside its probe with the lock held" "$(test -e "$W/lg3.paused" && echo paused)" "paused"
+fixture "$W/fix"
+drive lock "$LOG" log-append --vault "$VAULT" --action lint --title "held" --changed c --conflicts none --date 2026-09-05
+eq "LG4 a lock another run holds past LOCK_WAIT refuses the append, writing nothing; once free it goes through" "$(field RC)$(field UNCHANGED)$(field WAITED)$(sed -n 's/^AFTER=//p' "$OUT")" "2yesyes0"
+fixture "$W/fix"
+drive lock-dry "$LOG" log-append --vault "$VAULT" --action lint --title "held" --changed c --conflicts none --date 2026-09-05 --dry-run
+eq "LG5 a dry-run append takes no lock, so it answers at once" "$(field RC)$(field WAITED)" "0no"
+fixture "$W/fix"
+drive nofcntl "$LOG" log-append --vault "$VAULT" --action lint --title "no flock" --changed c --conflicts none --date 2026-09-05
+eq "LG6 a platform without flock refuses the append (Q3: refuse, as every other write)" "$(field RC)$(grep -c 'this platform has no flock' "$OUT")$(field UNCHANGED)" "21yes"
+fixture "$W/fix"
+rm -f "$W/lg7.paused" "$W/lg7.release"
+env DRIVE_PAUSED="$W/lg7.paused" DRIVE_RELEASE="$W/lg7.release" "$PY" -B "$W/driver.py" "$S" hold-log "$LOG" log-append --vault "$VAULT" --action lint --title "never appended" --changed c --conflicts none --date 2026-09-05 >"$W/lg7a.out" 2>&1 &
+LG7A=$!
+"$PY" -B "$W/driver.py" "$S" waitfor "$W/lg7.paused" 20
+kill -9 "$LG7A"
+wait "$LG7A" 2>"$W/lg7.wait"
+LG7K=$?
+vws log-append --vault "$VAULT" --action lint --title "after the holder died" --changed c --conflicts none --date 2026-09-05
+eq "LG7 an append killed while holding the lock releases it: the next append writes at once, and nothing of the killed one landed" "$RC$(count "$LOG" 'never appended')$(count "$LOG" '| after the holder died')" "001"
+eq "LG7c control: the holder was paused inside its probe and then killed (wait status 137)" "$(test -e "$W/lg7.paused" && echo paused)$LG7K" "paused137"
+fixture "$W/fix"
+if [ "$(id -u)" = "0" ]; then
+	echo "  --   LG8 skipped: running as root, an unreadable log would still open"
+else
+	chmod 000 "$LOG"
+	vws log-append --vault "$VAULT" --action lint --title "unopenable" --changed c --conflicts none --date 2026-09-05
+	chmod 600 "$LOG"
+	eq "LG8 a log that cannot be opened to append refuses by name, writing nothing" "$RC$(grep -c 'cannot open .*log.md to append' "$SOUT")$(count "$LOG" 'unopenable')" "210"
+fi
+
+echo "== what the decided verbs and the log append may touch =="
+
+dfixture "$W/fix"
+manifest "$W/fix" > "$W/man.d0"
+vw decided add --vault "$VAULT" --date 2026-09-05 --work "swept" --locator q --state "to build" --by b
+vw decided status --vault "$VAULT" --id DW-20260905-1 --note "swept" --by b
+vw decided state --vault "$VAULT" --id DW-20260905-2 --state "to build" --note "swept" --by b
+manifest "$W/fix" > "$W/man.d1"
+eq "EP1 add, status and state changed the open page and no other file" "$(changed_paths "$W/man.d0" "$W/man.d1")" "vault/wiki/developments/decided-work.md "
+vw decided close --vault "$VAULT" --id DW-20260905-1 --kind built --evidence "swept" --by b
+manifest "$W/fix" > "$W/man.d2"
+eq "EP2 a close changed the two decided-work pages and no other file" "$(changed_paths "$W/man.d1" "$W/man.d2")" "vault/wiki/developments/decided-work-done.md vault/wiki/developments/decided-work.md "
+vw log-append --vault "$VAULT" --action lint --title "swept" --changed c --conflicts none --date 2026-09-05
+manifest "$W/fix" > "$W/man.d3"
+eq "EP3 the log append changed the log and no other file" "$(changed_paths "$W/man.d2" "$W/man.d3")" "vault/wiki/log.md "
+eq "EP4 no temporary file survives the decided writes" "$(find "$W/fix" -name '.vault-writes-*' | wc -l | tr -d ' ')" "0"
+MODE0=$(ls -l "$REG" | cut -c1-10)
+"$PY" -B -c 'import sys
+with open(sys.argv[1], "r+b") as handle:
+    handle.seek(2)
+    byte = handle.read(1)
+    handle.seek(2)
+    handle.write(bytes([byte[0] ^ 1]))' "$REG"
+manifest "$W/fix" > "$W/man.d4"
+eq "EP4c control: one byte changed in a sibling of the same folder under the same permissions is caught" "$(changed_paths "$W/man.d3" "$W/man.d4")$( [ "$(ls -l "$REG" | cut -c1-10)" = "$MODE0" ] && echo samemode)" "vault/wiki/developments/known-issues.md samemode"
+
+vw decided add --help
+eq "EP5 decided add has help naming its locator" "$RC$(grep -c -- 'where his words are' "$OUT")" "01"
+vw decided
+eq "EP6 a bare decided is refused" "$RC" "2"
+
+echo "== fixes from the independent check (2026-11-12) =="
+
+# FX2: a line keeps its own terminator. One line of the open page ends in CRLF (the rest LF); each verb
+# must leave that CR as the line's last byte, never mid-line. crs FILE prints "mid,end": lines with a
+# CR before their end, lines ending in one.
+crs() { "$PY" -B -c 'import sys
+lines = open(sys.argv[1], "rb").read().split(b"\n")
+print("%d,%d" % (sum(1 for l in lines if b"\r" in l[:-1]), sum(1 for l in lines if l.endswith(b"\r"))))' "$1"; }
+crlf_line() { "$PY" -B - "$DW" "$1" <<'CRLF_END'
+import sys
+path, ident = sys.argv[1], sys.argv[2]
+lines = open(path, "rb").read().split(b"\n")
+hits = [i for i, l in enumerate(lines) if l.startswith(("- [ ] **%s** " % ident).encode())]
+assert len(hits) == 1, hits
+lines[hits[0]] += b"\r"
+open(path, "wb").write(b"\n".join(lines))
+CRLF_END
+}
+dfixture "$W/fix"; crlf_line DW-20260905-2
+[ "$(crs "$DW")" = "0,1" ] || no "FX2 premise: the planted page carries one CRLF line (got $(crs "$DW"))"
+vws decided status --vault "$VAULT" --id DW-20260905-2 --note "a status on a CRLF line" --by run-suite
+eq "FX2a status on a page with one CRLF line keeps the CR as that line's last byte, never mid-line" "$RC$(crs "$DW")$(awk 'NR==14' "$DW" | grep -c 'a status on a CRLF line.$')" "00,11"
+dfixture "$W/fix"; crlf_line DW-20260905-2
+vws decided state --vault "$VAULT" --id DW-20260905-2 --state "to build" --note "a state on a CRLF line" --by run-suite
+eq "FX2b state on a page with one CRLF line keeps the CR as that line's last byte, and field 4 holds no CR" "$RC$(crs "$DW")$(awk 'NR==14' "$DW" | grep -c ' · to build · other homes')" "00,11"
+dfixture "$W/fix"; crlf_line DW-20260905-2
+vws decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence "a close of a CRLF line" --by run-suite
+eq "FX2c close of a CRLF line: the closed copy keeps the CR as its last byte, none mid-line; the open copy goes whole" "$RC$(crs "$DONE")|$(crs "$DW")$(bold_count "$DW" DW-20260905-2)" "00,1|0,00"
+dfixture "$W/fix"; printf -- '- [x] %s · built 7 September 2026: e\r\n' "$BODY" >> "$DONE"
+vws decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by run-suite
+eq "FX2d control: count 1 where the closed line ends in CRLF is confirmed as the same line, not refused for its CR" "$RC$(bold_count "$DW" DW-20260905-2)" "00"
+
+# FX3: a value may not start or end with the field separator, and the composed line's field count is
+# asserted before any write.
+dfixture "$W/fix"
+dref "FX3a an add's --by ending with the separator refuses: 'recorded by x · at …' would gain a field" "--by starts or ends with the field separator" -- add --vault "$VAULT" --date 2026-09-05 --work w --locator l --state "to build" --by "run-suite ·"
+dref "FX3b a status --note starting with the separator refuses: ': · x' would gain a field" "--note starts or ends with the field separator" -- status --vault "$VAULT" --id DW-20260905-2 --note "· x" --by b
+dref "FX3c a state --note ending with the separator refuses" "--note starts or ends with the field separator" -- state --vault "$VAULT" --id DW-20260905-2 --state "to build" --note "x ·" --by b
+dref "FX3d a close --evidence starting with the separator refuses" "--evidence starts or ends with the field separator" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence "· x" --by b
+"$PY" -B - "$S" >"$OUT" 2>&1 <<'FIELDS_END'
+import importlib.util, io, contextlib, sys
+spec = importlib.util.spec_from_file_location("vw_fields", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+out = io.StringIO()
+code = 0
+with contextlib.redirect_stdout(out):
+    try:
+        module.check_fields("decided-add", "- [ ] **DW-20260905-9** · w · x · decided d (l) · to build · recorded by b", 5, "new line")
+    except SystemExit as exc:
+        code = exc.code
+print("RC=%s" % code)
+print(out.getvalue().strip())
+FIELDS_END
+eq "FX3e the field-count guard refuses a composed line with a field more than its template gives it" "$(field RC)$(grep -c 'would have 6 fields, not the 5 its template gives it' "$OUT")" "21"
+
+# FX4: an entry pushed later behind bytes that end mid-line is glued to them: exit 2, "landed but
+# malformed", and never a plain ok that a caller would leave as it is.
+fixture "$W/fix"
+drive log-noeol "$LOG" log-append --vault "$VAULT" --action lint --title "logged behind a fragment" --changed c --conflicts none --date 2026-09-05
+eq "FX4 an entry glued behind another writer's unfinished line: exit 2, 'landed but malformed; append a correction', the entry there once, their bytes kept" "$(field RC)$(field ACTED)$(field KEPT)$(grep -c 'the entry landed but malformed' "$OUT")$(grep -c 'append a correction entry, never a re-run' "$OUT")$(count "$LOG" '| logged behind a fragment')$(grep -c '^ok log-append' "$OUT" || true)" "21yes1110"
+fixture "$W/fix"
+drive log-between "$LOG" log-append --vault "$VAULT" --action lint --title "logged behind a whole line" --changed c --conflicts none --date 2026-09-05
+eq "FX4c control: behind a newline-ended append the same shift is still ok, with its readback line" "$(field RC)$(field READBACK)" "01"
+
+# FX6: the half-close message says what a re-run does when the open line itself changed, and it does that.
+dfixture "$W/fix"
+DRIVE_PLANT_PATH="$DW"; DRIVE_PLANT_TEXT="written between the two renames${NL}"; export DRIVE_PLANT_PATH DRIVE_PLANT_TEXT
+drive second "$DW" decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by run-suite
+eq "FX6a the half-close error says the re-run refuses as a repair if the open line changed meanwhile" "$(field RC)$(grep -c 'if the open line itself has changed since (a status added, say), the re-run refuses as a repair' "$OUT")" "21"
+dfixture "$W/fix"
+DRIVE_PLANT_PATH="$DW"; DRIVE_PLANT_OLD="· other homes: the fixture register"; DRIVE_PLANT_NEW="· other homes: the fixture register · status 6 September 2026 (fixture): added meanwhile"; export DRIVE_PLANT_PATH DRIVE_PLANT_OLD DRIVE_PLANT_NEW
+drive second-replace "$DW" decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by run-suite
+FX6RC=$(field RC); FX6P=$(field PLANTED)
+dref "FX6b and so it is: after a status lands on the open line between the renames, the re-run refuses as a repair" "with a body that differs from the open copy" -- close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by run-suite
+eq "FX6c control: that run was a half-close, the status landed on the open line between its renames" "$FX6RC$FX6P$(bold_count "$DONE" DW-20260905-2)$(count "$DW" 'added meanwhile')" "2111"
+
+# FX7: the other line-break characters are refused in every argument, the existing verbs' too.
+i=0
+for spec in 'a\342\200\250b|U+2028' 'a\342\200\251b|U+2029' 'a\302\205b|U+0085' 'a\013b|VT' 'a\014b|FF'; do
+	i=$((i + 1))
+	value=$(printf "${spec%%|*}"); label=${spec##*|}
+	dfixture "$W/fix"
+	dref "FX7.$i a decided add whose --work carries $label refuses" "--work carries $label" -- add --vault "$VAULT" --date 2026-09-05 --work "$value" --locator l --state "to build" --by b
+done
+fixture "$W/fix"; cp "$LOG" "$W/log.fx7"
+vws log-append --vault "$VAULT" --action lint --title "$(printf 'a\342\200\250b')" --changed c --conflicts none --date 2026-09-05
+eq "FX7.6 an existing verb refuses it too: log-append's --title carrying U+2028, the log untouched" "$RC$(grep -c 'carries U+2028' "$SOUT")$(cmp -s "$W/log.fx7" "$LOG" && echo same)" "21same"
+fixture "$W/fix"
+vws log-append --vault "$VAULT" --action lint --title "a title with a plain · and no break" --changed c --conflicts none --date 2026-09-05
+eq "FX7c control: a plain argument still goes through" "$RC" "0"
+
+echo "== inside a helper: the write grants bound every writing verb (2026-11-12) =="
+
+# A helper carries its write grants in LLM_WIKI_LANE_WRITES (lane.py sets it for every lane it spawns; empty
+# when read-only); the lead does not. vh GRANTS ARGS... runs the writer inside such a helper.
+vh() { GRANTS="$1"; shift; env LLM_WIKI_LANE_WRITES="$GRANTS" "$PY" -B "$S" "$@" >"$SOUT" 2>"$SERR"; RC=$?; }
+# The remedy every refusal for want of a grant ends with: the helper reports the gap, never edits its environment.
+REPORTGAP='report the missing grant (`needs: <path> because <reason>`)'
+pages_sha() { echo "$(fsha "$REG")$(fsha "$DW")$(fsha "$DONE")$(fsha "$IDEAS")$(fsha "$LOG")"; }
+# gw_refused NAME TARGET GRANTS -- ARGS...: inside a helper holding GRANTS, the call refuses, exit 2, one
+# stdout line naming TARGET and the grant list, every fixture page byte for byte as it was, no temp file.
+gw_refused() {
+	name="$1"; target="$2"; grants="$3"; shift 4
+	dfixture "$W/fix"; before=$(pages_sha)     # each refusal on a fresh fixture
+	vh "$grants" "$@"
+	if [ "$RC" = 2 ] && [ "$(nlines "$SOUT")" = 1 ] \
+	   && grep -qF -- "$target is outside this helper's write grants ($grants); nothing written; $REPORTGAP" "$SOUT" \
+	   && [ "$(pages_sha)" = "$before" ] && [ "$(temps_in "$VAULT")" = 0 ]; then ok "$name"
+	else no "$name (rc $RC, stdout '$(head -c 300 "$SOUT")', pages $( [ "$(pages_sha)" = "$before" ] && echo same || echo CHANGED))"; fi
+}
+WD="$VAULT/wiki/developments"
+D1="--date 2026-09-05"
+dfixture "$W/fix"
+gw_refused "GW1 register add inside a helper granted wiki/log.md only refuses, naming the register" "$REG" "$LOG" -- register add --vault "$VAULT" --why-not-fixed-now "$WN" $D1 --surface "gw surface" --symptom s --cause c --severity minor --status open
+gw_refused "GW2 register close inside that helper refuses" "$REG" "$LOG" -- register close --vault "$VAULT" --match "alpha surface" $D1 --status "closed by a helper"
+gw_refused "GW3 register annotate inside that helper refuses" "$REG" "$LOG" -- register annotate --vault "$VAULT" --match "alpha surface" --kind Status --note "a helper's note"
+gw_refused "GW4 ideas annotate inside that helper refuses, naming the IDEAS file" "$IDEAS" "$LOG" -- ideas annotate --file "$IDEAS" --item 119 --note "a helper's note" $D1
+gw_refused "GW5 decided add inside that helper refuses, naming the open page" "$DW" "$LOG" -- decided add --vault "$VAULT" $D1 --work w --locator l --state "to build" --by helper
+gw_refused "GW6 decided status inside that helper refuses" "$DW" "$LOG" -- decided status --vault "$VAULT" --id DW-20260905-2 --note n --by helper
+gw_refused "GW7 decided state inside that helper refuses" "$DW" "$LOG" -- decided state --vault "$VAULT" --id DW-20260905-2 --state "to build" --note n --by helper
+gw_refused "GW8 decided close inside that helper refuses" "$DW" "$LOG" -- decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by helper
+gw_refused "GW8b decided close inside a helper granted the open page only refuses, naming the closed page it would also write" "$DONE" "$DW" -- decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by helper
+gw_refused "GW8c a dry run refuses inside that helper as the real run would: it previews the run it stands for" "$DW" "$LOG" -- decided add --vault "$VAULT" $D1 --work w --locator l --state "to build" --by helper --dry-run
+
+# The helper's own writes go through (controls, the same on the writer before this change).
+dfixture "$W/fix"
+vh "$LOG" log-append --vault "$VAULT" --action lint --title "a helper's own entry" --changed c --conflicts none $D1
+eq "GW9 control: the same helper's log-append is allowed, the entry written once" "$RC$(count "$LOG" "| a helper's own entry")" "01"
+dfixture "$W/fix"
+vh "$LOG:$VAULT/wiki/index.md:$VAULT/wiki/sources" log-append --vault "$VAULT" --action ingest --title "an ingest lane's entry" --changed c --conflicts none $D1
+eq "GW9b control: an ingest-exception helper (log, index and its pages granted, CLAUDE.md 2.2) appends its log entry" "$RC$(count "$LOG" "| an ingest lane's entry")" "01"
+dfixture "$W/fix"
+vh "$WD" register add --vault "$VAULT" --why-not-fixed-now "$WN" $D1 --surface "gw granted" --symptom s --cause c --severity minor --status open
+eq "GW10 control: a helper granted wiki/developments may register add" "$RC$(count "$REG" 'gw granted')" "01"
+dfixture "$W/fix"
+vh "$WD" decided close --vault "$VAULT" --id DW-20260905-2 --kind built --evidence e --by helper
+eq "GW10b control: a helper granted wiki/developments may close a decided-work line (both pages in it)" "$RC$(bold_count "$DONE" DW-20260905-2)$(bold_count "$DW" DW-20260905-2)" "010"
+dfixture "$W/fix"
+vh "$REG" register annotate --vault "$VAULT" --match "alpha surface" --kind Status --note "a granted note"
+eq "GW10c control: a grant on the register file itself covers it" "$RC$(count "$REG" 'a granted note')" "01"
+
+# The lead (the variable absent) is unchanged: every verb writes where no grant names it.
+dfixture "$W/fix"
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" register add --vault "$VAULT" --why-not-fixed-now "$WN" $D1 --surface "lead surface" --symptom s --cause c --severity minor --status open >"$OUT" 2>&1; L1=$?
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" register annotate --vault "$VAULT" --match "alpha surface" --kind Status --note "lead note" >"$OUT" 2>&1; L2=$?
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" register close --vault "$VAULT" --match "beta surface" $D1 --status "closed by the lead" >"$OUT" 2>&1; L3=$?
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" ideas annotate --file "$IDEAS" --item 119 --note "lead note" $D1 >"$OUT" 2>&1; L4=$?
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" decided add --vault "$VAULT" $D1 --work "lead work" --locator l --state "to build" --by lead >"$OUT" 2>&1; L5=$?
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" decided status --vault "$VAULT" --id DW-20260905-2 --note "lead status" --by lead >"$OUT" 2>&1; L6=$?
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" decided state --vault "$VAULT" --id DW-20260904-1 --state "to build" --note "lead state" --by lead >"$OUT" 2>&1; L7=$?
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" decided close --vault "$VAULT" --id DW-20260905-1 --kind built --evidence "lead close" --by lead >"$OUT" 2>&1; L8=$?
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" log-append --vault "$VAULT" --action lint --title "lead entry" --changed c --conflicts none $D1 >"$OUT" 2>&1; L9=$?
+eq "GW11 control: the lead (no LLM_WIKI_LANE_WRITES) writes with every verb, as before" "$L1$L2$L3$L4$L5$L6$L7$L8$L9$(count "$REG" 'lead surface')$(count "$IDEAS" 'lead note')$(count "$DW" 'lead status')$(count "$LOG" '| lead entry')" "0000000001111"
+
+# An empty or unreadable variable refuses (fail-closed): a helper whose grants cannot be read writes nothing.
+# Each verb runs on a fresh fixture; its refusal names the file the write would change and prints the value
+# whole, as repr() gives it.
+EMPTYMSG="this run is inside a helper whose LLM_WIKI_LANE_WRITES is empty (''), so it holds no write grant; nothing written"
+refused=0; kept=0
+for spec in "log-append --vault $VAULT --action lint --title t --changed c --conflicts none $D1|$LOG" \
+            "register add --vault $VAULT --why-not-fixed-now x $D1 --surface s --symptom s --cause c --severity minor --status open|$REG" \
+            "register close --vault $VAULT --match alpha $D1 --status s|$REG" \
+            "register annotate --vault $VAULT --match alpha --kind Status --note n|$REG" \
+            "ideas annotate --file $IDEAS --item 119 --note n $D1|$IDEAS" \
+            "decided add --vault $VAULT $D1 --work w --locator l --state to-build --by b|$DW" \
+            "decided status --vault $VAULT --id DW-20260905-2 --note n --by b|$DW" \
+            "decided state --vault $VAULT --id DW-20260905-2 --state to-build --note n --by b|$DW" \
+            "decided close --vault $VAULT --id DW-20260905-2 --kind built --evidence e --by b|$DW, $DONE"; do
+	call=${spec%|*}; target=${spec##*|}
+	dfixture "$W/fix"; before=$(pages_sha)
+	# shellcheck disable=SC2086
+	env LLM_WIKI_LANE_WRITES= "$PY" -B "$S" $call >"$OUT" 2>&1
+	[ "$?" = 2 ] && grep -qF -- "$target: $EMPTYMSG" "$OUT" && refused=$((refused + 1))
+	[ "$(pages_sha)" = "$before" ] && kept=$((kept + 1))
+done
+eq "GW12 an empty LLM_WIKI_LANE_WRITES refuses every one of the nine writing verbs, each refusal naming its target, each fresh fixture untouched" "$refused$kept" "99"
+LONGV=$(printf 'relative/%0150d' 0)
+for spec in 'wiki/log.md|a relative path' ':::|separators only' " $LOG|a padded path" "$LOG:relative/x|a relative path beside an absolute one" "$LONGV|a 159-character relative value, printed whole"; do
+	value=${spec%%|*}; label=${spec##*|}
+	dfixture "$W/fix"; before=$(pages_sha)
+	RV=$("$PY" -B -c 'import sys; print(repr(sys.argv[1]))' "$value")
+	env LLM_WIKI_LANE_WRITES="$value" "$PY" -B "$S" log-append --vault "$VAULT" --action lint --title t --changed c --conflicts none $D1 >"$OUT" 2>&1; GRC=$?
+	eq "GW13 a garbled LLM_WIKI_LANE_WRITES ($label) refuses, naming the log and printing the value whole as repr gives it, writing nothing" "$GRC$(grep -c -F -- "$LOG: this run is inside a helper whose LLM_WIKI_LANE_WRITES" "$OUT")$(grep -c -F -- "($RV)" "$OUT")$( [ "$(pages_sha)" = "$before" ] && echo same)" "211same"
+done
+
+# A target that is itself a symbolic link: inside a helper it is refused whatever it points to, and the link is
+# left as it is, since a write would rename over the link's own path in its own folder. A folder reached
+# through a link is followed, and a grant given through a linked spelling covers what it resolves to.
+# P4a: --vault given as a link to the vault, the grant on the real folder.
+dfixture "$W/fix"; rm -f "$W/vaultlink"; ln -s "$VAULT" "$W/vaultlink"
+vh "$WD" register add --vault "$W/vaultlink" --why-not-fixed-now "$WN" $D1 --surface "through a linked vault folder" --symptom s --cause c --severity minor --status open
+eq "GW14-P4a control: a granted file reached through a linked vault folder is allowed, the write landing in the granted file" "$RC$(count "$REG" 'through a linked vault folder')$(test -L "$W/vaultlink" && echo link)$(test -L "$REG" || echo file)" "01linkfile"
+# P4b: --vault the real vault, the grant spelled through the linked vault folder.
+dfixture "$W/fix"; rm -f "$W/vaultlink"; ln -s "$VAULT" "$W/vaultlink"
+vh "$W/vaultlink/wiki/developments" register add --vault "$VAULT" --why-not-fixed-now "$WN" $D1 --surface "under a grant spelled through a link" --symptom s --cause c --severity minor --status open
+eq "GW14-P4b control: a grant spelled through a linked vault folder covers the folder it resolves to" "$RC$(count "$REG" 'under a grant spelled through a link')" "01"
+# P4c: an ungranted vault whose wiki/developments is a folder link to the granted folder, the grant given on the
+# real folder and then on the linked spelling. A folder reached through a link is followed: the write lands in the
+# real folder and the folder link stays.
+for spelling in real linked; do
+	dfixture "$W/fix"; rm -rf "$W/uvault"; mkdir -p "$W/uvault/wiki"; ln -s "$WD" "$W/uvault/wiki/developments"
+	if [ "$spelling" = real ]; then GRANT="$WD"; else GRANT="$W/uvault/wiki/developments"; fi
+	vh "$GRANT" register add --vault "$W/uvault" --why-not-fixed-now "$WN" $D1 --surface "through a linked folder ($spelling grant)" --symptom s --cause c --severity minor --status open
+	eq "GW14-P4c control ($spelling grant): an ungranted vault whose wiki/developments links to the granted folder writes into the real folder, the folder link intact" "$RC$(count "$REG" "through a linked folder ($spelling grant)")$(test -L "$W/uvault/wiki/developments" && echo link)$(test -L "$REG" || echo file)" "01linkfile"
+done
+# P4d: a file link in an ungranted folder to the granted register. Refused: a write would rename over the link's
+# own path in the ungranted folder.
+dfixture "$W/fix"; rm -rf "$W/linkvault"; mkdir -p "$W/linkvault/wiki/developments"
+ln -s "$REG" "$W/linkvault/wiki/developments/known-issues.md"; before=$(pages_sha)
+vh "$WD" register add --vault "$W/linkvault" --why-not-fixed-now "$WN" $D1 --surface "through a link" --symptom s --cause c --severity minor --status open
+eq "GW14-P4d a register add whose target is a link in an ungranted folder pointing into the granted one is refused, the link intact, nothing written" "$RC$(grep -c 'is a symbolic link (to ' "$SOUT")|$(test -L "$W/linkvault/wiki/developments/known-issues.md" && echo link)|$( [ "$(readlink "$W/linkvault/wiki/developments/known-issues.md")" = "$REG" ] && echo same-target)|$( [ "$(pages_sha)" = "$before" ] && echo pages-same)|$(find "$W/linkvault" -name '.vault-writes-*' | wc -l | tr -d ' ')" "21|link|same-target|pages-same|0"
+dfixture "$W/fix"; rm -rf "$W/linkvault2"; mkdir -p "$W/linkvault2/wiki/developments"
+ln -s "$DW" "$W/linkvault2/wiki/developments/decided-work.md"; before=$(pages_sha)
+vh "$WD" decided status --vault "$W/linkvault2" --id DW-20260905-2 --note "through a link" --by helper
+eq "GW14-P4d2 a decided status whose open page is such a link is refused the same way, the link intact" "$RC$(grep -c 'is a symbolic link (to ' "$SOUT")|$(test -L "$W/linkvault2/wiki/developments/decided-work.md" && echo link)|$( [ "$(pages_sha)" = "$before" ] && echo pages-same)" "21|link|pages-same"
+# P4e: ungranted/wiki/log.md a file link to the granted log, the grant on the granted log, log-append --vault
+# ungranted. Refused, like P4d: inside a helper any linked target is refused, so a link planted in an ungranted
+# folder never stands in for a granted file. (log-append appends through the link rather than renaming over it,
+# so here the refusal is that uniform rule, not a replace.)
+dfixture "$W/fix"; rm -rf "$W/uvault2"; mkdir -p "$W/uvault2/wiki"; ln -s "$LOG" "$W/uvault2/wiki/log.md"; before=$(pages_sha)
+vh "$LOG" log-append --vault "$W/uvault2" --action lint --title "through a log link" --changed c --conflicts none $D1
+eq "GW14-P4e a log-append whose log is a file link in an ungranted folder to the granted log is refused, the link intact, the log unchanged" "$RC$(grep -c 'is a symbolic link (to ' "$SOUT")|$(test -L "$W/uvault2/wiki/log.md" && echo link)|$( [ "$(readlink "$W/uvault2/wiki/log.md")" = "$LOG" ] && echo same-target)|$( [ "$(pages_sha)" = "$before" ] && echo pages-same)" "21|link|same-target|pages-same"
+dfixture "$W/fix"; rm -rf "$W/linkvault"; mkdir -p "$W/linkvault/wiki/developments"
+ln -s "$REG" "$W/linkvault/wiki/developments/known-issues.md"
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" register add --vault "$W/linkvault" --why-not-fixed-now "$WN" $D1 --surface "the lead through a link" --symptom s --cause c --severity minor --status open >"$OUT" 2>&1; LRC=$?
+eq "GW14-lead control: the lead (no variable) writes through a linked target as before" "$LRC$(grep -c 'the lead through a link' "$W/linkvault/wiki/developments/known-issues.md")" "01"
+
+# GW15: a helper whose grant variable is absent. lane.py sets LLM_WIKI_LANE, LLM_WIKI_LANE_ID and
+# LLM_WIKI_LANE_GRANTS beside LLM_WIKI_LANE_WRITES; a helper that removes the variable alone has not left the
+# helper, so every verb refuses: one line naming the target and ending with the report it owes its head.
+ABSENTMSG="this run is inside a helper whose LLM_WIKI_LANE_WRITES is absent, so its grants cannot be read; nothing written; $REPORTGAP"
+dfixture "$W/fix"; before=$(pages_sha)
+env -u LLM_WIKI_LANE_WRITES LLM_WIKI_LANE=1 LLM_WIKI_LANE_RUN=run-suite LLM_WIKI_LANE_ID=gw LLM_WIKI_LANE_GRANTS="$W" "$PY" -B "$S" register add --vault "$VAULT" --why-not-fixed-now "$WN" $D1 --surface "a helper without its variable" --symptom s --cause c --severity minor --status open >"$SOUT" 2>"$SERR"; RC=$?
+eq "GW15a register add in a helper environment as lane.py sets it, the grant variable removed, refuses: one line naming the register, ending with the report, nothing written" "$RC$(nlines "$SOUT")$(grep -c -F -- "$REG: $ABSENTMSG" "$SOUT")$( [ "$(pages_sha)" = "$before" ] && echo same)$(temps_in "$VAULT")" "211same0"
+refused=0; kept=0
+for marker in "LLM_WIKI_LANE=1" "LLM_WIKI_LANE_ID=gw" "LLM_WIKI_LANE_GRANTS=$W"; do
+	dfixture "$W/fix"; before=$(pages_sha)
+	env -u LLM_WIKI_LANE_WRITES "$marker" "$PY" -B "$S" log-append --vault "$VAULT" --action lint --title "one marker alone" --changed c --conflicts none $D1 >"$OUT" 2>&1
+	[ "$?" = 2 ] && grep -qF -- "$LOG: $ABSENTMSG" "$OUT" && refused=$((refused + 1))
+	[ "$(pages_sha)" = "$before" ] && kept=$((kept + 1))
+done
+eq "GW15b any one of the three names alone, the grant variable absent, refuses log-append, the log untouched (3 names)" "$refused$kept" "33"
+dfixture "$W/fix"; before=$(pages_sha)
+env -u LLM_WIKI_LANE_WRITES LLM_WIKI_LANE=1 LLM_WIKI_LANE_ID=gw "$PY" -B "$S" decided add --vault "$VAULT" $D1 --work w --locator l --state "to build" --by helper >"$SOUT" 2>&1; R1=$?; G1=$(grep -c -F -- "$DW: $ABSENTMSG" "$SOUT")
+env -u LLM_WIKI_LANE_WRITES LLM_WIKI_LANE=1 LLM_WIKI_LANE_ID=gw "$PY" -B "$S" decided add --vault "$VAULT" $D1 --work w --locator l --state "to build" --by helper --dry-run >"$SOUT" 2>&1; R2=$?; G2=$(grep -c -F -- "$DW: $ABSENTMSG" "$SOUT")
+eq "GW15c decided add, and its dry run, refuse the same way in such a helper, the pages untouched" "$R1$G1$R2$G2$( [ "$(pages_sha)" = "$before" ] && echo same)" "2121same"
+dfixture "$W/fix"; before=$(pages_sha)
+env -u LLM_WIKI_LANE_WRITES -u LLM_WIKI_LANE_GRANTS LLM_WIKI_LANE=1 LLM_WIKI_LANE_RUN=run-suite LLM_WIKI_LANE_ID=gw LLM_WIKI_LANE_HARNESS=codex "$PY" -B "$S" log-append --vault "$VAULT" --action lint --title "a codex helper's entry" --changed c --conflicts none $D1 >"$OUT" 2>&1; CRC=$?
+eq "GW15d a Codex helper's environment as codex-lane.py sets it (two of the names, no grant variable) is refused too, the log untouched" "$CRC$(grep -c -F -- "$LOG: $ABSENTMSG" "$OUT")$( [ "$(pages_sha)" = "$before" ] && echo same)" "21same"
+dfixture "$W/fix"
+env -u LLM_WIKI_LANE_WRITES -u LLM_WIKI_LANE -u LLM_WIKI_LANE_ID -u LLM_WIKI_LANE_GRANTS LLM_WIKI_LANE_RUN=run-suite LLM_WIKI_LANE_PROGRESS="$W/progress" LLM_WIKI_LANE_HOME="$W/home" "$PY" -B "$S" register add --vault "$VAULT" --why-not-fixed-now "$WN" $D1 --surface "a lead beside other lane names" --symptom s --cause c --severity minor --status open >"$OUT" 2>&1; LRC=$?
+eq "GW15e control: a lead's environment (none of the three names, other LLM_WIKI_LANE_ names set) writes as before" "$LRC$(count "$REG" 'a lead beside other lane names')" "01"
+# The refusal points at the report, not at the variable: no `NAME=value` a helper could copy onto its command line.
+dfixture "$W/fix"
+vh "$LOG" register add --vault "$VAULT" --why-not-fixed-now "$WN" $D1 --surface s --symptom s --cause c --severity minor --status open
+eq "GW15f the outside-the-grants refusal ends with the report and carries no LLM_WIKI_LANE_WRITES= assignment" "$RC$(grep -c -F -- "; $REPORTGAP" "$SOUT")$(grep -c -F -- 'LLM_WIKI_LANE_WRITES=' "$SOUT")" "210"
+dfixture "$W/fix"
+env LLM_WIKI_LANE_WRITES= "$PY" -B "$S" log-append --vault "$VAULT" --action lint --title t --changed c --conflicts none $D1 >"$OUT" 2>&1; ERC=$?
+eq "GW15g the empty-variable refusal ends with the report too" "$ERC$(grep -c -F -- "$EMPTYMSG; $REPORTGAP" "$OUT")" "21"
+
+# GW16: a target with a second hard link. Inside a helper granted only a folder of its own, a hard link there to
+# the vault's log (or register) would let an append (or a read) reach a file the grants do not name, so it is
+# refused, the links left as they are; a plain file is written, and the lead is unchanged.
+nlink() { "$PY" -B -c 'import os, sys; print(os.stat(sys.argv[1]).st_nlink)' "$1"; }
+dfixture "$W/fix"; rm -rf "$W/hl"; mkdir -p "$W/hl/v/wiki"; ln "$LOG" "$W/hl/v/wiki/log.md"; before=$(pages_sha)
+vh "$W/hl" log-append --vault "$W/hl/v" --action lint --title "through a hard link" --changed c --conflicts none $D1
+eq "GW16a log-append whose log is a hard link to the vault's log, in a folder the helper was granted, is refused, the log unchanged, both names kept" "$RC$(nlines "$SOUT")$(grep -c 'has 2 hard links' "$SOUT")|$( [ "$(pages_sha)" = "$before" ] && echo pages-same)|$(nlink "$LOG")$(nlink "$W/hl/v/wiki/log.md")" "211|pages-same|22"
+dfixture "$W/fix"; rm -rf "$W/hl"; mkdir -p "$W/hl/v/wiki/developments"; ln "$REG" "$W/hl/v/wiki/developments/known-issues.md"; before=$(pages_sha)
+vh "$W/hl" register add --vault "$W/hl/v" --why-not-fixed-now "$WN" $D1 --surface "through a hard link" --symptom s --cause c --severity minor --status open
+eq "GW16b register add whose register is such a hard link is refused the same way, nothing written, no temp file" "$RC$(grep -c 'has 2 hard links' "$SOUT")|$( [ "$(pages_sha)" = "$before" ] && echo pages-same)|$(nlink "$REG")|$(temps_in "$W/hl")" "21|pages-same|2|0"
+dfixture "$W/fix"; rm -rf "$W/hl"; mkdir -p "$W/hl/v/wiki"; cp "$LOG" "$W/hl/v/wiki/log.md"; before=$(pages_sha)
+vh "$W/hl" log-append --vault "$W/hl/v" --action lint --title "into a plain copy" --changed c --conflicts none $D1
+eq "GW16c control: the same helper appends to a plain file there (one link), the vault's log unchanged" "$RC$(count "$W/hl/v/wiki/log.md" '| into a plain copy')$(nlink "$W/hl/v/wiki/log.md")$( [ "$(pages_sha)" = "$before" ] && echo pages-same)" "011pages-same"
+dfixture "$W/fix"; rm -rf "$W/hl"; mkdir -p "$W/hl/v/wiki"; ln "$LOG" "$W/hl/v/wiki/log.md"
+env -u LLM_WIKI_LANE_WRITES "$PY" -B "$S" log-append --vault "$W/hl/v" --action lint --title "the lead through a hard link" --changed c --conflicts none $D1 >"$OUT" 2>&1; LRC=$?
+eq "GW16d control: the lead (no variable) appends through a hard link as before" "$LRC$(count "$LOG" '| the lead through a hard link')" "01"
 
 TOTAL=$((PASS + FAIL))
 if [ "$FAIL" -eq 0 ]; then

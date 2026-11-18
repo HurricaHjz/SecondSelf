@@ -24,12 +24,20 @@ SCOPE
 - Boundary: report off-scope findings without fixing them.
 
 GRANTS
+- Bounds: {{the job page's Bounds and lesson index (path); the hard limits that apply, each naming its source: the owner's strict mark, an approved rule, or the lead's own choice}}
+- Pushed: {{lesson ids or grants, each with one line on why this seat needs it | none}}
+- Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
+- Left out on purpose: {{what, and why | none}}
+- Second seat: {{none, or the rule that earns it and what that seat checks against}}
 DECISIONS: {{the run's decisions that bear on this task, and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
+Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
+A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 {{headless lanes: the read directories, the write scope and any add-on granted beyond the
 class row, each with its reason — so a refused path reads as a gap to report, never as a
 mistake to work around; every path and command literal, as the fence will see it — no `Let X =`
 shorthand and no pasteable placeholder, since a fenced lane copies a shorthand into a shell
 variable the fence reads as an ungranted root (eight denials, 2026-09-06) | in-session: "n/a — inherited"}}
+{{a Codex lane given shell network (`codex-lane.py --network`, with `--write`): one `HOST+: <host>, …` line, unquoted, naming every host the lane may reach as bare host names inside the run's network grant (DW-20261024-2) | no shell network: omit, since a Claude lane gets none}}
 
 VERIFICATION
 - Output gate: pack has ≥1 slice OR a Gaps section whose search-probe control hit — an empty

@@ -45,7 +45,14 @@ SCOPE
   (2026-09-05).
 
 GRANTS
+- Bounds: {{the job page's Bounds and lesson index (path); the hard limits that apply, each naming its source: the owner's strict mark, an approved rule, or the lead's own choice}}
+- Pushed: {{lesson ids or grants, each with one line on why this seat needs it | none}}
+- Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
+- Left out on purpose: {{what, and why | none}}
+- Second seat: {{this seat is one: the rule that earns it, and what it checks against}}
 DECISIONS: {{the run's decisions that bear on this task, and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
+Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
+A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 {{headless lanes: the read directories, the write scope and any add-on granted beyond the
 class row, each with its reason — so a refused path reads as a gap to report, never as a
 mistake to work around; every path and command literal, as the fence will see it — no `Let X =`
@@ -66,7 +73,7 @@ Role delta: blind lane applies doubly — the spawner's leaning is deliberately 
 if the brief leaks one, note the leak and disregard it. {{extra conduct | —}}
 
 REPORT
-Begin the verdict with "ready" or "not ready". Say "not ready" only where a finding must be fixed before the work passes on, and state why it must wait; list the remaining findings as advice. Judge readiness under the applicable rules and the review's stated pass test, including CUSTOMISATION.md's "Rounds are judged by progress, not counted".
+Begin the verdict with "ready" or "not ready". Say "not ready" only where a finding must be fixed before the work passes on, and state why it must wait; list the remaining findings as advice. Judge readiness under the applicable rules and the review's stated pass test, including CUSTOMISATION.md's "Rounds are judged by progress, not counted" and "Stopped designs", quoted in TASK where your copy cannot read that file.
 ## Verdict · ## Findings (severity-ranked, each evidenced, with its overturn condition) ·
 ## Confirmations · ## The cost question · ## Controls
 ```
@@ -88,3 +95,7 @@ Never ask the critic to construct or run a working bypass: both model families r
 review as offensive security work. A review of any check also states its effect (warn, block or
 repair) and CLAUDE.md §12's testing bar for that effect; a finding beyond the bar follows §12's
 bullet "Act now if you can; park only with a reason". -->
+
+<!-- Spawner: where the reviewer's copy cannot read CUSTOMISATION.md (its grants omit that file),
+quote both rules in TASK: "Rounds are judged by progress, not counted" and "Stopped designs"
+(2026-11-09: a staged reviewer asked to read "Stopped designs" could not weigh its stop grounds). -->

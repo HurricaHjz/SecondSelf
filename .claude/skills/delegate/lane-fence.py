@@ -1426,6 +1426,36 @@ def ssh_literal(raw, remote_data=False):
     return "".join(value), None
 
 
+def quoted_substitution(raw):
+    """Whether a shell word runs a command substitution that the ordinary checks cannot read.
+
+    Those checks remove quoted text before they read a segment, so a `$(` standing inside double
+    quotes, at any depth, is never seen there; an unquoted `$(` is read like the rest of the
+    command. A backtick counts as unreadable whether quoted or not: those checks do not judge what
+    an unquoted one runs either (an ssh, a fetch or an ungranted read inside one passes them).
+    ANSI-C and locale quoting (`$'…'`, `$"…"`) and an unterminated quote are not decoded here and
+    count as unreadable.
+    """
+    quote, i = None, 0
+    while i < len(raw):
+        ch = raw[i]
+        if quote == "'":
+            if ch == "'":
+                quote = None
+        elif ch == "\\":
+            i += 1
+        elif quote is None and raw.startswith(("$'", '$"'), i):
+            return True
+        elif ch == "'" and quote is None:
+            quote = "'"
+        elif ch == '"':
+            quote = None if quote else '"'
+        elif ch == "`" or (quote == '"' and raw.startswith("$(", i)):
+            return True
+        i += 1
+    return quote is not None
+
+
 def ssh_local_io(words, arg_indices=None):
     """Separate shell I/O before identifying any remote operands."""
     args, reads, writes, errors = [], [], [], []
@@ -1808,13 +1838,28 @@ def ssh_command_view(text, initial_base=CURRENT_DIRECTORY):
         words = [item[0] for item in segment]
         args, _, _, _ = ssh_local_io(words)
         index, client = segment_command(args)
+        # A leading assignment is local shell evaluation. Where this view replaces its segment
+        # (an ssh-family client, judged by ssh_family_info, or a shell wrapper whose payload is
+        # classified below) the assignment leaves the text the later checks read, so it must
+        # resolve to a literal. Any other segment stays in that text, and the later checks read a
+        # parameter or an unquoted $( ) substitution in it like the rest of the command, so a
+        # clock read such as T=$(date -u +%H:%M) before a local program is not refused here. What
+        # those checks cannot judge (quoted_substitution: a $( ) inside double quotes, any
+        # backtick, ANSI-C or locale quoting, an unterminated quote) is refused before any client.
+        # The prefix-wrapper test below reads the first word past the assignments, so an
+        # ssh-family program behind nice, env, xargs or another of PREFIXES is refused with a
+        # leading assignment as it is without one.
+        assignment_errors, unread = [], []
         if index is not None:
             for raw in args[:index]:
                 if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", raw):
                     _, error = ssh_literal(raw)
                     if error:
-                        errors.append(error)
+                        assignment_errors.append(error)
+                        if quoted_substitution(raw):
+                            unread.append(error)
         if client in SSH_FAMILY:
+            unread = []
             hs, rs, ws, es = ssh_family_info(words)
             hosts.extend(hs)
             reads.extend(local_paths(rs, base, "read"))
@@ -1835,6 +1880,8 @@ def ssh_command_view(text, initial_base=CURRENT_DIRECTORY):
                         reads.extend(rs)
                         writes.extend(ws)
                         errors.extend(es)
+                        errors.extend(assignment_errors)
+                        unread = []
                         wrapper, wrapper_error = ssh_literal(args[index])
                         if wrapper_error:
                             errors.append(wrapper_error)
@@ -1863,9 +1910,11 @@ def ssh_command_view(text, initial_base=CURRENT_DIRECTORY):
             for payload in interpreter_payloads(" ".join(args)):
                 if ssh_command_view(payload)[5]:
                     errors.append("unresolved ssh-family interpreter wrapper grammar")
-        elif args and os.path.basename(unquote_token(args[0])) in PREFIXES:
+        elif args and os.path.basename(unquote_token(next(
+                (raw for raw in args if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", raw)), args[0]))) in PREFIXES:
             if any(unquote_token(raw) in SSH_FAMILY for raw in args[1:]):
                 errors.append("unresolved ssh-family command wrapper options")
+        errors.extend(unread)
     for start, end, replacement in reversed(edits):
         text = text[:start] + replacement + text[end:]
     return text, hosts, reads, writes, errors, active
@@ -2224,7 +2273,7 @@ RECORD_OPTIONS = {
     ("register", "add"): (
         {"--vault", "--date", "--surface", "--symptom", "--cause", "--why-not-fixed-now", "--severity",
          "--status"},
-        {"--where"}),
+        {"--where", "--cause-kind"}),
     ("register", "close"): (
         {"--vault", "--match", "--date", "--status"}, set()),
     ("register", "annotate"): (
@@ -2566,6 +2615,437 @@ def record_writer_view(command, writes):
         return command, None
 
 
+# The record writer reads a helper's write grants from LLM_WIKI_LANE_WRITES, and knows it is inside
+# a helper from the other names lane.py sets beside it. A command line that changes those names
+# before the call hands the writer grants the helper was never given. So in the lane role the fence
+# refuses a command line on which such a change comes before a command that runs the writer, in
+# that command or an earlier one. A change is:
+# - an assignment to an LLM_WIKI_LANE* name, whether leading, bare or made through export,
+#   typeset, declare, readonly, local, read, printf -v, for, alias or an assigning expansion;
+# - unset of such a name;
+# - an `env` wrapper that clears the environment (-i, -) or removes or sets such a name;
+# - `exec -c`;
+# - a launcher that starts its command under another environment (sudo, tmux and the like).
+# The writer is found by its name or by a link to it. It counts as run when it is the program
+# itself or a Python interpreter's script, past the usual wrappers, inside `sh -c` and `eval`, and
+# behind an unlisted wrapper that names a Python interpreter running it.
+# A change that lasts (export, unset, a bare assignment and the other builtins) also refuses any
+# later mention of the writer on the line, because a function or an alias can hide the program. A
+# change made for one command (a leading assignment, an `env` wrapper) refuses a later command
+# only when that command runs the writer.
+# Code the shell structure does not show is read as text. Shell text that a shell reads from a
+# heredoc, a here-string or a pipe refuses when it names the writer beside a change. A -c or -e
+# program, or one an interpreter reads from stdin, refuses only when it names the writer, starts a
+# process or runs a file, and changes the environment. A program that only reads, edits or tests the
+# writer is not refused.
+# Not read here: a script file, a copy of the writer under another name, the writer imported as a
+# module and called in-process, and a program that empties its child's environment without naming
+# it. check() applies this in the lane role only.
+LANE_NAME = re.compile(r"LLM_WIKI_LANE[A-Za-z0-9_]*")
+# A read ($NAME, ${NAME}, ${#NAME}, ${NAME:-x}, zsh's ${(P)NAME}) changes nothing. The assigning
+# expansions ${NAME=x}, ${NAME:=x} and zsh's ${NAME::=x} do, so they never count as a read.
+LANE_READ = re.compile(r"\$(?:LLM_WIKI_LANE[A-Za-z0-9_]*|\{(?:\([^)]*\))?[#!~=^+]*"
+                       r"LLM_WIKI_LANE[A-Za-z0-9_]*(?![A-Za-z0-9_])(?!:{0,2}=))")
+LANE_ASSIGNING = re.compile(r"\$\{(?:\([^)]*\))?[#!~=^+]*LLM_WIKI_LANE[A-Za-z0-9_]*:{0,2}=")
+LANE_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?\+?=")
+LANE_SKIP = frozenset({"{", "}", "!", "if", "then", "else", "elif", "fi", "do", "done", "while", "until",
+                       "nohup", "builtin", "noglob", "nocorrect", "-", "--"})
+LANE_SETTERS = frozenset({"unset", "export", "typeset", "declare", "local", "readonly", "integer", "float",
+                          "read", "getopts", "let", "mapfile", "readarray", "vared", "alias", "for",
+                          "select", "setenv", "unsetenv"})
+LANE_RELAUNCHERS = frozenset({"sudo", "doas", "su", "runuser", "launchctl", "tmux", "screen", "at", "batch"})
+LANE_WRAPPERS = frozenset({"xargs", "find", "parallel", "watch", "flock", "ionice", "chrt", "taskset",
+                           "setsid", "arch", "unbuffer", "script", "caffeinate", "timeout", "gtimeout",
+                           "stdbuf", "sandbox-exec", "chroot"})
+LANE_INLINE = {"perl": "eE", "ruby": "e", "node": "ep", "osascript": "e", "php": "r"}
+LANE_PYTHON = re.compile(r"python[0-9.]*")
+# Builtins whose plain operands are variable names (a dynamic one may be a lane name).
+LANE_NAMED = frozenset({"unset", "export", "typeset", "declare", "local", "readonly", "integer", "float",
+                        "read", "vared", "getopts", "mapfile", "readarray"})
+# A Python program that starts a process or runs a file as a script. Loading code in-process
+# (exec(), importlib) is how test harnesses load the modules they test, so it does not count.
+LANE_RUNS_PYTHON = re.compile(
+    r"\bsubprocess\b|\bos\s*\.\s*(?:system|popen|exec\w*|spawn\w*|posix_spawnp?)\b|\bpty\s*\.\s*spawn\b"
+    r"|\brunpy\b")
+# A Perl, Ruby, Node, PHP or osascript program that starts a process.
+LANE_RUNS_OTHER = re.compile(
+    r"\b(?:system|exec|qx|spawn\w*|popen|proc_open|shell_exec|passthru|execSync|execFile\w*)\b|`"
+    r"|\bchild_process\b|\bOpen3\b|\bdo shell script\b")
+# Text that changes a lane name or empties the environment, in code the structure does not show.
+# Read only beside the writer's name, so a program merely inspecting the writer is not refused.
+LANE_TEXT_CHANGE = re.compile(
+    r"LLM_WIKI_LANE[A-Za-z0-9_]*\]?\s*(?:\+?=(?!=)|:)"
+    r"|(?:^|[;&|(){}\n]|\b(?:then|do|else|elif)\b)\s*(?:builtin\s+|command\s+)?"
+    r"(?:unset|export|typeset|declare|local|readonly|integer|float|read|getopts|let|mapfile|readarray"
+    r"|vared|alias|for|select|setenv|unsetenv)\s[^;&|\n]*LLM_WIKI_LANE"
+    r"|\bprintf\s[^;&|\n]*-v\s*LLM_WIKI_LANE"
+    r"|(?:^|[^\w.-])env(?:[^\S\n]+[^\s;&|]+)*?[^\S\n]+"
+    r"(?:-[A-Za-z0-9]*[iuS]|-(?=\s|$)|--(?:ignore-environment|unset|split-string))"
+    r"|(?:^|[^\w.-])exec(?:[^\S\n]+-[A-Za-z]+)*?[^\S\n]+-[A-Za-z]*c"
+    r"|(?:^|[^\w.-])(?:sudo|doas|runuser|launchctl|tmux)\s"
+    r"|\benv\s*=(?!=)|\benviron\s*\.\s*(?:clear|pop|popitem|update|setdefault|__setitem__|__delitem__)\b"
+    r"|\bdel\s+os\.environ|\b(?:unsetenv|putenv|clearenv|execve|execle|execvpe|spawnve|spawnle|spawnvpe"
+    r"|posix_spawnp?)\b|%ENV\b|\$ENV\{|\bprocess\.env\b|\bENV\s*\[")
+LANE_GATE = re.compile(r"LLM_WIKI_LANE|(?:^|[^\w.-])(?:env|exec|sudo|doas|su|runuser|launchctl|tmux|screen"
+                       r"|at|batch)(?:\s|$)")
+LANE_ABSOLUTE = re.compile(r"/[^\s'\"`;&|<>()]+")
+LANE_OVERRIDE_REASON = ("record writer: this command line changes or clears the helper's environment and "
+                        "then runs or names the record writer, which reads the helper's write grants from "
+                        "that environment — report the missing grant (`needs: <path> because <reason>`) "
+                        "instead of working around it")
+
+
+def lane_flat(text):
+    """Text with its quote characters and backslashes removed, as the name tests read it."""
+    return re.sub(r"['\"\\]", "", text)
+
+
+def lane_names_writer(text):
+    """True when text names the record writer: its file name, or an absolute path that resolves to it."""
+    flat = lane_flat(text)
+    if RECORD_NAME in flat:
+        return True
+    for token in LANE_ABSOLUTE.findall(flat):
+        try:
+            if os.path.basename(os.path.realpath(token)) == RECORD_NAME:
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def lane_word_change(raw):
+    """True when one raw shell word names an LLM_WIKI_LANE* variable other than by reading it."""
+    return bool(LANE_ASSIGNING.search(raw) or LANE_NAME.search(lane_flat(LANE_READ.sub("", raw))))
+
+
+def lane_text_change(text):
+    """True when code the shell structure does not show changes a lane name or empties the environment."""
+    return bool(LANE_ASSIGNING.search(text) or LANE_TEXT_CHANGE.search(lane_flat(LANE_READ.sub("", text))))
+
+
+def lane_segments(body, words):
+    """The simple commands of a shell text, each a list of (value, raw, literal) words, split on
+    ; & && || | newline ( and ). A redirection operator, its target (a heredoc's marker and a
+    here-string included) and a descriptor number glued to it are not words of the command."""
+    segments, current, i = [], [], 0
+
+    def adjacent(j):
+        return words[j][2] == words[j - 1][3]
+
+    while i < len(words):
+        kind, value, start, end = words[i][:4]
+        if kind == "word":
+            current.append((value, body[start:end], words[i][4]))
+            i += 1
+            continue
+        if value in ("<", ">") or (value == "&" and i + 1 < len(words) and words[i + 1][1] == ">"
+                                   and adjacent(i + 1)):
+            if (current and i and words[i - 1][0] == "word" and adjacent(i)
+                    and re.fullmatch(r"[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\}", words[i - 1][1])):
+                current.pop()
+            i += 1
+            while i < len(words) and words[i][0] == "op" and words[i][1] in ("<", ">", "&", "|") and adjacent(i):
+                i += 1
+            if i < len(words) and words[i][0] == "word":
+                i += 1
+            continue
+        if current:
+            segments.append(current)
+            current = []
+        i += 1
+    if current:
+        segments.append(current)
+    return segments
+
+
+def lane_split_string(text):
+    """The arguments `env -S` makes of its string, read with the shell's quoting, as words."""
+    try:
+        return [(word[1], text[word[2]:word[3]], word[4]) for word in record_words(text) if word[0] == "word"]
+    except ValueError:
+        return [(piece, piece, True) for piece in text.split()]
+
+
+def lane_env(args, j):
+    """(args, index of the command past env's options and assignments, whether they empty the
+    environment or remove or set an LLM_WIKI_LANE* name). A -S string joins the arguments."""
+    args, change, options = list(args), False, True
+    while j < len(args):
+        value, raw, literal = args[j]
+        if not literal:
+            return args, j, True          # an unseen value may be an option or an assignment
+        if options and value == "--":
+            options = False
+        elif options and value in ("-", "--ignore-environment"):
+            change = True
+        elif options and value.startswith("--"):
+            name, equals, operand = value.partition("=")
+            known = literal
+            if not equals and name in ("--unset", "--chdir", "--split-string", "--argv0") and j + 1 < len(args):
+                j += 1
+                operand, known = args[j][0], args[j][2]
+            if name == "--unset":
+                change = change or not known or bool(LANE_NAME.search(operand))
+            elif name == "--split-string":
+                args[j + 1:j + 1] = lane_split_string(operand)
+        elif options and value.startswith("-") and len(value) > 1:
+            for k in range(1, len(value)):
+                if value[k] == "i":
+                    change = True
+                if value[k] in "uPSCLUa":
+                    operand, known = value[k + 1:], True
+                    if not operand and j + 1 < len(args):
+                        j += 1
+                        operand, known = args[j][0], args[j][2]
+                    if value[k] == "u":
+                        change = change or not known or bool(LANE_NAME.search(operand))
+                    elif value[k] == "S":
+                        args[j + 1:j + 1] = lane_split_string(operand)
+                    break
+        elif LANE_ASSIGNMENT.match(lane_flat(raw)):
+            change = change or lane_word_change(raw)
+        else:
+            break
+        j += 1
+    return args, j, change
+
+
+def lane_python(args, i):
+    """What the Python interpreter at args[i] runs: ("script", index), ("code", word),
+    ("module", word) or ("stdin", None)."""
+    j = i + 1
+    while j < len(args):
+        value = args[j][0]
+        if value == "--":
+            return ("script", j + 1) if j + 1 < len(args) else ("stdin", None)
+        if value == "-":
+            return "stdin", None
+        if not value.startswith("-"):
+            return "script", j
+        if value.startswith("--"):
+            j += 2 if value == "--check-hash-based-pycs" else 1
+            continue
+        for k in range(1, len(value)):
+            if value[k] in "cm":
+                if value[k + 1:]:
+                    word = (value[k + 1:], value[k + 1:], args[j][2])
+                else:
+                    word = args[j + 1] if j + 1 < len(args) else ("", "", True)
+                return ("code" if value[k] == "c" else "module"), word
+            if value[k] in "WX":
+                if not value[k + 1:]:
+                    j += 1
+                break
+        j += 1
+    return "stdin", None
+
+
+def lane_shell(args, i):
+    """What the shell at args[i] runs: ("code", word), ("script", index) or ("stdin", None)."""
+    j, code, stdin = i + 1, False, False
+    while j < len(args):
+        value = args[j][0]
+        if value in ("-", "--"):
+            j += 1
+            break
+        if not value or value[0] not in "-+" or len(value) < 2:
+            break
+        if value in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"):
+            j += 1
+        elif value[0] == "-" and not value.startswith("--"):
+            code = code or "c" in value[1:]
+            stdin = stdin or "s" in value[1:]
+        j += 1
+    if code:
+        return "code", (args[j] if j < len(args) else ("", "", True))
+    if stdin or j >= len(args):
+        return "stdin", None
+    return "script", j
+
+
+def lane_change_words(words):
+    """True when words standing before a wrapped command change a lane name or empty the environment."""
+    for k, (value, raw, literal) in enumerate(words):
+        base = os.path.basename(value).lstrip("=")
+        if lane_word_change(raw) or base in LANE_RELAUNCHERS:
+            return True
+        if base == "env" and lane_env(words, k + 1)[2]:
+            return True
+        if base == "exec" and k + 1 < len(words) and re.match(r"-[A-Za-z]*c", words[k + 1][0]):
+            return True
+    return False
+
+
+def lane_segment(args, defines):
+    """One simple command read for the record-writer rule. before: a change the command itself runs
+    under; change: one that lasts for later commands; writer: it runs the writer; shells and inline:
+    code it runs; opaque: code it reads that the structure does not show ("shell", or the pattern
+    that finds a process start in a program);
+    dynamic: a program word that is not literal."""
+    view = dict(before=False, change=False, writer=False, shells=[], inline=[], opaque=None, dynamic=False)
+    if any(LANE_ASSIGNING.search(raw) for _, raw, _ in args):
+        view["before"] = view["change"] = True
+    assigned = False
+    i = 0
+    while i < len(args):
+        value, raw, literal = args[i]
+        base = os.path.basename(value).lstrip("=")      # zsh's =name expansion
+        if literal and value in LANE_SKIP:
+            i += 1
+        elif LANE_ASSIGNMENT.match(lane_flat(raw)):
+            assigned = assigned or lane_word_change(raw)
+            i += 1
+        elif literal and base == "env":
+            args, i, cleared = lane_env(args, i + 1)
+            view["before"] = view["before"] or cleared
+        elif literal and base in ("command", "time", "exec", "nice"):
+            i += 1
+            while i < len(args) and args[i][0].startswith("-") and len(args[i][0]) > 1 and args[i][0] != "--":
+                option = args[i][0]
+                if base == "exec" and not option.startswith("--") and "c" in option[1:]:
+                    view["before"] = True
+                takes = ((base == "exec" and option.endswith("a")) or (base == "nice" and option in ("-n", "--adjustment"))
+                         or (base == "time" and option in ("-o", "-f")))
+                i += 2 if takes else 1
+        else:
+            break
+    if i >= len(args):
+        view["change"] = view["change"] or assigned        # assignments alone last
+        return view
+    view["before"] = view["before"] or assigned            # a leading assignment is for this command
+    value, raw, literal = args[i]
+    rest = args[i + 1:]
+    if not literal:
+        view["dynamic"] = True
+        return view
+    base = os.path.basename(value).lstrip("=")
+    if base in LANE_SETTERS or base == "printf":
+        names = []
+        if base == "printf":
+            at = next((k for k, word in enumerate(rest) if word[0].startswith("-v")), None)
+            if at is None:
+                return view
+            option = rest[at]
+            rest = [(option[0][2:], option[1][2:], option[2])] if option[0][2:] else rest[at + 1:at + 2]
+            names = rest
+        elif base in ("for", "select"):
+            names = rest[:1]
+        elif base in LANE_NAMED:
+            names = [word for word in rest if not word[0].startswith(("-", "+"))]
+        if any(lane_word_change(r) or lane_text_change(v) for v, r, _ in rest) or any(
+                not lit and re.search(r"[$`]", r.split("=", 1)[0]) for _, r, lit in names):
+            view["change"] = True
+        return view
+    if lane_names_writer(value):
+        view["writer"] = True
+    elif LANE_PYTHON.fullmatch(base):
+        kind, at = lane_python(args, i)
+        if kind == "script":
+            view["writer"] = not args[at][2] or lane_names_writer(args[at][0])
+        elif kind == "code":
+            view["inline"].append((at[0], LANE_RUNS_PYTHON))
+        elif kind == "stdin":
+            view["opaque"] = LANE_RUNS_PYTHON
+    elif base in SHELL_PROGRAMS:
+        kind, at = lane_shell(args, i)
+        if kind == "code" and at[2]:
+            view["shells"].append(at[0])
+        elif kind == "code":
+            view["dynamic"] = True
+        elif kind == "stdin":
+            view["opaque"] = "shell"
+    elif base == "eval":
+        if all(word[2] for word in rest):
+            view["shells"].append(" ".join(word[0] for word in rest))
+        else:
+            view["dynamic"] = True
+    elif base in ("source", "."):
+        view["opaque"] = "shell" if not rest or rest[0][0] in ("-", "/dev/stdin") else None
+    elif base in LANE_INLINE:
+        for k in range(i + 1, len(args)):
+            option = args[k][0]
+            if not option.startswith("-") or option == "--":
+                break
+            at = next((m for m in range(1, len(option)) if option[m] in LANE_INLINE[base]), None)
+            if at is not None:
+                view["inline"].append((option[at + 1:] or (args[k + 1][0] if k + 1 < len(args) else ""),
+                                       LANE_RUNS_OTHER))
+                break
+        else:
+            view["opaque"] = LANE_RUNS_OTHER
+    elif base in LANE_RELAUNCHERS:
+        if any(lane_names_writer(word[0]) for word in rest):
+            view["writer"] = view["before"] = True
+    else:
+        # An unlisted program runs the writer when a Python interpreter further along runs it,
+        # and, when it is a listed wrapper or the line defines a function or an alias, whenever
+        # the writer's name follows it.
+        wrapper = base in LANE_WRAPPERS
+        for k, (word, _, word_literal) in enumerate(rest):
+            hit = False
+            if word_literal and LANE_PYTHON.fullmatch(os.path.basename(word).lstrip("=")):
+                kind, at = lane_python(rest, k)
+                hit = kind == "script" and (not rest[at][2] or lane_names_writer(rest[at][0]))
+            if hit or ((wrapper or defines) and lane_names_writer(word)):
+                view["writer"] = True
+                # A wrapper's change may follow the name it is given (find -name … -exec env -i).
+                view["before"] = view["before"] or lane_change_words(rest[:k] if hit else rest)
+                break
+        view["opaque"] = "shell" if base in ("xargs", "parallel") else None
+    return view
+
+
+def lane_program_override(code, runs, before):
+    """True when a program's text names the writer, starts a process or runs a file (`runs` finds
+    that in its language), and changes the environment or runs under a change already made."""
+    return lane_names_writer(code) and bool(runs.search(code)) and (before or lane_text_change(code))
+
+
+def lane_override(text, lasting=False, earlier=False, depth=0):
+    """True when, in shell text, a change to the helper's environment reaches the record writer.
+    `lasting`: a change in force for the whole text (an outer `env -i sh -c …`, an earlier export).
+    `earlier`: a change made for one earlier command of the outer line."""
+    if depth > 4:
+        return lasting or earlier or lane_names_writer(text) or lane_text_change(text)
+    body = strip_heredocs(text)
+    words = record_words(body)
+    defines = any(word[0] == "word" and word[1] in ("function", "alias") for word in words) or any(
+        words[k][0] == "word" and words[k + 1][1] == "(" and words[k + 2][1] == ")"
+        for k in range(len(words) - 2))
+    for args in lane_segments(body, words):
+        if lasting and any(lane_names_writer(word[0]) for word in args):
+            return True
+        view = lane_segment(args, defines)
+        before = lasting or view["before"]
+        if (view["writer"] and (before or earlier)) or (view["dynamic"] and before):
+            return True
+        if any(lane_override(code, before, earlier, depth + 1) for code in view["shells"]):
+            return True
+        if any(lane_program_override(code, runs, before) for code, runs in view["inline"]):
+            return True
+        if view["opaque"] not in (None, "shell") and lane_program_override(text, view["opaque"], before):
+            return True
+        if ((view["opaque"] == "shell" or view["dynamic"]) and lane_names_writer(text)
+                and (before or lane_text_change(text))):
+            return True
+        lasting = lasting or view["change"]
+        earlier = earlier or view["before"]
+    return False
+
+
+def lane_override_reason(command):
+    """The refusal for a lane command line on which a change to the helper's environment reaches
+    the record writer, or None. A command the reading cannot finish is read as text instead."""
+    if not (LANE_GATE.search(lane_flat(command)) or lane_names_writer(command)):
+        return None
+    try:
+        refused = lane_override(command)
+    except (ValueError, TypeError, IndexError, KeyError, OSError, RecursionError):
+        refused = lane_names_writer(command) and lane_text_change(command)
+    return LANE_OVERRIDE_REASON if refused else None
+
+
 def check(event, grants, writes, head=False, network=None):
     """The whole decision as a pair — ("deny", reason), ("allow", reason) or ("silent", "") —
     computed, never printed and never exited, so head-fence.py can IMPORT this module and call
@@ -2592,6 +3072,13 @@ def check(event, grants, writes, head=False, network=None):
         return denial("non-text command in hook input — fail-closed")
     if not command.strip():
         return "silent", ""               # writes nothing, reads nothing
+
+    # In the lane role, no change to the helper's environment may reach the record writer.
+    # The lead's role never reaches this rule.
+    if not head:
+        override = lane_override_reason(command)
+        if override:
+            return denial(override)
 
     temps = temp_roots()
     read_roots = grants + writes + temps

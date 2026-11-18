@@ -69,7 +69,15 @@ FALLBACK with the new lane; `--no-swap` opts out; a pass that changed its write 
 successor and waits for the head, since nothing it produced is kept (`a3_fallback_writes`), and no
 display shows a confirmed fallback's report (`void_report_line`); the run console alerts on the close and the
 swap, and the head tells the owner once (owner ruling 2026-09-29: the owner is told of every refused
-or re-routed task, which falls back to GPT-6 Astra at the same effort rung). The
+or re-routed task, which falls back to GPT-6 Astra at the same effort rung). A family named off
+in the machine-local `<store>/model-families.json` (`{"schema": 1, "off": ["codex"]}`, read by
+`families_off`) receives no move, whatever `--no-swap` says: the close holds the task with the
+file named, a confirmed fallback that changed its write folders still waits for the head with
+those paths named (under `--no-swap` too), `recover --decision move` is refused, the allowed
+decisions leave `move` out, and a move sealed before the file said so is held at its launch. A file
+that cannot be read, is not a regular file or does not parse holds every move for the head; a
+missing file holds none. `lane-open` and
+`lane-resumed` record `no_swap`, the flag as this call passed it. The
 `lane-open` line records where each axis came from: `model_src`/`effort_src` read `anchor` (no
 override, or one equal to the anchor), `auto: <text>` (a departure, carrying `--choice-reason`'s
 text), `throttle <name>` (a hand-set preset's own value) or `explicit` (a departure from a
@@ -100,7 +108,8 @@ gets its own input directory `<store>/<run>-in-<lane>/`, created by the wrapper 
 copied into it, granted read; the store itself is granted only when a call names it, so a
 blind lane never sees sibling reports or the record. `--grant-vault-root` grants the vault
 root itself (a lane may then read root files such as MANUAL.md without a copy). A per-spawn
-settings file `<store>/<run>-settings-<lane>.json` carries the home's hooks plus
+settings file `<store>/<run>-settings-<lane>.json` carries the home's hooks and its
+`attribution` setting (empty texts: no agent credit in a helper's commits) plus
 `permissions.allow` rules `Edit(//path)` / `Write(//path)` for every write grant, and the rule
 `WebSearch` where the lane gets that tool (below, "Tools beyond the class row"); whether
 that list beats the harness's sensitive-path guard under `.claude/` is recorded beside
@@ -139,6 +148,16 @@ reach them (review CR-B4L finding 4).
     pointed to codex-lane.py with `--search`, as is a search declaration on a lane without
     WebSearch. A resume admits a search declaration where its lane-open's tools and settings
     carry WebSearch.
+  - `HOST+: <host>[, <host> …]`: the hosts the lane may reach, bare host names (`HOST+: none`
+    declares the empty set); a quoted form is always a mention (DW-20261024-2). A Claude lane gets
+    no network, so a brief that names hosts is refused here and pointed to codex-lane.py
+    `--network`, which holds a lane to them as far as it can. The refusal follows the host guard's
+    mode, one constant (`NETWORK_GUARD_MODE`, `trial` as shipped: logged as `would refuse` on
+    stderr and the lane-open, and the spawn goes on). In both modes the child's environment never
+    carries an inherited `LLM_WIKI_LANE_NETWORK` (removed, recorded as `network_inherited_dropped`;
+    a provisional choice), and the lane-open records what no host list binds: `web_search` where
+    the lane holds WebSearch, `network_unbound` for Bash (programs the fence lets run) and for any
+    tool server.
 `<<STAGED_COPY>>` names a staged copy, which this wrapper never makes: a declaration using it
 refuses here (codex-lane.py resolves it after staging).
 
@@ -261,10 +280,21 @@ is not a failure — the missing close is the whole point — and one line says 
 lane, a lane that never spawned and a lane already closed each refuse with exit 2 and write
 nothing. `watch` stays the interim path for a lane whose wrapper has simply gone.
 
-`--detach` is a double fork: a worker process (its own session, so it survives the caller's
-exit) runs the lane and writes every record line, and the foreground stays as the watch over
-it, exiting with the worker's exit code once `lane-closed` appears. `resume` takes the same two
-flags (register 2026-09-10 15:22). Every argument, grant and cost check of spawn and resume runs in
+`--detach` is a double fork: a short-lived `/bin/sh` in a session of its own (`start_detached`;
+never this interpreter) starts the worker in the background and exits, so the worker's parent is
+the init process, not the caller. A stop that walks the caller's process tree by parent pid, which
+is how the harness stops a Bash call that is moved to the background or times out, therefore no
+longer reaches the worker (register 2026-11-07 21:36 a: with a single Popen the worker was the
+caller's child, and a stopped caller took it with it). The worker restores SIGINT and SIGQUIT, which
+the shell's background start leaves ignored, and leads a session of its own (`run_as_worker`). It runs
+the lane and writes every record line, and its last line in its log is `lane.py: worker pid N exit C`,
+since its caller is no longer its parent and reads its exit code there (`DetachedWorker`; none, after
+a signal, reads as 3). The foreground stays as the watch over it, exiting with the worker's exit code
+once `lane-closed` appears, and says so on stderr: without `--no-wait` a stopped or timed-out call
+loses its summary line though the worker runs on, so the pair is `--detach --no-wait` (one warning
+line, never a refusal). A launch whose shell prints no worker pid within DETACH_PID_WAIT_S prints
+`detached pid unknown, unconfirmed after N s` and exits 4, since the shell starts the worker before it
+prints the pid. `resume` takes the same two flags (register 2026-09-10 15:22). Every argument, grant and cost check of spawn and resume runs in
 the caller before the worker starts, so a refused call exits 2 in the caller's terminal with no
 worker started (register 2026-09-29 16:57); the caller hands its composed cost cap to the worker,
 which repeats every other check. `--detach --no-wait` then waits, bounded by `--ack-wait-s`
@@ -284,6 +314,17 @@ its outcome line still says which process may yet start the lane. `lane-open`, `
 `lane-spawned` carry `wrapper_pid`, the process that will write the close. The caller, not the worker, opens the run's console, before
 the worker starts, and hands the worker `--viewer none` (appended, so it wins over any `--viewer` the command carried).
 (register 2026-09-09 11:21; the opener itself is handsoff.py's).
+
+The closing summary (register 2026-11-12 09:13). A launch script redirects a detached call's output
+to a log its lead reads by the tail, so the warnings and any decisions HOLD printed above reached no
+reader. A detached spawn or resume (`--detach`, with or without `--no-wait`; never a dry run, never
+the worker, whose log is unchanged) therefore ends its output with exactly one line, on stderr after
+stdout is flushed: `lane.py: summary: clean`, or its items joined by ` · ` — `refused (exit 2):
+<reason>` or `exit N: <reason>` when the call did not exit 0, `N warning(s) (<each, to its first
+clause>; …)` and `decisions HOLD (<trial | trial, would refuse | held, exit 7>): <its first line>`.
+A warning is any stderr notice the caller printed before the worker's launch, the console opener's
+outcomes and the worker-started line set aside (`CallerSummary`), so a warning added later is named
+with no change to the summary. Arguments that do not parse but name `--detach` are a refusal too.
 
 A second pass on a helper's work goes to a fresh helper with a compact hand-off: the earlier
 report's path, the findings to fold, the held files and what must not change. Use `resume`
@@ -475,7 +516,8 @@ change in the harness's directory naming degrades to a slower search rather than
 The projects root is `<CLAUDE_CONFIG_DIR>/projects` under `--config-dir` (or that variable in
 the head's own environment), else `~/.claude/projects`. From the transcript the wrapper reads
 the effort actually applied, the cache write tier, the peak call context, the fence's denials
-(a tool result carrying a `lane-fence:` reason), a refusal (`stop_reason`), the last
+(a tool result opening with a `lane-fence:` reason, after the harness's optional
+`PreToolUse:<tool> hook error:` prefix, and marked `is_error` true), a refusal (`stop_reason`), the last
 assistant text when the result field came back empty, and the limit-stop shape.
 """
 
@@ -502,6 +544,7 @@ import subprocess
 import sys
 import time
 import threading
+import traceback
 import uuid
 
 SCHEMA = 2                      # routing.json schema this wrapper speaks
@@ -542,6 +585,14 @@ DECISIONS_HOLD_MODE = "trial"
 EXIT_UNCONFIRMED = 4            # a detached call's worker lives but its acknowledgement was not seen: the lowest code neither wrapper uses (they use 0, 2, 3, 5, 6, 7 and 8; 1 is Python's own for an uncaught error)
 ACK_WAIT_S = 60                 # see the derivation above: how long --detach --no-wait waits for this call's acknowledgement
 ACK_POLL_S = 0.25               # record reads while it waits; set by judgement, unmeasured
+DETACH_SHELL = "/bin/sh"        # the short-lived launcher of a detached worker (start_detached); AIMYTH_DETACH_SHELL names a stand-in, for a suite
+DETACH_PID_WAIT_S = 10          # how long a detached call waits for that shell to print the worker's pid; it forks and prints at once, so set by judgement, unmeasured
+DETACH_WAIT_WARNING = ("lane.py: --detach without --no-wait: this call stays open as the watch until the lane "
+                       "closes; if the call is stopped or times out the worker runs on, but this call's summary "
+                       "is lost. Pair --detach with --no-wait and read the close with `lane.py wait`.\n")
+# The detached caller's closing summary (register 2026-11-12 09:13; CallerSummary below).
+SUMMARY_PREFIX = "lane.py: summary: "
+SUMMARY_ITEM_CHARS = 160        # one item's text is cut here, so the line stays readable in a log's tail; set by judgement, unmeasured
 STALL_ACTION = "SIGTERM process group, %d s, SIGKILL" % KILL_GRACE_S
 # The held-lane beat (2026-09-17): the fixed no-work line, the bound on one beat, the
 # close classes a beat re-enters (handsoff.py's HOLDABLE_EXITS, the same tuple), who issued it,
@@ -582,6 +633,11 @@ BOX_PROFILE = ('(version 1)(allow default)(deny signal)(allow signal (target sam
 # mean of 13.8 ms over 20 runs on 2026-11-04 (Darwin 27.0.0), so only a hang reaches this.
 BOX_PROBE_S = 10
 BOX_NOTE_CHARS = 160            # how much of a refusal's stderr the `box` value keeps; by judgement
+# No agent credit in a helper's commits or pull requests: Claude Code's own `attribution` setting,
+# with both texts empty, drops the credit lines its built-in git guidance adds by default. `init`
+# writes it into the lane home's settings and settings_for carries the home's value into every
+# spawn's settings; a home built before the key existed gets this value until `init` runs again.
+LANE_ATTRIBUTION = {"commit": "", "pr": ""}
 
 
 # ----------------------------------------------------------------- premise and paths -------
@@ -948,10 +1004,15 @@ def decisions_spawn_check(record_path, run, lane_id, who="lane.py", verb="spawn"
         sys.stderr.write("%s: dry run, would %s: %s\n" % (
             who, "hold" if held else "refuse", "\n".join(lines)))
         return None
+    # A detached caller's closing summary names the hold from here, so its text is not also a warning.
+    CALLER_SUMMARY.hold(("held" if held else "refused") if not trial
+                        else ("trial" if held else "trial, would refuse"), lines[0] if lines else "")
     if not trial:
-        sys.stderr.write("%s: %s\n" % (who, "\n".join(lines)))
+        with CALLER_SUMMARY.claimed():
+            sys.stderr.write("%s: %s\n" % (who, "\n".join(lines)))
         sys.exit(EXIT_DECISIONS_HOLD if held else 2)
-    sys.stderr.write("%s: trial, nothing held: %s\n" % (who, "\n".join(lines)))
+    with CALLER_SUMMARY.claimed():
+        sys.stderr.write("%s: trial, nothing held: %s\n" % (who, "\n".join(lines)))
     if state.get("logged"):
         return None
     try:
@@ -1360,6 +1421,7 @@ def cmd_init(args):
         "type": "command",
         "command": "%s %s" % (shlex.quote(sys.executable),
                               shlex.quote(os.path.join(home, "lane-fence.py")))}]}]}}
+    settings["attribution"] = dict(LANE_ATTRIBUTION)
     settings_text = json.dumps(settings, indent=2) + "\n"
     materialise(home, "lane-settings.json", "(computed)", settings_text, settings_text,
                 state, report)
@@ -2141,7 +2203,8 @@ def allow_pattern(path, is_dir):
 
 
 def settings_for(home, write_entries, search=False):
-    """The per-spawn settings: the home's hooks plus Edit and Write allow rules for every
+    """The per-spawn settings: the home's hooks and its `attribution` setting (LANE_ATTRIBUTION
+    where the home holds none) plus Edit and Write allow rules for every
     write grant, in both spellings (design D18), and the `WebSearch` rule where `search` says the
     lane gets that tool (2026-10-10; WebFetch never). Sensitive-path restrictions still bind;
     use the authorised shell write channel when structured edits cannot reach a granted path."""
@@ -2161,7 +2224,9 @@ def settings_for(home, write_entries, search=False):
             add_unique(allow, ["Edit(%s)" % pattern, "Write(%s)" % pattern])
     if search:
         add_unique(allow, ["WebSearch"])
-    out = {"hooks": hooks}
+    carried = base.get("attribution")
+    out = {"hooks": hooks,
+           "attribution": dict(carried) if isinstance(carried, dict) else dict(LANE_ATTRIBUTION)}
     if allow:
         out["permissions"] = {"allow": allow}
     return out, allow
@@ -2188,7 +2253,7 @@ def settings_for(home, write_entries, search=False):
 #
 # A grammar keyed on the line's start alone would miss controls written after prose, and one that
 # reads every quoted form as a mention would drop those in backticks; this one reads both as before.
-DECL_MARKERS = ("CONTROL+", "READ+", "RUBRIC+", "WEB+")
+DECL_MARKERS = ("CONTROL+", "READ+", "RUBRIC+", "WEB+", "HOST+")
 STAGED_TOKEN = "<<STAGED_COPY>>"   # a staged copy's path, substituted after staging (codex-lane.py --stage-from)
 REPORT_TOKEN = "<<REPORT>>"        # this pass's own report, as a CONTROL+ file: checked at the close
 _MARKER_ALT = "|".join(re.escape(marker) for marker in DECL_MARKERS)
@@ -2197,7 +2262,8 @@ FENCE_RE = re.compile(r"^[ \t]*(?P<fence>`{3,}|~{3,})(?P<rest>.*)$")
 QUOTE_PAIRS = {"`": "`", '"': '"', "'": "'", "“": "”", "‘": "’", "«": "»"}
 DECL_FORMS = {"CONTROL+": "CONTROL+: <phrase> in <file>", "READ+": "READ+: <path>",
               "RUBRIC+": "RUBRIC+: <rubric file> in <reviewers' tree>",
-              "WEB+": "WEB+: <the web work the lane must do>"}
+              "WEB+": "WEB+: <the web work the lane must do>",
+              "HOST+": "HOST+: <host>[, <host> …] (bare host names, or none)"}
 # What a Claude lane's tools reach beyond its class row (register 2026-09-29 21:08): `--tools` sets the
 # tool LIST, never a permission, and with prompts off a listed tool no rule admits is refused at every
 # call. The read tools need no rule inside the add-dirs; Bash is admitted by the lane fence's explicit
@@ -2280,8 +2346,9 @@ def quoted_declares(marker, body, vault):
 
 
 def declare(out, number, line, marker, body):
-    """One declaration into `out`, refusing an empty or malformed one."""
-    if not body:
+    """One declaration into `out`, refusing an empty or malformed one (an empty HOST+ is judged
+    with its items, under the guard's mode: plan decision D6 starts every new refusal in trial)."""
+    if not body and marker != "HOST+":
         die("brief line %d: an empty %s declaration (want `%s`): %s"
             % (number, marker, DECL_FORMS[marker], line.strip()))
     if marker == "CONTROL+":
@@ -2298,18 +2365,23 @@ def declare(out, number, line, marker, body):
             die("brief line %d: malformed RUBRIC+ line (want `%s`): %s"
                 % (number, DECL_FORMS[marker], line.strip()))
         out["rubrics"].append({"line": number, "rubric": rubric, "tree": tree})
+    elif marker == "HOST+":
+        # The hosts the lane may reach (DW-20261024-2), as written: each item is judged by the
+        # launcher that grants network (network_host_items), never refused here, so a malformed
+        # item follows the guard's mode rather than the grammar's.
+        out["hosts"].append({"line": number, "text": body})
     else:
         out["web"].append({"line": number, "what": body})
 
 
 def parse_declarations(brief, vault=None):
     """Every declaration of a brief under the grammar above, as
-    {"controls": [...], "reads": [...], "rubrics": [...], "web": [...]}, each entry carrying its
-    line number. Refuses (exit 2) on an empty or malformed declaration, two unquoted markers on one
-    line, and an unclosed code fence that would hide a marker. With `vault`, a quoted form that names
-    existing files is read as the declaration it spells out; any other quoted form is a mention,
-    said on stderr when it holds more than the bare marker."""
-    out = {"controls": [], "reads": [], "rubrics": [], "web": []}
+    {"controls": [...], "reads": [...], "rubrics": [...], "web": [...], "hosts": [...]}, each entry
+    carrying its line number. Refuses (exit 2) on an empty or malformed declaration, two unquoted
+    markers on one line, and an unclosed code fence that would hide a marker. With `vault`, a quoted
+    form that names existing files is read as the declaration it spells out; any other quoted form is
+    a mention, said on stderr when it holds more than the bare marker (a quoted HOST+ always is)."""
+    out = {"controls": [], "reads": [], "rubrics": [], "web": [], "hosts": []}
     fence, fence_line, hidden = None, 0, []
     for number, line in enumerate((brief or "").splitlines(), 1):
         opened = FENCE_RE.match(line)
@@ -2604,6 +2676,204 @@ def refuse_web(declared, how, search_ok=False):
             die("brief line %d declares web work (%s), and %s" % (web["line"], web["what"][:120], how))
 
 
+# The host guard (DW-20261024-2): a helper reaches only the web addresses its brief names, as far
+# as each launcher can hold it, and the record says where it cannot. A brief names its hosts with
+# `HOST+: <host>[, <host> …]` (`HOST+: none` declares the empty set). One constant sets the mode
+# for both launchers (plan decision D6, as the lead settled it: every new refusal starts in its
+# trial state, logging what it would refuse and refusing nothing; no flag, grant or environment
+# variable moves it, so the other mode runs only in a copy of this file). "trial" makes each
+# refusal one `would refuse` line on stderr and an entry on the lane-open, and the start goes on;
+# "enforce" refuses it (exit 2, before any record line, in the caller before any detach).
+# Two things hold in both modes. The inherited LLM_WIKI_LANE_NETWORK is never passed to a child
+# (provisional, the lead's choice, easy to reverse: drop the drop_inherited_network calls, three
+# in all, two here and one in codex-lane.py). And codex-lane.py exports to a lane with shell
+# network only hosts that pass the host rule and, on a hands-off run, the run's network grant.
+NETWORK_GUARD_MODE = "trial"
+NETWORK_GUARD_MODES = ("trial", "enforce")
+NETWORK_VAR = "LLM_WIKI_LANE_NETWORK"   # the hosts a lane's tools may fetch from (the capture tool reads it)
+NETWORK_NONE_WORD = "none"              # HOST+: none, as handsoff.py's --network none: the empty set
+# What a Claude lane-open records where its tools reach the network unbound by any host list (the
+# cannot-decide cases; nothing is refused for them).
+WEB_SEARCH_UNBOUND = "server-side, not bound to named hosts"
+NETWORK_UNBOUND_BASH = ("the fence holds only the network commands it names and inline transport "
+                        "imports; programs it lets run (npm, npx, pip, git, renderers, installers, "
+                        "script files) are not bound to hosts")
+NETWORK_UNBOUND_MCP = ("tool servers (--mcp-config) are not Bash calls, so the fence never sees "
+                       "them, and they are not bound to hosts")
+
+
+def network_guard_mode():
+    """(mode, source) of the host guard: the constant, read at call time. A value outside
+    NETWORK_GUARD_MODES reads as trial, and the source names it."""
+    if NETWORK_GUARD_MODE in NETWORK_GUARD_MODES:
+        return NETWORK_GUARD_MODE, "lane.py NETWORK_GUARD_MODE (plan decision D6)"
+    return "trial", "default (unknown NETWORK_GUARD_MODE %r in lane.py)" % (NETWORK_GUARD_MODE,)
+
+
+def drop_inherited_network(env):
+    """Remove LLM_WIKI_LANE_NETWORK from a child's environment, in both modes, and return what it
+    held (None where it held none). [provisional] A Claude lane is meant to get no shell network,
+    and lane.py has no option for one, yet a child built as dict(os.environ) inherited the caller's
+    grant, which the lane fence reads as the lane's own (lane-fence.py's lane role). A Codex
+    child's variable is set again by codex-lane.py alone, from the guard's export."""
+    return env.pop(NETWORK_VAR, None)
+
+
+def import_handsoff():
+    """(the sibling handsoff.py, None), imported as open_console_for_spawn imports it (no
+    __pycache__ in the skill directory), or (None, why) when it cannot be imported."""
+    try:
+        sys.dont_write_bytecode = True
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import handsoff
+        return handsoff, None
+    except (Exception, SystemExit) as exc:
+        return None, "%s: %s" % (type(exc).__name__, one_line_text(exc))
+
+
+def one_line_text(value, limit=160):
+    """A value as one short line, for a reason on stderr or the record."""
+    return " ".join(str(value).split())[:limit]
+
+
+def network_host_items(declared, host_re, unread=None):
+    """(hosts, malformed, none_declared) from a brief's HOST+ declarations. Items are split on
+    commas, stripped and lower-cased, duplicates dropped in order; `none` alone declares the empty
+    set. The host rule (rule 3) is handsoff.py's HOST_RE (letters, digits, dots and inner hyphens;
+    no scheme, port, path, user or wildcard) plus at least one dot: with suffix matching, a single
+    label such as `com` would admit every host under it. Every other item is malformed, as
+    {"line", "item", "why"}. With `host_re` None (handsoff.py not importable: `unread` says why)
+    no item can be judged, and each is malformed with that reason."""
+    hosts, malformed, none_declared = [], [], False
+    for entry in declared.get("hosts") or []:
+        text = (entry.get("text") or "").strip()
+        items = [part.strip().lower() for part in text.split(",")]
+        if items == [NETWORK_NONE_WORD]:
+            none_declared = True
+            continue
+        if not any(items):
+            malformed.append({"line": entry["line"], "item": text, "why": "an empty HOST+ declaration"})
+            continue
+        for item in items:
+            if not item:
+                why = "an empty item"
+            elif item == NETWORK_NONE_WORD:
+                why = "none inside a list (write `HOST+: none` alone)"
+            elif host_re is None:
+                why = "unjudged: the host rule could not be read (%s)" % (unread or "handsoff.py absent")
+            elif not host_re.fullmatch(item):
+                why = ("not a bare host name (letters, digits, dots and inner hyphens; no scheme, "
+                       "port, path, user or wildcard)")
+            elif "." not in item:
+                why = "a single label, which would admit every host under it"
+            else:
+                why = None
+            if why:
+                malformed.append({"line": entry["line"], "item": item, "why": why})
+            elif item not in hosts:
+                hosts.append(item)
+    return hosts, malformed, none_declared
+
+
+def host_granted(host, grant):
+    """The fence's and the capture tool's match (lane-fence.py and capture_probe.py host_granted):
+    the host itself, or a subdomain of a granted host."""
+    host = (host or "").strip().lower()
+    return any(host == g or host.endswith("." + g) for g in grant or [])
+
+
+def run_network_policy(run, rows):
+    """What a launcher checks a lane's hosts against, shared by both launchers: the mode (the
+    constant), the host rule's pattern, and on a hands-off run (a run-open on the record the
+    launcher loaded) the run's network grant, read as handsoff.py's network_of reads the grants
+    file, so the host rule and the grant each have one home. handsoff.py is imported lazily, as
+    open_console_for_spawn imports it. Where the evidence is unavailable the grant reads as none
+    ([]) and `grant_src` says why: a grants file missing, unreadable or not a JSON object (in
+    grants_file_state's words; missing is never called corrupt), a `network` value the reader
+    cannot trust (network_of's own source), or a handsoff.py that cannot be imported. On a plain
+    lane run there is no run grant (None): the declaration and the spawn's shell network are the
+    grant. The mode never depends on that evidence."""
+    mode, mode_src = network_guard_mode()
+    hands_off = any(isinstance(row, dict) and row.get("event") == "run-open" for row in rows or [])
+    out = {"mode": mode, "mode_src": mode_src, "hands_off": hands_off, "grant": None,
+           "grant_src": "none: a plain lane run (no run-open), so the brief's HOST+ and the "
+                        "spawn's shell network are the grant",
+           "grants_file": None, "grants_file_state": None, "host_re": None, "unread": None}
+    handsoff, why = import_handsoff()
+    if handsoff is None:
+        out["unread"] = why
+        if hands_off:
+            out["grant"], out["grant_src"] = [], "none: the run grant could not be read (%s)" % why
+        return out
+    out["host_re"] = getattr(handsoff, "HOST_RE", None)
+    if out["host_re"] is None:
+        out["unread"] = "handsoff.py has no HOST_RE"
+    if not hands_off:
+        return out
+    try:
+        path = handsoff.grants_path(run)
+        state = handsoff.grants_file_state(path)
+        hosts, source = handsoff.network_of(handsoff.read_grants(path))
+    except (Exception, SystemExit) as exc:
+        out["grant"], out["grant_src"] = [], "none: the run grant could not be read (%s: %s)" % (
+            type(exc).__name__, one_line_text(exc))
+        return out
+    out["grants_file"], out["grants_file_state"] = path, state
+    if state != "readable":
+        out["grant"], out["grant_src"] = [], "none: the run's grants file is %s (%s)" % (state, path)
+    else:
+        out["grant"], out["grant_src"] = list(hosts), "the run grant (%s)" % source
+    return out
+
+
+def network_guard_apply(reasons, who, verb, quiet=False, refuse=None):
+    """The guard's one decision point: (mode, source, would_refuse). In enforce, any reason
+    refuses through `refuse` (the launcher's own die: exit 2, before any record line); in trial,
+    each reason is one stderr line `would refuse (trial state)`, none from a detached worker
+    (`quiet`), whose caller printed them, and the list rides the lane-open."""
+    mode, mode_src = network_guard_mode()
+    if reasons and mode == "enforce":
+        (refuse or die)("; ".join(reasons))
+    if reasons and not quiet:
+        for why in reasons:
+            sys.stderr.write("%s: would refuse (trial state): %s; the %s proceeds\n" % (who, why, verb))
+    return mode, mode_src, list(reasons)
+
+
+def claude_host_guard(declared, verb, quiet=False):
+    """A Claude lane gets no network: lane.py has no per-spawn grant for one and removes the
+    inherited variable, so a brief that names hosts is refused (enforce) or logged (trial), and
+    pointed to codex-lane.py --network, as a page-fetch WEB+ is. The `network_guard` field, or
+    None where the brief names no hosts."""
+    lines = sorted({entry["line"] for entry in (declared or {}).get("hosts") or []})
+    if not lines:
+        return None
+    why = ("brief line %s declares hosts (HOST+), and a Claude lane gets no network (no per-spawn "
+           "grant admits it): spawn it with codex-lane.py --network, or drop the HOST+ line"
+           % ", ".join(str(n) for n in lines))
+    mode, mode_src, would = network_guard_apply([why], "lane.py", verb, quiet=quiet)
+    return {"mode": mode, "mode_src": mode_src, "would_refuse": would}
+
+
+def claude_network_fields(tools, search, mcp, dropped, guard):
+    """A Claude lane-open's network fields: the inherited grant removed, WebSearch's and the
+    shell's reach unbound by any host (recorded, never refused), and the guard's verdict."""
+    out = {}
+    if dropped is not None:
+        out["network_inherited_dropped"] = dropped
+    if search:
+        out["web_search"] = WEB_SEARCH_UNBOUND
+    unbound = ([NETWORK_UNBOUND_BASH] if "Bash" in (tools or []) else []) + \
+        ([NETWORK_UNBOUND_MCP] if mcp else [])
+    if unbound:
+        out["network_unbound"] = "; ".join(unbound)
+    if guard is not None:
+        out["network_guard"] = guard
+    return out
+
+
 def deferred_verdicts(pending, report_path, text, fresh, persisted, closed_as):
     """The verdict on each control a pass declared on its own report (`<<REPORT>>`), at its close:
     `checked` (the phrase is in this pass's fresh report, which was written), `failed` (a fresh,
@@ -2789,6 +3059,13 @@ def block_text(block):
     return ""
 
 
+# A fence refusal as the harness delivers it to the lane: the fence's own prefix, after an optional
+# hook-error prefix. Claude Code hands a PreToolUse deny back as `PreToolUse:Bash hook error: lane-fence:
+# …` (register 2026-11-12 02:38; of 31 real tool results drawn from 11 helper transcripts for this fix,
+# all 12 refusals opened so, each with is_error true, and none of the other 19 was marked an error);
+# the bracketed command is the form the hooks documentation shows for a hook
+# that exits 2, and the bare prefix is the older delivery. Matched at the start of the text only.
+FENCE_DENIAL = re.compile(r"(?:PreToolUse:\S+ hook error:\s*(?:\[[^\n]*?\]:\s*)?)?lane-fence:")
 USAGE_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens",
               "output_tokens")
 
@@ -2852,15 +3129,20 @@ def parse_transcript(path, boundary=None):
                 out["synthetic_stop"] = out["last_model"].startswith("<synthetic") and stock == 0
                 out["terminal_synthetic_text"] = text.strip() if out["synthetic_stop"] else None
                 out["terminal_synthetic_event"] = {"uuid": record.get("uuid"), "order": out["records"]}
-            # A fence DENIAL is a tool result whose text starts with the fence prefix; the
-            # lane's own prose quoting that prefix back (it does, when the brief asks it to
-            # report the reason) is not a denial, so the test is the record kind and the
-            # start of the text, never a substring search over the whole record.
+            # A fence DENIAL is a tool result whose text starts with the fence prefix, after the
+            # harness's optional hook-error prefix (FENCE_DENIAL); the lane's own prose quoting
+            # that prefix back (it does, when the brief asks it to report the reason) is not a
+            # denial, so the test is the record kind and the start of the text, never a
+            # substring search over the whole record. Only a result the harness marks as an
+            # error (`is_error` true, as every real refusal is) counts: output marked false, or
+            # carrying no mark (a Grep content-mode result on one file), that happens to begin
+            # with the text is ordinary output, not a denial.
             if kind == "user":
                 for block in (message.get("content") or []):
                     if isinstance(block, dict) and block.get("type") == "tool_result":
                         text = block_text(block).lstrip()
-                        if text.startswith("lane-fence:") and "within grants" not in text:
+                        if FENCE_DENIAL.match(text) and "within grants" not in text \
+                                and block.get("is_error") is True:
                             out["fence_denials"] += 1
             elif kind == "attachment":
                 attachment = record.get("attachment")
@@ -3106,6 +3388,75 @@ A3_FAMILY_HOLD = "no untried model family remains"
 A3_FAMILY_RULE = ("both families refused: hold; the head may rewrite the brief once "
                   "(harmless purpose stated, exact files and change, nothing from the refused replies) "
                   "or park the task for the owner; a second double refusal parks it.")
+# The model families no task moves to (register 2026-11-11 00:06): a machine-local file in the run
+# store, so every close, recover and launch on this machine reads the same state whatever a session
+# was told. `{"schema": 1, "off": ["codex"]}` stops every move to that family; a missing file stops
+# none (a fresh clone moves as the fallback rule says); a file that cannot be read, is not a regular
+# file or does not parse stops every move until it reads, since what it holds cannot be told.
+FAMILIES_NAME = "model-families.json"
+FAMILY_NAMES = ("claude", "codex")
+
+
+def families_path():
+    return os.path.join(store_root(), FAMILIES_NAME)
+
+
+def families_off():
+    """(off, path, error): the families named off in the store's families file, as a frozenset;
+    an empty set when the file is absent; None with the reason when it cannot be read or does not
+    hold `{"schema": 1, "off": [<family>, ...]}`. Reads only, and never blocks: anything at the path
+    that is not a regular file (a directory, a FIFO, a device, a dangling link) is unknown, read from
+    a stat before the open and again from the opened descriptor, so a FIFO put there in between
+    cannot hang the close (review V10B L2). A link to a regular file reads as that file."""
+    path = families_path()
+    if not os.path.lexists(path):
+        return frozenset(), path, None
+    def not_regular(mode):
+        return "not a regular file (%s)" % (
+            "a directory" if stat.S_ISDIR(mode) else "a FIFO" if stat.S_ISFIFO(mode)
+            else "a socket" if stat.S_ISSOCK(mode) else "a device" if stat.S_ISCHR(mode) or stat.S_ISBLK(mode)
+            else "file type %o" % stat.S_IFMT(mode))
+    try:
+        mode = os.stat(path).st_mode
+        if not stat.S_ISREG(mode):
+            return None, path, not_regular(mode)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0))
+        with os.fdopen(fd, "rb") as handle:
+            mode = os.fstat(handle.fileno()).st_mode
+            if not stat.S_ISREG(mode):
+                return None, path, not_regular(mode)
+            text = handle.read().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, path, "%s: %s" % (type(exc).__name__, exc)
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        return None, path, "not JSON (%s)" % exc
+    except RecursionError:   # nesting deeper than the parser's stack (review V10B L3), as resume_transcript_error and a3_native_evidence catch it
+        return None, path, "not JSON (nested too deeply to parse)"
+    if not isinstance(data, dict) or isinstance(data.get("schema"), bool) or data.get("schema") != 1:
+        return None, path, "not schema 1"
+    off = data.get("off")
+    if not isinstance(off, list) or any(name not in FAMILY_NAMES for name in off):
+        return None, path, "`off` is not a list of family names (%s)" % ", ".join(FAMILY_NAMES)
+    return frozenset(off), path, None
+
+
+def a3_move_target(journal):
+    """The family a move of this pass would go to: the other one (as a3_prepare_move picks it)."""
+    return "codex" if journal.get("harness") == "claude" else "claude"
+
+
+def a3_move_blocked(target):
+    """None when a move to `target` may happen; else (phase, reason): `resolved` when the file
+    names the family off, `awaiting-head` when the file cannot be read, so the head acts on it."""
+    off, path, error = families_off()
+    if off is None:
+        return "awaiting-head", ("the families file %s cannot be read (%s): no move to %s until it reads"
+                                 % (path, error, target))
+    if target in off:
+        return "resolved", "moves to %s are off (%s)" % (target, path)
+    return None
 
 
 class A3Premise(Exception):
@@ -4133,17 +4484,35 @@ def a3_prepare_disposition(journal, allow_move=True):
     # E3–E5 head judgement and evidence holds precede E7 ordinary option/exhaustion holds.
     if (confirmed or outcome.get("exit_class") == "refusal") and a3_families_exhausted(journal):
         return {"phase": "resolved", "decision": "held", "reason": A3_FAMILY_HOLD}
+    # A stopped move: --no-swap (which reads no families file), else the families file. Both are
+    # applied below the fallback-writes check, so a stopped pass whose fallback changed its write
+    # folders still waits for the head with those paths named (review V10B M1, CR10B finding 7).
     if journal.get("no_swap"):
-        return {"phase": "resolved", "decision": "held", "reason": "movement disabled (--no-swap)"}
+        blocked, stop = ("resolved", "movement disabled (--no-swap)"), "movement is disabled (--no-swap)"
+    else:
+        blocked = a3_move_blocked(a3_move_target(journal))
+        stop = blocked[1] if blocked else None
     if confirmed:
         # Only the automatic move stops here: the head's own `recover --decision move` is the check.
         changed, why = a3_fallback_writes(journal)
         if changed or why:
+            where = why or "%d path(s), first %s" % (len(changed), changed[0])
+            # A stopped move still names the changed paths: nothing the fallen-back model produced
+            # is kept, whichever way the work continues.
+            reason = ("a confirmed fallback may have changed its write folders (%s), and its "
+                      "successor would inherit them: restore them where a copy from before the "
+                      "pass exists, otherwise give the move a reviewed brief (--brief) to rewrite "
+                      "what this pass overwrote, then recover --decision move"
+                      % where) if not blocked else (
+                     "a confirmed fallback may have changed its write folders (%s), and %s: restore "
+                     "the folders before any retry on another pass" % (where, stop))
             return {"phase": "awaiting-head", "fallback_writes": {
                         "count": len(changed), "paths": changed[:A3_WRITE_SAMPLE], "unread": why},
-                    "reason": "a confirmed fallback may have changed its write folders (%s), and its "
-                              "successor would inherit them: restore them, then recover --decision "
-                              "move" % (why or "%d path(s), first %s" % (len(changed), changed[0]))}
+                    "reason": reason}
+    if blocked:
+        phase, reason = blocked
+        return ({"phase": "resolved", "decision": "held", "reason": reason} if phase == "resolved"
+                else {"phase": "awaiting-head", "reason": reason})
     return a3_prepare_move(journal)
 
 
@@ -4151,6 +4520,12 @@ def a3_prepare_move(journal):
     """Read only the immutable task snapshot; output evidence is never continuation input."""
     if a3_families_exhausted(journal):
         return {"phase": "resolved", "decision": "held", "reason": A3_FAMILY_HOLD}
+    blocked = a3_move_blocked(a3_move_target(journal))
+    if blocked:
+        # Reached by the head's `recover --decision move` too, which a3_recover refuses first.
+        phase, reason = blocked
+        return ({"phase": "resolved", "decision": "held", "reason": reason} if phase == "resolved"
+                else {"phase": "awaiting-head", "reason": reason})
     provenance = journal.get("continuation_input") or journal.get("input") or {}
     start = journal["start"]
     snapshot = provenance.get("snapshot")
@@ -4234,6 +4609,16 @@ def a3_launch(owner):
         journal = owner.refresh()
         disposition = journal["disposition"]
         if disposition["phase"] != "sealed" or disposition.get("attempted"):
+            return
+        # The families file is read again at the launch: a move sealed before it named the target
+        # family off (or before it became unreadable) is held here, and nothing starts.
+        blocked = a3_move_blocked(disposition.get("target") or a3_move_target(journal))
+        if blocked:
+            phase, reason = blocked
+            disposition.update(phase="resolved" if phase == "resolved" else "awaiting-head",
+                               decision="held" if phase == "resolved" else "pending",
+                               reason=reason + "; it was sealed before that, and was not launched")
+            a3_save_journal(journal)
             return
         disposition.update(phase="launch-intent", attempted=True, launch_intent=now())
         a3_save_journal(journal)
@@ -4418,7 +4803,8 @@ def a3_render(journal, fmt="text", report_words=None):
         triggered = journal["evidence"].get("refusal_count") or \
                     (journal.get("outcome") or {}).get("fallback", {}).get("verdict") == "fallback"
         if triggered and journal.get("kind") != "beat" and not journal.get("no_swap") \
-                and not a3_families_exhausted(journal):
+                and not a3_families_exhausted(journal) \
+                and not a3_move_blocked(a3_move_target(journal)):
             decisions.append("move")
     if fmt == "json":
         print(a3_json({"state": journal["execution"], "pass_id": journal["pass_id"],
@@ -4547,6 +4933,10 @@ def a3_recover(args, harness, explicit_kill=False):
             raise A3Premise(A3_FAMILY_HOLD + "; allowed decisions: hold, recovered")
         if args.decision == "move" and journal.get("no_swap"):
             raise A3Premise("movement disabled (--no-swap); allowed decisions: hold, recovered")
+        if args.decision == "move":
+            blocked = a3_move_blocked(a3_move_target(journal))
+            if blocked:
+                raise A3Premise(blocked[1] + "; allowed decisions: hold, recovered")
         if not args.decision and not args.repair_projection and not explicit_kill:
             return a3_render(journal, args.format, args.report_words) or 3
         if args.decision and not (args.reason or "").strip():
@@ -5721,13 +6111,18 @@ def summary_of(run, lane, cls, model, effort, close):
     denials = close.get("denials") or {}
     if not isinstance(denials, dict):
         denials = {"tool": denials, "fence": denials}
+    fence = denials.get("fence", "?")
+    if "transcript" in close and close.get("transcript") is None:
+        # No transcript was read for this close, so its fence count (an integer on the record, as
+        # every count stays: CLOSE_NOT_APPLICABLE) proves nothing; the line says it is unread.
+        fence = "?"
     usage = close.get("usage") or {}
     line = ("lane %s/%s: %s %s·%s · %s · %s turns · $%s · denials tool %s fence %s · "
             "effort applied %s · tier %s · peak %s · session %s"
             % (run, lane, cls, model, effort, close.get("exit_class"),
                close.get("num_turns") if close.get("num_turns") is not None else "?",
                ("%.2f" % cost) if isinstance(cost, (int, float)) else "?",
-               denials.get("tool", "?"), denials.get("fence", "?"),
+               denials.get("tool", "?"), fence,
                ",".join(close.get("effort_applied") or []) or "unread",
                ",".join(close.get("cache_write_tier") or []) or "unread",
                format(usage.get("peak_context") or 0, ","), close.get("session_id")))
@@ -6399,6 +6794,380 @@ def await_ack(worker, record_path, since, match, wait_s, log_path, ack_line, wha
         time.sleep(min(ACK_POLL_S, max(0.01, wait_s - waited)))
 
 
+class UnknownExit(int):
+    """A detached worker's exit code that its log does not hold (a signal ended it, or the log cannot
+    be read): the value 3, the code every caller already gives an unknown exit (`or 3`, `else 3`),
+    shown as `(code unknown)` wherever a message prints it."""
+    def __new__(cls):
+        return int.__new__(cls, 3)
+
+    def __str__(self):
+        return "(code unknown)"
+
+    __repr__ = __str__
+
+
+WORKER_EXIT_LINE = "lane.py: worker pid %d exit %d\n"
+
+
+class DetachedWorker:
+    """The handle a detached call keeps on a worker it started but is not the parent of (its parent
+    is the init process: start_detached). It offers what await_ack, watch_lane and a3_watch read from
+    a Popen: `pid`, `poll()`, `wait(timeout)` and `returncode`. Liveness is the pid's birth identity
+    (a3_liveness), so a reused pid reads as gone; with no readable identity it is the pid alone, said
+    once on stderr. The exit code is the worker's own last line in its log (WORKER_EXIT_LINE), read only
+    from what the log gained after this call's launch and matched on this pid; none is UnknownExit."""
+    def __init__(self, pid, log_path, offset):
+        self.pid, self.log_path, self.offset = pid, log_path, offset
+        self.returncode = None
+        self.identity = a3_process_identity(pid)
+        if self.identity is None and pid_alive(pid):
+            sys.stderr.write("lane.py: the worker pid %d has no readable birth identity; its liveness "
+                             "is read from the pid alone\n" % pid)
+
+    def _alive(self):
+        if self.identity is not None:
+            return a3_liveness(self.identity) != "dead"
+        return pid_alive(self.pid) is not False
+
+    def _exit_code(self):
+        try:
+            with open(self.log_path, "rb") as handle:
+                handle.seek(self.offset)
+                tail = handle.read().decode("utf-8", errors="replace")
+        except OSError:
+            return UnknownExit()
+        codes = re.findall(r"^lane\.py: worker pid %d exit (-?\d+)$" % self.pid, tail, re.M)
+        return int(codes[-1]) if codes else UnknownExit()
+
+    def poll(self):
+        if self.returncode is None and not self._alive():
+            self.returncode = self._exit_code()
+        return self.returncode
+
+    def wait(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired("detached worker pid %d" % self.pid, timeout)
+            time.sleep(0.05)
+        return self.returncode
+
+
+def start_detached(argv, log_path):
+    """The second half of the double fork (register 2026-11-07 21:36 a): start `argv` as a worker that
+    is not this process's child. A short-lived shell, in a session of its own, starts it in the
+    background with its input /dev/null and its output appended to `log_path`, prints its pid and
+    exits; the worker's parent is then the init process, so a stop that walks this caller's process
+    tree by parent pid (how the harness stops a Bash call) does not reach it. The shell is never this
+    interpreter, so a suite that plants a worker in place of the interpreter plants the worker only.
+    Returns (pid, None) on success; (None, why) when no pid came back, so a worker may be running; and
+    (False, why) when the shell itself could not start, so none is."""
+    shell = os.environ.get("AIMYTH_DETACH_SHELL") or DETACH_SHELL
+    script = '"$@" </dev/null >>"$0" 2>&1 & echo "$!"'
+    try:
+        launcher = subprocess.Popen([shell, "-c", script, log_path] + list(argv),
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, start_new_session=True, close_fds=True)
+    except OSError as exc:
+        return False, "the launch shell %s could not start: %s" % (shell, exc)
+    try:
+        out, err = launcher.communicate(timeout=DETACH_PID_WAIT_S)
+    except subprocess.TimeoutExpired:
+        return None, ("the launch shell %s printed no worker pid within %d s and was left running"
+                      % (shell, DETACH_PID_WAIT_S))
+    text = out.decode("utf-8", errors="replace").strip()
+    if launcher.returncode == 0 and re.fullmatch(r"[1-9][0-9]*", text):
+        return int(text), None
+    return None, ("the launch shell %s exited %s without a worker pid (stdout %r, stderr %r)"
+                  % (shell, launcher.returncode, text[:120],
+                     err.decode("utf-8", errors="replace").strip()[:200]))
+
+
+def exit_status(code):
+    """The status a process exits with for `sys.exit(code)`: None is 0, an integer is taken modulo 256
+    as the system does, anything else is 1 (Python prints it)."""
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return int(code) % 256
+    return 1
+
+
+class _SummaryTee:
+    """sys.stderr while a CallerSummary records: every write reaches the real stream as it stands and
+    is seen by the summary; everything else (flush, fileno, encoding) is the real stream's."""
+    def __init__(self, summary, stream):
+        self._summary, self._stream = summary, stream
+
+    def write(self, text):
+        self._summary.saw(text)
+        return self._stream.write(text)
+
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def summary_cut(text):
+    """One item's text: white space collapsed and cut at SUMMARY_ITEM_CHARS, an ellipsis marking a cut."""
+    text = " ".join(str(text).split())
+    return text if len(text) <= SUMMARY_ITEM_CHARS else text[:SUMMARY_ITEM_CHARS - 1].rstrip() + "…"
+
+
+def summary_label(line):
+    """A notice as one summary item: its first line without the `lane.py: ` and `warning: ` leads, up
+    to its first ` — ` and then its first `; ` (where this file's notices turn from what happened to
+    what to do about it), cut."""
+    text = line.strip()
+    for lead in ("lane.py: ", "warning: "):
+        if text.startswith(lead):
+            text = text[len(lead):]
+    for stop in (" — ", "; "):
+        at = text.find(stop)
+        if at > 0:
+            text = text[:at]
+    return summary_cut(text)
+
+
+def summary_names_detach(argv):
+    """For arguments that did not parse: whether they name --detach (argparse also takes a unique
+    prefix, `--det` at the shortest) and no --dry-run (`--dr`), the call shape the summary is for."""
+    flags = [token for token in argv[1:] if token.startswith("--")]
+    return (any(len(token) >= 5 and "--detach".startswith(token) for token in flags)
+            and not any(len(token) >= 4 and "--dry-run".startswith(token) for token in flags))
+
+
+class CallerSummary:
+    """The closing line of a detached spawn or resume (register 2026-11-12 09:13). A detached call's
+    warnings and any decisions HOLD go to its caller's output, which launch scripts redirect to a log
+    the lead reads only by its tail, and on two nights they reached no reader that way (the register
+    entry and its recurrence). So the caller ends its output with one line naming them (`line`),
+    written to stderr after stdout is flushed: the last line whether the script joins the two streams
+    or keeps them apart.
+
+    While it records, it stands in for sys.stderr (_SummaryTee): every write passes through as it
+    stands and is kept as notices, a notice being a line that does not start with white space with
+    the indented lines under it. A warning is any notice printed before the worker's launch that is
+    neither claimed nor one of INFO (the console opener's outcomes and the worker-started line), so a
+    warning added later is named with no change here. The decisions check names its hold through
+    `hold` and writes it under `claimed`, as argument parsing writes its refusal, so neither is
+    counted twice. Notices after `launched` are the outcome's (an unconfirmed acknowledgement, a
+    worker's log tail), read only for the reason of a non-zero exit. Until `start` and after
+    `finish` or `stop`, every hook is a no-op, so the worker and codex-lane.py, which call the shared
+    functions, are unchanged and the worker's log gains nothing."""
+
+    INFO = re.compile(r"^(?:viewer: |lane\.py: viewer none · no window$|lane\.py: worker pid \d+ started )")
+    REFUSAL = re.compile(r"PROBE FAILED: (.*)$")
+
+    def __init__(self):
+        self.on = False             # the call is a detached spawn or resume: the line is owed
+        self.stream = None          # the real stderr while recording
+        self.partial = ""
+        self.notices = []
+        self.claiming = False
+        self.launched = False
+        self.holds = []             # (mode, the check's first line)
+        self.parse_error = None
+        self.crash = None
+        self.interrupted = False
+        self.done = False
+
+    def start(self):
+        if self.stream is None and not self.done:
+            self.stream = sys.stderr
+            sys.stderr = _SummaryTee(self, self.stream)
+
+    def _release(self):
+        if self.partial:
+            self._line(self.partial)
+            self.partial = ""
+        if self.stream is not None and isinstance(sys.stderr, _SummaryTee):
+            sys.stderr = self.stream
+        stream, self.stream = self.stream, None
+        return stream
+
+    def stop(self):
+        """Not a detached call: the real stream back, nothing recorded and no line at the end."""
+        self.on = False
+        self.done = True
+        self._release()
+
+    def saw(self, text):
+        if self.stream is None:
+            return
+        lines = (self.partial + str(text)).split("\n")
+        self.partial = lines.pop()
+        for line in lines:
+            self._line(line)
+
+    def _line(self, line):
+        if not line.strip():
+            return
+        if line[:1] in (" ", "\t") and self.notices:
+            self.notices[-1]["lines"].append(line)
+            return
+        self.notices.append({"lines": [line], "claimed": self.claiming, "after": self.launched})
+
+    @contextlib.contextmanager
+    def claimed(self):
+        """Writes inside are named by their writer (the hold, a parse refusal), never as warnings."""
+        was, self.claiming = self.claiming, True
+        try:
+            yield
+        finally:
+            if self.partial and self.stream is not None:
+                self._line(self.partial)
+                self.partial = ""
+            self.claiming = was
+
+    def hold(self, mode, first):
+        """The decisions check's verdict: `trial`, `trial, would refuse`, `held` (exit 7) or `refused`
+        (exit 2), with the first line of its text."""
+        if self.stream is not None:
+            self.holds.append((mode, first))
+
+    def line(self, code):
+        """The summary line for a call that exits `code`: `clean`, or its items joined by ` · `."""
+        items, refusal_notice = [], None
+        if self.interrupted:
+            items.append("interrupted")
+        elif code == 2:
+            found = [n for n in self.notices if self.REFUSAL.search(n["lines"][0])]
+            refused = [text for mode, text in self.holds if mode == "refused"]
+            if found:
+                refusal_notice = found[-1]
+                reason = self.REFUSAL.search(refusal_notice["lines"][0]).group(1)
+            elif self.parse_error:
+                reason = self.parse_error
+            elif refused:
+                reason = "the decisions check: %s" % refused[-1]
+            else:
+                rest = [n for n in self.notices if not n["claimed"] and not self.INFO.match(n["lines"][0])]
+                reason = rest[-1]["lines"][0] if rest else "no reason printed"
+            items.append("refused (exit 2): %s" % summary_cut(reason))
+        elif code and not (code == EXIT_DECISIONS_HOLD and any(m == "held" for m, _ in self.holds)):
+            outcome = [n for n in self.notices if n["after"] and not n["claimed"]
+                       and not self.INFO.match(n["lines"][0])]
+            reason = self.crash or (summary_label(outcome[-1]["lines"][0]) if outcome else None)
+            items.append("exit %d%s" % (code, ": %s" % summary_cut(reason) if reason else ""))
+        warnings = [summary_label(n["lines"][0]) for n in self.notices
+                    if not n["after"] and not n["claimed"] and n is not refusal_notice
+                    and not self.INFO.match(n["lines"][0])]
+        if warnings:
+            items.append("%d warning%s (%s)" % (len(warnings), "" if len(warnings) == 1 else "s",
+                                                "; ".join(warnings)))
+        for mode, text in self.holds:
+            if mode == "refused":
+                continue                    # named as the refusal above
+            word = "held, exit 7" if mode == "held" else mode
+            items.append("decisions HOLD (%s): %s"
+                         % (word, summary_cut(text.replace("HOLD (decisions channel) — ", "", 1))))
+        return SUMMARY_PREFIX + (" · ".join(items) if items else "clean")
+
+    def finish(self, code):
+        """Once, at the end of the call: the real stream back and, for a detached call, the line."""
+        if self.done:
+            return
+        self.done = True
+        stream = self._release()
+        if not self.on or stream is None:
+            return
+        try:
+            sys.stdout.flush()
+        except (OSError, ValueError):
+            pass
+        try:
+            stream.write(self.line(code) + "\n")
+            stream.flush()
+        except (OSError, ValueError):
+            pass
+
+
+CALLER_SUMMARY = CallerSummary()
+
+
+def caller_main():
+    """The entry for every call but the worker's: `main()`, with the closing summary around a
+    detached spawn or resume (`--detach`, with or without `--no-wait`; a dry run never detaches, so
+    it has none). Arguments that do not parse but name --detach are a refusal like any other (exit
+    2) and end with the line too. An uncaught exception's traceback is printed here, so the line
+    still comes last, and the call exits 1 as Python's own handler would; an interrupt is named and
+    re-raised, its traceback after the line."""
+    argv = sys.argv[1:]
+    if not argv or argv[0] not in ("spawn", "resume"):
+        return main()
+    summary = CALLER_SUMMARY
+    summary.start()
+    code = 1
+    try:
+        with summary.claimed():
+            try:
+                args = build_parser().parse_args(argv)
+            except SystemExit as exc:
+                if exit_status(exc.code) == 2 and summary_names_detach(argv):
+                    summary.on = True
+                    mine = [n for n in summary.notices if n["claimed"]]
+                    summary.parse_error = (re.sub(r"^lane\.py(?: \w+)?: ", "", mine[-1]["lines"][0])
+                                           if mine else None)
+                raise
+        if getattr(args, "detach", False) and not getattr(args, "dry_run", False):
+            summary.on = True
+        else:
+            summary.stop()
+        code = exit_status(main(args))
+        return code
+    except SystemExit as exc:
+        code = exit_status(exc.code)
+        if summary.on and exc.code is not None and not isinstance(exc.code, int):
+            sys.stderr.write("%s\n" % exc.code)     # what Python would print at exit, before the line
+            raise SystemExit(code)
+        raise
+    except KeyboardInterrupt:
+        summary.interrupted = True
+        raise
+    except Exception as exc:
+        if not summary.on:
+            raise
+        with summary.claimed():
+            traceback.print_exc()
+        summary.crash = "%s: %s" % (type(exc).__name__, exc)
+        code = 1
+        return code
+    finally:
+        summary.finish(code)
+
+
+def run_as_worker():
+    """The entry for `--as-worker`. The launch shell started this process in the background, which
+    leaves SIGINT and SIGQUIT ignored and leaves it no session leader: both signals are restored and it
+    leads a session of its own again, as the single-Popen worker did. Its last line in its log is
+    WORKER_EXIT_LINE with the status it exits with, from a normal return, a SystemExit or any other
+    exception (1, re-raised, so Python prints the traceback as before); a signal leaves none."""
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    signal.signal(signal.SIGQUIT, signal.SIG_DFL)
+    try:
+        os.setsid()
+    except OSError:
+        pass                                # already a session leader (an older caller's Popen made it one)
+    code = 1
+    try:
+        code = exit_status(main())
+        return code
+    except SystemExit as exc:
+        code = exit_status(exc.code)
+        raise
+    except BaseException:
+        code = 1
+        raise
+    finally:
+        sys.stderr.write(WORKER_EXIT_LINE % (os.getpid(), code))
+        sys.stderr.flush()
+
+
 def detach_spawn(args, session_id, home, projects_root, caps):
     """The double fork for a spawn, once every check has passed in the caller: the session id
     chosen there and the cap it composed are handed to the worker, which runs the whole spawn and
@@ -6429,6 +7198,11 @@ def detach_worker(args, session_id, extra, home, projects_root, since=None, ack=
     event count before the detach, so the foreground waits for a lane-resumed after it and never
     takes the previous call's close for this one's. `ack` is (what, record count, match) for
     --no-wait's bounded acknowledgement wait (await_ack)."""
+    # The warn-only check (register 2026-11-07 21:36 a): every refusal has passed by here, and a dry
+    # run never detaches, so this is the one call shape it names.
+    if not args.no_wait and not getattr(args, "dry_run", False) and not getattr(args, "as_worker", False):
+        sys.stderr.write(DETACH_WAIT_WARNING)
+        sys.stderr.flush()
     argv = [a for a in sys.argv[1:] if a not in ("--detach", "--no-wait")]
     argv += list(extra) + ["--viewer", "none", "--as-worker"]
     paths = store_paths(args.run, args.lane, args.record)
@@ -6436,16 +7210,23 @@ def detach_worker(args, session_id, extra, home, projects_root, since=None, ack=
     try:
         os.makedirs(os.path.dirname(paths["detach_log"]), exist_ok=True)
         fd = os.open(paths["detach_log"], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        offset = os.fstat(fd).st_size     # the worker's exit line is read only from what follows
     except OSError as exc:
         die("detach log is not writable (%s): %s" % (paths["detach_log"], exc))
-    try:
-        worker = subprocess.Popen([sys.executable, "-B", os.path.abspath(__file__)] + argv,
-                                  stdin=subprocess.DEVNULL, stdout=fd, stderr=fd,
-                                  start_new_session=True, close_fds=True)
-    except OSError as exc:
-        os.close(fd)
-        die("could not start the detached worker: %s" % exc)
     os.close(fd)
+    began = time.monotonic()
+    pid, why = start_detached([sys.executable, "-B", os.path.abspath(__file__)] + argv, paths["detach_log"])
+    CALLER_SUMMARY.launched = True      # what follows is the outcome's, never a warning (CallerSummary)
+    if pid is False:
+        die("could not start the detached worker: %s" % why)
+    if pid is None:
+        # The shell starts the worker before it prints the pid, so a missing pid never means that
+        # nothing started (review CR10B finding 3): the call is unconfirmed, as await_ack's is.
+        print("detached pid unknown, unconfirmed after %d s" % round(time.monotonic() - began))
+        sys.stderr.write("lane.py: %s; a worker may be running: read the detach log %s and the record "
+                         "%s before acting\n" % (why, paths["detach_log"], paths["record"]))
+        return EXIT_UNCONFIRMED
+    worker = DetachedWorker(pid, paths["detach_log"], offset)
     if args.no_wait:
         what, count, match = ack
         return await_ack(worker, paths["record"], count, match, args.ack_wait_s, paths["detach_log"],
@@ -6557,6 +7338,23 @@ def grants_from_lane(args, record_path):
     return {"lane": args.grants_from, "grants": len(reads), "writes": len(writes)}
 
 
+def usage_windows_module():
+    """The sibling usage_windows.py (the window meter's item rule), loaded by path from this
+    script's own directory, leaving no __pycache__; one instance per process."""
+    import importlib.util
+    want = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "usage_windows.py"))
+    mod = sys.modules.get("usage_windows")
+    if mod is not None and os.path.realpath(getattr(mod, "__file__", "") or "") == want:
+        return mod
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location("usage_windows", want)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["usage_windows"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 @a3_entry("claude")
 def cmd_spawn(args):
     require_lane_id(args.lane)
@@ -6618,6 +7416,9 @@ def cmd_spawn(args):
                          "and lane.py grants no shell network (a declaration that needs search alone "
                          "opens with `search:`) — spawn it through codex-lane.py with --search",
                search_ok=True)
+    # Named hosts (HOST+): a Claude lane gets no network, so they refuse in enforce and are logged
+    # in trial (DW-20261024-2); a detached worker repeats the check quietly.
+    network_guard = claude_host_guard(declared, "spawn", quiet=bool(args.as_worker))
 
     config_dir = None
     if args.config_dir:
@@ -6810,6 +7611,7 @@ def cmd_spawn(args):
     settings, settings_allow = settings_for(home, writes, search)
     settings_text = json.dumps(settings, indent=2) + "\n"   # the bytes written below, hashed above them
     env = dict(os.environ)
+    network_dropped = drop_inherited_network(env)   # [provisional] both modes (DW-20261024-2)
     env.update({"LLM_WIKI_LANE": "1", "LLM_WIKI_LANE_RUN": args.run, "LLM_WIKI_LANE_ID": args.lane,
                 "LLM_WIKI_LANE_GRANTS": grants_env, "LLM_WIKI_LANE_WRITES": writes_env,
                 "LLM_WIKI_LANE_PROGRESS": progress})
@@ -6866,6 +7668,9 @@ def cmd_spawn(args):
         "silence_s": silence, "silence_src": silence_src, "poll_s": args.poll_s,
         "progress_file": progress, "report_words_cap": args.report_words,
         "reason": args.reason, "plant": args.plant, "reading_list": args.reading_list,
+        # whether this spawn passed --no-swap, so the record says which spawns carried the hold
+        # (register 2026-11-11 00:06); the pass journal keeps its own copy for the close
+        "no_swap": bool(getattr(args, "no_swap", False)),
         "brief": brief_abs, "brief_copy": brief_copy, "mode": mode, "mode_src": mode_src,
         "mode_from": mode_from, "baseline": args.baseline,
         "baseline_lane": args.baseline_lane or None,
@@ -6887,6 +7692,17 @@ def cmd_spawn(args):
         open_line["throttle_note"] = throttle_note
     if withheld:
         open_line["tools_withheld"] = withheld
+    # What holds this lane to hosts and what does not (DW-20261024-2): the inherited grant removed,
+    # WebSearch, the shell's unbound programs and any tool server recorded, the guard's verdict.
+    open_line.update(claude_network_fields(tools, search, args.mcp_config, network_dropped,
+                                           network_guard))
+    # The lane's item for the window meter (package A2): --item, else the latest preceding
+    # boundary's `to` (inferred, with its locator), else unassigned, under usage_item*; one rule,
+    # shared with codex-lane.py through the sibling module. The explicit `item` above stays as is.
+    usage_windows = usage_windows_module()
+    open_line.update(usage_windows.item_at_open(usage_windows.record_events(record_path),
+                                                getattr(args, "item", None),
+                                                source_pass=getattr(args, "source_pass", None)))
 
     if args.dry_run:
         print("command:")
@@ -7261,6 +8077,7 @@ def cmd_resume(args):
                 % (args.run, args.lane, recorded_cap, cap_source,
                    "" if args.budget_usd is None
                    else ", and --budget-usd $%.2f is not above it" % args.budget_usd))
+    network_guard = None
     if beat:
         brief, declared = None, None    # the beat's prompt is BEAT_PROMPT, below
     else:
@@ -7279,6 +8096,7 @@ def cmd_resume(args):
                              "WebFetch and lane.py grants no shell network (search alone needs a "
                              "`search:` declaration and a lane-open carrying WebSearch) — re-spawn it "
                              "through codex-lane.py with --search", search_ok=search_ok)
+        network_guard = claude_host_guard(declared, "resume", quiet=bool(args.as_worker))
 
     # The lane's reason has not changed, so the resumed call is tallied under the letter its spawn
     # gave: `lane-resumed` records the reason carried from lane-open, and the command needs no flag
@@ -7399,6 +8217,7 @@ def cmd_resume(args):
         list(opened.get("grants") or []) + [home, "/tmp"])
     writes_env = opened.get("writes_env") or os.pathsep.join(writes)
     env = dict(os.environ)
+    network_dropped = drop_inherited_network(env)   # [provisional] both modes, a beat's too (DW-20261024-2)
     env.update({"LLM_WIKI_LANE": "1", "LLM_WIKI_LANE_RUN": args.run, "LLM_WIKI_LANE_ID": args.lane,
                 "LLM_WIKI_LANE_GRANTS": grants_env, "LLM_WIKI_LANE_WRITES": writes_env,
                 "LLM_WIKI_LANE_PROGRESS": progress})
@@ -7475,6 +8294,7 @@ def cmd_resume(args):
            "viewer": args.viewer, "open_line": opened, "spawn_extra": {"resume_n": resume_n},
            "no_swap": bool(getattr(args, "no_swap", False)), "brief_current": brief_abs,
            "pre_event": {"event": "lane-resumed", "reason": lane_reason, "reason_src": lane_reason_src,
+                           "no_swap": bool(getattr(args, "no_swap", False)),
                            "brief": brief_abs, "brief_copy": brief_copy, "resume_n": resume_n,
                            "report": paths["report"],
                            "resumes_close_ts": closed.get("ts"), "age_s": round(age, 1),
@@ -7496,6 +8316,8 @@ def cmd_resume(args):
                                              if isinstance(opened.get("choice_reason"), str) else None)},
            "close_extra": {"resumed": True, "resume_n": resume_n},
            "soft_usd": soft_usd, "soft_src": soft_src, "controls_pending": controls_pending}
+    # The resume's network fields (DW-20261024-2): the inherited grant removed, the guard's verdict.
+    ctx["pre_event"].update(claude_network_fields((), False, None, network_dropped, network_guard))
     # The session is claimed HERE, immediately before the first thing this resume writes or
     # starts, and not only checked at the top (critic finding 2 of review): a beat that took the
     # session while this call was preparing must turn it back at the door, whichever of the two
@@ -7667,9 +8489,15 @@ def build_parser():
     spawn.add_argument("--prompt-arg", action="store_true",
                        help="pass the brief as the prompt argument instead of on stdin")
     spawn.add_argument("--detach", action="store_true",
-                       help="run the lane in a worker that survives the caller, once every argument "
-                            "and grant check has passed in the caller (a refusal exits 2 and starts "
-                            "no worker); the foreground watches it")
+                       help="run the lane in a worker outside this call's process tree (a short-lived "
+                            "shell starts it and exits, so its parent is the init process), once every "
+                            "argument and grant check has passed in the caller (a refusal exits 2 and "
+                            "starts no worker). Without --no-wait this call stays open as the watch "
+                            "until the lane closes; if the call is stopped or times out the worker runs "
+                            "on, but this call's summary is lost, so pair --detach with --no-wait and "
+                            "read the close with `lane.py wait`. If the launch reports no worker pid "
+                            "within %d s, it prints `detached pid unknown, unconfirmed after N s` and "
+                            "exits %d: a worker may be running" % (DETACH_PID_WAIT_S, EXIT_UNCONFIRMED))
     spawn.add_argument("--no-wait", action="store_true",
                        help="with --detach: wait up to --ack-wait-s for THIS call's own lane-open "
                             "(its wrapper_pid the worker's), then: acknowledged, print `detached pid "
@@ -7770,9 +8598,14 @@ def build_parser():
                         help="the run's console window, as on spawn; a detached resume's caller "
                              "opens it and runs its worker under none")
     resume.add_argument("--detach", action="store_true",
-                        help="run the resumed call in a worker that survives the caller, once every "
-                             "check has passed in the caller (a refusal exits 2 and starts no "
-                             "worker); the foreground watches it and returns on the resumed call's close")
+                        help="run the resumed call in a worker outside this call's process tree, as "
+                             "on spawn, once every check has passed in the caller (a refusal exits 2 "
+                             "and starts no worker). Without --no-wait this call stays open as the "
+                             "watch and returns on the resumed call's close; if the call is stopped or "
+                             "times out the worker runs on, but this call's summary is lost, so pair "
+                             "--detach with --no-wait and read the close with `lane.py wait`. No "
+                             "worker pid within %d s: `detached pid unknown, unconfirmed after N s`, "
+                             "exit %d" % (DETACH_PID_WAIT_S, EXIT_UNCONFIRMED))
     resume.add_argument("--no-wait", action="store_true",
                         help="with --detach: wait up to --ack-wait-s for THIS call's own "
                              "lane-resumed (its wrapper_pid the worker's), then: acknowledged, print "
@@ -7826,10 +8659,12 @@ def build_parser():
 
 
 @a3_public
-def main():
-    args = build_parser().parse_args()
+def main(args=None):
+    """One call: `args` as caller_main parsed them, else parsed here (the worker's entry)."""
+    if args is None:
+        args = build_parser().parse_args()
     return args.func(args)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_as_worker() if "--as-worker" in sys.argv[1:] else caller_main())

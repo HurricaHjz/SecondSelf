@@ -108,7 +108,7 @@ a named discard list shows what the sweep found and what the dedup killed.
 | Destination | When | Note |
 |---|---|---|
 | A **rule** — the schema, `CUSTOMISATION.md` or a skill | The lesson generalises **and** can tighten or replace an existing line | A rule that only adds a line feeds the always-on ratchet: report the byte delta and prefer a tightening |
-| An **experience page** — `wiki/experience/<feature>.md` | A lesson about how one feature should decide next time, applied case by case | Propose a `lesson` delta with its label on an existing page, or a new page and its pointer together; an `owner` entry's change goes in exact text for CLAUDE.md §12. The head, never this lane, checks the bound and writes |
+| An **experience page** — `wiki/experience/<feature>.md` | A lesson about how one feature should decide next time, applied case by case | Propose a `lesson` delta with its label on an existing page (after its date, the model that learnt it and the kind of evidence behind it, as the reflect skill's Step 7 sets), or a new page and its pointer together; an `owner` entry's change goes in exact text for CLAUDE.md §12. The head, never this lane, checks the bound and writes |
 | A **wiki page** (concepts, entities, tools, models, benchmarks, user) | Domain or research knowledge | A new page or an addition to an existing one. The owner's own pages are theirs to curate: propose only |
 | A **`notes-*` synthesis** | A reusable procedure or a cross-page conclusion | `type: synthesis`, kebab-case, `notes-` prefix, with its sources |
 | The **known-issues register** | A framework defect that a named reason blocks from being fixed now (CLAUDE.md §12: fix it now if you can) | Entry format per the register's own shape |

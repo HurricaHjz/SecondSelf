@@ -410,6 +410,10 @@ class Suite(A3Suite):
                     "head_context": lambda *a: {"context": 1000}, "open_console_if_dark": lambda *a: None,
                     "remainder": lambda *a: (1, "fixture budget"),
                     "wait_head": wait_head, "run_on_limit": lambda *a: ("resume", "fixture", None),
+                    # Limit policy 1 (DW-20261021-2) classifies the stop text before it acts, and
+                    # the fixture's LIMIT names neither window; these legs test the resume after a
+                    # 5-hour stop, so the window is that one, as the seam above fixes on_limit.
+                    "claude_limit_window": lambda *a: ("short", "fixture: the 5-hour window"),
                     "wait_for_reset": lambda *a: (resets.append("reset") or "ok", "fixture reset", 0),
                     "resume_in_place": lambda *a: True,
                     "successor_path": lambda *a, **k: None,

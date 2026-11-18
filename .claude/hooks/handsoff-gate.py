@@ -23,11 +23,12 @@ of the figure) and read against the same bands():
   - at the hard band, the run's LAST LEAD may also stop its background tasks (TaskStop) and close
     the run (a Bash command containing `handsoff.py close`): the owner's decision of 30 October
     2026. The last lead is the session handsoff.py's last_lead_state() reads as `last` — no
-    successor left on the run's decided cap (the count `gate` prints, successors_left) and the
+    successor left on the run's decided limit (the count `gate` prints, successors_left) and the
     calling session the record's current head — so another armed session of the same run is
-    denied. Only for such a call, and only at that height, is handsoff.py imported (from the
-    delegate skill beside this hooks folder, ../skills/delegate/handsoff.py); every other call
-    costs what it did. An allowance is silence, one stderr note and one events.log line.
+    denied. A run with no limit, the default since the owner's decision of 2026-11-04, has no last
+    lead: its lead hands over at this height. Only for such a call, and only at that height, is
+    handsoff.py imported (from the delegate skill beside this hooks folder,
+    ../skills/delegate/handsoff.py); every other call costs what it did. An allowance is silence, one stderr note and one events.log line.
   - at or above the SECOND band (80 %): a Read with no `limit`, or a limit above READ_CAP, is
     denied — at that height one unbounded read can cross the remaining headroom in a single call
     (C1 F3 on the design page; the 369k single-call jump on record). A bounded Read passes
@@ -64,8 +65,8 @@ Knobs (env):
   decide the figure and the edges.)
   The last-lead allowance reads handsoff.py's knobs: AIMYTH_HANDSOFF_RUN (the run), else the
   pointer file `run-<session_id>` under AIMYTH_STATE_DIR; LLM_WIKI_STORE (the run store holding
-  the record and its grants file); AIMYTH_MAX_SUCCESSORS (the cap's fallback when the grants file
-  carries none).
+  the record and its grants file); AIMYTH_MAX_SUCCESSORS (a limit, when the grants file carries
+  none; with neither the run has no limit).
 
 Never blocks by exit code: every path exits 0 and the decision travels in the JSON on stdout, which
 is what the registration line (`... || true`) preserves.

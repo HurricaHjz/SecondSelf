@@ -3,6 +3,27 @@
 Fill `{{slots}}`; replace the paste marker with the `_inherited.md` block; delete
 `<!-- -->` lines before sending.
 
+<!-- Spawner: fill the first-line model/effort slots from the spawn record (lanes copy them
+into every registry/ledger config field). Escalate the spawn to model: opus for research-depth papers (routing table).
+VAULT-ROOT GRANT: a headless compile lane that writes its own log entry (the ingest exception) or sorts also takes `--grant-vault-root` (read-only): `vault-writes.py log-append` and `sort_check.py` take the vault root as their `--vault` argument, and the fence refuses an ungranted one, so without the grant the head appends the lane's entries and sorts for it.
+ONE-LANE BATCH: apply the ingest Pacing section’s batch precedence: a batch compiles in a lane by default, and this brief is that case. The pre-flight records the standing instrument-rule reason satisfying `single`: (d) a batch longer than the head can afford, or (b) breadth one context cannot hold; the Routing note at Step 3 applies its head-compile rule under `single` to the single-source path. The owner’s word, else the head’s pre-flight judgement by converted bytes, chooses one-lane or parallel; that batch shape takes precedence over the older per-source `auto` sequence. For one-lane, assign the whole batch to this lane and set siblings to none. The lane compiles the batch serially, writes its source pages and warranted shared pages itself (no claims, no merge, no conflict lane), and writes its own index lines and log entry under the explicit §2.2 ingest exception. Grant those pages and raw pairs in the whitelist, choose the sorting option, and delete the parallel-only LEDGER & CLAIMS block. The lane sorts each raw pair after its own Step 7 self-check; one verify lane follows over all its pages before the head accepts the run, under the ingest Verify step. Carry these duties in the filled TASK, SCOPE and REGISTRIES slots. The head’s retained brief, verification, merge, sorting, Step 7 and registry duties remain as assigned by Routing and the chosen shape, including registries where the ingest exception is not granted.
+TOOL-MARKUP GATE: fill `{{vault root}}` with the vault root, literal. A headless lane also takes
+`--grant {{vault root}}/.claude/skills/lint/check-tool-markup.py`, a file grant with the reason
+"the output gate runs it": the class row grants `wiki` and the raws only, and the script finds its
+vault from its own path, so it needs no `--vault` and no vault-root grant.
+CLAIMS-LOCATOR CHECK: a headless parallel compile lane also takes `--grant {{vault root}}/.claude/skills/ingest/raw_slices.py`, a file grant with the reason "the claims-locator check runs it"; the raws and the run ledger it reads are already granted.
+SORT CHECK: a headless lane granted sorting also takes `--grant {{vault root}}/.claude/skills/ingest/sort_check.py`, with the reason "the Step 6 sort procedure runs it".
+Grant the registry exception ONLY to a lane under a real ingest contract — never from
+brief-generic. Anchor every index.md/reading-list reference by heading or grep pattern,
+NEVER by line number — concurrent sibling lanes shift lines mid-run (a lane has hit stale
+anchors live).
+PREFLIGHT (parallel ingest, before the owner go): the ingest skill's `brief_preflight.py` runs over
+every filled compile and verify brief (its Parallel mode step 1) and fails a brief on a path token
+whose parent directory is missing, an unfilled slot, a ledger path that differs between briefs, no `preflight`
+append proven at the brief's ledger path, a fence deny for a headless lane's own append, or an index
+section named or pasted: fill every path slot with a literal path before the check runs.
+A verify brief is exempt from the fence check: the head appends the verifier's `lane_open` and `lane_close` itself (the ingest Verify step, item 5). -->
+
 ```
 You are wiki-compile (definition: .claude/agents/wiki-compile.md), lane {{LANE_ID}} of run
 {{RUN_ID}} · model {{model}} · effort {{effort}}.
@@ -72,7 +93,14 @@ SCOPE
 - Boundary: anything else — proposed diff only; off-scope findings reported, never fixed.
 
 GRANTS
+- Bounds: {{the job page's Bounds and lesson index (path); the hard limits that apply, each naming its source: the owner's strict mark, an approved rule, or the lead's own choice}}
+- Pushed: {{lesson ids or grants, each with one line on why this seat needs it | none}}
+- Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
+- Left out on purpose: {{what, and why | none}}
+- Second seat: {{none, or the rule that earns it and what that seat checks against}}
 DECISIONS: {{the run's decisions that bear on this task, and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
+Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
+A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 {{headless lanes: the read directories, the write scope and any add-on granted beyond the
 class row, each with its reason — so a refused path reads as a gap to report, never as a
 mistake to work around; every path and command literal, as the fence will see it — no `Let X =`
@@ -159,23 +187,3 @@ context note not borne out by the raw, a thin or truncated source, anything unse
 `## Controls` (parallel mode): the checkpoint assertion's `claims-shape:` line and the brief's `controls:` line, which the verify leg's named check reads (a report without them is an evidence failure the verify leg names, `shape: fail`, never a `claims` count; critic review finding 1, 2026-09-16; scoring form corrected 2026-09-21).
 The same section carries the claims-locator check's `locators:` line for each raw, naming this lane, the raw and its source page as the check printed them, which the verify leg's locator check matches raw by raw (a raw without its own clean line, or any line with a non-zero unresolved, missing or unattributed count, is an evidence failure the verify leg names, `shape: fail`, never a `claims` count).
 ```
-
-<!-- Spawner: fill the first-line model/effort slots from the spawn record (lanes copy them
-into every registry/ledger config field). Escalate the spawn to model: opus for research-depth papers (routing table).
-ONE-LANE BATCH: apply the ingest Pacing section’s batch precedence: a batch compiles in a lane by default, and this brief is that case. The pre-flight records the standing instrument-rule reason satisfying `single`: (d) a batch longer than the head can afford, or (b) breadth one context cannot hold; the Routing note at Step 3 applies its head-compile rule under `single` to the single-source path. The owner’s word, else the head’s pre-flight judgement by converted bytes, chooses one-lane or parallel; that batch shape takes precedence over the older per-source `auto` sequence. For one-lane, assign the whole batch to this lane and set siblings to none. The lane compiles the batch serially, writes its source pages and warranted shared pages itself (no claims, no merge, no conflict lane), and writes its own index lines and log entry under the explicit §2.2 ingest exception. Grant those pages and raw pairs in the whitelist, choose the sorting option, and delete the parallel-only LEDGER & CLAIMS block. The lane sorts each raw pair after its own Step 7 self-check; one verify lane follows over all its pages before the head accepts the run, under the ingest Verify step. Carry these duties in the filled TASK, SCOPE and REGISTRIES slots. The head’s retained brief, verification, merge, sorting, Step 7 and registry duties remain as assigned by Routing and the chosen shape, including registries where the ingest exception is not granted.
-TOOL-MARKUP GATE: fill `{{vault root}}` with the vault root, literal. A headless lane also takes
-`--grant {{vault root}}/.claude/skills/lint/check-tool-markup.py`, a file grant with the reason
-"the output gate runs it": the class row grants `wiki` and the raws only, and the script finds its
-vault from its own path, so no `--vault` and no vault-root grant are needed.
-CLAIMS-LOCATOR CHECK: a headless parallel compile lane also takes `--grant {{vault root}}/.claude/skills/ingest/raw_slices.py`, a file grant with the reason "the claims-locator check runs it"; the raws and the run ledger it reads are already granted.
-SORT CHECK: a headless lane granted sorting also takes `--grant {{vault root}}/.claude/skills/ingest/sort_check.py`, with the reason "the Step 6 sort procedure runs it".
-Grant the registry exception ONLY to a lane under a real ingest contract — never from
-brief-generic. Anchor every index.md/reading-list reference by heading or grep pattern,
-NEVER by line number — concurrent sibling lanes shift lines mid-run (a lane has hit stale
-anchors live).
-PREFLIGHT (parallel ingest, before the owner go): the ingest skill's `brief_preflight.py` runs over
-every filled compile and verify brief (its Parallel mode step 1) and fails a brief on a path token
-whose parent directory is missing, an unfilled slot, a ledger path that differs between briefs, no `preflight`
-append proven at the brief's ledger path, a fence deny for a headless lane's own append, or an index
-section named or pasted: fill every path slot with a literal path before the check runs.
-A verify brief is exempt from the fence check: the head appends the verifier's `lane_open` and `lane_close` itself (the ingest Verify step, item 5). -->

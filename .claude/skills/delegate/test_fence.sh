@@ -13,6 +13,7 @@
 #       sh test_fence.sh --fence F           (test a copy of the fence elsewhere)
 #       FENCE_PRISTINE=<old lane-fence.py> sh test_fence.sh   (adds differential and control runs)
 #       FENCE_RECORDED_HELPER=<replay-recorded.sh> sh test_fence.sh   (adds helper controls)
+#       FENCE_FIXTURE_PARENT=<folder> sh test_fence.sh   (fixtures made in <folder>, never under /tmp)
 set -u
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -33,7 +34,14 @@ PASS=0; FAIL=0
 ok(){ PASS=$((PASS+1)); echo "  ok   — $1"; }
 no(){ FAIL=$((FAIL+1)); echo "FAIL   — $1"; }
 
-F=$(mktemp -d) || { echo "PROBE FAILED: mktemp -d failed"; exit 2; }
+# FENCE_FIXTURE_PARENT, when set, is the folder the fixture root is made in, for a caller that may not
+# write the system temporary folder. It must not sit under a fence temp root such as /tmp, where every
+# path is open to the fence and the "outside the grants" legs could not refuse.
+if [ -n "${FENCE_FIXTURE_PARENT:-}" ]; then
+  F=$(mktemp -d "$FENCE_FIXTURE_PARENT/fence.XXXXXX") || { echo "PROBE FAILED: mktemp -d in FENCE_FIXTURE_PARENT failed"; exit 2; }
+else
+  F=$(mktemp -d) || { echo "PROBE FAILED: mktemp -d failed"; exit 2; }
+fi
 cleanup(){ chmod -R u+w "$F" >/dev/null 2>&1; rm -rf "$F"; }
 trap cleanup EXIT INT TERM
 # K3dc64067: the fixture root is resolved ONCE, to its real path, before any command is built.
@@ -997,8 +1005,9 @@ writer_ops = writer_operations(writer_module.build_parser())
 check('the fence grammar names exactly the writer options, operation by operation',
       all(writer_ops.get(key) == required | optional for key, (required, optional) in lf.RECORD_OPTIONS.items()),
       repr({key: sorted(writer_ops.get(key, set()) ^ (r | o)) for key, (r, o) in lf.RECORD_OPTIONS.items()}))
-check('every writer operation is admitted, but for ideas annotate, which is left out on purpose',
-      set(writer_ops) - set(lf.RECORD_OPTIONS) == {('ideas', 'annotate')}, repr(sorted(set(writer_ops))))
+check('every writer operation is admitted, but for ideas annotate and the decided-work verbs, which are left out on purpose',
+      set(writer_ops) - set(lf.RECORD_OPTIONS) == {('ideas', 'annotate'), ('decided', 'add'), ('decided', 'status'),
+                                                   ('decided', 'state'), ('decided', 'close')}, repr(sorted(set(writer_ops))))
 check('each admitted operation writes the target the writer derives',
       getattr(lf, 'RECORD_TARGETS', None) == {
           'log-append': tuple(writer_module.LOG_REL.split(os.sep)),
@@ -1227,6 +1236,14 @@ fallback('duplicate scalar field', log_call + ' --title repeated', log_writes)
 fallback('wrong subcommand', log_call.replace('log-append', 'log-replace'), all_writes)
 fallback('ideas never gains record authority', prefix + ' ideas annotate --file ' + q(vault / 'IDEAS.md') +
      ' --item 1 --note x', all_writes, reads=broad_reads)
+# The decided-work verbs are the head's (G32 gives those edits to the head), so no lane gains them as
+# record authority, even with a write grant on the pages' folder: one refusal leg per verb.
+for verb, fields in [('add', ' --date 2000-01-01 --work x --locator y --state ' + q('to build') + ' --by z'),
+                     ('status', ' --id DW-20000101-1 --note x --by z'),
+                     ('state', ' --id DW-20000101-1 --state ' + q('to build') + ' --note x --by z'),
+                     ('close', ' --id DW-20000101-1 --kind built --evidence x --by z')]:
+    fallback('decided ' + verb + ' never gains record authority', prefix + ' decided ' + verb + ' ' + root + fields,
+             all_writes, reads=broad_reads)
 
 for label, replacement in [
     ('counterfeit writer', q(fake)), ('outward script alias', q(bad_alias)),
@@ -1390,6 +1407,200 @@ for label, command, want in [('covered', log_call, 'allow'), ('uncovered', add_c
             expected = ordinary(lf, command, broad_reads, log_writes, role != 'lane CLI')[0]
         check(role + ': ' + label, run.returncode == 0 and not run.stderr and decision == expected,
               repr((run.returncode, decision, run.stderr)))
+
+# The fence half of the writer's grant guard: in the lane role a helper may not change the
+# environment the record writer reads its grants from. Each override form refuses in the lane role,
+# with a reason that asks for the missing grant and never names the variable. The lead's decision
+# is the one the fence gives
+# with the rule switched off, and for each writer call below that is silence, as before the rule.
+# Each must-allow form keeps the lane decision the fence gives without the rule.
+OVERRIDE_TEXT = 'changes or clears the helper'
+
+def without_override(command, reads, writes, head):
+    rule = getattr(lf, 'lane_override_reason', None)
+    if rule is not None:
+        lf.lane_override_reason = lambda text: None
+    try:
+        return lf.check({'tool_name': 'Bash', 'tool_input': {'command': command}},
+                        [lf.norm(p) for p in reads], [lf.norm(p) for p in writes], head=head)
+    finally:
+        if rule is not None:
+            lf.lane_override_reason = rule
+
+def override(name, command, refuse=True, lead='silent', want=None):
+    for head in (False, True):
+        actual = lf.check({'tool_name': 'Bash', 'tool_input': {'command': command}},
+                          [lf.norm(p) for p in broad_reads], [lf.norm(p) for p in log_writes], head=head)
+        plain = without_override(command, broad_reads, log_writes, head)
+        if head:
+            label, held = 'lead unchanged', actual == plain and (lead is None or actual[0] == lead)
+        elif refuse:
+            label = 'must refuse'
+            held = (actual[0] == 'deny' and OVERRIDE_TEXT in actual[1] and
+                    'needs: <path> because <reason>' in actual[1] and 'LLM_WIKI_LANE' not in actual[1])
+        else:
+            label = 'must allow'
+            held = actual == plain and OVERRIDE_TEXT not in actual[1] and (want is None or actual[0] == want)
+        check(('head' if head else 'lane') + ' override, ' + label + ': ' + name, held, repr((actual, plain)))
+
+wide = 'LLM_WIKI_LANE_WRITES=' + q(vault / 'wiki')
+add_tail = add_call[len(prefix):]
+suite_call = 'sh ' + q(delegate / 'test_vault_writes.sh')
+clear_four = 'env -u LLM_WIKI_LANE -u LLM_WIKI_LANE_ID -u LLM_WIKI_LANE_GRANTS -u LLM_WIKI_LANE_WRITES '
+if not add_tail.startswith(' register add ') or add_call != prefix + add_tail:
+    print('PROBE FAILED: the override legs need the register call to open with the writer prefix')
+    sys.exit(2)
+for name, command in [
+    # The five forms the review of the writer's guard found allowed.
+    ('a wider grant assigned before the call', wide + ' ' + add_call),
+    ('env -i', 'env -i ' + add_call),
+    ('env -u of the grant variable', 'env -u LLM_WIKI_LANE_WRITES ' + add_call),
+    ('unset in an earlier segment', 'unset LLM_WIKI_LANE_WRITES; ' + add_call),
+    ('export in an earlier segment', 'export ' + wide + '; ' + add_call),
+    # The same change, spelled otherwise.
+    ('env setting the name', 'env ' + wide + ' ' + add_call),
+    ('env by path, emptying the environment with a bare dash', '/usr/bin/env - ' + add_call),
+    ('env --ignore-environment', 'env --ignore-environment ' + add_call),
+    ('an env option cluster holding -i', 'env -0i ' + add_call),
+    ('env -u glued to the name', 'env -uLLM_WIKI_LANE_WRITES ' + add_call),
+    ('env --unset=', 'env --unset=LLM_WIKI_LANE_WRITES ' + add_call),
+    ('env -S with -i inside its string', 'env -S ' + q('-i python3 -B ' + q(writer)) + add_tail),
+    ('all four helper names removed', clear_four + add_call),
+    ('another lane name assigned', 'LLM_WIKI_LANE_ID= ' + add_call),
+    ('a bare assignment in an earlier segment', wide + '; ' + add_call),
+    ('an appending assignment', 'LLM_WIKI_LANE_WRITES+=:' + q(vault / 'wiki') + ' ' + add_call),
+    ('export joined by &&', 'export ' + wide + ' && ' + add_call),
+    ('export on an earlier line', 'export ' + wide + '\n' + add_call),
+    ('export inside a subshell', '(export ' + wide + '; ' + add_call + ')'),
+    ('export inside a brace group', '{ export ' + wide + '; ' + add_call + '; }'),
+    ('export piped into the call', 'export ' + wide + ' | ' + add_call),
+    ('typeset -x', 'typeset -x ' + wide + '; ' + add_call),
+    ('declare -x', 'declare -x ' + wide + '; ' + add_call),
+    ('readonly', 'readonly ' + wide + '; ' + add_call),
+    ('export -n', 'export -n LLM_WIKI_LANE_WRITES; ' + add_call),
+    ('unset -v of two names', 'unset -v LLM_WIKI_LANE LLM_WIKI_LANE_WRITES; ' + add_call),
+    ('unset of an ANSI-C quoted name', "unset $'LLM_WIKI_LANE_WRITES'; " + add_call),
+    ('read into the name', 'read -r LLM_WIKI_LANE_WRITES <<< ' + q(vault / 'wiki') + '; ' + add_call),
+    ('printf -v into the name', 'printf -v LLM_WIKI_LANE_WRITES %s ' + q(vault / 'wiki') + '; ' + add_call),
+    ('a for loop over the name', 'for LLM_WIKI_LANE_WRITES in ' + q(vault / 'wiki') + '; do ' + add_call + '; done'),
+    ('an assigning expansion', ': ${LLM_WIKI_LANE_WRITES:=' + q(vault / 'wiki') + '}; ' + add_call),
+    ('exec -c', 'exec -c ' + add_call),
+    ('nice before env -i', 'nice -n 5 env -i ' + add_call),
+    ('command before env -i', 'command env -i ' + add_call),
+    ('nohup before env -i', 'nohup env -i ' + add_call),
+    ('time before env -u', 'time env -u LLM_WIKI_LANE_WRITES ' + add_call),
+    ('a redirection between env -i and the call', 'env -i 2>&1 ' + add_call),
+    ('xargs running env -i', 'printf x | xargs env -i ' + add_call),
+    ('sudo, which replaces the environment', 'sudo ' + add_call),
+    ("zsh's =name expansion of the interpreter", wide + ' =python3 -B ' + q(writer) + add_tail),
+    ("zsh's - precommand modifier", wide + ' - ' + add_call),
+    ('find naming the writer before -exec env -i',
+     'find ' + q(delegate) + ' -name vault-writes.py -exec env -i python3 -B {}' + add_tail + ' \\;'),
+    ('an env wrapper on an earlier command, then a writer call',
+     'env -u LLM_WIKI_LANE_WRITES ' + suite_call + '; ' + add_call),
+    ('a lasting change, then a later command that names the writer',
+     'export ' + wide + '; grep -c LOG_REL ' + q(writer)),
+    ('a Perl program that sets the name and runs the writer',
+     'perl -e ' + q('$ENV{LLM_WIKI_LANE_WRITES} = "' + str(vault / 'wiki') + '"; system("python3", "' +
+                    str(writer) + '");')),
+    ('a Python program under env -u that runs the writer',
+     "env -u LLM_WIKI_LANE_WRITES python3 - <<'END'\nimport subprocess\nsubprocess.run(['python3', " +
+     repr(str(writer)) + '])\nEND'),
+    ('an unlisted wrapper before a Python call of the writer', wide + ' chronic ' + add_call),
+    ('the writer run directly', wide + ' ' + q(writer) + add_tail),
+    ('a link to the writer', wide + ' python3 -B ' + q(alias) + add_tail),
+    ('a function that hides the interpreter', 'f(){ python3 -B "$@"; }; ' + wide + ' f ' + q(writer) + add_tail),
+    ('an alias that hides env -i', "alias py='env -i python3 -B'; py " + q(writer) + add_tail),
+    ('a program word the fence cannot read', wide + ' "$PY" ' + q(writer) + add_tail),
+    ('sh -c', 'sh -c ' + q(wide + ' ' + add_call)),
+    ('bash -c under env -i', 'env -i bash -c ' + q(add_call)),
+    ('eval', 'eval ' + q(wide + ' ' + add_call)),
+    ('a heredoc read by sh', "sh <<'END'\n" + wide + ' ' + add_call + '\nEND'),
+    ('a here-string read by sh', 'sh <<< ' + q(wide + ' ' + add_call)),
+    ('a pipe read by sh', 'printf %s ' + q(wide + ' ' + add_call) + ' | sh'),
+    ('a Python program that sets the name and runs the writer',
+     'python3 -c ' + q("import os, subprocess; os.environ['LLM_WIKI_LANE_WRITES'] = " + repr(str(vault / 'wiki')) +
+                       "; subprocess.run(['python3', " + repr(str(writer)) + "])")),
+    ('a Python heredoc that empties the environment',
+     "python3 - <<'END'\nimport subprocess\nsubprocess.run(['python3', " + repr(str(writer)) + "], env={})\nEND")]:
+    override(name, command)
+
+for name, command, want in [
+    ('an ordinary granted writer call', log_call, 'allow'),
+    ('a suite run with the grant variable removed', 'env -u LLM_WIKI_LANE_WRITES ' + suite_call, 'allow'),
+    ('a suite run with all four helper names removed', clear_four + suite_call, 'allow'),
+    ('a suite run given the writer as an argument', 'env -u LLM_WIKI_LANE_WRITES ' + suite_call + ' ' + q(writer), 'allow'),
+    ('a Python script given the writer as an argument',
+     'env -u LLM_WIKI_LANE_WRITES python3 -B ' + q(checker) + ' ' + q(writer), None),
+    ('the clock assigned before the call', 'T=$(date -u +%H:%M) ' + log_call, 'allow'),
+    ('the clock in an earlier segment', 'T=$(date -u +%H:%M); ' + log_call, 'allow'),
+    ('the clock before a wrapped echo', 'T=$(date) nice -n 5 /bin/echo x', None),
+    ('the clock before a Python heredoc', 'T=$(date -u +%H:%M) ' + q(sys.executable) + " - <<'END'\nprint(1)\nEND", None),
+    ('another leading assignment', 'PYTHONDONTWRITEBYTECODE=1 ' + log_call, 'allow'),
+    ('env setting another name', 'env PYTHONDONTWRITEBYTECODE=1 ' + log_call, 'allow'),
+    ('a lane name read before the call', 'printf %s "$LLM_WIKI_LANE_ID"; ' + log_call, 'allow'),
+    ('a lane name unset after the call', log_call + '; unset LLM_WIKI_LANE_WRITES', 'allow'),
+    ("a lane name as the writer's own data",
+     log_call.replace('--title literal', '--title ' + q('LLM_WIKI_LANE_WRITES=x')), 'allow'),
+    ('grep of the writer for the name', 'grep -n LLM_WIKI_LANE_WRITES ' + q(writer), 'allow'),
+    ('find naming the writer with no change', 'find ' + q(delegate) + ' -name vault-writes.py', None),
+    ('an env wrapper on an earlier command, then a test script given the writer',
+     'env -u LLM_WIKI_LANE_WRITES python3 -B ' + q(checker) + ' ' + q(writer) + '; python3 -B ' + q(checker) +
+     ' ' + q(writer), None),
+    ("a for loop over the writer's path", 'for f in ' + q(writer) + '; do grep -c LOG_REL "$f"; done', None),
+    ('a Python program that holds the forms as test strings',
+     "python3 - <<'END'\ncases = [" + repr('env -i python3 ' + str(writer)) + ', ' +
+     repr(wide + ' python3 ' + str(writer)) + ']\nprint(len(cases))\nEND', None),
+    ("a Python program that edits the writer's text",
+     'python3 - ' + q(writer) + " <<'END'\nimport sys\ntext = open(sys.argv[1]).read()\n"
+     "print(text.replace('x', 'LLM_WIKI_LANE_WRITES: the grants')[:1])\nEND", None),
+    ('a Python harness that loads the writer in-process with exec()',
+     "python3 - <<'END'\nimport os, types\nm = types.ModuleType('w')\nexec(compile(open(" + repr(str(writer)) +
+     ").read(), 'w', 'exec'), m.__dict__)\nos.environ['LLM_WIKI_LANE_WRITES'] = '/x'\nprint(m.__name__)\nEND", None),
+    ('a Python program that changes a lane name but starts no process',
+     "python3 - <<'END'\nimport os\nos.environ['LLM_WIKI_LANE_WRITES'] = '/x'\n"
+     "os.environ.pop('LLM_WIKI_LANE_WRITES')\nprint(" + repr(str(writer)) + ')\nEND', None),
+    ('xargs running the writer with no change', 'printf %s ' + q(writer) + ' | xargs python3 -B', None),
+    ('a heredoc that holds the forms only as data', "cat <<'END'\n" + wide + ' ' + add_call + '\nEND', 'allow'),
+    ('a Python program that only reads the writer',
+     "python3 - <<'END'\nprint('LLM_WIKI_LANE_WRITES' in open(" + repr(str(writer)) + ").read())\nEND", None),
+    ('a liveness loop beside the call, reading a lane name',
+     '(' + log_call + ') & while kill -0 $!; do python3 -c ' +
+     q('import os,time; open(os.environ["LLM_WIKI_LANE_PROGRESS"],"a").write(time.ctime()+chr(10))') +
+     '; sleep 30; done; wait $!', None)]:
+    override(name, command, refuse=False, lead=None, want=want)
+
+# Controls: switching the rule off restores the old lane decision (so the comparisons above are not
+# vacuous), and the lead's role never reaches the rule at all.
+control = wide + ' ' + add_call
+control_actual = lf.check({'tool_name': 'Bash', 'tool_input': {'command': control}},
+                          [lf.norm(p) for p in broad_reads], [lf.norm(p) for p in log_writes], head=False)
+control_plain = without_override(control, broad_reads, log_writes, False)
+check('override control: switching the rule off restores the old lane decision',
+      control_actual[0] == 'deny' and control_plain[0] == 'allow', repr((control_actual, control_plain)))
+reached, kept = [], getattr(lf, 'lane_override_reason', None)
+lf.lane_override_reason = lambda text: reached.append(text)
+try:
+    lead_result = lf.check({'tool_name': 'Bash', 'tool_input': {'command': control}},
+                           [lf.norm(p) for p in broad_reads], [lf.norm(p) for p in log_writes], head=True)
+finally:
+    if kept is None:
+        del lf.lane_override_reason
+    else:
+        lf.lane_override_reason = kept
+check('override control: the lead role never reaches the rule', reached == [] and lead_result == ('silent', ''),
+      repr((reached, lead_result)))
+# The real hook entry points: the lane CLI refuses; the head CLI and the head hook stay silent.
+for role, script, tail, want in [('lane CLI', checker, [], 'deny'), ('head CLI', checker, ['--head'], 'silent'),
+                                 ('head hook', hook, [], 'silent')]:
+    event = json.dumps({'session_id': 'fixture', 'hook_event_name': 'PreToolUse', 'tool_name': 'Bash',
+                        'tool_input': {'command': control}})
+    run = subprocess.run([sys.executable, '-B', str(script)] + tail, input=event, text=True,
+                         capture_output=True, env=environment)
+    decision = 'silent' if not run.stdout else json.loads(run.stdout)['hookSpecificOutput']['permissionDecision']
+    check('override ' + role + ': a wider grant assigned before the call',
+          run.returncode == 0 and not run.stderr and decision == want and
+          (want != 'deny' or OVERRIDE_TEXT in run.stdout), repr((run.returncode, decision, run.stderr)))
 
 # Include the saved writer regression shape as well as every fallback call above.
 # Its expected replay decisions stay unchanged; the command is only checked, never run.
@@ -2288,6 +2499,42 @@ case('S5', 'assignment-local-evaluation', 'REMOTE_PREFIX="$(cat ' + q(uf) + ')" 
      False, r'local evaluation|unresolv|read')
 case('S5', 'assignment-then-read', "REMOTE_PREFIX='/remote/prefix' cat " + q(uf), False, READ, (U,))
 
+# S5b: before a program that is not an ssh-family client, a leading assignment stays in the text the
+# ordinary checks read: a clock read passes, and an unquoted $( ) substitution is judged like any
+# command. A substitution those checks never judge (inside double quotes, or any backtick) is still
+# refused; an ssh-family client or a shell wrapper of one still needs a literal value; and an
+# ssh-family program behind a prefix wrapper (nice, env) is refused with an assignment as without.
+interpreter = next((p for p in ('/usr/local/bin/python3', '/usr/bin/python3') if os.path.exists(p)), None)
+case('S5b', 'clock-before-interpreter-heredoc',
+     ('T=$(date -u +%H:%M) ' + interpreter + " - <<'X'\nprint(1)\nX") if interpreter
+     else "T=$(date -u +%H:%M) /bin/sh -s <<'X'\necho 1\nX")
+case('S5b', 'clock-before-local-program', 'T=$(date -u +%H:%M) /bin/echo "$T"')
+case('S5b', 'quoted-format-clock', 'T=$(date -u +"%H:%M") /bin/echo x')
+case('S5b', 'parameter-before-local-program', 'T="$HOME" /bin/echo x')
+case('S5b', 'quoted-substitution-read', 'T="$(cat ' + q(uf) + ')" /bin/echo x', False, r'local evaluation', (U,))
+case('S5b', 'nested-quoted-substitution', 'T=$(printf %s "$(cat ' + q(uf) + ')") /bin/echo x', False,
+     r'local evaluation', (U,))
+case('S5b', 'quoted-backtick', 'T="' + chr(96) + 'cat ' + q(uf) + chr(96) + '" /bin/echo x', False,
+     r'local evaluation', (U,))
+case('S5b', 'ansi-c-quoting', "T=$'x'" + '"$(cat ' + q(uf) + ')" /bin/echo x', False, r'local evaluation', (U,))
+case('S5b', 'unquoted-substitution-read', 'T=$(cat ' + q(uf) + ') /bin/echo x', False, READ, (U,))
+case('S5b', 'unquoted-substitution-write', 'T=$(cp ' + q(rf) + ' ' + q(str(readable / 'copy.txt')) + ') /bin/echo x',
+     False, WRITE)
+case('S5b', 'clock-before-ssh', 'T=$(date -u +%H:%M) ssh ' + H + ' true', False, r'local evaluation')
+case('S5b', 'clock-before-shell-wrapper-of-ssh', 'T=$(date -u +%H:%M) sh -c ' + q('ssh ' + H + ' true'), False,
+     r'local evaluation')
+case('S5b', 'quoted-read-before-shell-wrapper-of-ssh', 'X="$(cat ' + q(uf) + ')" sh -c ' + q('ssh ' + H + ' true'),
+     False, r'local evaluation', (U,))
+case('S5b', 'clock-before-prefix-wrapped-ssh', 'T=$(date -u +%H:%M) nice -n 5 ssh ' + X + ' id', False,
+     r'ssh-family command wrapper options')
+case('S5b', 'literal-before-env-wrapped-ssh', 'T=1 env -i ssh ' + X + ' id', False,
+     r'ssh-family command wrapper options')
+case('S5b', 'unquoted-backtick-read', 'T=' + chr(96) + 'cat ' + q(uf) + chr(96) + ' /bin/echo x', False,
+     r'local evaluation', (U,))
+case('S5b', 'unquoted-backtick-ssh', 'T=' + chr(96) + 'ssh ' + X + ' id' + chr(96) + ' /bin/echo x', False,
+     r'local evaluation', (X,))
+case('S5b', 'clock-before-prefix-wrapped-local-program', 'T=$(date) nice -n 5 /bin/echo x')
+
 # S6: one leading absolute cd supplies the base of local relative writes.
 for key, suffix in (('overwrite', '> result.txt'), ('append', '>> result.txt'), ('tee', '| tee result.txt')):
     case('S6', 'cd-' + key, 'cd ' + q(W) + ' && ssh ' + H + ' true ' + suffix)
@@ -2922,7 +3169,10 @@ MUST_NOT_LOG = [
     ('Q10', "sh -c 'cat " + R + "/inside.txt'"), ('Q11', 'bash ' + R + '/script.sh'), ('Q12', 'sleep $[N*60]'),
     ('Q13', 'rg -n "$PAT" ' + R + '/inside.txt'), ('Q14', 'cat ' + R + '/inside.txt | grep -c bash'),
 ]
-STILL_REFUSED = [('D01', 'strings ' + O + '/outside.txt'), ('D02', 'cat "$F" > "$OUT"'), ('D03', 'X="$Y" cat x')]
+# D03 was `X="$Y" cat x` until a parameter in a leading assignment before a program other than an ssh
+# client stopped being refused (it stays in the text the ordinary checks read); a substitution inside
+# double quotes, which those checks never see, is still refused there.
+STILL_REFUSED = [('D01', 'strings ' + O + '/outside.txt'), ('D02', 'cat "$F" > "$OUT"'), ('D03', 'X="$(id)" cat x')]
 # CASES_END
 SENTINEL = 'strings "$B"'                     # L02, the must-log command the premise legs use
 

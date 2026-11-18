@@ -849,6 +849,54 @@ class Suite:
             finally:
                 fixture.cleanup()
 
+    def families_off_moves(self, family):
+        """A40 (register 2026-11-11 00:06): the store's families file stops every move to a family it
+        names off, at the close and again at the launch; a family it does not name still moves."""
+        target = "codex" if family == "claude" else "claude"
+        def write(f, off):
+            (f.store / "model-families.json").write_text(json.dumps({"schema": 1, "off": off}) + "\n")
+        def case_journal(snap):
+            return next(x for x in snap["journals"] if x["lane"] == "case")
+        def held_at_close(f):
+            write(f, [target])
+            f.scenario(family, events_for(family, "terminal"))
+            result = f.run(f.command(family))
+            snap = f.snapshot(); d = case_journal(snap)["disposition"]
+            reason = d.get("reason") or ""
+            return (d.get("phase") == "resolved" and d.get("decision") == "held"
+                    and reason.startswith("moves to %s are off (" % target) and reason.endswith("model-families.json)")
+                    and snap["successor_start_count"] == 0 and self.controls[family]), {"result": result.returncode, "d": d}
+        self.exercise("A40", family + " an unrecovered refusal with " + target + " named off is held at the close, no successor", held_at_close)
+        def held_at_launch(f):
+            f.scenario(family, events_for(family, "terminal"))
+            proc, release, arrived = f.barrier(family, "decision-sealed")
+            sealed = dict(case_journal(f.snapshot())["disposition"])
+            write(f, [target])
+            result = f.finish(proc, release)
+            snap = f.snapshot(); d = case_journal(snap)["disposition"]
+            reason = d.get("reason") or ""
+            return (sealed.get("phase") == "sealed" and sealed.get("target") == target
+                    and d.get("phase") == "resolved" and d.get("decision") == "held" and not d.get("attempted")
+                    and ("moves to %s are off" % target) in reason and "was not launched" in reason
+                    and snap["successor_start_count"] == 0 and self.controls[family]), {
+                        "arrived": arrived, "sealed": sealed, "d": d, "returncode": result["returncode"]}
+        self.exercise("A40", family + " a move sealed before the file named " + target + " off is held at its launch, nothing started", held_at_launch)
+        def unreadable(f):
+            (f.store / "model-families.json").write_text("not json\n")
+            f.scenario(family, events_for(family, "terminal"))
+            result = f.run(f.command(family))
+            snap = f.snapshot(); d = case_journal(snap)["disposition"]
+            return (d.get("phase") == "awaiting-head" and "cannot be read (not JSON" in (d.get("reason") or "")
+                    and snap["successor_start_count"] == 0 and self.controls[family]), {"result": result.returncode, "d": d}
+        self.exercise("A40", family + " a families file that does not parse holds the move for the head", unreadable)
+        def other_named(f):
+            write(f, [family])           # only the pass's own family named: its move to the other goes ahead
+            f.scenario(family, events_for(family, "terminal"))
+            result = f.run(f.command(family))
+            snap = f.snapshot(); d = case_journal(snap)["disposition"]
+            return (d.get("decision") == "moved" and snap["successor_start_count"] == 1), {"result": result.returncode, "d": d}
+        self.exercise("A40", family + " control: a file naming only " + family + " off leaves the move to " + target + " as it was", other_named)
+
     def exercise(self, group, name, callback):
         if not self.selected(group):
             return
@@ -1438,7 +1486,7 @@ class Suite:
             j=f.snapshot()["journals"][0]; notice=j["notices"][-1]
             head=[sys.executable,"-B",str(f.wrappers/"handsoff.py")]
             common=["--run","fixture","--record",str(f.record)]
-            commands={"run-open":["--handoff",str(f.root/"absent.md"),"--session","fixture-head",
+            commands={"run-open":["--envelope-usd","1000","--handoff",str(f.root/"absent.md"),"--session","fixture-head",
                                   "--head","fixture","--regime","single","--regime-src","head",
                                   "--detail","fixture entry"],
                       "run-resume":["--head","fixture","--detail","fixture restart"],
@@ -2665,6 +2713,7 @@ print("fixture supervisor result",head.issue_beat(args,record,"case",family,{"be
                 self.uncertain_beat(family)
                 self.remaining_variants(family)
                 self.family_limit(family)
+                self.families_off_moves(family)
                 self.fold_family(family)
                 self.fold_policy(family)
         if self.args.part == "handsoff":

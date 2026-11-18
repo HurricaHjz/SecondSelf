@@ -10,7 +10,7 @@ PY="${PYTHON:-python3}"
 ADAPTER="$HERE/codex-lane.py"
 # A partial staged checkout cannot establish a clean suite result.
 MISSING=0
-for dependency in lane.py routing.json templates/lane-core.md handsoff.py test_fix_c.py test_a3.py probe_fix_c.py fixtures-fix-c.json test_codex_effort.py; do
+for dependency in lane.py routing.json templates/lane-core.md handsoff.py test_fix_c.py test_a3.py probe_fix_c.py fixtures-fix-c.json test_codex_effort.py test_network_guard.py ../gather/capture_probe.py; do
   if [ ! -s "$HERE/$dependency" ]; then
     printf 'PROBE FAILED: suite dependency missing: %s\n' "$HERE/$dependency"
     MISSING=$((MISSING+1))
@@ -24,6 +24,13 @@ export AIMYTH_VIEWER=none
 export CODEX_SHIM_ARGS="$T/shim-args.txt"
 export CODEX_SHIM_PROMPT="$T/shim-prompt.txt"
 mkdir -p "$T/bin" "$T/work" "$T/extra" "$T/store/spawn-records"
+# The usage reader's stand-in (limit policy 1, migrated with package B): on a record holding a
+# run-open, a spawn, a resume or a beat reads GPT's week through read-usage.py first; so that no
+# case ever reaches a real account, both clients the reader starts are this stand-in, which fails,
+# and such a reading reads unmeasured.
+printf '#!/bin/sh\necho "stand-in: no account in this suite" >&2\nexit 1\n' > "$T/bin/usage-unread"
+chmod +x "$T/bin/usage-unread"
+export USAGE_CLAUDE_BIN="$T/bin/usage-unread" USAGE_CODEX_BIN="$T/bin/usage-unread"
 TR="$(cd "$T" && pwd -P)"     # Resolve aliases before comparing the adapter's recorded paths.
 # The suite's own home (register 2026-10-04 10:45): the adapter's lookups under the home directory —
 # Codex's global instructions under CODEX_HOME or ~/.codex, lane.py's trust entry and projects root —
@@ -830,6 +837,10 @@ check("F7-C24 (CR-ADD3 finding 1, the differential) the beat's parse_events matc
 check("F7-C24b the differential's control: a planted reading with the close's strict sum (the round-2 fold's rule for the beat) is caught on the negative, numeric-string, bool, float and overflowing streams",
       {"negative", "numeric-strings", "bool", "float", "overflow"} <= set(caught), "caught only %s" % caught)
 beat_source, close_source = inspect.getsource(adapter.run_beat), inspect.getsource(adapter.run_lane)
+# Line 2's replacement moved run_lane's pass, unchanged, into _run_lane_pass (run_lane keeps the
+# GPT watch's finally around it), so the close's source is both functions where the second exists.
+if hasattr(adapter, "_run_lane_pass"):
+    close_source += inspect.getsource(adapter._run_lane_pass)
 def calls(source, name):
     return bool(re.search(r"\b%s\(" % name, source))
 check("F7-C24c separate beat accounting and stop evidence: run_lane calls parse_close_events; run_beat keeps parse_events usage and classifies parse_close_events",
@@ -3218,6 +3229,22 @@ while IFS= read -r line; do
 done < "$T/item-bars.log"
 if [ "$IBARS_RC" != 0 ] && ! grep -q '^BAD ' "$T/item-bars.log"; then
   fail "item bars harness failed" "$(tail -3 "$T/item-bars.log")"
+fi
+
+# The host guard (DW-20261024-2): the named hosts exported as LLM_WIKI_LANE_NETWORK, with the
+# capture tool each way inside a stand-in lane (a granted host fetches, an ungranted one is
+# refused), the guard's rules in both modes, and the inherited grant never passed on.
+"$PY" -B "$HERE/test_network_guard.py" --wrappers "$HERE" --fixture-root "$T" --part codex > "$T/network-guard.log" 2>&1
+NGUARD_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) pass "${line#OK }" ;;
+    'BAD '*) fail "${line#BAD }" "host guard assertion" ;;
+    'PROBE FAILED:'*) fail "$line" "host guard premise" ;;
+  esac
+done < "$T/network-guard.log"
+if [ "$NGUARD_RC" != 0 ] && ! grep -q '^BAD ' "$T/network-guard.log"; then
+  fail "host guard harness failed" "$(tail -3 "$T/network-guard.log")"
 fi
 
 SOURCE_AFTER=$(shasum "$ADAPTER" "$HERE/lane.py" "$0")

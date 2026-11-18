@@ -570,11 +570,11 @@ fi
 HGSTORE="$F/hg-store"; mkdir -p "$HGSTORE/spawn-records"
 HGL=sid-hg-lead-7777; HGX=sid-hg-other-8888; HGN=sid-hg-nopointer-9999; HGR=sid-hg-newer-6666
 # Three records: run-hg-last at 3 of 3 (its last head start is HGL's), run-hg-more at 3 of 4, and
-# run-hg-bad at 3 used with a grants file of garbage bytes (its cap falls back past a faulty file).
-# Three more at exhaustion on the default of 20 (build review RV-CAP finding F5), each with HGL's
-# head start last: run-hg-keyless, a readable grants file with no max_successors key (a run that set
-# no cap, so the default is its decided cap); run-hg-badval, an unusable value; and run-hg-bad20,
-# garbage bytes (each a fault, so undecided).
+# run-hg-bad at 3 used with a grants file of garbage bytes (its limit cannot be read).
+# Three more at 20 started (build review RV-CAP finding F5; the owner's decision of 2026-11-04 took the
+# default limit away), each with HGL's head start last: run-hg-keyless, a readable grants file with no
+# max_successors key (a run that set no limit, so it has none, or the environment's where one is set);
+# run-hg-badval, an unusable value; and run-hg-bad20, garbage bytes (each a fault, so undecided).
 # Three more of run-hg-last's shape (build review RV-CAP4 finding F1), with run-hg-last itself, HG-1's
 # record, as their intact exhausted/current-lead control: run-hg-newer gains a newer lead's
 # run-resume (HGR, a session that resumed the run), whole; run-hg-torn the same row torn, its
@@ -666,7 +666,7 @@ check "HG-3 a record that does not exist: denied, the premise named" "$(dec "$OU
 OUT=$(printf '%s' "$(ptu "$HGL" "$T91" "$F/vault" TaskStop "$HGTS")" | env AIMYTH_HANDSOFF=1 AIMYTH_HANDSOFF_RUN=run-hg-last AIMYTH_MAX_SUCCESSORS= LLM_WIKI_STORE="$HGSTORE" AIMYTH_PROJECTS_DIR="$F/projects" AIMYTH_STATE_DIR="$GS" AIMYTH_CONTEXT_WINDOW=200000 "$PY" -B "$F/hookcopy/handsoff-gate.py" 2>"$E")
 check "HG-3 the hook copy with no ../skills/delegate/handsoff.py beside it: denied, the premise named" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c 'could not be read (FileNotFoundError')" "deny:1"
 OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" TaskStop "$HGTS")" AIMYTH_HANDSOFF_RUN=run-hg-bad 2>"$E")
-check "HG-3 (review CR-CAP2 finding 6) a grants file whose cap cannot be read: denied, the fault named" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c 'could not be read (successors: 3 of 20 started.*the grants file is unreadable (')" "deny:1"
+check "HG-3 (review CR-CAP2 finding 6) a grants file whose limit cannot be read: denied, the fault named" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c 'could not be read (successors: 3 started, no limit.*the grants file is unreadable (')" "deny:1"
 # Build review RV-CAP4 finding F1: a record with an unreadable line cannot show who leads the run, so
 # the allowance is undecided and the deny stands, the premise named; the intact controls keep theirs.
 NA3=$(hgcount allow-last-lead); ND3=$(hgcount deny)
@@ -689,15 +689,23 @@ OUT=$(hg "$(ptu "$HGR" "$T91" "$F/vault" Bash "$HGCL")" AIMYTH_HANDSOFF_RUN=run-
 check "…and its handsoff.py close allowed too" "$RC:$(dec "$OUT")" "0:(silent)"
 OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" TaskStop "$HGTS")" 2>"$E"); RC=$?
 check "HG-4 no environment run, the pointer naming run-hg-last for the current lead: TaskStop allowed" "$RC:$(dec "$OUT")" "0:(silent)"
-OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" TaskStop "$HGTS")" AIMYTH_HANDSOFF_RUN=run-hg-keyless 2>"$E"); RC=$?
-check "HG-7 (build review RV-CAP finding F5) a readable grants file with no cap key, 20 of the default 20 used: a decided cap, so the current lead's TaskStop is allowed" "$RC:$(dec "$OUT")" "0:(silent)"
-check "…its stderr note names the default and the keyless file as the cap's source" "$(grep -c "TaskStop allowed for the run's last lead (successors: 20 of 20 started, none left (the default (the grants file: readable, no max_successors key; no AIMYTH_MAX_SUCCESSORS))" "$E")" "1"
-OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" Bash "$HGCL")" AIMYTH_HANDSOFF_RUN=run-hg-keyless 2>"$E"); RC=$?
+OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" TaskStop "$HGTS")" AIMYTH_HANDSOFF_RUN=run-hg-keyless 2>"$E")
+check "HG-7 (the decision of 2026-11-04) a readable grants file with no limit key, 20 started: no limit, so this lead is not the last, TaskStop denied, the count named" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c "TaskStop passes at the hard band only for the run's last lead, and this lead is not (successors: 20 started, no limit)")" "deny:1"
+OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" Bash "$HGCL")" AIMYTH_HANDSOFF_RUN=run-hg-keyless 2>"$E")
+check "…and its handsoff.py close is denied the same way" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c "handsoff.py close passes at the hard band only for the run's last lead, and this lead is not (successors: 20 started, no limit)")" "deny:1"
+OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" Bash '{"command":"python3 handsoff.py handoff --run r --final"}')" AIMYTH_HANDSOFF_RUN=run-hg-keyless 2>"$E"); RC=$?
+check "…the hand-over itself stays open at that height" "$RC:$(dec "$OUT")" "0:(silent)"
+OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" TaskStop "$HGTS")" AIMYTH_HANDSOFF_RUN=run-hg-keyless AIMYTH_MAX_SUCCESSORS=20 2>"$E"); RC=$?
+check "HG-7's control (build review RV-CAP finding F5) the same keyless file under an environment limit of 20, 20 used: a decided limit, so the current lead's TaskStop is allowed" "$RC:$(dec "$OUT")" "0:(silent)"
+check "…its stderr note names the environment and the keyless file as the limit's source" "$(grep -c "TaskStop allowed for the run's last lead (successors: 20 of 20 started, none left (AIMYTH_MAX_SUCCESSORS=20 (the grants file: readable, no max_successors key))" "$E")" "1"
+OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" Bash "$HGCL")" AIMYTH_HANDSOFF_RUN=run-hg-keyless AIMYTH_MAX_SUCCESSORS=20 2>"$E"); RC=$?
 check "…and its handsoff.py close is allowed too" "$RC:$(dec "$OUT")" "0:(silent)"
-OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" TaskStop "$HGTS")" AIMYTH_HANDSOFF_RUN=run-hg-badval 2>"$E")
-check "HG-8 (RV-CAP F5) an unusable max_successors value at 20 of the fallback 20: undecided, so TaskStop is denied, the fault named" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c "could not be read (successors: 20 of 20 started, none left on a fallback cap.*the grants file is readable, unusable max_successors value 'six')")" "deny:1"
-OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" Bash "$HGCL")" AIMYTH_HANDSOFF_RUN=run-hg-bad20 2>"$E")
+OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" TaskStop "$HGTS")" AIMYTH_HANDSOFF_RUN=run-hg-badval AIMYTH_MAX_SUCCESSORS=20 2>"$E")
+check "HG-8 (RV-CAP F5) an unusable max_successors value at 20 of the environment's 20: undecided, so TaskStop is denied, the fault named" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c "could not be read (successors: 20 of 20 started, none left on a fallback cap.*the grants file is readable, unusable max_successors value 'six')")" "deny:1"
+OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" Bash "$HGCL")" AIMYTH_HANDSOFF_RUN=run-hg-bad20 AIMYTH_MAX_SUCCESSORS=20 2>"$E")
 check "…an unreadable grants file at 20 of 20: handsoff.py close denied, undecided, the fault named" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c 'could not be read (successors: 20 of 20 started, none left on a fallback cap.*the grants file is unreadable (')" "deny:1"
+OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" TaskStop "$HGTS")" AIMYTH_HANDSOFF_RUN=run-hg-badval 2>"$E")
+check "…the same unusable value with no environment limit: still undecided, so the deny stands" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c "could not be read (successors: 20 started, no limit.*the grants file is readable, unusable max_successors value 'six'")" "deny:1"
 OUT=$(hg "$(ptu "$HGL" "$T91" "$F/vault" Read "$RD")" AIMYTH_HANDSOFF_RUN=run-hg-last 2>"$E")
 check "HG-5 the last lead at 91 %: a Read is still denied, the static last-lead sentence in its reason" "$(dec "$OUT" | cut -d'|' -f2):$(dec "$OUT" | grep -c -F "$LASTLEAD")" "deny:1"
 check "…and leg o's pattern still matches that reason" "$(dec "$OUT" | grep -c 'hands-off hard band: context 182,000 tokens (91 % of 200k), at or above the 90 % edge.*handsoff.py handoff, handsoff.py successor, handsoff.py boundary, handsoff.py ledger')" "1"
@@ -1414,6 +1422,32 @@ RC=$?
 [ "$RC" -eq 0 ] || { echo "PROBE FAILED: attended regression block exited $RC"; exit 2; }
 read ATTENDED_PASS ATTENDED_FAIL < "$F/attended/state/counts"
 PASS=$((PASS + ATTENDED_PASS)); FAIL=$((FAIL + ATTENDED_FAIL))
+
+echo "== w. the projects folder: <CLAUDE_CONFIG_DIR>/projects before ~/.claude/projects, AIMYTH_PROJECTS_DIR still first (critic CR10A F2: a login-folder head's bands failed open) =="
+# Each leg names both variables: an empty value is read as unset, and the ambient values of the
+# shell that runs this suite never reach a leg.
+WLOGIN="$F/login-a"; mkdir -p "$WLOGIN/projects/proj"; cp "$T91" "$WLOGIN/projects/proj/ctx-182000.jsonl"
+TL91="$WLOGIN/projects/proj/ctx-182000.jsonl"
+OUT=$(gate "$(ptu "$SA" "$TL91" "$F/vault" Read "$RD")" AIMYTH_HANDSOFF=1 AIMYTH_PROJECTS_DIR= CLAUDE_CONFIG_DIR="$WLOGIN" 2>"$E")
+check "w1 must measure: armed at 91 % with the transcript under <CLAUDE_CONFIG_DIR>/projects, the hard band denies the Read" "$(dec "$OUT" | cut -d'|' -f2)" "deny"
+OUT=$(gate "$(ptu "$SA" "$TL91" "$F/vault" Read "$RD")" AIMYTH_HANDSOFF=1 AIMYTH_PROJECTS_DIR= CLAUDE_CONFIG_DIR= 2>"$E")
+check "w2 must not: the same transcript with no login folder named lies outside the projects folder, allowed with the premise failure named" "$(dec "$OUT"):$(grep -c 'premise failure: path outside the projects dir; allowing Read' "$E")" "(silent):1"
+OUT=$(gate "$(ptu "$SA" "$TL91" "$F/vault" Read "$RD")" AIMYTH_HANDSOFF=1 CLAUDE_CONFIG_DIR="$WLOGIN" 2>"$E")
+check "w3 must not: AIMYTH_PROJECTS_DIR, set to the fixture's folder, still wins over CLAUDE_CONFIG_DIR" "$(dec "$OUT"):$(grep -c 'premise failure: path outside the projects dir; allowing Read' "$E")" "(silent):1"
+OUT=$(wm "$(ups s "$TL91" x)" AIMYTH_PROJECTS_DIR= CLAUDE_CONFIG_DIR="$WLOGIN")
+check "w4 must measure: the watermark hook meters the login folder's transcript" "$(ctxof "$OUT" | sed 's/ tokens.*//')" "UserPromptSubmit|context: 182,000"
+OUT=$(wm "$(ups s "$TL91" x)" AIMYTH_PROJECTS_DIR= CLAUDE_CONFIG_DIR=)
+check "w5 must not: with no login folder named, the same transcript is foreign to the watermark hook" "$(ctxof "$OUT")" "UserPromptSubmit|context: unmetered (path outside the projects dir)"
+# Independent check V10A finding 5: with AIMYTH_PROJECTS_DIR unset, a login folder named in
+# CLAUDE_CONFIG_DIR adds a root and never removes the default one.
+mkdir -p "$HOME/.claude/projects/proj"; cp "$T91" "$HOME/.claude/projects/proj/ctx-182000.jsonl"
+TD91="$HOME/.claude/projects/proj/ctx-182000.jsonl"
+OUT=$(wm "$(ups s "$TD91" x)" AIMYTH_PROJECTS_DIR= CLAUDE_CONFIG_DIR="$WLOGIN")
+check "w6 must measure: with a login folder named, a transcript under ~/.claude/projects is still metered" "$(ctxof "$OUT" | sed 's/ tokens.*//')" "UserPromptSubmit|context: 182,000"
+OUT=$(gate "$(ptu "$SA" "$TD91" "$F/vault" Read "$RD")" AIMYTH_HANDSOFF=1 AIMYTH_PROJECTS_DIR= CLAUDE_CONFIG_DIR="$WLOGIN" 2>"$E")
+check "w7 must measure: armed at 91 % with a login folder named and the transcript under ~/.claude/projects, the hard band denies the Read" "$(dec "$OUT" | cut -d'|' -f2)" "deny"
+OUT=$(wm "$(ups s "$T91" x)" AIMYTH_PROJECTS_DIR= CLAUDE_CONFIG_DIR="$WLOGIN")
+check "w8 must not: with a login folder named, a transcript under neither root is still foreign" "$(ctxof "$OUT")" "UserPromptSubmit|context: unmetered (path outside the projects dir)"
 
 echo "== l. no-write-outside-state-dir: read-only fixtures, planted checkpoints, the sentinel and the real home path are untouched =="
 manifest "$F/projects" "$F/elsewhere" "$F/llm" "$F/llm-win" "$F/llm-big" "$F/role" "$F/vault" "$F/decoy" "$F/handoffs" "$F/mk.py" "$F/stdin-e.json" > "$F/manifest.after"

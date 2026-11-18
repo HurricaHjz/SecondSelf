@@ -10,6 +10,7 @@ Small programs Claude Code runs by itself at fixed moments in a session of this 
 | `handsoff-gate.py` | Before any tool, in a hands-off run | Enforces the hard context band of a hands-off run. |
 | `head-fence.py` | Before a shell command, in a hands-off run | Holds the run's lead inside its granted folders. |
 | `ingest-ledger-check.sh` | Reply end | Warns when an ingest run's ledger is open and stale. |
+| `kill-by-name-guard.py` | Before a shell command | Refuses a typed kill by name or pattern (`pkill`, `killall`, a `kill` fed by a name search, or `kill -1`) and names the safe form, a kill by a recorded process number. Where it cannot decide, or cannot start, it lets the command through and logs an `allow-broken` line; `kill-by-name-guard.py --log` reads its lines. |
 | `precompact-checkpoint.py` | Before a compaction, and at the session start after one | Writes a checkpoint, then briefs the session from it. |
 
 The `test_*.sh` files are the suites for these hooks, and for the destructive-git guard, which has no file here because it sits as an inline command in the settings file.

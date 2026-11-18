@@ -1601,6 +1601,12 @@ mk r-cut      B1 2026-09-06T11:59+0100 sonnet high default "(a) x" "$RDJ"
 mk r-cut      A1 2026-09-06T12:01+0100 sonnet high default "(a) x" "$RDJ"
 mk r-letter   L0 2026-09-03T23:00+0100 opus max default "no letter here" "$RDJ"
 mk r-letter   L1 2026-09-04T01:00+0100 opus max default "no letter here" "$RDJ"
+mk r-letter   L2 2026-09-04T01:00+0100 opus max default "d — a lead letter with a spaced dash" "$RDJ"
+mk r-letter   L3 2026-09-04T01:00+0100 opus max default "b: a lead letter with a colon" "$RDJ"
+mk r-letter   L4 2026-09-04T01:00+0100 opus max default "dash-led text names no letter" "$RDJ"
+mk r-letter   L5 2026-09-04T01:00+0100 opus max default "a lot of work names no letter" "$RDJ"
+mk r-letter   L6 2026-09-04T01:00+0100 opus max default "b-tree index names no letter" "$RDJ"
+mk r-letter   L7 2026-09-04T01:00+0100 opus max default "(A) an upper-case bracket" "$RDJ"
 mk r-ts       Z1 garbage opus max default "(a) x" "$RDJ"
 mk r-close    U1 2026-09-06T13:00+0100 opus max default "(a) x" "$RDJ"
 mk r-close    N1 2026-09-06T13:00+0100 opus max default "(a) x" "$RDJ"
@@ -1638,6 +1644,15 @@ leg "srr: top flags a pick below the ceiling" "$(want "$TMP/srr.out" 'T1: model 
 leg "srr: a line without row_default is re-resolved and labelled" "$(want "$TMP/srr.out" 'R1: re-resolved (no row_default)')$(notwant "$TMP/srr.out" 'FINDING R1')"
 leg "srr: the cut: a minute before RULE_FROM is baseline, a minute after is checked" "$(notwant "$TMP/srr.out" 'FINDING B1')$(want "$TMP/srr.out" 'A1: model sonnet below the row default')"
 leg "srr: the letter check starts at LETTER_FROM" "$(notwant "$TMP/srr.out" 'FINDING L0')$(want "$TMP/srr.out" 'L1: no instrument-rule letter')"
+leg "srr: a lead letter (d —, b:) counts as lane.py counts it; a word that merely starts with a-d does not" "$(notwant "$TMP/srr.out" 'FINDING L2')$(notwant "$TMP/srr.out" 'FINDING L3')$(want "$TMP/srr.out" 'L4: no instrument-rule letter')"
+leg "srr: a lone article or a hyphenated word is no letter (a lot, b-tree), an upper-case bracket is one, and the tally is lower-cased" "$(want "$TMP/srr.out" 'FINDING L5: no instrument-rule letter')$(want "$TMP/srr.out" 'FINDING L6: no instrument-rule letter')$(notwant "$TMP/srr.out" 'FINDING L7')$(want "$TMP/srr.out" '  r-letter: 8 lanes · letters {"a": 1, "b": 1, "d": 1}')"
+leg "srr: the letter expressions are lane.py's twins, character for character" "$($PY -B -c 'import re, sys
+src = [open(p, encoding="utf-8").read() for p in sys.argv[1:3]]
+def pat(text, name):
+    m = re.search("^" + name + r" = re\.compile\((.*)\)\s*$", text, re.M)
+    return m.group(1) if m else "MISSING " + name
+for a, b in (("LETTER_RE", "REASON_BRACKET_RE"), ("LETTER_LEAD_RE", "REASON_LEAD_RE")):
+    if pat(src[0], a) != pat(src[1], b): sys.stdout.write("%s differs from lane.py %s; " % (a, b))' "$SRR" "$HERE/../delegate/lane.py" 2>&1)"
 leg "srr: an unparseable ts is listed" "$(want "$TMP/srr.out" 'Z1: unparsed ts')"
 leg "srr: unclosed, unread applied effort and a recorded/applied mismatch are told apart" "$(want "$TMP/srr.out" 'U1: unclosed')$(want "$TMP/srr.out" 'N1: applied effort unread')$(want "$TMP/srr.out" 'M1: effort max recorded, high applied')"
 leg "srr: a file with neither a run-open nor a dated lane-open is skipped and its bad lines counted" "$(want "$TMP/srr.out" 'r-norunopen.jsonl: skipped (no run-open and no dated lane-open, 1 bad lines)')"

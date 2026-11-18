@@ -420,7 +420,7 @@ A query answered **inline** (no file written) and a **read-only** lint scan are 
 > information that arrives in a session — a ruling, an installed design, a measurement, a source — and
 > contradicts a dated fact a wiki page states as current is marked on that page in the same pass, research
 > and development alike: a dated status fact where the edit is small, else a `flagged:` line naming what
-> superseded it; and a rule quoted from a design page is first checked for a later status on the pages that
+> superseded it; and a rule or a result quoted from a page is first checked for a later status on that page and on the pages that
 > link to it before relying on the quoted rule. When the superseded statement is in CLAUDE.md,
 > CUSTOMISATION.md or a script, its change is proposed to the owner in the same pass, on its own.
 > The method, who marks, what a mark says and who clears it, is on `wiki/developments/stale-marks.md`.
@@ -585,10 +585,12 @@ Each skill's own description surfaces automatically — below is just *when to r
   from it, unless the owner gives a routing rule a home of its own (owner, 2 November 2026).
 - ⚠️ **Account limits and logins are the owner's alone (owner ruling 2026-09-06, amended
   2026-10-05 and 2026-10-21).** No agent works around an account's usage limit or switches a login,
-  and none adjusts its behaviour to them beyond the recorded stop-and-resume rule: a limit stop
-  stands the supervisor down unless the pre-flight armed limit-off, in which case it waits for the
-  reset time the stop text names and resumes per the delegate skill's limit row (§4). Any change to
-  that handling, and any inquiry into why a limit fell when it did, needs the owner's explicit
+  and none adjusts its behaviour to them beyond the recorded limit rule: by default the supervisor
+  waits for the reset Claude's 5-hour stop text names and resumes, stands the run down at Claude's
+  weekly limit, and starts no GPT work past GPT's weekly limit without credits the pre-flight
+  approves, and stops GPT work still running past it; the pre-flight may set each the other way,
+  per the delegate skill's limit row (§4). Any change to that handling, and any inquiry into why a
+  limit fell when it did, needs the owner's explicit
   approval first.
 
 ---

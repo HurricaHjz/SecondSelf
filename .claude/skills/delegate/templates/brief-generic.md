@@ -34,16 +34,24 @@ diffs. {{Ingest lanes only, under an explicit ingest contract — replace this s
 the granted-exception wording in brief-compile.md; never grant to any other lane.}}
 
 GRANTS
+- Bounds: {{the job page's Bounds and lesson index (path); the hard limits that apply, each naming its source: the owner's strict mark, an approved rule, or the lead's own choice}}
+- Pushed: {{lesson ids or grants, each with one line on why this seat needs it | none}}
+- Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
+- Left out on purpose: {{what, and why | none}}
+- Second seat: {{none, or the rule that earns it and what that seat checks against}}
 {{headless lanes: the read directories, the write scope and any add-on granted beyond the
 class row, each with its reason — so a refused path reads as a gap to report, never as a
 mistake to work around; every path and command literal, as the fence will see it — no `Let X =`
 shorthand and no pasteable placeholder, since a fenced lane copies a shorthand into a shell
 variable the fence reads as an ungranted root (eight denials, 2026-09-06) | in-session: "n/a — inherited"}}
+{{a Codex lane given shell network (`codex-lane.py --network`, with `--write`): one `HOST+: <host>, …` line, unquoted, naming every host the lane may reach as bare host names inside the run's network grant (DW-20261024-2) | no shell network: omit, since a Claude lane gets none}}
 
 DECISIONS
 {{the run decisions that bear on this task, and what sibling lanes hold; "none" is a
 statement, not an omission. A decision this lane needs and cannot find here is a gap to
 report, never one to invent.}}
+Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
+A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 
 FOLD
 <!-- For a fold, fill the hand-off below. For other tasks, replace its entire body with
@@ -87,7 +95,7 @@ REPORT
 
 <!-- Spawner checks before sending: spawn-record line written (SKILL.md §3 slot 0); all
 eight slots present (GRANTS belongs to slot 2's scope, DECISIONS to slot 8 — neither adds a
-ninth); no expected answer leaked anywhere; reading list scoped. Control
+ninth); the GRANTS slot opens with its five labelled lines (Bounds, Pushed, Held by the reviewer, Left out on purpose, Second seat), and a brief that lacks one is named before it is sent, with the lines it lacks (SKILL.md §3, the GRANTS slot's warning, which blocks nothing); no expected answer leaked anywhere; reading list scoped. Control
 strings for greps over the CURRENT session's transcript must be generated at probe time
 by the lane, never written in the brief — a brief-supplied string matches its own spawn
 prompt inside the transcript, so use a fresh nonce or scope the grep to pre-brief lines. -->

@@ -10,6 +10,16 @@ Resolve the plan's conflicting targets and the manual targets assigned with them
 
 DECISIONS
 {{the run's decisions, canonical-name decisions already made and unresolved gaps}}
+Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
+A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
+
+GRANTS
+- Bounds: {{the job page's Bounds and lesson index (path); the hard limits that apply, each naming its source: the owner's strict mark, an approved rule, or the lead's own choice}}
+- Pushed: {{lesson ids or grants, each with one line on why this seat needs it | none}}
+- Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
+- Left out on purpose: {{what, and why | none}}
+- Second seat: {{none, or the rule that earns it and what that seat checks against}}
+The read directories and the write scope are SCOPE's, below.
 
 SCOPE
 - Read: {{absolute target paths, competing claim objects and diff paths, affected source-page paths, plan file}}.
