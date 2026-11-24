@@ -3157,6 +3157,11 @@ def case_named_groups_inline_hooks(world):
     names = named_groups()
     check(names == ("reflection controls",
                     "experience pages (wiki/experience/; a group name)",
+                    "replace at the write (a group name)",
+                    "hold before removing (a group name)",
+                    "closing review reads edited pages (a group name)",
+                    "old-state listing (a group name)",
+                    "bulk-clean check (a group name)",
                     ),
           "NAMED_GROUPS: %r" % (names,))
     for name in names[1:]:

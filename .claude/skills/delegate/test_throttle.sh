@@ -981,7 +981,9 @@ else
 	# moves. An install that quietly narrowed a class is exactly what this catches. Fable left
 	# every set under the owner rulings of 2026-09-22 and 2026-09-29, the writer's last on 2026-11-02
 	# (fable only when the owner asks by name), and the gate-judge's fixed
-	# effort moved to xhigh under the first.
+	# effort moved to xhigh under the first. 2026-11-20: `high` joined the critic's effort set
+	# (the owner's answer of that date, for a closed check: a build or a claim list read against a
+	# written spec; the critic row's `dated` records it); its default stays xhigh.
 	opts() { # $1 class -> "models|efforts"
 		case "$1" in
 		verifier) echo "sonnet,opus|high,xhigh,max" ;;
@@ -989,7 +991,7 @@ else
 		wiki-compile) echo "sonnet,opus|medium,high,xhigh,max" ;;
 		builder) echo "sonnet,opus|high,xhigh,max" ;;
 		writer) echo "opus|xhigh,max" ;;
-		critic) echo "opus|xhigh,max" ;;
+		critic) echo "opus|high,xhigh,max" ;;
 		planner) echo "opus|high,xhigh,max" ;;
 		reflector) echo "opus|high,xhigh,max" ;;
 		gate-judge) echo "opus|xhigh" ;;
@@ -1055,10 +1057,13 @@ ROWOPTS_END
 	else no "L48a resolve under the active throttle matches every definition on disk (drifting:$defbad; $CLOSE)"; fi
 	# The gate rule: a default whose `dated` names a target is CARRIED — it sits at or above that
 	# target until the gate passes, never below it, and the target is one of its own options.
+	# A target the text marks as reached ("target <v> reached") is a passed gate, no longer carried:
+	# an effort anchor then moves by a dated edit without a re-gate (delegate skill §2).
 	cat >"$W/carried.py" <<'CARRIED_END'
-"""Carried defaults: every `target <value>` a row's `dated` names, checked against that row.
-Its own positive control runs first on a synthetic line, so `carried=0` can never read as clean
-when the parser has simply stopped matching."""
+"""Carried defaults: every `target <value>` a row's `dated` names and does not mark as reached
+("target <value> reached"), checked against that row. Its own positive control runs first on
+synthetic lines, so `carried=0` can never read as clean when the parser has simply stopped
+matching, or stopped telling a reached target from a carried one."""
 import json, re, sys
 
 rec = json.load(open(sys.argv[1]))
@@ -1067,16 +1072,20 @@ order = rec["order"]
 
 def targets(text):
     out = []
-    for token in re.findall(r"target ([A-Za-z0-9_-]+)", text or ""):
+    for token, reached in re.findall(r"target ([A-Za-z0-9_-]+)( reached\b)?", text or ""):
+        if reached:
+            continue
         for axis in ("model", "effort"):
             if token in order[axis]:
                 out.append((axis, token))
     return out
 
 
-probe = order["effort"][0]
+probe, done = order["effort"][0], order["effort"][1]
 if targets("carried as today's value until the gate — target %s per the table" % probe) \
-        != [("effort", probe)]:
+        != [("effort", probe)] \
+        or targets("moved on its gate PASS: target %s reached; carried — target %s per the table"
+                   % (done, probe)) != [("effort", probe)]:
     print("carried=- control=FAILED verdict=parser did not match its own control")
     raise SystemExit(2)
 

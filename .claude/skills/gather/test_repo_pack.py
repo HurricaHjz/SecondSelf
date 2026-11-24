@@ -5,7 +5,7 @@ guard (inside the repository, no symbolic link, normal form, a regular file of
 the commit's tree, bytes read from the commit and never the working tree); and
 clone's --force-refresh against a local bare repository, which refuses rather
 than overwrites an ignored local file."""
-import argparse, contextlib, io, os, re, shutil, subprocess, sys, tempfile, unittest
+import argparse, contextlib, hashlib, io, os, re, shutil, stat, subprocess, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RP = os.path.join(HERE, "repo_pack.py")
@@ -289,6 +289,63 @@ class Fixture(unittest.TestCase):
         self.assertIn("- skipped: data.bin (binary); ptr.bin (git-LFS pointer)\n", body)
         self.assertIn("- noted: ctrl.md (control bytes present — sanitiser strip applies)\n", body)
         self.assertIsNone(rp.self_check(body))
+
+    # ---- the temp pack file goes once the write ends, written or failed ------------------------------------------
+
+    def folder_state(self, top):
+        """A checksum-and-mode manifest of the files in top: (name, sha256, mode) each."""
+        rows = []
+        for name in sorted(os.listdir(top)):
+            with open(os.path.join(top, name), "rb") as fh: digest = hashlib.sha256(fh.read()).hexdigest()
+            rows.append((name, digest, stat.S_IMODE(os.stat(os.path.join(top, name)).st_mode)))
+        return rows
+
+    def write_through(self, writer_exit=None):
+        """pack-and-write through a stand-in capture_write.py exiting writer_exit (None: no writer at the path given),
+        the system temp folder pointed at a fixture folder holding one planted file. Returns (result, the temp
+        folder's manifest before and after, the temp folder, what the stand-in read on stdin)."""
+        tmpdir = os.path.join(self.root, "systmp"); os.makedirs(tmpdir)
+        with open(os.path.join(tmpdir, "keep-e7q1.md"), "w") as fh: fh.write("planted beside the pack\n")
+        os.chmod(os.path.join(tmpdir, "keep-e7q1.md"), 0o640)
+        got = os.path.join(self.root, f"stdin-{writer_exit}.txt")
+        writer = os.path.join(self.root, f"stand-in-capture-write-{writer_exit}.py")
+        if writer_exit is not None:
+            with open(writer, "w") as fh:
+                fh.write(f"import sys\nopen({got!r}, 'w').write(sys.stdin.read())\nsys.exit({writer_exit})\n")
+        self.assertEqual(os.path.exists(writer), writer_exit is not None)   # premise: the writer is there, or is not
+        before = self.folder_state(tmpdir)
+        r = subprocess.run([sys.executable, RP, "pack-and-write", "--repo", self.repo, "--ledger-id", "t", "--paths", "plain.md",
+                            "--capture-write", writer], capture_output=True, text=True, env=dict(os.environ, TMPDIR=tmpdir))
+        read = ""
+        if os.path.exists(got):
+            with open(got) as fh: read = fh.read()
+        return r, before, self.folder_state(tmpdir), tmpdir, read
+
+    def test_temp_pack_removed_after_the_write(self):
+        r, before, after, tmpdir, read = self.write_through(0)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        tmp = re.search(r" · tmp (.+)", r.stdout).group(1)
+        self.assertEqual(os.path.dirname(tmp), tmpdir)                  # premise: the pack went to the redirected folder
+        self.assertIn("planted-doc-e7q1", read); self.assertIn(rp.FOOTER, read)   # the writer still read the whole pack
+        self.assertFalse(os.path.exists(tmp))
+        self.assertEqual(after, before)                                 # the planted file byte-identical, nothing left
+        shutil.copy2(os.path.join(tmpdir, "keep-e7q1.md"), os.path.join(tmpdir, "keep-copy.md"))   # control, same mode
+        held = self.folder_state(tmpdir)
+        with open(os.path.join(tmpdir, "keep-copy.md"), "r+b") as fh: fh.write(b"P")
+        self.assertNotEqual(self.folder_state(tmpdir), held, "the manifest must catch one changed byte")
+
+    def test_temp_pack_removed_when_the_write_fails(self):
+        r, before, after, _tmpdir, read = self.write_through(3)
+        self.assertEqual(r.returncode, 3, r.stderr)                     # the writer's failure still propagates
+        self.assertIn("planted-doc-e7q1", read)
+        self.assertFalse(os.path.exists(re.search(r" · tmp (.+)", r.stdout).group(1)))
+        self.assertEqual(after, before)
+        shutil.rmtree(_tmpdir)
+        r, before, after, _tmpdir, _read = self.write_through(None)    # no writer at the path: refused, the pack still goes
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("capture_write.py not found", r.stderr)
+        self.assertFalse(os.path.exists(re.search(r" · tmp (.+)", r.stdout).group(1)))
+        self.assertEqual(after, before)
 
 class Clone(unittest.TestCase):
     """clone against a local bare repository (no network); the store is redirected into the fixture."""

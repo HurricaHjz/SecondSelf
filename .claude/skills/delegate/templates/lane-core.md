@@ -4,7 +4,7 @@ Replaces `_inherited.md` for a **headless** lane: one the wrapper spawns into a 
 granted directories and no vault contract in its context. In-session lanes, which inherit
 `CLAUDE.md`, keep `_inherited.md`.
 
-The wrapper (`lane.py`) injects the block below once per spawn through a system-prompt append; a headless brief never pastes
+The wrapper (`lane.py`) injects this whole file once per spawn through a system-prompt append; a headless brief never pastes
 it, so it is never paid for twice. This file is the one source for shared lane text: `_inherited.md`
 renders its conduct for in-session lanes, and the prefills carry role deltas.
 
@@ -122,13 +122,16 @@ SHELL
 - When a bare command stops resolving mid-session, switch to absolute binary paths
   (`/bin/mv`, `/usr/bin/curl`) and continue.
 - Convert a non-Markdown file with `python3 -m markitdown "<file>" -o /tmp/<stem>.md`; the bare
-  command is not on PATH.
+  command is not on PATH; where bare `python3` cannot import markitdown, use an interpreter that can.
 
 WRITING
 Wiki prose is never hard-wrapped: one line per paragraph, list item or quote, because the renderer
 breaks on every newline (schema §1 line discipline). Frontmatter carries values only — no run id, lane
 id or evidence in a comment (a `confidence:` ground is a reason, not evidence); evidence goes in your
-report. UK spelling on every page.
+report. UK spelling on every page. A newer state of the same thing, from a voice with the standing
+to change it, is no conflict (the schema slice, section 4.4): leave the older statement as it stands
+and report the pair, with the page's path, the older statement quoted whole and the newer one with
+its source, for the head to replace.
 
 REPORT
 No restatement of what a file you wrote already holds: give the verdict, the

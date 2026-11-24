@@ -1,5 +1,5 @@
 {
-  "attachmentFolderPath": "assets",
+  "attachmentFolderPath": "assets/figures",
   "userIgnoreFilters": [
     "examples/",
     "raw/",

@@ -651,7 +651,7 @@ mkdir -p "$V/output/new-folder"; printf 'hello\n' >"$V/output/new-folder/README.
 expect "a new README and a gone one are listed" 0 "+NEW output/new-folder/README.md" "+GONE output/README.md"
 
 fresh; run record-audit --vault "$V" --today 2020-07-01
-printf 'edited\n' >"$V/wiki/developments/fixture-rules.md"; run weekly --vault "$V"
+printf -- '---\ntype: development\n---\nedited\n' >"$V/wiki/developments/fixture-rules.md"; run weekly --vault "$V"
 expect "a rule-holding page changed is listed" 0 "+CHANGED wiki/developments/fixture-rules.md"
 
 fresh; edit_data 'data["rule_holding_pages"] = ["wiki/sources/ahead.md"]'; run record-audit --vault "$V" --today 2020-07-01
@@ -1422,6 +1422,44 @@ words = [w["text"] for row in json.load(open(sys.argv[2], encoding="utf-8"))["ro
 sys.exit(1 if [w for w in words if w in source] else 0)
 PY
 rc=$?; expect "control: the same test catches a wording planted in source" 1
+
+# ---- the old-state listing in the weekly pass, and CLAUDE.md section 12's words on the page (21 November 2026)
+fresh; run weekly --vault "$V" --today 2020-07-08
+expect "OS1 the weekly pass runs the old-state listing; with no recorded counts nothing is called risen" 0 "+OLD STATE · " "+no recorded counts yet, so nothing can be called risen" "+the records skipped: developments/known-issues.md, developments/decided-work.md, developments/decided-work-done.md" "+old_state_risen=no-baseline"
+printf -- '---\ntitle: "Ended"\ntype: source\n---\nThe allowance runs until 3 January 2020.\n' >"$V/wiki/sources/ended.md"
+run weekly --vault "$V" --today 2020-07-08
+expect "OS2 an end date now past is listed" 0 "+PAST wiki/sources/ended.md · 1 end date now past" "+end_dates_past=1"
+run record-audit --vault "$V" --today 2020-07-08
+expect "OS3 record-audit records the old-state counts" 0 "+old-state counts of 1 pages recorded"
+python3 -B -c 'import json,sys; print("RECORDED", sorted(json.load(open(sys.argv[1]))["audit"]["old_state"].items()))' "$DOC" >"$OUT" 2>&1; rc=$?
+expect "OS4 the recorded counts name each page with marks, and only those" 0 "+RECORDED [('sources/ended.md', 1)]"
+run weekly --vault "$V" --today 2020-07-09
+expect "OS5 an end date still past is listed again; nothing rose" 0 "+PAST wiki/sources/ended.md" "+0 pages risen since the audit of 2020-07-08" "-ROSE "
+printf -- '**Status 2020-07-09:** a newer layer.\n' >>"$V/wiki/sources/ended.md"; run weekly --vault "$V" --today 2020-07-10
+expect "OS6 a page whose marks rose since the audit is listed with the rise" 0 "+ROSE wiki/sources/ended.md · 1 → 2 (+1)" "+1 pages risen since the audit of 2020-07-08" "+old_state_risen=1"
+printf -- '---\ntitle: "Quoted"\ntype: source\n---\n> **Status 2020-07-09:** his words.\n' >"$V/wiki/sources/quoted.md"; run weekly --vault "$V" --today 2020-07-10
+expect "OS7 a status line inside a quotation is not counted" 0 "-ROSE wiki/sources/quoted.md"
+printf -- '---\ntitle: "Ended"\ntype: source\n---\nNothing is past now.\n' >"$V/wiki/sources/ended.md"; run weekly --vault "$V" --today 2020-07-10
+expect "OS8 a page whose marks fell is not listed" 0 "+0 pages risen" "-ROSE wiki/sources/ended.md" "-PAST wiki/sources/ended.md"
+printf -- '---\ntitle: "Register"\ntype: development\n---\n## Open\n### [2020-07-01 10:00] x\n- **Status 2020-07-02:** a\n- **Status 2020-07-03:** b\n' >"$V/wiki/developments/known-issues.md"; run weekly --vault "$V" --today 2020-07-10
+expect "OS9 the fault list is a record and is not listed" 0 "-wiki/developments/known-issues.md"
+printf '\xff\xfe not utf-8\n' >"$V/wiki/sources/undecodable.md"; run weekly --vault "$V" --today 2020-07-10
+expect "OS10 a page the listing cannot decode is a broken premise, never a count" 2 "+PROBE FAILED: old-state listing: cannot read sources/undecodable.md" "+old_state_risen=could-not-check"
+run record-audit --vault "$V" --today 2020-07-11
+expect "OS11 record-audit records the other baselines when the listing cannot finish, and says the old-state counts are not recorded" 0 "+record-audit 2020-07-11: " "+old-state counts not recorded: old-state listing: cannot read sources/undecodable.md" "+the scan could not finish; the next weekly pass has no counts to call a page risen" "-old-state counts of" "-PROBE FAILED"
+python3 -B -c 'import json,sys; a=json.load(open(sys.argv[1]))["audit"]; print("AUDIT", a["at"], "old_state" in a, bool(a["rule_files"] or a["sources"]))' "$DOC" >"$OUT" 2>&1; rc=$?
+expect "OS12 the data file holds that audit, its other baselines and no old-state counts" 0 "+AUDIT 2020-07-11 False True"
+rm "$V/wiki/sources/undecodable.md"
+run weekly --vault "$V" --today 2020-07-12
+expect "OS12b so the next pass calls nothing risen against the counts of an earlier audit" 0 "+no recorded counts yet, so nothing can be called risen" "-ROSE "
+mkdir -p "$WORK/alone"; cp "$TOOL" "$WORK/alone/rule_register.py"
+python3 -B "$WORK/alone/rule_register.py" weekly --vault "$V" --today 2020-07-10 >"$OUT" 2>&1; rc=$?
+expect "OS13 the tool without old_state_listing.py beside it is a broken premise, never a quiet skip" 2 "+PROBE FAILED: old-state listing: old_state_listing.py is not beside this tool"
+rm -rf "$WORK/alone"
+fresh; run generate --vault "$V" --today 2020-02-02; cp "$PAGE" "$OUT"; rc=0
+expect "OS14 the generated page holds a replaced wording as CLAUDE.md section 12 sets, and names no history page" 0 "+and the log entry names the commit that holds the replaced wording or, where no commit holds it, an entry appended before the edit quotes that wording; holds made under the old rule are reopened" "+the new text becomes the approved wording, and the log entry names the commit that holds the old one or, where no commit holds it, an entry appended before the edit quotes it; or it stays as a noted difference" "-owner-rulings-history" "-goes once to" "-going once to"
+fresh; edit_data 'by["R2#0-0"]["approved"][0]["text"] = "Only the history holds this retired sentence about the blue door."'; run wording-check --vault "$V"
+expect "OS15 a miss's choices hold the old wording as CLAUDE.md section 12 sets" 0 "+MISS R2#0-0" "+the approved wording, and the log entry names the commit that holds the old one or, where no commit holds it, an entry appended before the edit quotes it; or it stays" "-rulings history; or"
 
 # ---- the last leg: the listing commands write nothing ---------------------------------------------
 store_fixture; run record-audit --vault "$V" --today 2020-07-01; printf 'one changed\n' >"$V/raw/one.md"; seed_fixture

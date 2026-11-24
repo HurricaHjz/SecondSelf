@@ -2,7 +2,7 @@
 # publish.sh — the export-template publish flow as ONE chain, so no step can be skipped by hand.
 #
 # The flow this owns is SKILL.md's publish steps 1–4 and the RUNBOOK's maintain section:
-#   pull → overlay → stage → drift check → payload gate → release gate → throttle gate → recap
+#   pull → overlay → stage → README images → drift check → payload gate → release gate → throttle gate → recap
 # and it STOPS there with nothing committed. Only `--publish "<word>" --message "<msg>"` — the
 # owner's go on the presented recap, passed verbatim by the caller — continues to commit and push.
 # Chain every step explicitly: a semicolon or an unchecked command substitution can ignore
@@ -44,20 +44,31 @@
 # EXIT CODES
 #   0  the chain reached the recap and stopped, nothing committed — or, with --publish, committed
 #      and pushed.
-#   1  a gate refused the publish: drift, a payload-gate finding, a release-gate finding, a
-#      throttle finding — or the approval check found the approved recap or its tree no longer on
+#   1  a gate refused the publish: an image the README names that the index lacks, drift, a
+#      payload-gate finding, a release-gate finding, a throttle finding — or the approval check
+#      found the approved recap or its tree no longer on
 #      disk as approved, or the release's tag already exists, or the branch would push somewhere
 #      other than the address the recap names. Nothing is committed.
 #   2  a broken premise: usage, a missing script, a repo that is not a git clone, the vault passed
 #      as the repo, a vault it cannot read, a recap it cannot write or (under --publish) cannot
-#      find, a gate that exited 2. Nothing is committed.
-#   3  a step of the chain failed: pull, overlay, stage, commit, tag or push. A failed push takes
+#      find, a published recap it cannot keep beside the recap, a gate that exited 2, an index with no README.md, a README reader that fails its own
+#      control. Nothing is committed.
+#   3  a step of the chain failed: pull, overlay, stage, commit, tag or push. An overlay that
+#      export_template.sh refuses is this code whatever that script's own exit, its lines printed
+#      above `STOP overlay`: a backup file beside a shipped file, a search for backups that could not
+#      finish, a knowledge-shaped folder inside a skill, an unmarked routing row. A failed push takes
 #      the local tag and the commit back, so the same word can be tried again on the same index.
 #
 # WHAT IT WRITES — the whole of it:
-#   · the recap file (default <vault>/output/publish-recap.txt): the only file it writes in the
-#     vault, and only on a recap-only run. Under --publish the approved recap is never truncated;
-#     it gains the publish result appended, and only after the push succeeds.
+#   · the recap file (default <vault>/output/publish-recap.txt), and only on a recap-only run. Under
+#     --publish the approved recap is never truncated; it gains the publish result appended, and only
+#     after the push succeeds.
+#   · on a recap-only run that finds a published recap there (one carrying the `published` line the
+#     publish step appends after its push), a copy of it beside the recap, made before the placeholder
+#     replaces it: <stem>-<candidate>.txt, or <stem>-<first 12 hex of its sha-256>.txt when it names no
+#     version. One copy per version, never overwritten: other bytes already under that name stop the
+#     run before anything is written. A recap with no `published` line is replaced as before. These
+#     are the only files it writes in the vault.
 #   · the repo clone, on a recap-only run: the overlay export_template.sh copies in, and the git
 #     index `git add -A` stages. Both are written BEFORE the gates run, so a gate STOP leaves the
 #     clone with the overlay in its working tree and everything staged, uncommitted —
@@ -178,6 +189,47 @@ STRIP="$SCRIPT_DIR/strip_vault_local.py"
 [ -d "$SCRIPT_DIR/payload" ] || die 2 "STOP premise — no payload/ beside this script ($SCRIPT_DIR)"
 
 [ -n "$RECAP" ] || RECAP="$VAULT/output/publish-recap.txt"
+# A recap-only run writes its INCOMPLETE placeholder over the recap before the gates run. A recap that was
+# published is the owner's approved record of that release, so it is kept first, beside the recap, one copy
+# per version: made in the same folder as a temporary file, moved into place without overwriting (mv -n)
+# and compared byte for byte. The same bytes already kept: nothing to do. Other bytes under that name: a
+# version is published once ("a published tag never moves"), so one of the two is wrong and the run stops,
+# the recap untouched. Only a recap with the `published` line is kept: one that was never approved, or a
+# stopped run's placeholder, is replaced as before, and the run says so.
+keep_published_recap() {
+  { [ -f "$RECAP" ] && [ -s "$RECAP" ]; } || return 0
+  if ! grep -q '^published ' "$RECAP"; then
+    printf '== recap: %s holds no published line (never approved, or a stopped run'"'"'s placeholder); this run replaces it\n' "$RECAP"
+    return 0
+  fi
+  local dir stem cand sha name keep tmp
+  dir="$(dirname "$RECAP")"; stem="$(basename "$RECAP")"; stem="${stem%.*}"
+  cand="$(awk 'index($0, "candidate ") == 1 { sub("^candidate +", ""); print; exit }' "$RECAP")"
+  if printf '%s\n' "$cand" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+    name="$stem-$cand.txt"
+  else
+    sha="$( { shasum -a 256 "$RECAP" 2>/dev/null || sha256sum "$RECAP"; } | awk '{ print $1 }')" \
+      || die 2 "STOP recap — the published recap at $RECAP names no version and its sha-256 could not be read, so it cannot be kept; nothing written"
+    [ -n "$sha" ] || die 2 "STOP recap — the published recap at $RECAP names no version and its sha-256 could not be read, so it cannot be kept; nothing written"
+    name="$stem-$(printf '%s' "$sha" | cut -c 1-12).txt"
+  fi
+  keep="$dir/$name"
+  if [ -e "$keep" ]; then
+    if cmp -s "$RECAP" "$keep"; then
+      printf '== recap: the published recap is already kept as %s\n' "$keep"
+      return 0
+    fi
+    die 2 "STOP recap — $keep already holds a different published recap of that version, and $RECAP is published too: a version is published once, so one of the two is wrong and a person must look. Nothing written; the recap is as it was"
+  fi
+  tmp="$(mktemp "$dir/.$name.XXXXXX" 2>/dev/null)" \
+    || die 2 "STOP recap — cannot write in $dir, so the published recap at $RECAP cannot be kept before this run replaces it. Nothing written; the recap is as it was"
+  if ! cp -p "$RECAP" "$tmp" || ! mv -n "$tmp" "$keep" || ! cmp -s "$RECAP" "$keep"; then
+    rm -f "$tmp"
+    die 2 "STOP recap — the published recap at $RECAP could not be kept as $keep. Nothing written; the recap is as it was"
+  fi
+  rm -f "$tmp"
+  printf '== recap: the published recap of %s is kept as %s\n' "${cand:-a version it does not name}" "$keep"
+}
 if [ -n "$OWNER_WORD" ]; then
   # A --publish run NEVER truncates the recap: that file is the evidence the owner's word was given
   # on, and the approval check below reads it. The INCOMPLETE placeholder belongs to the recap-only
@@ -189,6 +241,7 @@ if [ -n "$OWNER_WORD" ]; then
 else
   mkdir -p "$(dirname "$RECAP")" || true
   [ -d "$(dirname "$RECAP")" ] || die 2 "STOP recap — cannot write $RECAP: $(dirname "$RECAP") is not a directory"
+  keep_published_recap
   printf 'publish.sh recap — stamp %s — INCOMPLETE\n' "$STAMP" > "$RECAP" \
     || die 2 "STOP recap — cannot write $RECAP"
   RECAP="$(cd "$(dirname "$RECAP")" && pwd)/$(basename "$RECAP")"
@@ -293,6 +346,53 @@ step_stage() {
   cat "$TMPD/stat.txt"
 }
 
+# The shipped .gitignore keeps assets/ out of every commit except the names it lists, so an image the
+# README names that is off that list is copied by the overlay, passed over by `git add -A`, and would
+# ship broken while every other gate passes. So every assets/ file the README names must be in the
+# index, and the README is read from the index too, as a commit writes it. A name is the target of a
+# Markdown link or image (`](…)`, spaces allowed after the bracket, `]: …`) or of an HTML src=, srcset=
+# or href= in either case, with or without `./` or a leading `/`; an address into another site
+# (`…/assets/…` inside a URL) names no file of this repo.
+# shortcut: a percent-encoded name is compared as written; only the first srcset candidate is read; a target on a later line than its `](` or attribute, or one starting `../`, is not read; widen here if a README needs one.
+README_REF_RE="(]\\([[:space:]]*<?|]:[[:space:]]*<?|([Ss][Rr][Cc]([Ss][Ee][Tt])?|[Hh][Rr][Ee][Ff])[[:space:]]*=[[:space:]]*[\"']?)(\\.?/)?assets/[^][:space:]()<>\"'?#]+"
+readme_assets() {                              # $1 a Markdown file: each assets/ path it names, once
+  local rc=0
+  grep -oE "$README_REF_RE" "$1" > "$TMPD/refs.txt" || rc=$?
+  [ "$rc" -le 1 ] || die 2 "PROBE FAILED: grep could not read $1 (exit $rc), so the README-image check read nothing"
+  awk '{ print substr($0, index($0, "assets/")) }' "$TMPD/refs.txt" | sort -u
+}
+
+step_readme_images() {
+  printf -- '-- README images (each assets/ file the staged README.md names is in the index)\n'
+  # The reader's own control on every run: two names it must read, and one image link into another
+  # site that it must leave alone, written as a link so that a reader reading past the prefix fails.
+  printf '%s\n' '![c](assets/control-one.png)' '<img src="./assets/control-two.svg">' \
+    '![r](https://example.com/someone/assets/not-this-repo.png)' > "$TMPD/readme-control.md"
+  [ "$(readme_assets "$TMPD/readme-control.md" | tr '\n' ' ')" = "assets/control-one.png assets/control-two.svg " ] \
+    || die 2 "PROBE FAILED: the README reader did not read exactly its control's two names, so a clean result would mean nothing"
+  git -C "$REPO" show :README.md > "$TMPD/readme.md" \
+    || die 2 "PROBE FAILED: the index of $REPO holds no README.md, so the README-image check has nothing to read. Nothing committed; $LEFT_BEHIND"
+  git -C "$REPO" ls-files --cached -z > "$TMPD/cached.z" \
+    || die 3 "STOP stage — 'git ls-files --cached' failed in $REPO"
+  tr '\0' '\n' < "$TMPD/cached.z" > "$TMPD/cached.txt"
+  readme_assets "$TMPD/readme.md" > "$TMPD/named.txt"
+  : > "$TMPD/unindexed.txt"
+  local img why
+  while IFS= read -r img; do
+    if grep -qxF -- "$img" "$TMPD/cached.txt"; then continue; fi
+    if [ -e "$REPO/$img" ]; then why="in the clone but ignored: payload/gitignore.txt has no '!/$img' line"
+    else why="not in the clone: the vault has no such file, or export_template.sh's readme_images() does not copy its type"; fi
+    printf '  NOT IN INDEX  %s  (%s)\n' "$img" "$why" >> "$TMPD/unindexed.txt"
+  done < "$TMPD/named.txt"
+  if [ -s "$TMPD/unindexed.txt" ]; then
+    cat "$TMPD/unindexed.txt" >&2
+    die 1 "STOP readme-images — $(grep -c . "$TMPD/unindexed.txt") of the $(grep -c . "$TMPD/named.txt") assets/ file(s) the staged README.md names are not in the index, so the published README would show them broken. Nothing committed; $LEFT_BEHIND"
+  fi
+  printf '  README images: %s named, all in the index (reader control: 2 of 2 names read, an address into another site left alone)\n' \
+    "$(grep -c . "$TMPD/named.txt" || true)" > "$TMPD/images.txt"
+  cat "$TMPD/images.txt"
+}
+
 step_drift() {
   printf -- '-- drift check (exemptions derived from export_template.sh)\n'
   if git -C "$REPO" rev-parse --verify -q HEAD >/dev/null; then
@@ -381,6 +481,8 @@ step_recap() {
     printf 'tree        %s\n' "$TREE"
     printf '\n-- staged (git diff --cached --stat) --\n'
     cat "$TMPD/stat.txt"
+    printf '\n-- README images --\n'
+    cat "$TMPD/images.txt"
     printf '\n-- drift check --\n'
     cat "$TMPD/exempt.txt"
     printf '  drift: none\n'
@@ -508,13 +610,14 @@ step_finish() {
 # The two chains differ in one way that matters: the recap-only chain BUILDS the tree it reports on
 # (pull, overlay, stage), the publish chain does not touch it. A second pull or overlay under
 # --publish would move the tree out from under the recap the owner read — the whole point of the
-# digest — so the publish chain proves the index is still the approved one, re-runs the four gates
-# on it read-only (they are the same gates, on the same index, and a vault that moved since is drift
-# here just as it was there), and only then commits and pushes.
+# digest — so the publish chain proves the index is still the approved one, re-runs the README-image
+# check and the four gates on it read-only (they are the same checks, on the same index, and a vault
+# that moved since is drift here just as it was there), and only then commits and pushes.
 if [ -z "$OWNER_WORD" ]; then
   step_pull \
     && step_overlay \
     && step_stage \
+    && step_readme_images \
     && step_drift \
     && step_payload_gate \
     && step_release_gate \
@@ -523,6 +626,7 @@ if [ -z "$OWNER_WORD" ]; then
     && step_finish
 else
   step_verify_approval \
+    && step_readme_images \
     && step_drift \
     && step_payload_gate \
     && step_release_gate \

@@ -14,7 +14,7 @@
     {
       "from": "Routing and rounds",
       "layer": "core",
-      "text": "xhigh is the default for most work, and important, long-chain, essential or hard work takes max, with its reason given; the rule is not rigid (owner, 2 and 3 October 2026). Status 13 November 2026: max as the starting point lapsed by the owner's yes to \"One owner per job\" (the delegate skill, §2): a seat starts at its row's default, and max comes after a not-ready review."
+      "text": "xhigh is the default for most work, and important, long-chain, essential or hard work takes max, with its reason given; the rule is not rigid (owner, 2 and 3 October 2026). Status 13 November 2026: max as the starting point lapsed by the owner's yes to \"One owner per job\" (the delegate skill, §1): a seat starts at its row's default, and max comes after a not-ready review. Status 20 November 2026: a clear, checkable job starts at high (the builder, verifier, wiki-compile and memory-hunter rows); design, design review, code that guards and writing for readers outside the vault stay at xhigh or above, as their rows set, and a critic or a reflector on a closed check, which is a build or a claim list read against a written spec, starts at high."
     },
     {
       "from": "Routing and rounds",
@@ -24,36 +24,36 @@
     {
       "from": "delegate skill §2",
       "layer": "core",
-      "text": "The test, applied to the task in hand: a closed and precise brief → the anchor (`xhigh` for the closed-task classes builder, verifier, wiki-compile, memory-hunter and planner), or `high` for a closed one-leg task; on opus `max` only after an `xhigh` attempt failed, or for a genuinely hard or very extensive task, because max is slow and costly (owner ruling 2026-09-22 19:0x BST, which moved the `critic` and `reflector` Claude-half anchors from `max` to `xhigh`: `max` for a framework-changing or extensive review, `xhigh` for a narrow second pass); `gate-judge` is fixed at the executor's default tier."
+      "text": "The test, applied to the task in hand: a closed and precise brief → the anchor (`high` for the classes whose usual job is clear and checkable, builder, verifier, wiki-compile and memory-hunter, since 20 November 2026; `xhigh` for planner, or `high` for a closed one-leg task), and `xhigh` where the job is design, code that guards or writing for readers outside the vault, as the \"Routing and rounds\" row's status of 20 November 2026 sets (recorded against the class anchor with that reason); on opus `max` only after an `xhigh` attempt failed, or for a genuinely hard or very extensive task, because max is slow and costly (owner ruling 2026-09-22 19:0x BST, which moved the `critic` and `reflector` Claude-half anchors from `max` to `xhigh`: `max` for a framework-changing or extensive review, `xhigh` for a narrow second pass, and since 20 November 2026 `high` for a closed check, which is a build or a claim list read against a written spec); `gate-judge` is fixed at `xhigh`."
     },
     {
       "from": "delegate skill §2",
       "layer": "core",
-      "text": "A model below the anchor only where the instructions are clear and a mistake is unlikely; `gate-judge` none, since a gate measures the routed step at its default tier and a second gate lane is a fresh spawn, never a resume."
+      "text": "A model below the anchor only where the instructions are clear and a mistake is unlikely; `gate-judge` none, since its tier is fixed and a second gate lane is a fresh spawn, never a resume."
     },
     {
       "class": "builder",
       "from": ".claude/agents/builder.md",
       "layer": "core",
-      "text": "opus (Opus 5.5) by default for every build, the closed-work model; xhigh the anchor, max only after a failed xhigh attempt or for a genuinely hard or very extensive build; sonnet per call under the delegate skill §2 test, the reason recorded (owner ruling 2026-11-01)."
+      "text": "opus (Opus 5.5) by default for every build, the closed-work model; high the anchor for a clear, checkable build (since 20 November 2026), xhigh where the build is design or code that guards or after a failed high attempt, max only after a failed xhigh attempt or for a genuinely hard or very extensive build; sonnet per call under the delegate skill §2 test, the reason recorded (owner ruling 2026-11-01)."
     },
     {
       "class": "memory-hunter",
       "from": ".claude/agents/memory-hunter.md",
       "layer": "core",
-      "text": "per call: opus whenever relevance needs judgement, sonnet only for a closed one-leg lookup with the reason recorded (delegate skill §2 rule of 2026-09-06); the default is opus (Opus 5.5) at xhigh."
+      "text": "per call: opus whenever relevance needs judgement, sonnet only for a closed one-leg lookup with the reason recorded (delegate skill §2 rule of 2026-09-06); the default is opus (Opus 5.5) at high (since 20 November 2026), xhigh after a failed high attempt."
     },
     {
       "class": "verifier",
       "from": ".claude/agents/verifier.md",
       "layer": "core",
-      "text": "per call: opus whenever the claims may need reasoning rather than lookup, a lower model only for a closed mechanical list with the reason recorded; verification is closed work, so opus (Opus 5.5) at xhigh, max only after a failed xhigh or for a genuinely hard or very extensive claim list (delegate skill §2 rules of 2026-09-06 and 2026-09-22)."
+      "text": "per call: opus whenever the claims may need reasoning rather than lookup, a lower model only for a closed mechanical list with the reason recorded; verification is closed work, so opus (Opus 5.5) at high (since 20 November 2026), xhigh after a failed high attempt, max only after a failed xhigh or for a genuinely hard or very extensive claim list (delegate skill §2 rules of 2026-09-06 and 2026-09-22)."
     },
     {
       "class": "wiki-compile",
       "from": ".claude/agents/wiki-compile.md",
       "layer": "core",
-      "text": "opus (Opus 5.5) by default for every compile, the closed-work model (sonnet per call under the delegate skill §2 test, the reason recorded; owner ruling 2026-11-01), at xhigh, max only after a failed xhigh or for a genuinely hard or very extensive paper."
+      "text": "opus (Opus 5.5) by default for every compile, the closed-work model (sonnet per call under the delegate skill §2 test, the reason recorded; owner ruling 2026-11-01), at high (since 20 November 2026), xhigh after a failed high attempt, max only after a failed xhigh or for a genuinely hard or very extensive paper."
     }
   ],
   "order": {
@@ -92,7 +92,7 @@
           "xhigh",
           "max"
         ],
-        "default": "xhigh"
+        "default": "high"
       },
       "grants": {
         "default": [
@@ -143,7 +143,7 @@
           "xhigh",
           "max"
         ],
-        "default": "xhigh"
+        "default": "high"
       },
       "grants": {
         "default": [
@@ -189,7 +189,7 @@
           "xhigh",
           "max"
         ],
-        "default": "xhigh"
+        "default": "high"
       },
       "grants": {
         "default": [
@@ -244,7 +244,7 @@
           "xhigh",
           "max"
         ],
-        "default": "xhigh"
+        "default": "high"
       },
       "grants": {
         "default": [
@@ -355,6 +355,7 @@
       },
       "effort": {
         "options": [
+          "high",
           "xhigh",
           "max"
         ],

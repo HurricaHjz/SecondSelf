@@ -11,13 +11,14 @@ Reader inputs default to the shipped sibling skills beside DIR. --instance-data 
 historical v2/layout-1 tuple kept as a compatibility fixture; --demo-instance is the demonstration
 instance regenerated from it through the writer. The Stop hook is vault-local and never ships:
 hook-dependent cases run only with --stamp-hook and otherwise print `NOT APPLICABLE: hook absent`;
-the vault's hook suite runs them with `--group hook`. A missing reader input is `UNRUN REQUIRED`
-and fails the family. A broken premise prints `PROBE FAILED` and exits 2. Expected values derive
+the vault's hook suite runs them with `--group hook`. A required omitted input known to be absent
+is `UNRUN REQUIRED`, for that case alone; an unusable explicit path is a probe. Only inputs the
+selected cases need are inspected. Expected values derive
 from fixture instants and independent byte hashing, never from the renderer under test or
 today's clock. Each case line names its evidence kind: an original-base discriminator fails on
 the build before this feature, a preservation control passes there too, and a case whose own
-delta refines a rule the original base lacks names the mutant that discriminates it. Ends
-`PASS n/n` or `FAIL k/n`.
+delta refines a rule the original base lacks names the mutant that discriminates it. Ends with
+the shared result record and closing line (suite_results.py).
 """
 import argparse
 import contextlib
@@ -39,6 +40,8 @@ import time
 import traceback
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
+import suite_results
+from suite_results import Collector, Premise, Unrun
 
 REG = "wiki/developments/capability-register.md"
 FM = re.compile(rb"\A---\r?\n(.*?\r?\n)---\r?\n", re.S)
@@ -48,11 +51,13 @@ STAGES = ["before-pending", "after-pending", "before-data", "after-data", "befor
           "after-receipt", "before-page", "after-page", "before-clear", "after-clear"]
 COUNT = 0
 ARGS = None
+EXPLICIT = set()
 D = W = R = G = T = render = None
 
 
-class Unrun(Exception):
-    pass
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Premise("argument parsing", message)
 
 
 def check(ok, label):
@@ -602,25 +607,69 @@ def case_d6(root):
                                         "content": [{"type": "link", "target": "bad|target", "label": "x"}], "provenance": []})
     refuses(lambda: render(bad), "D6 a structural target character refuses with a diagnostic", codes=(2,), text="unsafe")
     data_path = need("instance-data", ARGS.instance_data)
+    frozen = frozen_tuple(data_path)
     instance = data_path.parent
-    receipt = json.loads((instance / "register-state/receipt.json").read_bytes())
-    data = json.loads(data_path.read_bytes())
-    stored = (instance.parent.parent / REG).read_bytes()
+    receipt, data, stored = frozen["receipt"], frozen["data"], frozen["page"]
     check(render(data) == stored and sha(stored) == receipt["page_sha256"],
           "D6 a saved v2/layout-1 tuple re-renders to its exact page and receipt")
     import adopt_compat_v1
-    old_data = next(p for p in (instance / "register-state/objects").iterdir()
-                    if p.read_bytes()[:1] == b"{" and json.loads(p.read_bytes()).get("schema_version") == 1)
-    old = json.loads(old_data.read_bytes())
+    old = frozen["v1"]
     old_page = adopt_compat_v1.render(old)
     check((instance / "register-state/objects" / sha(old_page)).is_file(),
           "D6 the saved frozen v1 tuple re-renders to its archived page bytes")
 
 
 def need(label, path):
-    if path is None or not Path(path).is_file():
-        raise Unrun(label + " not found at " + str(path))
-    return Path(path)
+    """An input, acquired where a case needs it. An omitted default provably absent is one known
+    omission; an unusable explicit path, or a default that cannot be inspected, is a broken premise."""
+    path = Path(path)
+    if str(path) not in EXPLICIT:
+        try:
+            state = suite_results.default_state(path)
+        except OSError as exc:
+            raise Premise("external fixture acquisition", label + " default cannot be inspected: " + str(exc))
+        if state == "absent":
+            raise Unrun(label, [label + " at " + str(path)])
+    if not path.is_file() or not os.access(path, os.R_OK):
+        raise Premise("external fixture acquisition", label + " is not a readable file: " + str(path))
+    return path
+
+
+def need_all(*inputs):
+    """Several inputs under one obligation: every known absence is listed, once."""
+    found, missing = [], []
+    for label, path in inputs:
+        try:
+            found.append(need(label, path))
+        except Unrun as exc:
+            missing.extend(exc.missing)
+    if missing:
+        raise Unrun(" and ".join(label for label, _path in inputs), missing)
+    return found
+
+
+def frozen_tuple(path):
+    """A saved layout-1 tuple and its companions, read and shaped before any product check sees them.
+    A missing receipt, archive or page is a broken fixture, not a failure of the code under test."""
+    instance = path.parent
+    objects = instance / "register-state/objects"
+    try:
+        raw = path.read_bytes()
+        data = json.loads(raw)
+        receipt_raw = (instance / "register-state/receipt.json").read_bytes()
+        receipt = json.loads(receipt_raw)
+        page = (instance.parent.parent / REG).read_bytes()
+        source = (objects / data["migration"]["source_archive"]).read_bytes()
+        stored = [p.read_bytes() for p in sorted(objects.iterdir())]
+        v1 = [json.loads(item) for item in stored if item[:1] == b"{"]
+        old = next(item for item in v1 if item.get("schema_version") == 1)
+        if type(receipt) is not dict or "page_sha256" not in receipt:
+            raise KeyError("page_sha256")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, StopIteration) as exc:
+        raise Premise("external fixture acquisition", "frozen tuple unusable at " + str(path) + ": " +
+                      type(exc).__name__ + ": " + str(exc))
+    return {"raw": raw, "data": data, "receipt": receipt, "receipt_raw": receipt_raw, "page": page,
+            "source": source, "v1": old}
 
 
 def case_d7(root):
@@ -794,8 +843,8 @@ def case_r1(root):
     check(section(page_bytes(ctx).replace(b"\n## Related\n", b"\n## Elsewhere\n"), "Related") is None,
           "R1 native assertion: removing Related is caught (the checker does not require it for development pages)")
     data_path = need("instance-data", ARGS.instance_data)
-    data = json.loads(data_path.read_bytes())
-    source = (data_path.parent / "register-state/objects" / data["migration"]["source_archive"]).read_bytes()
+    frozen = frozen_tuple(data_path)
+    data, source = frozen["data"], frozen["source"]
     census = targets(body(source).decode().split("\n"))
     data["page"]["layout_version"] = 2
     produced = targets(section(render(data), "Related"))
@@ -1064,14 +1113,15 @@ def case_n1_route(root):
 def case_f7_demo_instance(root):
     """F7 (closed check): the demonstration instance is regenerated through the writer, and the
     historical tuple it came from is kept as an explicit compatibility fixture, every object kept."""
-    compat_path = need("instance-data", ARGS.instance_data)
-    demo_path = need("demo-instance", ARGS.demo_instance)
+    compat_path, demo_path = need_all(("instance-data", ARGS.instance_data), ("demo-instance", ARGS.demo_instance))
     compat_state, demo_state = compat_path.parent / "register-state", demo_path.parent / "register-state"
-    compat_raw = compat_path.read_bytes()
-    compat = json.loads(compat_raw)
-    compat_page = (compat_path.parent.parent.parent / REG).read_bytes()
-    compat_receipt_raw = (compat_state / "receipt.json").read_bytes()
-    compat_receipt = json.loads(compat_receipt_raw)
+    frozen = frozen_tuple(compat_path)
+    compat_raw, compat, compat_page = frozen["raw"], frozen["data"], frozen["page"]
+    compat_receipt_raw, compat_receipt = frozen["receipt_raw"], frozen["receipt"]
+    try:
+        json.loads(demo_path.read_bytes())
+    except (OSError, ValueError) as exc:
+        raise Premise("external fixture acquisition", "demo-instance unusable: " + str(exc))
     check(compat["schema_version"] == 2 and compat["page"]["layout_version"] == 1 and render(compat) == compat_page and
           compat_receipt["data_sha256"] == sha(compat_raw) and compat_receipt["page_sha256"] == sha(compat_page),
           "F7 the compatibility fixture is a self-consistent historical v2/layout-1 tuple")
@@ -1120,28 +1170,59 @@ CASES = [("D1", case_d1, "pure"), ("D1-freshness", case_d1_freshness, "pure"), (
          ("N1-rename", case_n1_rename, "hook"), ("N1-last", case_no_write, "pure")]
 
 
-def main():
-    global ARGS, D, W, R, G, T, render
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--adopt-dir", type=Path, required=True)
-    for name in ("stamp-hook", "audit-pools", "required-sections", "link-check", "lint-adapter",
-                 "instance-data", "demo-instance", "deep-lint-skill", "lint-skill"):
-        parser.add_argument("--" + name, type=Path)
-    parser.add_argument("--group", choices=("all", "pure", "hook"), default="all")
-    parser.add_argument("--case", choices=[c[0] for c in CASES])
+def selected_inventory(scope):
+    """The named cases of a scope as plain data. The start-up decoder control is a premise, not a case."""
+    if scope in ("all", "pure", "hook"):
+        names = [name for name, _function, group in CASES if scope in ("all", group)]
+    elif scope in [case[0] for case in CASES]:
+        names = [scope]
+    else:
+        raise ValueError("unknown GD scope: " + str(scope))
+    return [{"id": name, "modules": []} for name in names]
+
+
+def run_case(name, function, results, root):
+    before = COUNT
+    print("CASE " + name + " (kind: " + KINDS[name] + ")", flush=True)
+    case_root = root / ("case-" + name)
     try:
-        ARGS = parser.parse_args()
-    except SystemExit as exc:
-        print("PROBE FAILED: arguments")
-        return 2
+        case_root.mkdir()
+    except OSError as exc:
+        raise Premise("TMPDIR and scratch creation", str(exc))
+    try:
+        function(case_root)
+        results.execute(name, COUNT - before)
+        print("PASS " + name, flush=True)
+    except Unrun as exc:
+        if COUNT > before:
+            results.execute(name, COUNT - before)
+        results.unrun("GD/" + name, name, exc.requirement, exc.missing)
+    except Premise as exc:
+        if COUNT > before:
+            results.execute(name, COUNT - before)
+        results.probe(exc.stage, [name], exc.message)
+    except (AssertionError, D.Problem) as exc:
+        results.fail(name, COUNT - before)
+        print("FAIL " + name + ": " + type(exc).__name__ + ": " + str(exc), flush=True)
+    except Exception as exc:
+        # A test body has begun on its fixture: whatever it raises is an executed failure.
+        results.fail(name, COUNT - before)
+        print("FAIL " + name + ": unexpected " + type(exc).__name__ + ": " + str(exc), flush=True)
+        traceback.print_exc(file=sys.stdout)
+    print(results.family_line(name), flush=True)
+
+
+def bootstrap():
+    """The named premises every selected case shares; each failure is a typed probe."""
+    global D, W, R, G, T, render
+    if sys.flags.optimize != 0:
+        raise Premise("interpreter-options", "Python options strip the checks' assertions")
     if not os.environ.get("TMPDIR") or not Path(os.environ["TMPDIR"]).is_dir():
-        print("PROBE FAILED: explicit existing TMPDIR required")
-        return 2
+        raise Premise("TMPDIR and scratch creation", "explicit existing TMPDIR required")
     try:
         ARGS.adopt_dir = ARGS.adopt_dir.resolve(strict=True)
     except OSError as exc:
-        print("PROBE FAILED: adopt directory: " + str(exc))
-        return 2
+        raise Premise("implementation imports", "adopt directory: " + str(exc))
     skills = ARGS.adopt_dir.parent
     defaults = {"audit_pools": skills / "deep-lint/audit-pools.py", "required_sections": skills / "lint/check-required-sections.py",
                 "link_check": skills / "lint/check-links.py", "lint_adapter": skills / "lint/check_register.py",
@@ -1151,59 +1232,78 @@ def main():
     for key, value in defaults.items():
         if getattr(ARGS, key) is None:
             setattr(ARGS, key, value)
-    if ARGS.stamp_hook is not None and not ARGS.stamp_hook.is_file():
-        print("PROBE FAILED: --stamp-hook names no file: " + str(ARGS.stamp_hook))
-        return 2
+        else:
+            EXPLICIT.add(str(getattr(ARGS, key)))
     sys.path.insert(0, str(ARGS.adopt_dir))
     sys.dont_write_bytecode = True
-    import adopt_data, adopt_register, adopt_resources, adopt_migrate, adopt_render, test_register
-    D, W, R, G, T, render = adopt_data, adopt_register, adopt_resources, adopt_migrate, test_register, adopt_render.render
-    if not (D.control() == 3):
-        print("PROBE FAILED: decoder control")
-        return 2
-    root = Path(tempfile.mkdtemp(prefix="generated-dates.", dir=os.environ["TMPDIR"])).resolve(strict=True)
-    T.ROOT = root
-    failed = total = 0
     try:
-        for name, function, group in CASES:
-            if ARGS.case and name != ARGS.case:
+        import adopt_data, adopt_register, adopt_resources, adopt_migrate, adopt_render, test_register
+    except Exception as exc:
+        raise Premise("implementation imports", type(exc).__name__ + ": " + str(exc))
+    D, W, R, G, T, render = adopt_data, adopt_register, adopt_resources, adopt_migrate, test_register, adopt_render.render
+    try:
+        decoder = D.control()
+    except Exception as exc:
+        raise Premise("fixture-premise controls", "decoder control: " + type(exc).__name__ + ": " + str(exc))
+    if not (decoder == 3):
+        raise Premise("fixture-premise controls", "decoder control")
+
+
+def main():
+    global ARGS
+    parser = Parser(description=__doc__)
+    parser.add_argument("--adopt-dir", type=Path, required=True)
+    for name in ("stamp-hook", "audit-pools", "required-sections", "link-check", "lint-adapter",
+                 "instance-data", "demo-instance", "deep-lint-skill", "lint-skill"):
+        parser.add_argument("--" + name, type=Path)
+    parser.add_argument("--group", choices=("all", "pure", "hook"), default="all")
+    parser.add_argument("--case", choices=[c[0] for c in CASES])
+    try:
+        ARGS = parser.parse_args()
+    except Premise as exc:
+        results = Collector("generated-dates", "all", selected_inventory("all"))
+        results.probe(exc.stage, results.unaccounted(), exc.message)
+        return results.finish()
+    scope = ARGS.case or ARGS.group
+    groups = {name: group for name, _function, group in CASES}
+    clash = ARGS.case and ARGS.group not in ("all", groups[ARGS.case])
+    results = Collector("generated-dates", scope, [] if clash else selected_inventory(scope))
+    selected = [case for case in CASES if case[0] in results.ids]
+    hooks = [name for name, _function, group in selected if group == "hook"]
+    if ARGS.stamp_hook is None:
+        for name in hooks:
+            print("NOT APPLICABLE: hook absent: " + name + " (the vault's hook suite runs it)", flush=True)
+            results.not_applicable(name, name, "hook absent")
+    root = None
+    try:
+        bootstrap()
+        if hooks and ARGS.stamp_hook is not None and not ARGS.stamp_hook.is_file():
+            results.probe("external fixture acquisition", hooks, "--stamp-hook names no file: " + str(ARGS.stamp_hook))
+        try:
+            root = Path(tempfile.mkdtemp(prefix="generated-dates.", dir=os.environ["TMPDIR"])).resolve(strict=True)
+        except OSError as exc:
+            raise Premise("TMPDIR and scratch creation", str(exc))
+        T.ROOT = root
+        for name, function, group in selected:
+            if group == "hook" and (ARGS.stamp_hook is None or name in [e for p in results.probes for e in p["entries"]]):
                 continue
-            if ARGS.group != "all" and group != ARGS.group:
-                continue
-            if group == "hook" and ARGS.stamp_hook is None:
-                print("NOT APPLICABLE: hook absent: " + name + " (the vault's hook suite runs it)", flush=True)
-                continue
-            total += 1
-            print("CASE " + name + " (kind: " + KINDS[name] + ")", flush=True)
-            case_root = root / ("case-" + name)
-            case_root.mkdir()
-            try:
-                function(case_root)
-                print("PASS " + name, flush=True)
-            except Unrun as exc:
-                failed += 1
-                print("UNRUN REQUIRED " + name + ": " + str(exc), flush=True)
-            except (AssertionError, D.Problem) as exc:
-                failed += 1
-                print("FAIL " + name + ": " + type(exc).__name__ + ": " + str(exc), flush=True)
-            except Exception as exc:
-                failed += 1
-                print("FAIL " + name + ": unexpected " + type(exc).__name__ + ": " + str(exc), flush=True)
-                traceback.print_exc(file=sys.stdout)
-    finally:
-        for path in sorted(root.rglob("*"), key=lambda p: len(p.parts)):
-            try:
-                if not path.is_symlink():
-                    path.chmod(0o700 if path.is_dir() else 0o600)
-            except OSError:
-                pass
-        shutil.rmtree(root)
-    print("COUNTS " + json.dumps({"assertions": COUNT, "cases": total, "failed": failed}))
-    if total == 0:
-        print("PROBE FAILED: no case selected")
-        return 2
-    print(f"FAIL {failed}/{total}" if failed else f"PASS {total}/{total}")
-    return 1 if failed else 0
+            run_case(name, function, results, root)
+    except Premise as exc:
+        results.probe(exc.stage, results.unaccounted(), exc.message)
+    except Exception as exc:
+        results.probe("harness", results.unaccounted(), type(exc).__name__ + ": " + str(exc))
+    if root is not None:
+        try:
+            for path in sorted(root.rglob("*"), key=lambda p: len(p.parts)):
+                try:
+                    if not path.is_symlink():
+                        path.chmod(0o700 if path.is_dir() else 0o600)
+                except OSError:
+                    pass
+            shutil.rmtree(root)
+        except OSError as exc:
+            results.probe("clean-up", [], str(exc))
+    return results.finish()
 
 
 if __name__ == "__main__":

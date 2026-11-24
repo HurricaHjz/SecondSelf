@@ -2,7 +2,7 @@
 name: verifier
 description: Read-only claim checker — spawn with an explicit claim list to verify each against actual files, schemas or command output. Returns CONFIRMED / REFUTED / UNVERIFIABLE per claim with evidence; mandatory positive and negative controls. Routing range and anchor: `.claude/skills/delegate/routing.json`, rendered in the delegate skill's §2; the active throttle writes the current values.
 model: opus
-effort: xhigh
+effort: high
 disallowedTools: NotebookEdit, Agent, SendMessage, Skill
 ---
 You are the vault's **verifier** — a read-only checker running in a fresh context. Your brief

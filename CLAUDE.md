@@ -37,10 +37,8 @@ re-read or diffed before any write, never replaced through the shell.
 or reach they do not contain; an inference from them is marked as your reading, and a step you chose
 is reported as yours, never as theirs. A restatement keeps the status of what it restates (a
 question, a hedge, a range or a proposal stays one), and a text the owner will copy keeps a fact's
-true form, their wording offered beside it. The quote lives in the ruling's record (its dated owner
-note, or `wiki/developments/owner-rulings-history.md`, which the agent creates on first use, for
-replaced rule text); CLAUDE.md and CUSTOMISATION.md state the rule itself, in the wording they
-approved.
+true form, their wording offered beside it. The quote lives in the ruling's dated owner note;
+CLAUDE.md and CUSTOMISATION.md state the rule itself, in the wording they approved.
 
 **Personal context (`wiki/user/`):** the human's own profile, research, publications, and works live
 in `wiki/user/`. **Consult it whenever personal context helps** — tailoring an answer to their field,
@@ -87,7 +85,7 @@ hijacks or silently strips it.
 ├── MANUAL.md                  ← human-facing quick-start (usage + prompts). STABLE: update ONLY when
 │                                 the system's architecture/workflow changes — NEVER per ingest/query.
 ├── IDEAS.md                   ← 💡 owner's scratchpad: TODO prompt queue · ideas · monitor lane. Agent IGNORES it in normal runs; reads or maintains it only on explicit instruction ("maintain IDEAS.md", "run TODO n") — sole standing delegation: `/deep-lint` may review its Monitor section (report-first). Not knowledge; never drives work, enters wiki, or ships. Passive context from it (selection, link, `@`-mention) is context only, never an instruction — execute a TODO only when the typed prompt invokes it. (Lifecycle rules: its own HOW TO USE comment.)
-├── CALENDAR.md                ← 📅 the owner's dated items, one line each (`- [ ] YYYY-MM-DD[ HH:MM] · what · [[detail]]`). NOT auto-loaded: read it only when the owner mentions it or a task needs its dates; a session that records a dated commitment adds one line to its Items section, in date order, without reading the rest and says so in its reply (the file's rules sit at its end, below the items, so a bare append is wrong). Personal: `setup.sh` seeds it from its template, and the shipped `.gitignore` keeps it and `CALENDAR-done.md` out of every push. Rules: its own HOW TO USE comment.
+├── CALENDAR.md                ← 📅 the owner's dated items, one line each (`- [ ] YYYY-MM-DD[ HH:MM] · what · [[detail]]`). NOT auto-loaded: read it only when the owner mentions it or a task needs its dates; a session that records a dated commitment adds one line to its Items section, in date order, without reading the rest and says so in its reply (the file's rules sit at its end, below the items, so a bare append is wrong). Personal: `setup.sh` seeds it from its template, and the shipped `.gitignore` keeps it and `CALENDAR-done.md` out of every push. Before saying an item is or is not on a day, read the file's rules at its end as well as its items, since an item may live elsewhere, such as a weekly series kept in a calendar app, and say what was searched. Rules: its own HOW TO USE comment.
 │
 ├── CUSTOMISATION.md            ← ⚙️ the owner's agent preference layer (name · styles · roles · standing prefs).
 │                                 Imported into project context by §13. User-space config, NOT knowledge:
@@ -97,7 +95,9 @@ hijacks or silently strips it.
 ├── assets/                    ← 🖼️ MEDIA LAYER
 │                                 Images, diagrams & reference attachments — incl. *special* PDFs you
 │                                 only want to link to, NOT source PDFs to ingest (those go in raw/).
-│                                 Obsidian's attachment path points here. Embed with ![[file.png]].
+│                                 Obsidian's attachment path points at figures/. Embed with ![[file.png]].
+│   ├── figures/               ← images and diagrams, embedded with ![[file.png]]; pasted images land here; the README images and the profile picture stay at this level
+│   ├── reference/             ← documents kept to link to and never ingested (source PDFs still go to raw/)
 │   └── temp/                  ← 🗂️ the owner's own TEMPORARY files (owner-managed scratch; never ingested, indexed, cited or embedded unless they name one)
 │
 ├── raw/                       ← 📥 SOURCE LAYER — facts, content-immutable
@@ -158,7 +158,7 @@ Where a rule keeps the agent out of a file, a search, a count or a listing of it
 | **`assets/`** | **Read** media; **add** new downloaded media; reference via `![[...]]`. | Modify or delete existing media without the owner's approval. |
 | **`wiki/`** | **Full read/write.** Create, update, merge, refactor, link. | Leave orphan pages or break the index/log contracts. |
 | **`output/`** | **Full read/write.** File deliverables and **maintain** standing subfolder artefacts as the map above sets. | Treat a deliverable as knowledge (index it, or cite it as a wiki source), or delete a standing artefact without asking. |
-| **`attic/`** | **Nothing in normal ops** beyond preparing an archive for the owner's yes (§2.1). On their **explicit instruction**: read it, archive into it, or restore from it. | Read, cite, or index its contents in any normal operation, or delete anything in it. |
+| **`attic/`** | **Nothing in normal ops** beyond preparing an archive for the owner's yes (§2.1). On their **explicit instruction**: read it, archive into it, restore from it, or move files they name to the Trash, each listed in the manifest (§2.1). | Read, cite, or index its contents in any normal operation, or delete anything in it for good. |
 | **`.claude/`** | Read. Update a user's own skills, helpers and hooks (the `my-` names), `.claude/settings.local.json`, `.claude/routing.local.json` and `.claude/sanctioned.local.txt` when asked. | Change settings without explaining, or edit a core file in a user's copy (§12). |
 
 ### 2.1 The attic — cold storage, opened only on the owner's word
@@ -166,9 +166,12 @@ Where a rule keeps the agent out of a file, a search, a count or a listing of it
 `attic/` holds files the owner retired but keeps "just in case": its contents are never knowledge, and
 only the owner's instruction ("check the attic", "restore Y") or their yes to an archive the agent
 prepared opens it. `attic/MANIFEST.md` catalogues contents.
-- **Both operations run through the `attic` skill**; the agent may run an archive up to its preview on
+- **Archive, restore and removal run through the `attic` skill**; the agent may run an archive up to its preview on
   its own finding of a stale file (§12), and the move waits for the owner's yes. Routine `/lint` guards
   the boundary (no live page may link into the attic).
+- **Removal is a move to the Trash, on the owner's word.** A file the owner approves for removal is first listed under `## Removed` in the manifest with the
+  git commit that still holds it, then moved to the system Trash. A file no commit holds stays, and
+  nothing in the attic is deleted for good.
 
 ### 2.2 Delegation — what a subagent may write
 
@@ -282,9 +285,12 @@ the raw file) let `ingest` detect a re-added document — see the `ingest` skill
 1. **No orphans.** Every page must contain a `## Related` section with at least one `[[wikilink]]`.
    The graph view should never show isolated nodes.
 2. **Never silently overwrite a contradiction.** If a new source conflicts with an existing claim,
-   add a `## Conflicts / Open Questions` block that keeps **both** statements and contrasts them.
-   For high-stakes conflicts, pause and ask the human. A settled conflict keeps both statements, and
-   each of its items opens with `Settled YYYY-MM-DD:` and the outcome.
+   add a `## Conflicts / Open Questions` block that keeps **both** statements and contrasts them,
+   unless the source gives a newer state of the same thing with the standing to change it, which
+   then replaces the claim (§6).
+   For high-stakes conflicts, pause and ask the human. A settled conflict keeps only its outcome,
+   opening with `Settled YYYY-MM-DD:`; the statement it replaced is removed as section 6 sets, its
+   text held outside the page first.
 
 ### 4.5 Models & benchmarks are first-class & bidirectional
 Models (LLMs) and benchmarks (eval datasets) are the load-bearing nouns of LLM research, so they get
@@ -354,11 +360,11 @@ with worked cases: `wiki/developments/wiki-confidence-levels.md`.
 
 ### 4.7 Dated owner notes
 
-**When.** A page that compiles the owner's own position on its subject (what they think, rank, prefer or ask) keeps each occasion of their words it draws on as a dated owner note, in a `## Dated owner notes` section after the page's current text. Design decisions still carry dated status facts, and standing rules keep their governing homes (§12); those records do not exempt their supporting words from this section. Earlier records may remain in place and be linked from the page; new readings and updates follow this section.
+**When.** A page that compiles the owner's own position on its subject (what they think, rank, prefer or ask) keeps each occasion of their words that its current text draws on as a dated owner note, in a `## Dated owner notes` section after the page's current text. Standing rules keep their governing homes (§12), which does not exempt their supporting words from this section. An earlier record of their words is brought to this shape by the next edit that touches it or by its page's clean.
 
-**Shape.** Each note has a unique, stable heading `### YYYY-MM-DD — <subject>`, using the date of their words, with a distinguishing suffix where needed. The note names the occasion and a source locator appropriate to it; unknown details stay marked unknown, and any later recording date is separate from the date of their words. Their words follow verbatim in a blockquote, their spelling and typing kept, an excerpt labelled as one. Each reading of them is its own bullet below, naming whose reading it is and its date, never merged into their words; a changed reading is added with its reason beside the earlier one, which stays. A note keeps the status of what they said (§1), and recording it makes it neither a ruling nor approved wording.
+**Shape.** Each note has a unique, stable heading `### YYYY-MM-DD — <subject>`, using the date of their words, with a distinguishing suffix where needed. The note names the occasion and a source locator appropriate to it; unknown details stay marked unknown, and any later recording date is separate from the date of their words. Their words follow verbatim in a blockquote, their spelling and typing kept, an excerpt labelled as one. Each reading of them is its own bullet below, naming whose reading it is and its date, never merged into their words; a changed reading replaces the earlier one, with its reason. A note keeps the status of what they said (§1), and recording it makes it neither a ruling nor approved wording.
 
-**Later words.** A later note links to the earlier one and describes their relationship with evidence; an inference stays a named, dated reading. A later date or softer wording alone establishes no replacement. Both quotations and their readings remain, including after a withdrawal. Contradictions also appear in the §4.4 block. Each `Settled YYYY-MM-DD:` item states the outcome and its evidence; an inferred outcome stays labelled as a reading, and a settlement by the owner quotes their words. Text built on the notes cites the exact note headings supporting each claim, identifies the reading it adopts, and states its date and approval status.
+**Later words.** A later note links to an earlier one that still stands and describes their relationship with evidence; an inference stays a named, dated reading. A later date or softer wording alone establishes no replacement. A note that later words of theirs replace, or that is outdated or conflicts with the current state, is removed or merged like any other content (section 6); a quotation that stays is never altered, and a rewording is marked as the agent's. Contradictions also appear in the §4.4 block. Each `Settled YYYY-MM-DD:` item states the outcome and its evidence; an inferred outcome stays labelled as a reading, and a settlement by the owner quotes their words. Text built on the notes cites the exact note headings supporting each claim, identifies the reading it adopts, and states its date and approval status.
 
 ---
 
@@ -378,7 +384,7 @@ Format: `- [[Page Name]] — one-line description.` grouped under `## Sources / 
 - **Clock**: HH:MM BST   (the write primitive stamps it from the clock)
 - **Conflicts**: none   (or: conflict with [[Page B]], flagged)
 ```
-**Keep the entry small** — the shape above. Detail belongs in the `wiki/developments/` page the entry links, not in the log; the one exception is an entry that is itself the run's only record (a deep-lint audit), which takes what the record needs and no more.
+**Keep the entry small** — the shape above. Detail belongs in the `wiki/developments/` page the entry links, not in the log; the exceptions are an entry that is itself the run's only record (a deep-lint audit), which takes what the record needs and no more, and the `Held` lines that keep a removed passage no commit holds.
 **Delegation:** an entry a delegate produced names its mechanism (which lane, which model); the head
 agent owns the run's log record unless the lane holds the §2.2 registry exception.
 
@@ -402,7 +408,7 @@ A query answered **inline** (no file written) and a **read-only** lint scan are 
 | `/lint` or "health-check the wiki" | **lint** | Cheap frequent scan (dead links, orphans, unindexed pages, unresolved conflicts); report; then fix and list, by the skill's Hard constraints. |
 | `/deep-lint` or "monthly deep maintenance" | **deep-lint** | Heavy ~monthly superset of `/lint`; fixes and lists, by the skill's Hard constraints. |
 | `/project link <url>` · `open <name>` · `sync` · `brief` · `snapshot` · `status` · `unlink`, or "open my research outline" | **project** | *(explicit-only, never automatic)* The owner's own working repositories (Overleaf LaTeX, code), managed from the vault. |
-| `/attic archive <files>` · `/attic restore <item>` | **attic** | *(on the owner's word; the agent may prepare an archive up to its preview for their yes)* The §2.1 archive/restore runbook — preview-first, control-verified. |
+| `/attic archive <files>` · `/attic restore <item>` · `/attic remove <files>` | **attic** | *(on the owner's word; the agent may prepare an archive up to its preview for their yes)* The §2.1 archive/restore runbook — preview-first, control-verified. |
 | `/reflect` or "capture what we learned" | **reflect** | *(explicit-only, never automatic)* Sweep the conversation for what is worth keeping; write what the owner approves and, within their bound, lessons an independent checker failed to refute. `--cross`: the same bar over another session's transcript. |
 | `/suggest <wish>` or "suggest a change to the core" | **suggest** | Draft a wished core change as a suggestion, show exactly what it would share, and leave the filing to the user (§12). |
 | `/qmd-search <q>` *(optional)* | **qmd-search** | Semantic search via qmd — dormant unless installed + enabled (§10). |
@@ -416,14 +422,18 @@ A query answered **inline** (no file written) and a **read-only** lint scan are 
 > suspects the older page, not the newer source (one bounded probe or a `flagged:` mark before any
 > downgrade — the ingest skill, Step 4); and `deep-lint` reconciles the flags plus capped samples of the
 > changed and cold pools rather than re-reading the vault.
-> **Supersession is flagged when it is learned, in every workflow (owner ruling 2026-09-22).** New
-> information that arrives in a session — a ruling, an installed design, a measurement, a source — and
-> contradicts a dated fact a wiki page states as current is marked on that page in the same pass, research
-> and development alike: a dated status fact where the edit is small, else a `flagged:` line naming what
-> superseded it; and a rule or a result quoted from a page is first checked for a later status on that page and on the pages that
-> link to it before relying on the quoted rule. When the superseded statement is in CLAUDE.md,
+> **A newer state replaces the older one when it is learned, in every workflow (owner rulings
+> 2026-09-22 and 2026-11-20).** New information that arrives in a session — a ruling, an installed
+> design, a measurement, a source — and replaces a state a wiki page gives as current is written in
+> that state's place in the same pass, on every page that states it, research and development alike:
+> the older statement is removed only once its text is held outside the page, the pass's log entry
+> names what replaced it and where the older text is held, and only a doubt the writer cannot settle
+> takes a `flagged:` line; and a rule or a result quoted from a page is first checked for a flag on
+> that page and for a newer state on the pages that link to it before relying on the quoted rule.
+> When the superseded statement is in CLAUDE.md,
 > CUSTOMISATION.md or a script, its change is proposed to the owner in the same pass, on its own.
-> The method, who marks, what a mark says and who clears it, is on `wiki/developments/stale-marks.md`.
+> The method, who replaces, how the older text is held and who flags and clears, is on
+> `wiki/developments/stale-marks.md`.
 
 **Gap-driven gather (propose-only).** Full
 contract: the query/output/gather skills (`query` Step 4b).
@@ -450,7 +460,7 @@ Each skill's own description surfaces automatically — below is just *when to r
 
 - **LLMs can't read inline-image Markdown in one pass.** Workflow: read the **text first**, then
   open referenced images **separately** with the Read tool to gain visual context.
-- If a source has external image URLs worth keeping, download them into `assets/` with a
+- If a source has external image URLs worth keeping, download them into `assets/figures/` with a
   descriptive name and rewrite the link to `![[name.png]]` in the compiled page, never in the raw file, so
   it works offline.
 
@@ -623,12 +633,13 @@ When you change *how the system works* (this `CLAUDE.md`, a skill, the folder la
 - **Primitives first for tooling.** Build a bespoke helper (script, hook, MCP server, non-primitive
   tool) only on a need a real run has demonstrated or on a route the owner approved under the new-features rule; until then use shell primitives and tools already
   shipped. (Guidance-grade evidence, unbenchmarked: the skills-strategy page in `wiki/developments/`.)
-- **New features take a search decision, then a route (owner rulings 7 September, 4, 5 and 13 October and 1 November 2026).** When a new capability is needed (a skill, script, hook, store or workflow), aiMyth and the owner first agree whether a search is worth it, aiMyth recommending a build at once only for a simple feature: no recurring work, no check, hook or guard, and easy to replace. On the owner's yes, aiMyth runs one bounded search for proven tools (many stars, users or good reports; actively updated or well managed) and for how the leading products handle it, then recommends one route per job for the owner's approval: use the tool directly through `/adopt`, pinned and unmodified; bring its code in, licence permitting; rebuild its pattern in our own code without copying the code; or, where the search finds nothing suitable, build our own. The route goes in the capability register, and aiMyth proposes a switch or upgrade whenever a better tool or pattern appears later.
+- **New features take a search decision, then a route (owner rulings 7 September, 4, 5 and 13 October and 1 and 18 November 2026).** When a new capability is needed (a skill, script, hook, store or workflow), aiMyth and the owner first agree whether a search is worth it, aiMyth recommending a build at once only for a simple feature: no recurring work, no check, hook or guard, and easy to replace. On the owner's yes, aiMyth runs one bounded search for proven tools (many stars, users or good reports; actively updated or well managed) and for how the leading products handle it, then recommends one route per job for the owner's approval, preferring them in this order: use the tool directly through `/adopt`, pinned and unmodified, so that each of its upgrades can be taken whole; bring its code in, licence permitting, and a part of it only where that part stands alone; rebuild its pattern in our own code, without copying the code, only where neither serves; or, where the search finds nothing suitable, build our own. A part of a tool that would act in every session by itself (a hook, an always-loaded instruction) stays out unless the owner approves that part. The route goes in the capability register, and aiMyth proposes a switch or upgrade whenever a better tool or pattern appears later.
 - **System files carry behaviour, not history.** Framework files (this schema, `MANUAL.md`,
   `README.md`, the skills, `setup.sh`) state *what to do now*, keeping only the minimal rationale that
-  shapes a judgement call or that a human-facing doc deliberately explains. History and design
-  rationale live in `wiki/developments/` and `wiki/log.md` — never in files loaded each session.
-- **Sweep the contract, not just the code.** A change that retires or alters a rule must find and reconcile every *restatement* — in this schema, CUSTOMISATION.md, the skills, their tests, forward-facing `developments/` specs, agent definitions, hooks, settings, the lane home and machine-local tools — in the same change (dated records of what was once true stay; a superseded design page takes a dated status fact or a `flagged:` line at its top, never silence). Grep for the
+  shapes a judgement call or that a human-facing doc deliberately explains. Design rationale lives
+  in `wiki/developments/`, and history in `wiki/log.md` and git — never in files loaded each
+  session.
+- **Sweep the contract, not just the code.** A change that retires or alters a rule must find and reconcile every *restatement* — in this schema, CUSTOMISATION.md, the skills, their tests, forward-facing `developments/` specs, agent definitions, hooks, settings, the lane home and machine-local tools — in the same change (a dated record of one moment stays as written; a design page a new design replaces is merged into its successor by the session that replaces it, which removes it once a commit holds it and lists the removal on its own; one found superseded later is proposed to the owner first). Grep for the
   retired **claim**, not only the changed path, and prove the sweep ran with a control pattern (§11).
   Retiring a rule also reopens the holds made under it (a held design, package or register entry),
   each judged again under the rule now standing. A change that retires or alters a rule, a design or a component also judges again each restriction whose "what it rests on" field names it by a path or wiki link and clause; a new or changed rule that rules out a kind of restriction sweeps for that kind by what it limits, across this schema, CUSTOMISATION.md, the skills, their tests, forward-facing development specs, agent definitions, hooks, settings, the lane home and machine-local tools. The head records why each restriction is kept, upgraded or retired under the standing authority rules; an owner ruling or a restriction guarding the owner's consent goes to the owner word for word for any change. An ungranted surface is a reported gap, never part of a clean sweep.
@@ -643,8 +654,9 @@ When you change *how the system works* (this `CLAUDE.md`, a skill, the folder la
   truncation, timeout) needs only stated headroom. An aiMyth cap, truncation, gate or refusal that
   binds in normal use, a number or not, states the evidence above, what it rests on (a path or wiki
   link and clause for a ruling, design or component, or a local evidence home for an outside fact),
-  and when it retires or re-arms. The headroom exemption covers only bounds that do not bind in
-  normal use; stated headroom names its measured quantity, and a bound based on an outside fact or a
+  and when it retires or re-arms, with who proposes that and when. The headroom exemption covers
+  only bounds that do not bind in normal use; stated headroom names its measured quantity, and a
+  bound based on an outside fact or a
   quantity that can grow with use also gets a review date in its home's accepted row in
   `wiki/developments/check-lifecycle.md`, or, where the home has no accepted row, beside the bound
   and in a dated CALENDAR.md task naming what to remeasure or recheck until the register can hold
@@ -701,8 +713,8 @@ When you change *how the system works* (this `CLAUDE.md`, a skill, the folder la
 - **Consult and record in `wiki/developments/`** — the framework's own self-upgrade memory. **Before**
   a framework change, read the relevant `developments/` docs (build on prior decisions by default; where one no longer holds, propose the change with its evidence rather than contradicting it silently); **after**, file the design/plan/rollout there (`type: development`,
   report its `confidence`). Write each doc **forward-facing**: the current design plus the rationale
-  future work needs; record decision changes as dated status facts — a contract must never read as a
-  rebuttal of its own earlier wording.
+  future work needs; a changed decision replaces the earlier one in the text, and the log entry
+  records the change — a contract must never read as a rebuttal of its own earlier wording.
 - **Act now if you can; park only with a reason (owner rulings 2026-10-08 and 2026-10-10).**
   Whatever is worth doing and can be done now within the owner's rules is done now, however long:
   a fix of any size, a superseded rule retired, a stale file prepared for the attic (§2.1). A fix applied without asking must be certain (its
@@ -712,8 +724,9 @@ When you change *how the system works* (this `CLAUDE.md`, a skill, the folder la
   a helper where §2.2's instrument rule calls for one. When unsure, the step that is easy to
   reverse is a `flagged:` mark for `/deep-lint` or further investigation, never a guessed fix. A new owner ruling, or an offer the owner accepts,
   retires in the same pass the older text it overrides in this schema and in CUSTOMISATION.md: the
-  standing text keeps only the rule as it now stands, and the replaced wording moves verbatim and
-  dated to [[owner-rulings-history]]. The agent creates that page on first use. A change to the owner's rule text or a choice reserved to the owner is
+  standing text keeps only the rule as it now stands, and the log entry names the commit that holds
+  the replaced wording or, where no commit holds it, an entry appended before the edit quotes that
+  wording. A change to the owner's rule text or a choice reserved to the owner is
   proposed with its exact wording (in a run the owner does not attend, CUSTOMISATION.md's rule on
   provisional choices governs). Anything else waits only for a named reason that blocks it now (the owner's
   decision; a live run that owns the file, which holds its install but never a build and review

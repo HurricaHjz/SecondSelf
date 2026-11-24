@@ -87,6 +87,10 @@ G="$F/granted"; W="$F/writable"
 fence(){
   NAME="$1"; WANT="$2"; CMD="$3"; FG="${4-$G}"; FW="${5-}"; FN="${6-}"; ROLE="${7-}"; FCWD="${8-.}"
   BOUNDARY="${9-}"; OPERAND="${10-}"
+  # DW-20261109-31 D5: every leg's command, grants, writes, network, role and checker folder, six
+  # NUL-separated fields, so the escaped-quote block can re-run these legs and count how many its second
+  # reading ran on. Inside the fixture; it decides nothing.
+  printf '%s\0%s\0%s\0%s\0%s\0%s\0' "$CMD" "$FG" "$FW" "$FN" "$ROLE" "$(cd "$FCWD" && pwd -P)" >> "$F/leg-commands"
   # FCWD is the working directory of the CHECKER process (default `.`). A leg about a RELATIVE
   # target must set it outside every write root, or the suite's own cwd would clear it for free.
   OUT=$(printf '%s' "$("$PY" - "$CMD" <<'FENCE_JSON_TERMINATOR'
@@ -432,6 +436,71 @@ fence "N3 premise: a named host with a port still parses to the host" \
       allow "curl https://evil.example.com:8443/x" "$G" "" "evil.example.com"
 fence "N3 control: a named host with a port is still checked against the grant" \
       deny "curl https://evil.example.com:8443/x" "$G" "" "api.openalex.org"
+
+# >>> mktemp legs (register entry [2026-11-12 08:19 b]): a bare mktemp -d made a folder under $TMPDIR
+echo "== mktemp [2026-11-12 08:19 b]: it creates where its template or -p folder says, or is refused =="
+fence "mktemp must-fire (fails on base): a bare mktemp -d is refused, and the reason names the fix" \
+      deny "mktemp -d" "$G" "$W" "" "" "$F/elsewhere" 'template under a granted folder' 'mktemp'
+fence "mktemp must-fire (fails on base): the command-substitution form is refused too" \
+      deny 'T=$(mktemp -d); echo "$T"' "$G" "$W" "" "" "$F/elsewhere" 'template under a granted folder' 'mktemp'
+fence "mktemp must-fire (fails on base): -t places it by TMPDIR, even beside a granted -p" \
+      deny "mktemp -d -p $W -t lane" "$G" "$W" "" "" "$F/elsewhere" 'template under a granted folder' 'mktemp'
+fence "mktemp must-fire (fails on base): a bare --tmpdir names TMPDIR" \
+      deny "mktemp -d --tmpdir" "$G" "$W" "" "" "$F/elsewhere" 'template under a granted folder' 'mktemp'
+fence "mktemp must-fire (fails on base): the head role refuses it as well" \
+      deny "mktemp -d" "$G" "$W" "" "--head" "$F/elsewhere"
+fence "mktemp must-fire (fails on base): a template inside the read grants but outside W is refused" \
+      deny "mktemp -d $G/x.XXXXXX" "$G" "$W" "" "" "$F/elsewhere" 'outside the write whitelist' "$G/x.XXXXXX"
+fence "mktemp must-fire (fails on base): -p naming a read-only folder is refused" \
+      deny "mktemp -d -p $G x.XXXXXX" "$G" "$W" "" "" "$F/elsewhere" 'outside the write whitelist' "$G/x.XXXXXX"
+fence "mktemp must-fire (fails on base): a variable template cannot be placed (N3)" \
+      deny 'mktemp -d "$S/x.XXXXXX"' "$G" "$W" "" "" "$F/elsewhere" 'carries a variable' '$S/x.XXXXXX'
+if [ "$(uname -s)" = Darwin ]; then
+  fence "mktemp must-fire on macOS (fails on base): -p with no template is read by the manual as -t tmp" \
+        deny "mktemp -d -p $W" "$G" "$W" "" "" "$F/elsewhere" 'template under a granted folder' 'mktemp'
+else
+  fence "mktemp must-not-fire off macOS: -p naming a write grant, with no template, clears" \
+        allow "mktemp -d -p $W" "$G" "$W" "" "" "$F/elsewhere"
+fi
+fence "mktemp must-not-fire: a template under a granted /tmp folder clears (the entry's own fix)" \
+      allow "mktemp -d /tmp/b3-granted/x.XXXXXX" "$G" "/tmp/b3-granted" "" "" "$F/elsewhere"
+fence "mktemp must-not-fire: a template under a write grant outside /tmp clears" \
+      allow "mktemp -d $W/x.XXXXXX" "$G" "$W" "" "" "$F/elsewhere"
+fence "mktemp must-not-fire: -p naming a write grant, with a template, clears" \
+      allow "mktemp -d -p $W x.XXXXXX" "$G" "$W" "" "" "$F/elsewhere"
+fence "mktemp must-not-fire: a relative template after a cd into W clears" \
+      allow "cd $W && mktemp -d x.XXXXXX" "$G" "$W" "" "" "$F/elsewhere"
+fence "mktemp must-not-fire: the word as data is no call (a grep pattern, quoted prose)" \
+      allow "grep -n mktemp $G/index.md; echo 'mktemp -d is refused'" "$G" "$W" "" "" "$F/elsewhere"
+fence "mktemp must-not-fire: --help creates nothing" allow "mktemp --help" "$G" "$W" "" "" "$F/elsewhere"
+fence "mktemp control: an earlier check's refusal keeps its own reason beside a bare mktemp" \
+      deny "cat /etc/hosts; mktemp -d" "$G" "$W" "" "" "$F/elsewhere" 'outside the granted directories' '/etc/hosts'
+# The fix's independent review, findings A1, A3, A4 and A5: each must-fire leg fails on the first
+# fix's checker and passes on this one.
+fence "mktemp A1 must-fire: the double-quoted substitution spelling is read too" \
+      deny 'T="$(mktemp -d)"; echo "$T"' "$G" "$W" "" "" "$F/elsewhere" 'template under a granted folder' 'mktemp'
+fence "mktemp A1 must-fire: a double-quoted substitution's read-only template is refused" \
+      deny "T=\"\$(mktemp -d \"$G/x.XXXXXX\")\"" "$G" "$W" "" "" "$F/elsewhere" 'outside the write whitelist' "$G/x.XXXXXX"
+fence "mktemp A1 must-not-fire: a double-quoted substitution with a template in W clears" \
+      allow "T=\"\$(mktemp -d \"$W/x.XXXXXX\")\"; echo \"\$T\"" "$G" "$W" "" "" "$F/elsewhere"
+fence "mktemp A1 must-not-fire: the spelling as quoted prose, a search word or an escaped dollar is no call" \
+      allow "echo 'T=\"\$(mktemp -d)\"'; grep -n \"mktemp -d\" $G/index.md; echo \"run \\\$(mktemp -d) later\"" \
+      "$G" "$W" "" "" "$F/elsewhere"
+fence "mktemp A3 must-fire: --help beside a read-only template no longer switches the check off" \
+      deny "mktemp $G/x.XXXXXX --help" "$G" "$W" "" "" "$F/elsewhere" 'outside the write whitelist' "$G/x.XXXXXX"
+fence "mktemp A3 must-not-fire: --help alone still creates nothing" allow "mktemp --help" "$G" "$W" "" "" "$F/elsewhere"
+fence "mktemp A4 must-fire: an abbreviated --tmp= naming a read-only folder is read as --tmpdir" \
+      deny "mktemp -d --tmp=$G x.XXXXXX" "$G" "$W" "" "" "$W" 'outside the write whitelist' "$G/x.XXXXXX"
+fence "mktemp A4 must-not-fire: an abbreviated --tm= naming W places the template in W" \
+      allow "mktemp -d --tm=$W x.XXXXXX" "$G" "$W" "" "" "$F/elsewhere"
+if [ "$(uname -s)" = Darwin ]; then
+  fence "mktemp A5 must-fire on macOS: the -p-alone refusal says a -p folder alone is not enough" \
+        deny "mktemp -d -p $W" "$G" "$W" "" "" "$F/elsewhere" 'a `-p` folder alone is not enough' 'add a template'
+else
+  fence "mktemp A5 must-not-fire off macOS: -p naming a write grant, with no template, still clears" \
+        allow "mktemp -d -p $W" "$G" "$W" "" "" "$F/elsewhere"
+fi
+# <<< mktemp legs
 
 # >>> batch 9 legs (K3dc64067, K23b12c39, Kef9c30da, Kc37755f0, Kb2a266d1)
 echo "== batch 9: fixture root, symlink docstring, glob words, search patterns, curl values =="
@@ -944,6 +1013,17 @@ def load(path, name):
     return module
 
 lf = load(checker, 'record_fence')
+# DW-20261109-31 D5: count the calls in which the escaped-quote second reading ran (a re-spelling with a
+# non-zero count, after the first reading cleared); a checker without it counts nothing. Decides nothing.
+escq_ran, escq_seen = [0], [0]
+if callable(getattr(lf, 'escaped_quote_view', None)):
+    escq_view = lf.escaped_quote_view
+    def escq_counting(text):
+        got = escq_view(text)
+        escq_seen[0] += 1
+        escq_ran[0] += got[1] > 0
+        return got
+    lf.escaped_quote_view = escq_counting
 decoder = load(here / 'lane-fence.py', 'record_decoder')
 writer_module = load(writer, 'record_writer_parser')
 if lf.within(str(vault), lf.temp_roots()) or lf.within(os.getcwd(), [str(ro)]):
@@ -1152,6 +1232,10 @@ for number, value in enumerate(prose):
     case('literal prose ' + str(number + 1), command, log_writes, True)
 escaped_title = r'''"owner's \"record\"; touch /outside"'''
 case('double-quoted escaped quotation', log_call.replace('--title literal', '--title ' + escaped_title), log_writes, True)
+# DW-20261109-31, pinned on both checkers: the writer's reader (`record_words`) decodes an escaped
+# quote, so one in the writer's own arguments cannot hide its missing grant from the first reading.
+case('an escaped quote in the writer arguments keeps the grant refusal',
+     log_call.replace('--title literal', "--title it\\'s"), [], reason='record writer:')
 case('double-quoted literal dollar and backslash',
      log_call.replace('--title literal', r'--title "\$literal \\ literal\q"'), log_writes, True)
 case('path-looking typed changed value', log_call.replace('--changed x', '--changed /outside/description'), log_writes, True)
@@ -1718,6 +1802,8 @@ check('read-only copy checksum manifest unchanged', bool(before) and before == a
 planted = dict(after)
 planted['sentinel'] = ('file', 0o444, 'different')
 check('checksum manifest positive control detects a changed entry', before != planted)
+# DW-20261109-31 D5: how many of these legs the escaped-quote second reading ran on, for its reach leg.
+(fixture / 'escq-reach-record').write_text('%d %d' % (escq_ran[0], escq_seen[0]))
 print('RECORD_COUNTS', passed, failed)
 RECORD_WRITER_TEST_END
 RECORD_OUT=$("$PY" -B "$F/record-tests.py" "$FENCE" "$HERE" "$F")
@@ -4655,6 +4741,258 @@ case "$HOOK_COUNTS" in
 esac
 PASS=$((PASS + HOOK_PASS)); FAIL=$((FAIL + HOOK_FAIL))
 # HOOK_GRANTS_END
+
+# >>> escaped-quote legs (DW-20261109-31): a write an escaped quote hid from the first reading
+echo "== escaped quotes (DW-20261109-31): the second reading refuses the hidden write and loses no refusal =="
+# Written to a file first: bash 3.2 misreads a heredoc inside $( … ) whose body holds lone quotes.
+cat > "$F/escq-tests.py" <<'ESCAPED_QUOTE_TEST_END'
+import importlib.util, json, os, shlex, subprocess, sys, time
+fence, fixture, G, W, replay_json, leg_log, replay_grants, replay_writes = sys.argv[1:9]
+E = os.path.join(fixture, 'elsewhere')
+os.makedirs(os.path.join(W, "it's"), exist_ok=True)
+passed = failed = 0
+def result(name, good, detail=''):
+    global passed, failed
+    if good:
+        passed += 1
+        print('  ok   — ' + name)
+    else:
+        failed += 1
+        print('FAIL   — ' + name + ('  [' + detail + ']' if detail else ''))
+
+def run(cmd, head=False, writes=None, cwd=None):
+    """The checker as the wrapper calls it: the tool-call JSON on stdin, the grants in the environment."""
+    env = dict(os.environ, LLM_WIKI_LANE_GRANTS=G, LLM_WIKI_LANE_WRITES=W if writes is None else writes,
+               LLM_WIKI_LANE_NETWORK='')
+    p = subprocess.run([sys.executable, fence] + (['--head'] if head else []), text=True, capture_output=True,
+                       input=json.dumps({'tool_name': 'Bash', 'tool_input': {'command': cmd}}), cwd=cwd or E, env=env)
+    if p.returncode:
+        return 'exit %d' % p.returncode, p.stderr[-300:]
+    if not p.stdout.strip():
+        return 'silent', ''
+    out = json.loads(p.stdout)['hookSpecificOutput']
+    return out['permissionDecision'], out['permissionDecisionReason']
+
+def fill(cmd):
+    return cmd.replace('{G}', G).replace('{W}', W).replace('{E}', E)
+
+ESC = "lane-fence: an escaped quote (\\' or \\\") hid a write from this checker's first reading; read as the shell reads it, "
+REDIRECT = 'shell redirection outside the write whitelist is denied'
+RM = '`rm` targets `' + G + '/f.md`, which is outside the write whitelist'
+OPEN = "an interpreter's `open` writes `" + G + "/f.md`"
+# D1: every planted shape, refused on this checker with the escaped-quote reason and its inner rule;
+# each is allowed (or silent) on the checker before this change, so every one fails there.
+MUST_FIRE = [
+    ("S1, the register's shape, relative in a read-only working folder", r"echo a\'b > f.md c\'d", {'cwd': G}, REDIRECT),
+    ('S1a, an absolute target', r"echo a\'b > {G}/f.md c\'d", {}, REDIRECT),
+    ('S2, the double-quote form', r'echo "a\"b" > {G}/f.md "c\"d"', {}, REDIRECT),
+    ('S3, ANSI-C quoting hides a tee', r"echo $'\'' | tee {G}/f.md ; echo $'\''", {}, '`tee` outside the write whitelist'),
+    ('S4, a deletion between escaped double quotes', r'rm "/tmp/a\"" {G}/f.md "\"b"', {}, RM),
+    ('S5, ANSI-C quoting hides a deletion', r"echo $'\'' ; rm {G}/f.md ; echo $'\''", {}, RM),
+    ('S6, ANSI-C quoting hides a redirect', r"echo $'a\'b' > {G}/f.md $'c\'d'", {}, REDIRECT),
+    ('S7, an escaped quote fakes a heredoc that swallows a deletion', 'echo "a\\" <<X b"\nrm {G}/f.md\nX', {}, RM),
+    ('S8, the 2b tripwire split from its segment', r"""echo "a\"" ; python3 -c "open('{G}/f.md','w')" ; echo "\"" """, {}, OPEN),
+    ('S9, sed -i between escaped double quotes', r'sed "s/x/\"/" -i {G}/f.md "\""', {}, 'in-place editor'),
+    ('S10, ANSI-C quoting hides a bare mktemp', r"echo $'\'' ; mktemp -d ; echo $'\''", {}, 'template under a granted folder'),
+    ('B1, a double-quoted python3 -c program with escaped literals', r'python3 -c "open(\"{G}/f.md\",\"w\").write(\"x\")"', {}, OPEN),
+    ('B1, the same with a substitution in the program', r'python3 -c "open(\"{G}/f.md\",\"w\").write(\"$(date)\")"', {}, OPEN),
+    ('B1, an ANSI-C program', r"python3 -c $'open(\'{G}/f.md\',\'w\')'", {}, OPEN),
+    ('B5, unquoted escaped double quotes', r'echo a\"b > {G}/f.md c\"d', {}, REDIRECT),
+    ('B5, a double-quoted redirect target holding the escaped quote', r'echo x > "{G}/a\"b.md"', {'cwd': W}, REDIRECT),
+    ('B5, a double-quoted tee target holding the escaped quote', r'echo x | tee "{G}/a\"b.md"', {'cwd': W}, '`tee`'),
+    ('B5, a curl output option', r"echo $'\'' ; curl -o {G}/f.md https://h.example/x ; echo $'\''", {}, '`curl -o` targets'),
+    ('B5, a wget output option', r"echo $'\'' ; wget -O {G}/f.md https://h.example/x ; echo $'\''", {}, '`wget -O` targets'),
+    ('B5, an ssh-family local write', r"echo $'\'' ; scp h.example:/x {G}/f.md ; echo $'\''", {}, 'local write `' + G + '/f.md`'),
+    ('B5, a script file on a write-less lane (2c)', r"echo $'\'' ; python3 /tmp/s.py {G}/f.md ; echo $'\''", {'writes': ''}, 'runs the script'),
+    ('B5, perl -i', r"echo $'\'' ; perl -i -pe s/a/b/ {G}/f.md ; echo $'\''", {}, 'in-place editor'),
+    ('B5, an append redirect', r"echo a\'b >> {G}/f.md c\'d", {}, REDIRECT),
+    ('B5, the head role', r"echo a\'b > {G}/f.md c\'d", {'head': True}, REDIRECT),
+    ('B2, a nested quote the flat reading cannot follow, then a hidden deletion', r'''echo "$(echo "it's")" ; rm {G}/f.md ; echo \'''', {}, RM),
+    ('B2, the text ends inside a quote after a hidden deletion', "echo $'\\''\nrm {G}/f.md\necho 'x", {}, RM),
+    ('D4 pair, a dollar straight before an escaped quote', r"echo $\' > {G}/f.md \'", {}, REDIRECT),
+]
+for name, cmd, opts, inner in MUST_FIRE:
+    got, why = run(fill(cmd), head=opts.get('head', False), writes=opts.get('writes'), cwd=opts.get('cwd'))
+    result('must-fire (fails before the change): ' + name, got == 'deny' and why.startswith(ESC) and inner in why,
+           repr((got, why[:240])))
+# The must-not-fire twins and D4: escaped quotes in ordinary work clear on both checkers.
+MUST_NOT_FIRE = [
+    ('B1 twin, the same program writing inside W', r'python3 -c "open(\"{W}/f.md\",\"w\").write(\"x\")"', {}),
+    ('B5 twin, the escaped quote in a target name inside W', r'echo x > "{W}/a\"b.md"', {'cwd': W}),
+    ('B2 twin, a nested quote and an escaped quote, no write', r'''echo "$(echo "it's")" \'done\'''', {}),
+    ('B2 twin, the text ends inside a quote, no write', "echo it\\'s\necho 'x", {}),
+    ('D4, an escaped apostrophe in prose', r"echo it\'s fine", {}),
+    ('D4, an escaped apostrophe beside a redirect into /tmp', r"echo it\'s > /tmp/escq-fixture-x.md", {}),
+    ('D4, escaped double quotes in a printf into W', r'''printf '%s\n' "say \"hi\"" > {W}/f.md''', {}),
+    ('D4, an escaped apostrophe in a grep pattern', r"grep -n don\'t {G}/index.md", {}),
+    ("D4, a cd into W/it's still sets the base", r"cd {W}/it\'s && touch f.md", {}),
+    ('D4, an escaped double quote in a granted name', r'rm "{W}/a\"b"', {}),
+    ('D4, an escaped quote inside a heredoc body', "cat > {W}/f.md <<'EOF'\nit\\'s > here\nEOF", {}),
+    ('D4, an escaped quote inside a comment', "echo ok # don\\'t", {}),
+    ('D4, a double-quoted -c program with escaped quotes and a quoted comparison sign',
+     r'python3 -c "print(\"a\" if 2 > 1 else \"b\")"', {}),
+    ('D4, an escaped backslash before a closing quote', r'''printf '%s\n' "C:\\" don\'t > {W}/f.md''', {}),
+    ('D4, a dollar straight before an escaped quote', r"echo $\'x > /tmp/escq-fixture-x.md", {}),
+    # The corpus replay's one false refusal, before its fix: escaped backticks in a double-quoted program
+    # were read as a substitution, so the rest was read as unquoted and `>=` as a redirect.
+    ('D4, escaped backticks and a comparison in a double-quoted -c program',
+     r'''echo it\'s; python3 -c "t='a \`b\`'; print(1 if len(t)>=0 else 0)"''', {}),
+]
+for name, cmd, opts in MUST_NOT_FIRE:
+    for head in (False, True):
+        got, why = run(fill(cmd), head=head, cwd=opts.get('cwd'))
+        result('must-not-fire (%s): %s' % ('head' if head else 'lane', name),
+               got == ('silent' if head else 'allow'), repr((got, why[:240])))
+# D2 (ii): refusals made today, each with today's reason byte for byte.
+PINNED = [
+    ('K1, an escaped apostrophe exposing a quoted >', r'''echo don\'t "x'y > z"''',
+     'lane-fence: shell redirection outside the write whitelist is denied (writes go to the granted directories, or the change comes back as a proposed diff)'),
+    ('K3, the word claude in an echo label', "echo '== A: another claude account / second account'",
+     'lane-fence: a lane may not invoke `claude` (no nested spawns)'),
+    ('K4, a lone slash in a python3 -c program', "python3 -c \"print('/')\"",
+     'lane-fence: `/` is outside the granted directories — report the gap (`needs: <path> because <reason>`) instead of working around it'),
+    ('C1, a plain redirect', 'echo ab > {G}/f.md',
+     'lane-fence: shell redirection outside the write whitelist is denied (writes go to the granted directories, or the change comes back as a proposed diff)'),
+    ('C2, a plain deletion', 'rm {G}/f.md', 'lane-fence: ' + RM),
+]
+for name, cmd, reason in PINNED:
+    got = run(fill(cmd))
+    result('pinned refusal, reason unchanged: ' + name, got == ('deny', reason), repr(got))
+
+# D5: the re-spelling itself, read from the checker in memory.
+spec = importlib.util.spec_from_file_location('escq_fence', fence)
+lf = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(lf)
+view = getattr(lf, 'escaped_quote_view', None)
+present = callable(view)
+result('D5 premise: the checker has escaped_quote_view', present)
+replay = [e['full'] for e in json.load(open(replay_json, encoding='utf-8'))]
+fields = open(leg_log, encoding='utf-8', errors='replace').read().split('\0')
+leg_rows = [fields[i:i + 6] for i in range(0, len(fields) - 5, 6)]
+legs = [row[0] for row in leg_rows]
+d4_plain = [fill(c) for _, c, _ in MUST_NOT_FIRE if "\\'" not in c and '\\"' not in c]
+if not present:                           # a checker before this change: each D5 leg below fails, by name
+    for label in ('no-escape identity', 'invariant', 'shlex words', 'cannot-decide marks', 'reach',
+                  'fail-closed', 'B6 default', 'B6 switch', 'gate', 'one call site', 'timing'):
+        result('D5 %s: needs escaped_quote_view' % label, False, 'absent from this checker')
+if present:
+    # With no backslash-quote the gate never calls the pass; called anyway, it counts nothing, and its view
+    # is the text itself unless a part is read as unquoted (an unmodelled span or an unclosed quote).
+    plain = [t for t in replay + legs + d4_plain if "\\'" not in t and '\\"' not in t]
+    changed = [t[:80] for t in plain if view(t)[1] != 0 or (view(t)[0] != t and not view(t)[2])]
+    result('D5: a command with no escaped quote counts 0 and is its own view unless read as unquoted (%d texts)'
+           % len(plain), plain and not changed, repr(changed[:3]))
+    planted = [fill(c) for _, c, _, _ in MUST_FIRE] + [fill(c) for _, c, _ in MUST_NOT_FIRE]
+    left = [c[:80] for c in planted if view(view(c)[0])[1] != 0]
+    result('D5 invariant: no escaped quote remains in any view outside single quotes and heredoc bodies (%d commands)'
+           % len(planted), not left, repr(left[:3]))
+    flat = [c for c in planted if "$'" not in c and '$\\' not in c and '<<' not in c and not view(c)[2]]
+    def words(text):
+        try:
+            return shlex.split(text, comments=True)
+        except ValueError as exc:
+            return 'unsplittable: %s' % exc
+    differ = [c[:80] for c in flat if words(c) != words(view(c)[0])]
+    result('D5: in flat context the view is the same words to the shell (shlex, %d commands)' % len(flat),
+           flat and not differ, repr(differ[:3]))
+    marked = [c for c in planted if view(c)[2]]
+    result('D5: the two cannot-decide shapes and their twins are read as unquoted (%d marked)' % len(marked),
+           len(marked) == 4, repr([c[:60] for c in marked]))
+    # B3 reach: re-run every earlier leg as it ran (its grants, writes, network, role and folder) and the
+    # replay texts as block 2R runs them, counting the calls in which the second reading really ran (the
+    # first reading cleared, and the re-spelling counted an escaped quote); the record-writer block counts
+    # its own legs the same way. Zero in total means the existing legs say nothing about the new step.
+    ran = [0]
+    def counting(text):
+        got = view(text)
+        ran[0] += got[1] > 0
+        return got
+    def paths(value):
+        return [lf.norm(p) for p in value.split(os.pathsep) if p.strip()]
+    lf.escaped_quote_view = counting
+    try:
+        for cmd, fg, fw, fn, role, folder in leg_rows:
+            os.chdir(folder if folder and os.path.isdir(folder) else E)
+            try:
+                lf.check({'tool_name': 'Bash', 'tool_input': {'command': cmd}}, paths(fg), paths(fw),
+                         head=role == '--head', network=[h for h in fn.replace(',', ' ').split() if h])
+            except Exception:
+                pass                      # a leg that raises is the leg's own business, counted by it
+        legs_ran, ran[0] = ran[0], 0
+        os.chdir(E)
+        for text in replay:
+            lf.check({'tool_name': 'Bash', 'tool_input': {'command': text}}, paths(replay_grants),
+                     paths(replay_writes), head=True)
+        replay_ran = ran[0]
+    finally:
+        lf.escaped_quote_view = view
+    record_reach = os.path.join(fixture, 'escq-reach-record')
+    record_ran, record_calls = (int(x) for x in open(record_reach).read().split()) if os.path.isfile(record_reach) else (0, 0)
+    total = legs_ran + replay_ran + record_ran
+    result('D5 reach: the second reading ran on %d of %d earlier fence legs, %d of %d replay texts and %d '
+           'record-writer calls (fails at zero)' % (legs_ran, len(leg_rows), replay_ran, len(replay), record_ran),
+           total > 0, 'record calls seen %d' % record_calls)
+    # Failure direction (B6): a raising re-spelling refuses in the helper role, reaches head-fence.py's
+    # logged allow in the lead's role by default, and refuses there too with the switch set False.
+    ev = {'tool_name': 'Bash', 'tool_input': {'command': fill(r"echo a\'b > {G}/f.md c\'d")}}
+    calls = []
+    def planted_failure(text):
+        calls.append(text)
+        raise RuntimeError('planted failure')
+    os.chdir(E)
+    lf.escaped_quote_view = planted_failure
+    try:
+        lane = lf.check(ev, [lf.norm(G)], [lf.norm(W)])
+        result('D5 fail-closed: a raising re-spelling refuses in the helper role',
+               lane == ('deny', 'lane-fence: the escaped-quote reading failed — fail-closed'), repr(lane))
+        try:
+            head = lf.check(ev, [lf.norm(G)], [lf.norm(W)], head=True)
+        except RuntimeError as exc:
+            head = 'raised ' + str(exc)
+        result("D5 B6 default: in the lead's role the failure reaches head-fence.py (raised)",
+               head == 'raised planted failure', repr(head))
+        lf.ESCAPED_QUOTE_HEAD_FAILS_OPEN = False
+        head = lf.check(ev, [lf.norm(G)], [lf.norm(W)], head=True)
+        result("D5 B6 switch: set False, the lead's role refuses too",
+               head == ('deny', 'lane-fence: the escaped-quote reading failed — fail-closed'), repr(head))
+        lf.ESCAPED_QUOTE_HEAD_FAILS_OPEN = True
+        before = len(calls)
+        quiet = lf.check({'tool_name': 'Bash', 'tool_input': {'command': 'echo it is > ' + W + '/f.md'}},
+                         [lf.norm(G)], [lf.norm(W)])
+        result('D5: a command with no backslash-quote never calls the re-spelling', quiet[0] == 'allow' and len(calls) == before,
+               repr((quiet, len(calls) - before)))
+    finally:
+        lf.escaped_quote_view = view
+    # B5: the `view` keyword skips checks 1, N, 3 and 4, so exactly one call site may pass it.
+    source = open(fence, encoding='utf-8').read()
+    sites, control = source.count('view=True'), (source + '\nx(view=True)\n').count('view=True')
+    result('D5 source: `view=True` has exactly one call site (control: a planted second one counts %d)' % control,
+           sites == 1 and control == 2, 'sites %d' % sites)
+    # B2: no length bound, so the cost is pinned instead. 64 KiB of commands holding escaped quotes against the
+    # same text with the escapes removed; the measured ratio was 1.8 on 20 November 2026 (bound set by judgement).
+    unit = 'echo it\\\'s ok > ' + W + '/f.md ; '
+    long_cmd = unit * (65536 // len(unit))
+    timings = []
+    for text in (long_cmd, long_cmd.replace("\\'", 'q')):
+        start = time.perf_counter()
+        got = lf.check({'tool_name': 'Bash', 'tool_input': {'command': text}}, [lf.norm(G)], [lf.norm(W)])
+        timings.append((time.perf_counter() - start, got[0]))
+    result('D5 timing: a 64 KiB escaped-quote command clears in %.2f s, %.1f times its escape-free twin (bound: 3 times, 5 s)'
+           % (timings[0][0], timings[0][0] / max(timings[1][0], 1e-6)),
+           timings[0][1] == timings[1][1] == 'allow' and timings[0][0] < 5 and timings[0][0] <= 3 * timings[1][0], repr(timings))
+print('ESCQ_COUNTS', passed, failed)
+ESCAPED_QUOTE_TEST_END
+ESCQ_OUT=$("$PY" -B "$F/escq-tests.py" "$FENCE" "$F" "$G" "$W" "$RJSON" "$F/leg-commands" "$RG" "$RW")
+ESCQ_RC=$?
+printf '%s\n' "$ESCQ_OUT"
+[ "$ESCQ_RC" = 0 ] || { echo "PROBE FAILED: escaped-quote legs exited $ESCQ_RC"; exit 2; }
+ESCQ_COUNTS=$(printf '%s\n' "$ESCQ_OUT" | tail -1)
+case "$ESCQ_COUNTS" in
+  'ESCQ_COUNTS '*) PASS=$((PASS + $(printf '%s\n' "$ESCQ_COUNTS" | awk '{print $2}')))
+                   FAIL=$((FAIL + $(printf '%s\n' "$ESCQ_COUNTS" | awk '{print $3}'))) ;;
+  *) echo "PROBE FAILED: escaped-quote legs omitted their counts"; exit 2 ;;
+esac
+# <<< escaped-quote legs
 
 echo "== the fence wrote only its log, note and markers, and writes only through _unplaced_append =="
 AFTER=$("$PY" -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$FENCE")

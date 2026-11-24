@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <id>https://arxiv.org/api/fixture-batch-2401.00001</id>
+  <title>arXiv Query: search_query=&amp;id_list=2401.00001&amp;start=0&amp;max_results=1</title>
+  <updated>2026-11-19T00:00:00Z</updated>
+  <opensearch:itemsPerPage>1</opensearch:itemsPerPage>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00001v2</id>
+    <title>Planted Preprint: A Fixture for the Version Check</title>
+    <updated>2026-10-01T09:30:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-01T09:00:00Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author><name>Ada Fixture</name></author>
+  </entry>
+</feed>

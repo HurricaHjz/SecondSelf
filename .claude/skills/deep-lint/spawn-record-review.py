@@ -12,7 +12,10 @@ Carries two guards from one read of the spawn records, and never calls the meter
   `row_default` on either axis in either direction carries its reason, `model_src`/`effort_src`
   reading `auto: <text>` or a non-empty `choice_reason`; a departure with neither is the finding
   `auto pick without --choice-reason`. A line without `model_src` (every record before 2026-09-08)
-  keeps the phrase check whatever its throttle; a hand-set preset keeps it too.
+  keeps the phrase check whatever its throttle; a hand-set preset keeps it too, and from the owner's
+  ruling of 2026-11-20 (every pick names its reason, the default included) a non-empty
+  `choice_reason` on a line carrying the pick fields answers it there; a floor or ceiling the owner
+  wrote is never answered by a reason.
 
 Inputs: the records directory (`~/.llm-wiki/spawn-records/*.jsonl`), `routing.json` with any
 user's overlay merged in (`routing_layers.py`), and the
@@ -34,6 +37,7 @@ from datetime import datetime, timezone, timedelta
 
 RULE_FROM = "2026-09-06T18:22+0100"    # the ship instant; the suite asserts it equals the ship entry's title time
 LETTER_FROM = "2026-09-04T00:00+0100"  # the instrument rule's date (delegate §1, 2026-09-04)
+REASON_FROM = "2026-11-20T00:00+0000"  # the day of the owner's ruling that every pick names its reason
 FLOOR_MODEL = {"cheap", "cheap-fast"}
 FLOOR_EFFORT = {"fast", "cheap-fast"}
 # The instrument-rule letter, read as lane.py reads it (reason_letters: REASON_BRACKET_RE and
@@ -145,9 +149,12 @@ def main():
         run = {"run": ro.get("run") or os.path.basename(f), "attended": attended, "resumed": bool(since and ro_ts and ro_ts < since), "bad_lines": bad,
                "lanes": 0, "letters": {}, "findings": [], "notes": [], "throttle_unrecorded": 0}
         opens = [e for e in evs if e.get("event") == "lane-open"]
-        closes = {}
+        closes, raised, pass_effort = {}, {}, {}
         for e in evs:
-            if e.get("event") == "lane-closed": closes[e.get("lane")] = e   # the last close wins
+            # A resume that ran at another effort than the open's names it (`resume --effort`,
+            # 2026-11-21): the close of that pass is compared with the pass's own effort.
+            if e.get("event") == "lane-resumed" and isinstance(e.get("effort"), str): raised[e.get("lane")] = e["effort"]
+            if e.get("event") == "lane-closed": closes[e.get("lane")] = e; pass_effort[e.get("lane")] = raised.get(e.get("lane"))   # the last close wins
         for e in opens:
             run["lanes"] += 1; lane = e.get("lane", "?"); reason = e.get("reason") or ""
             opened = parse_ts(e.get("ts"))
@@ -178,8 +185,11 @@ def main():
             # The `auto` pick guard (2026-09-08) applies to a line that carries the pick fields lane.py
             # writes from that date; an older line, whatever its throttle, keeps the phrase check below.
             recorded_pick = isinstance(e.get("model_src"), str)
+            choice = e.get("choice_reason"); choice = choice.strip() if isinstance(choice, str) else ""
+            # Under a hand-set preset a recorded pick reason answers the below-default phrase check
+            # (owner ruling 2026-11-20: every pick names its reason); a floor or ceiling never is.
+            reasoned = recorded_pick and bool(choice) and opened >= parse_ts(REASON_FROM)
             if thr == "auto" and recorded_pick and opened >= rule_from:
-                choice = e.get("choice_reason"); choice = choice.strip() if isinstance(choice, str) else ""
                 for axis, value in (("model", model), ("effort", effort)):
                     anchor = rd.get(axis) if isinstance(rd, dict) else None
                     if not value or value not in order[axis] or anchor not in order[axis] or value == anchor: continue
@@ -193,7 +203,7 @@ def main():
                 elif thr == "top":
                     ceil = max(row["model"]["options"], key=lambda o: rk("model", o))
                     if rk("model", model) < rk("model", ceil): run["findings"].append("%s: model %s below the ceiling under top" % (lane, model))
-                elif rk("model", model) < rk("model", rd["model"]) and ("%s because" % model) not in reason:
+                elif rk("model", model) < rk("model", rd["model"]) and ("%s because" % model) not in reason and not reasoned:
                     run["findings"].append("%s: model %s below the row default %s without '%s because'" % (lane, model, rd["model"], model))
             if opened >= rule_from and effort and not (thr == "auto" and recorded_pick):
                 if thr in FLOOR_EFFORT:
@@ -202,14 +212,16 @@ def main():
                 elif thr == "top":
                     ceil = max(row["effort"]["options"], key=lambda o: rk("effort", o))
                     if rk("effort", effort) < rk("effort", ceil): run["findings"].append("%s: effort %s below the ceiling under top" % (lane, effort))
-                elif rk("effort", effort) < rk("effort", rd["effort"]) and ("effort %s because" % effort) not in reason:
+                elif rk("effort", effort) < rk("effort", rd["effort"]) and ("effort %s because" % effort) not in reason and not reasoned:
                     run["findings"].append("%s: effort %s below the row default %s without 'effort %s because'" % (lane, effort, rd["effort"], effort))
             c = closes.get(lane)
             if c is None: run["notes"].append("%s: unclosed" % lane)
             else:
                 applied = tier_word(c.get("effort_applied"), order["effort"])
                 if c.get("effort_applied") in (None, []): run["notes"].append("%s: applied effort unread" % lane)
-                elif effort and applied and applied != effort: run["findings"].append("%s: effort %s recorded, %s applied" % (lane, effort, applied))
+                else:
+                    expected = tier_word(pass_effort.get(lane), order["effort"]) or effort
+                    if expected and applied and applied != expected: run["findings"].append("%s: effort %s recorded, %s applied" % (lane, expected, applied))
         tally = sum(run["letters"].values())
         if run["lanes"] > tally and opens: run["notes"].append("lane count %d exceeds reason tally %d" % (run["lanes"], tally))
         out["totals"]["runs"] += 1; out["totals"]["lanes"] += run["lanes"]; out["totals"]["findings"] += len(run["findings"])

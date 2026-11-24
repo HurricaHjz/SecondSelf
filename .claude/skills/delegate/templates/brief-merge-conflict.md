@@ -9,7 +9,7 @@ TASK
 Resolve the plan's conflicting targets and the manual targets assigned with them. Read each target once alongside every competing claim and diff. Return one resolved unified diff per target, the canonical-name map and link diffs for source pages that named losing variants. Propose every page change; the head applies it.
 
 DECISIONS
-{{the run's decisions, canonical-name decisions already made and unresolved gaps}}
+{{the run's decisions, the owner's earlier decisions on the same question (a search of decided-work, its closed page and the subject page's dated owner notes), canonical-name decisions already made and unresolved gaps}}
 Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
 A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 

@@ -868,6 +868,64 @@ rc, output = release(args) if args else (1, '')
 check('D52 N19 changed held-union hunk context refuses release', rc == 2 and 'patch -F0' not in output)
 target.write_text(base)
 
+# The decline path: a declined raise needs no full-page read, and the planner's
+# binding of the page and the additions it validated still runs, and still refuses a changed page.
+DECLINE = 'or decline the raise, with no full-page read: '
+def decline_args(output):
+    line = next((line for line in output.splitlines() if line.startswith(DECLINE)), '')
+    return shlex.split(line[len(DECLINE):])[1:] if line else []
+held_lift = union_rows(link('source-a'), link('source-b'))
+for i in (2, 6): held_lift[i]['claims'][0]['confidence'] = 'high'
+rc, held = run(held_lift, ('--union-dir', uniondir))
+read_k, decline_k = release_args(held), decline_args(held)
+check('K01 a held union names the decline beside the full-page read, on the same receipt, with no command', rc == 0 and 'tier-raised GPT' in held and 'or decline it with no page read' in held and len(decline_k) == 6 and decline_k[4] == '--declined' and read_k[:4] + read_k[5:] == decline_k[:4] + decline_k[5:] and 'patch -F0' not in held)
+rc, output = release(decline_k) if decline_k else (1, '')
+check('K02 the decline releases the held union with no page read, bound to the validated base', rc == 0 and 'confidence lift declined: no full-page read' in output and output.count('patch -F0') == 2 and 'base recheck immediately before real patch: ' + m.digest(base.encode()) in output)
+target.write_text(drifted_title)
+rc, output = release(decline_k) if decline_k else (1, '')
+target.write_text(base)
+check('K03 a page changed after the plan, outside the hunk, refuses the decline: the page check still runs', rc == 2 and 'resolved base is not the held page' in output and 'patch -F0' not in output)
+k_sub = list(decline_k)
+if '--resolved' in k_sub: k_sub[k_sub.index('--resolved') + 1] = held_lift[2]['claims'][0]['diff']
+rc, output = release(k_sub) if decline_k else (1, '')
+check('K04 a member diff put in place of the held union refuses the decline: the additions check still runs', rc == 2 and 'resolved diff hash is not the held artefact' in output and 'patch -F0' not in output)
+k_path = Path(decline_k[decline_k.index('--resolved') + 1]) if '--resolved' in decline_k else None
+k_saved = k_path.read_bytes() if k_path else b''
+try:
+    if k_path: k_path.write_bytes(Path(held_lift[2]['claims'][0]['diff']).read_bytes())
+    rc, output = release(decline_k) if decline_k else (1, '')
+finally:
+    if k_path: k_path.write_bytes(k_saved)
+check('K05 changed bytes at the held artefact path refuse the decline', rc == 2 and 'resolved diff hash is not the held artefact' in output and 'patch -F0' not in output)
+k_single = copy.deepcopy(rows); k_single[2]['claims'][0]['confidence'] = 'high'
+rc, held = run(k_single)
+read_k, decline_k = release_args(held), decline_args(held)
+check('K06 a single-lane claim-field lift is held with its lane diff and names the decline, with no command', rc == 0 and 'tier-raised GPT' in held and any(line.startswith('held until the full-page read: ') and ' · lane diff ' in line for line in held.splitlines()) and len(read_k) == 6 and len(decline_k) == 6 and decline_k[3] == str(diff.resolve()) and 'patch -F0' not in held)
+rc, output = release(decline_k) if decline_k else (1, '')
+check('K07 the single-lane decline releases the lane diff with no page read', rc == 0 and 'confidence lift declined: no full-page read' in output and output.count('patch -F0') == 2 and 'base recheck immediately before real patch: ' + claim['base'] in output)
+target.write_text(drifted_title)
+rc, output = release(decline_k) if decline_k else (1, '')
+target.write_text(base)
+check('K08 a page changed after the plan refuses the single-lane decline', rc == 2 and 'resolved base is not the held page' in output and 'patch -F0' not in output)
+rc, held = run(lift)
+read_k = release_args(held)
+check('K09 a lane diff that writes the raise itself is held for the read and offers no decline', rc == 0 and 'tier-raised GPT' in held and len(read_k) == 6 and not decline_args(held) and 'or decline it' not in held and 'patch -F0' not in held)
+k_forced = list(read_k)
+if '--after-read' in k_forced: k_forced[k_forced.index('--after-read')] = '--declined'
+rc, output = release(k_forced) if read_k else (1, '')
+check('K10 --declined on a diff that raises confidence itself is refused with no command', rc == 2 and 'a declined raise cannot apply a diff that raises confidence itself' in output and 'patch -F0' not in output)
+rc, output = release(read_k) if read_k else (1, '')
+check('K10b the same held lane diff releases after the full-page read', rc == 0 and 'confidence lift: full-page read acknowledged' in output and output.count('patch -F0') == 2)
+receipt_k = m.digest(base.encode()) + ':' + m.digest(diff.read_bytes())
+rc, output = resolution([diff], ('--after-read', receipt_k, '--declined', receipt_k))
+check('K11 --after-read and --declined in one call are refused', rc == 2 and 'go in separate calls' in output and 'patch -F0' not in output)
+rc, output = resolution([diff, diff], ('--declined', receipt_k))
+check('K12 a decline cannot be shared across a batch', rc == 2 and 'pair every --resolved with its own --declined' in output and 'patch -F0' not in output)
+rc, output = release(['--vault', str(vault), '--declined', receipt_k])
+check('K13 a decline without a resolution fails closed', rc == 2 and '--declined requires --resolved' in output and 'patch -F0' not in output)
+rc, output = resolution([diff], ('--declined', 'invalid'))
+check('K14 a malformed decline receipt fails closed', rc == 2 and 'want the printed BASE:DIFF_HASH pair' in output and 'patch -F0' not in output)
+
 original_emit = m.emit_union
 for ident, held_tier in [('D55', True), ('D56', False)]:
     vals = union_rows(link('source-a'), link('source-b'))
@@ -2190,6 +2248,107 @@ target.write_text(base)
 for leftover in (vault / 'wiki').rglob('*.md'):
     if leftover != target: leftover.unlink()
 
+# One lane, several diffs for one page (known-issues 2026-11-13 03:57): the union path two lanes take.
+def one_lane_rows(page, changes, lane='LA', share=(), extra_lanes=()):
+    """One lane's cycle with one claim object per change, each with its own diff against the same base;
+    an index in share reuses the previous claim's diff (two claim objects, one diff)."""
+    target.write_text(page)
+    objects = []
+    for k, fn in enumerate(changes):
+        if k in share:
+            objects.append(dict(copy.deepcopy(objects[-1]), source=f's{k}.md')); continue
+        path = make_diff(root / f'{lane}-one-{k}.diff', page, fn(page))
+        c = copy.deepcopy(claim); c.update(source=f's{k}.md', base=m.digest(page.encode()), diff=str(path), diff_hash=m.digest(path.read_bytes()))
+        objects.append(c)
+    rows_ = [event('run_open', 0, inbox=[])] + cycle(lane, claims=objects)
+    for n, (other, fn) in enumerate(extra_lanes, 1):
+        path = make_diff(root / f'{other}-one.diff', page, fn(page))
+        c = copy.deepcopy(claim); c.update(source=f'{other}.md', base=m.digest(page.encode()), diff=str(path), diff_hash=m.digest(path.read_bytes()))
+        rows_ += cycle(other, offset=10 * n, claims=[c])
+    return rows_
+
+def union_file(output):
+    name = next((x.split(' · ', 1)[0][len('union diff: '):] for x in output.splitlines() if x.startswith('union diff: ')), None)
+    return Path(name) if name else None
+
+def add(heading, text):
+    return lambda t: t.replace(heading + '\n', heading + '\n' + text)
+
+out = leg('S01 one lane, two diffs each adding a list item on one base: apply-union, one artefact', one_lane_rows(base, [add('## Appears in', link('source-a')), add('## Appears in', link('source-b'))]), 0, 'apply-union GPT', ('--union-dir', uniondir))
+ufile = union_file(out)
+p = subprocess.run(shlex.split(m.patch_command(vault, target, ufile, root / 's01.rej')), text=True, capture_output=True) if ufile else None
+check('S01 the composed diff dry-runs at zero fuzz', p is not None and p.returncode == 0, f'exit {p.returncode if p else "no artefact"}')
+p = subprocess.run(shlex.split(m.patch_command(vault, target, ufile, root / 's01.rej', False)), text=True, capture_output=True) if ufile else None
+page_after = target.read_text()
+check('S01 applied: each item once, in member order', p is not None and p.returncode == 0 and page_after.count(link('source-a')) == 1 and page_after.count(link('source-b')) == 1 and page_after.index('source-a') < page_after.index('source-b'))
+target.write_text(base)
+stamped_base = base.replace('aliases: [GPT-4o]\n', 'aliases: [GPT-4o]\naudited: 2026-01-01\n')
+out = leg('S02 three diffs from one lane (Appears in, Related with a re-date, an alias append with a later re-date): apply-union', one_lane_rows(stamped_base, [
+    add('## Appears in', link('source-a')),
+    lambda t: add('## Related', link('source-b'))(t).replace('audited: 2026-01-01', 'audited: 2026-01-02'),
+    lambda t: t.replace('aliases: [GPT-4o]', 'aliases: [GPT-4o, GPT-4 Omni]').replace('audited: 2026-01-01', 'audited: 2026-01-03')]), 0, 'apply-union GPT', ('--union-dir', uniondir))
+ufile = union_file(out)
+text = ufile.read_text() if ufile else ''
+check('S02 the composed diff folds the stamp to the latest date and merges the list', '+audited: 2026-01-03' in text and '+aliases: [GPT-4o, GPT-4 Omni]' in text and text.count('+' + link('source-a').rstrip('\n')) == 1 and text.count('+' + link('source-b').rstrip('\n')) == 1)
+out = leg('S03 one lane whose second diff edits prose stays manual, with no artefact or command', one_lane_rows(base, [add('## Appears in', link('source-a')), lambda t: t.replace('Original.', 'Original, edited.')]), 0, 'manual GPT', ('--union-dir', uniondir))
+check('S03 the lone-lane manual names its reason', 'reason: one lane sent 2 diffs for this page and not all of them are list additions' in out and 'patch -F0' not in out and 'union diff:' not in out)
+first_fn, second_fn = add('## Appears in', link('source-a')), add('## Related', link('source-b'))
+moved_rows = one_lane_rows(base, [first_fn, second_fn])
+moved = root / 'LA-moved.diff'; make_diff(moved, first_fn(base), second_fn(first_fn(base)))
+moved_rows[2]['claims'][1].update(base=m.digest(first_fn(base).encode()), diff=str(moved), diff_hash=m.digest(moved.read_bytes()))
+out = leg('S04 control: a second diff made against the first diff\'s result is manual (base moved)', moved_rows, 0, 'manual GPT', ('--union-dir', uniondir))
+check('S04 the moved base is the reason', 'base missing or moved' in out and 'patch -F0' not in out)
+leg('S05 control: two claim objects of one lane sharing one diff apply as one diff', one_lane_rows(base, [add('## Appears in', link('source-a')), None], share=(1,)), 0, 'apply GPT', ('--union-dir', uniondir))
+lift_rows = one_lane_rows(base, [add('## Appears in', link('source-a')), add('## Appears in', link('source-b'))])
+lift_rows[2]['claims'][1]['confidence'] = 'high'
+out = leg('S06 one lane\'s two list-only diffs with a claim-field lift: tier-raised with a held union and its decline line', lift_rows, 0, 'tier-raised GPT', ('--union-dir', uniondir))
+check('S06 held for the read or a decline, with no apply command', 'held until the full-page read:' in out and bool(decline_args(out)) and 'patch -F0' not in out)
+fence_page = base.replace('## Appears in\n', '## Appears in\n- kept\n\n```\n- example\n```\n')
+out = leg('S07 one lane whose second diff adds an item inside a fence: manual, the reason naming that diff', one_lane_rows(fence_page, [add('## Appears in', link('source-a')), lambda t: t.replace('- example\n', '- example\n- inside\n')]), 0, 'manual GPT', ('--union-dir', uniondir))
+check('S07 the refusal names member LA #2 and the fence', 'member LA #2' in out and 'fence' in out and 'patch -F0' not in out)
+leg('S08 control: one lane\'s two diffs beside another lane\'s one, all list-only, union as before', one_lane_rows(base, [add('## Appears in', link('source-a')), add('## Related', link('source-b'))], extra_lanes=[('LB', add('## Appears in', link('source-c')))]), 0, 'apply-union GPT', ('--union-dir', uniondir))
+out = leg('S09 one lane whose second diff re-adds the first diff\'s item beside a new one: manual, overlapping diffs', one_lane_rows(base, [add('## Appears in', link('source-a')), add('## Appears in', link('source-a') + link('source-c'))]), 0, 'manual GPT', ('--union-dir', uniondir))
+check('S09 the reason names the overlap', 'reason: overlapping diffs:' in out and 'source-a' in out and 'patch -F0' not in out and 'union diff:' not in out)
+out = leg('S10 three claim objects of one lane on two distinct diffs, one shared: apply-union, the shared diff\'s item once', one_lane_rows(base, [add('## Appears in', link('source-a')), None, add('## Related', link('source-b'))], share=(1,)), 0, 'apply-union GPT', ('--union-dir', uniondir))
+ufile = union_file(out)
+check('S10 the shared diff\'s item lands once', ufile is not None and ufile.read_text().count('+' + link('source-a').rstrip('\n')) == 1)
+target.write_text(base)
+
+def classify_before_lone_lane_union(members):
+    """classify as it was before one lane's several diffs took the union path."""
+    if len({x['claim']['lane'] for x in members}) > 1: return real_classify(members)
+    if any(x['problems'] for x in members): return 'manual'
+    if len({str(x['diff']) for x in members}) != 1: return 'manual'
+    return 'tier-raised' if any(x['lift'] for x in members) else 'apply'
+real_classify = m.classify
+with mock.patch.object(m, 'classify', classify_before_lone_lane_union):
+    try: m.planted(); planted_old = 'not raised'
+    except m.ProbeError as error: planted_old = str(error)
+try: m.planted(); planted_new = 'not raised'
+except m.ProbeError as error: planted_new = str(error)
+check('P01 planted() catches a classify that sends one lane\'s list-only diffs to manual, and passes the real one', planted_old == 'classification controls failed' and planted_new == 'not raised', f'{planted_old} / {planted_new}')
+
+# A claim's page_tier (known-issues 2026-11-18 11:18): read where it is carried; confidence read as before where it is not.
+def tiered(values, **fields):
+    for i in (2, 6): values[i]['claims'][0].update(fields)
+    return values
+out = leg('Q01 page_tier keep with confidence high (the lane\'s certainty) on two lanes: apply-union, no hold', tiered(union_rows(link('source-a'), link('source-b')), page_tier='keep', confidence='high'), 0, 'apply-union GPT', ('--union-dir', uniondir))
+check('Q01 no lift and no mixed-schema note', 'tier-raised GPT' not in out and 'confidence lift' not in out and 'carry no page_tier' not in out)
+out = leg('Q02 page_tier high on two lanes: tier-raised with the held union and its decline line', tiered(union_rows(link('source-a'), link('source-b')), page_tier='high', confidence='medium'), 0, 'tier-raised GPT', ('--union-dir', uniondir))
+check('Q02 held, declinable, no command', 'held until the full-page read:' in out and bool(decline_args(out)) and 'patch -F0' not in out)
+out = leg('Q03 a page_tier that names no tier is manual with its reason', tiered(union_rows(link('source-a'), link('source-b')), page_tier='very high'), 0, 'manual GPT', ('--union-dir', uniondir))
+check('Q03 the reason names the value', 'page_tier is not a tier or keep: "very high"' in out and 'patch -F0' not in out)
+out = leg('Q04 control: no page_tier anywhere, confidence high, reads as before: tier-raised, no note', tiered(union_rows(link('source-a'), link('source-b')), confidence='high'), 0, 'tier-raised GPT', ('--union-dir', uniondir))
+check('Q04 no mixed-schema note when no claim carries page_tier', 'carry no page_tier' not in out)
+mixed = union_rows(link('source-a'), link('source-b')); mixed[2]['claims'][0].update(page_tier='keep', confidence='low'); mixed[6]['claims'][0].update(confidence='high')
+out = leg('Q05 a run mixing the two schemas prints the note and reads the claim without page_tier through its confidence', mixed, 0, 'tier-raised GPT', ('--union-dir', uniondir))
+check('Q05 the note counts 1 of 2', 'note: 1 of 2 claim objects carry no page_tier' in out)
+raising = copy.deepcopy(rows); raised_diff = make_diff(root / 'q06.diff', base, base.replace('confidence: medium', 'confidence: high').replace('Original.', 'Original.\nAdded.'))
+raising[2]['claims'][0].update(page_tier='keep', diff=str(raised_diff), diff_hash=m.digest(raised_diff.read_bytes()))
+out = leg('Q06 control: a diff that writes confidence: high itself is held with page_tier keep on its claim, and offers no decline', raising, 0, 'tier-raised GPT', ('--union-dir', uniondir))
+check('Q06 no decline and no command', not decline_args(out) and 'patch -F0' not in out)
+target.write_text(base)
+
 def manifest(directory):
     return {str(p.relative_to(directory)):hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.rglob('*') if p.is_file()}
 
@@ -2209,6 +2368,15 @@ p=subprocess.run([sys.executable,'-B',str(ro/'merge_plan.py'),'--vault',str(ro),
 if p.stderr:print(p.stderr,end='')
 check('D53 resolved release executes on the same read-only copy',p.returncode==0 and p.stdout.count('patch -F0')==2 and 'controls:' in p.stdout,f'exit {p.returncode}')
 check('D54 resolved checksum manifest remains unchanged',before==manifest(ro),f'files {len(before)}')
+ro_receipt=m.digest(base.encode())+':'+m.digest(ro_diff.read_bytes())
+p=subprocess.run([sys.executable,'-B',str(ro/'merge_plan.py'),'--vault',str(ro),'--resolved',str(ro_diff),'--declined',ro_receipt],text=True,capture_output=True)
+if p.stderr:print(p.stderr,end='')
+after_decline=manifest(ro)
+victim=ro/'ledger.jsonl';saved_victim=victim.read_bytes()  # control: one byte changed in the same folder, its modes put back
+ro.chmod(0o755);victim.chmod(0o644);victim.write_bytes(b'X'+saved_victim[1:]);victim.chmod(0o444);ro.chmod(0o555)
+caught=manifest(ro)!=before
+ro.chmod(0o755);victim.chmod(0o644);victim.write_bytes(saved_victim);victim.chmod(0o444);ro.chmod(0o555)
+check('K15 a decline on the read-only copy releases and leaves its manifest unchanged; a byte changed there is caught',p.returncode==0 and p.stdout.count('patch -F0')==2 and 'confidence lift declined' in p.stdout and before==after_decline and caught and before==manifest(ro),f'exit {p.returncode}')
 altered=dict(before);altered['ledger.jsonl']='planted'
 check('M79 checksum positive control',altered!=before)
 patterns=[r'\.write(?:_text|_bytes)?\s*\(',r'\bopen\([^\n]*,[ ]*[\'\"][wax][^\'\"]*[\'\"]',r'\b(?:os|shutil)\.(?:replace|rename|remove|unlink|mkdir|makedirs|rmdir|copy|move|chmod)',r'\b(?:subprocess|os\.system|os\.popen)\b',r'\.(?:touch|unlink|mkdir|rename|chmod)\s*\(']

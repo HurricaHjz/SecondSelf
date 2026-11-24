@@ -148,7 +148,7 @@ Leave empty to let the agent decide per deliverable. -->
 
 These are starter rules for how the agent works with you. `CLAUDE.md` and the skills name them here, so keep each bullet's name when you change its text.
 
-- **Decisions are asked in one pattern**: whenever the agent asks you for decisions, each comes in turn with its high-level context first, then the options where there are several, then its recommendation with its reason, or a statement of uncertainty and its thoughts. Any hold, deferral or extra review it recommends names the harm it prevents.
+- **Decisions are asked in one pattern**: whenever the agent asks you for decisions, each comes in turn with its high-level context first, then the options where there are several, then, on a line of its own, its recommendation with its reason and how sure it is, or a statement of uncertainty and its thoughts. Any hold, deferral or extra review it recommends names the harm it prevents.
 - **Provisional choices**: in a run you do not attend, a choice reserved to you may be taken provisionally where it is easy to reverse, so the work continues; the report then lists it under your decisions.
 - **New features: search first, discuss first**: when a new capability is needed (a skill, script, hook, store or workflow), the agent first asks your permission to run one bounded online search for existing verified solutions, then presents what it found beside the build-it-yourself option (fit, cost, what the vault would still have to add) and waits for your decision before any implementation.
 - **Routing and rounds**: the routing table (`.claude/skills/delegate/routing.json`) holds which model and effort serve which helper, and the lead's own model is your session's setting. A reviewing seat takes the other model family from the author where one is available, a soft default that never outranks quality, cost, limits or your instruction. An `ultra` round is a per-item grant in the pre-flight, never a forced step.
@@ -383,7 +383,7 @@ The retirement rules:
 - A check retires when the failure it guards can no longer occur, or when a cheaper check shown to cover the same failure replaces it.
 - A text pin (a check that pins a past edit's wording) retires once that wording is installed and reviewed, unless other code reads the wording.
 - A monitor retires when its condition has ended or nobody acts on its warning.
-- A standing rule or text retires only by the owner's yes or by the CLAUDE.md §12 retire clause, its replaced wording moved to `wiki/developments/owner-rulings-history.md`.
+- A standing rule or text retires only by the owner's yes or by the CLAUDE.md §12 retire clause, its replaced wording held as that clause sets.
 - A whole script or file leaves only through the attic skill's preview and the owner's yes (CLAUDE.md §2.1).
 - Removing checks from a suite changes a check, so it takes an independent review.
 - Every retired row keeps its reason and its re-arm condition; when the re-arm condition comes true the row returns to `active`.
@@ -491,18 +491,21 @@ SMHEAD
 
 # Stale marks
 
-The method behind `CLAUDE.md`'s rule that supersession is flagged when it is learned. With it the weekly review makes clearing old flags routine.
+The method behind `CLAUDE.md`'s rule that a newer state replaces the older one when it is learned: who replaces, what is logged, when a flag is used and who clears it. The weekly review makes clearing routine.
 
-## Who marks
-The session that learns of a change marks every surface that names the old state, in the same pass. An outside change (an app, a provider, a model or an account) is named as one. When it needs action, it becomes a dated calendar step with its checklist.
+## Who replaces, and who flags
+The session that learns of a change brings every surface that names the old state up to date in the same pass, and flags only what it cannot settle. An outside change (an app, a provider, a model or an account) is named as one. When it needs action, it becomes a dated calendar step with its checklist.
+
+## How the older text is held
+- **A replaced rule or state** is written over: the newer text takes its place in the same pass, and the older text is removed only once it is held outside the page. A commit holds it where `git ls-files --error-unmatch -- <page>` and `git diff --quiet HEAD -- <page>` both exit 0, and the operation's log entry names that commit; otherwise the writer first appends a log entry of its own, before the edit, whose `Replaced` line ends `held below` and is followed by one `Held:` line for each non-blank line of the removed text, in order, its words as they stood, and the operation's entry names that entry by its clock time. A passage that cannot be held stays.
 
 ## What a mark says
 - **A `flagged:` line** at the top of a page says what is in doubt and why, and ends with what clears it: `Clears when <event>.` or `Clears on YYYY-MM-DD.` An event names something a later session can see happen, and its clause carries no date, since the weekly pass reads a date there as the clearing date. A flag with neither is a fault to fix when found, and the weekly pass lists it as having no clause.
-- **A replaced rule** takes a dated status line instead, under `CLAUDE.md`'s supersession rule, and keeps its old wording as a record.
-- **A fact that turns out wrong and is corrected** needs no flag: the correction goes in place, with its date and its evidence.
+- **A fact that turns out wrong and is corrected** needs no flag: the correction goes in place with its evidence, and the log entry carries the date of the correction.
+- **A fact with a known end** (an allowance, a deadline, an allocation) states its end date, with its year, in its sentence; the weekly pass lists it once that date has passed, and an action it needs is a dated calendar step.
 
 ## Who clears it
-The session that performs the clearing event clears the flag, or the weekly review once the event or date has passed. Clearing removes the line. Where a reader still needs to know what changed, the page keeps a dated status line in its place.
+The session that performs the clearing event clears the flag, or the weekly review once the event or date has passed. Clearing removes the line and leaves the page stating what holds now; what changed is in the log entry.
 
 ## How marks are listed
 - **Flags.** The weekly audit lists a flag once its clearing date has passed, and lists a flag that names an event, or has no clause, at the first pass that sees it. Only a reader can tell that an event has happened, so the weekly review judges those. A flag whose date is still ahead is counted and not listed. The audit's `rule_register.py record-audit` records each listed flag; after that it is only counted, unless its text changes or 28 days pass since its last listing, either of which lists it again, and `rule_register.py weekly --all-flags` lists every flag.
@@ -510,7 +513,7 @@ The session that performs the clearing event clears the flag, or the weekly revi
 - **Where they run.** Both are in the weekly audit's one pass (`.claude/skills/weekly-audit/rule_register.py weekly`), which only lists and never stops work. Routine lint keeps its existing count of flagged pages.
 
 ## Rulings that may contradict
-When a new ruling lands in a home that already holds older dated rulings, the weekly coverage check lists the pair. The stale-mark pass judges whether the new one contradicts an older one, and flags the older one if it does.
+When a new ruling lands in a home that already holds older dated rulings, the weekly coverage check lists the pair. The stale-mark pass judges whether the new one replaces an older one: where it does, the older one is removed as CLAUDE.md section 12 sets for the owner's rule text, and where the pass cannot tell, the pair goes to the owner.
 
 ## Rules the agent disagrees with
 The stale-mark pass reads every rule it touches and asks whether the agent still agrees with it. Where it does not, because the rule is stale, too strict, a fixed route that robs judgement, or beaten by a better pattern, the agent proposes the change at once with its evidence. The weekly review lists the proposals still open.
@@ -520,38 +523,7 @@ The stale-mark pass reads every rule it touches and asks whether the agent still
 
 ## Related
 - [[check-lifecycle]]: the register of checks and standing texts that this method's listings join.
-- [[owner-rulings-history]]: where a replaced rule's wording goes.
 SMEOF
-}
-
-mk_rulings_history() {  # the page a replaced rule's wording moves to, empty; seeded only when absent, then yours
-  mkdir -p wiki/developments
-  local today; today="$(date +%F)"
-  cat > wiki/developments/owner-rulings-history.md <<RHHEAD
----
-title: "Owner rulings history"
-type: development
-confidence: medium
-audited: $today
-tags: [framework, governance, history]
-sources: []
-aliases: []
-created: $today
-updated: $today
----
-RHHEAD
-  cat >> wiki/developments/owner-rulings-history.md <<'RHEOF'
-
-# Owner rulings history
-
-`CLAUDE.md` and `CUSTOMISATION.md` keep only each rule as it now stands. When a rule is replaced, its old wording moves here, word for word and dated, so nothing you ruled is lost.
-
-## Sources Used
-- [[stale-marks]]: how a replaced rule is marked.
-
-## Related
-- [[stale-marks]]: the method that sends replaced wording here.
-RHEOF
 }
 
 index_page() {  # $1 the page, $2 its line: listed under Developments, once; an index with no such heading is left as it is
@@ -565,8 +537,7 @@ index_page() {  # $1 the page, $2 its line: listed under Developments, once; an 
 index_seeds() {  # the no-orphan rule: a seeded page has its registry line
   index_page check-lifecycle "the lifecycle register: one row per check, hook and standing text, with when each retires."
   index_page known-issues "the register of the framework's own defects, open and closed."
-  index_page stale-marks "the method: who marks a page, what the mark says, and who clears it."
-  index_page owner-rulings-history "where a replaced rule's old wording is kept."
+  index_page stale-marks "the method: who replaces, what is logged, when a flag is used and who clears it."
 }
 
 init_weekly_tools() {
@@ -640,7 +611,6 @@ seed_user_layer() {
   [ -f wiki/developments/check-lifecycle.md ] || mk_lifecycle
   [ -f wiki/developments/known-issues.md ] || mk_known_issues
   [ -f wiki/developments/stale-marks.md ] || mk_stale_marks
-  [ -f wiki/developments/owner-rulings-history.md ] || mk_rulings_history
   index_seeds
 }
 

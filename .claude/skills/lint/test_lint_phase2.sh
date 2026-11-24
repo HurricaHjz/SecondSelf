@@ -865,6 +865,51 @@ eq "a register with no ## Open heading is a broken premise (exit 2, stderr, no s
 ROUT="$(python3 "$REG" --register "$W/no-such-register.md" 2>"$ERR")"; rc=$?
 eq "a named register file that does not exist is a broken premise, never n/a" "2" "$rc"
 
+printf '\n--- check_register.py · more than one status (stale-information design, 21 November 2026) ---\n'
+# An open entry keeps one status. Must warn: an open entry with two `- **Status` lines (its field and a
+# dated note). Must not: an open entry with one, a closed entry with two, or a status inside the fenced
+# example. It is a listing and never sets the exit code.
+RMFIX="$W/register-layers"; rm -rf "$RMFIX"; rawbase "$RMFIX"; mkdir -p "$RMFIX/wiki/developments"
+cat > "$RMFIX/wiki/developments/known-issues.md" <<'MDFIX'
+---
+title: "Known Issues"
+type: development
+confidence: medium
+---
+
+```
+### [YYYY-MM-DD] <surface> — <short title> (minor)
+- **Status**: open — an example inside the fence
+- **Status 2026-01-01 10:00 GMT:** a second example line, never counted
+```
+
+## Open
+
+### [2026-09-10 10:00] a page — a status layered beside the field (minor)
+- **Symptom**: s1
+- **Status**: open — fix shape: one
+- **Status 2026-09-11 09:00 BST (session x):** a newer status beside it
+
+### [2026-09-10 09:00] a skill — one status only (minor)
+- **Symptom**: s2
+- **Severity**: minor. **Status**: open — fix shape: two
+- **Recurrence 2026-09-12 10:00 BST (session y):** it came back
+
+## Closed
+
+### [2026-08-01 12:00] an old surface — two statuses, closed (minor)
+- **Status**: open — fix shape: old *(2026-08-02: closed 2026-08-02 10:00 — fixed)*
+- **Status 2026-08-01 18:00 BST:** an earlier layer
+MDFIX
+ROUT="$(python3 "$REG" --vault "$RMFIX" 2>"$ERR")"; rc=$?
+eq "an Open entry with two status lines is listed, with its count (must warn)" "1-1" "$(rline '^MORE THAN ONE STATUS: 1 Open entry holding more than one status line')-$(rline '^  wiki/developments/known-issues.md:15 · \[2026-09-10 10:00\] a page — a status layered beside the field (minor) · 2 status lines$')"
+eq "  an Open entry with one status line (a combined Severity line and a Recurrence note) is not listed (must not)" "0" "$(rline 'one status only (minor) · ')"
+eq "  a Closed entry with two status lines, and the fenced example, are not listed" "0-0" "$(rline 'two statuses, closed (minor) · ')-$(rline 'YYYY-MM-DD')"
+eq "  the listing never sets the exit code" "0" "$rc"
+eq "  control: the same run printed its in-memory control and read the register" "1-1" "$(rline '^CONTROL: .*the one Open entry with two status lines -> listed')-$(rline '| 2 entries under ## Open · 1 under ## Closed')"
+ROUT="$(python3 "$REG" --vault "$RFIX" 2>"$ERR")"; rc=$?
+eq "  on the first fixture the Open entry with a dated status fact beside its Status field is listed" "1-1" "$(rline '^MORE THAN ONE STATUS: 1 Open entry')-$(rline 'bytecode left beside the kit (minor) · 2 status lines$')"
+
 printf '\n--- check_register.py · the three closing words (review F8, 2026-09-13) ---\n'
 # A Status that opens with fixed or resolved closes an entry as surely as one that opens with closed. The fixed
 # entry replays the register's own shape, its Status after a Severity clause on one line; the cases that must not
@@ -1223,8 +1268,17 @@ eq "--settled-markers 'Fixed' is refused (exit 2, one line), and by default \"Fi
    "$rc-$(printf '%s\n' "$S3O" | grep -c .)-$(s3open FixedNegated)-$(s3open FixedWhole)"
 
 printf '\n--- anomaly-lister.py · the CLAUDE.md 4.4 form ---\n'
-# CLAUDE.md 4.4: a settled conflict keeps both statements, and each of its items opens with
-# `Settled YYYY-MM-DD:` and the outcome. A block settles only on that literal form (the word as written,
+# A text pin: the lister's rule text (its docstring) quotes CLAUDE.md 4.4's settled-conflict sentence,
+# which no other check reads there (the wording check reads it in its home, CLAUDE.md; the text sweeps
+# read Markdown).
+# It retires once that wording is installed and reviewed, as the lifecycle register's line on text
+# pins sets, since no code reads the docstring; the lead of the install that placed it proposes that.
+SETTLED44="A settled conflict keeps only its outcome, opening with \`Settled YYYY-MM-DD:\`; the statement it replaced is removed as section 6 sets, its text held outside the page first."
+eq "the lister cites CLAUDE.md 4.4 in its approved words, and no longer as keeping both statements" "1-0" "$(tr '\n' ' ' < "$ANOM" | tr -s ' ' | grep -c -F -- "$SETTLED44")-$(grep -c 'keeps both statements' "$ANOM")"
+eq "  control: the same join finds a sentence the lister's rule text does hold" "1" "$(tr '\n' ' ' < "$ANOM" | tr -s ' ' | grep -c -F -- 'found a substring test reading "unresolved" and "a single reconciled table" as settlement')"
+# CLAUDE.md 4.4: "A settled conflict keeps only its outcome, opening with `Settled YYYY-MM-DD:`; the
+# statement it replaced is removed as section 6 sets, its text held outside the page first." A block settles only on that
+# literal form (the word as written,
 # one space, the date in that shape, the colon straight after it), and the guards above still apply to
 # it: "unresolved", "settled" or "a single resolution" anywhere else settles nothing, and a block in an
 # older form is listed, never rewritten. Its own fixture, so the legs above keep their counts.

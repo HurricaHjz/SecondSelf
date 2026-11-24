@@ -15,8 +15,9 @@ Four kinds, all read straight off the page
                  stub, uncorroborated.
   unverified     inline `unverified` markers (CLAUDE.md 11), counted per page.
 
-When a conflict block counts as settled (CLAUDE.md 4.4: a settled conflict keeps both statements,
-and each of its items opens with `Settled YYYY-MM-DD:` and the outcome). The register entry of
+When a conflict block counts as settled (CLAUDE.md 4.4: "A settled conflict keeps only its outcome,
+opening with `Settled YYYY-MM-DD:`; the statement it replaced is removed as section 6 sets, its text
+held outside the page first."). The register entry of
 2026-10-09 found a substring test reading "unresolved" and "a single reconciled table" as
 settlement; the two reviews of 2026-10-11 found settled readings of a line settling one claim
 beside an open one, a nested or block-quoted open claim beside another claim's settlement, a

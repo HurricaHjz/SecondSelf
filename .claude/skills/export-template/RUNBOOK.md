@@ -11,22 +11,229 @@ Produces `template-export/` per `SPEC.md`.
 
 ## B. Verify (script prints most of this — confirm)
 - Skills are discovered automatically. The public payload contains every discovered skill except professor-loop, whose standalone prerequisites are still being prepared (the owner's decision of 3 November 2026, answer 3g; its upgrade is set for v0.10.2, moved from v0.10.1 by his yes of 9 November 2026 so that v0.10.1 could ship the README). Verify both that professor-loop is absent and that an ordinary skill and export-template are present. Verify the vault's excluded skill is unchanged. The exclusion applies to build/push packaging, not to private source maintenance.
-- **Suites — run every one the tree holds (discovered from the tree), then the build-side re-run; green = `0 failed` printed by each suite itself** (never compare against a historical count — assertion totals grow):
+- **Suites — discover every test file the tree holds, account for dispatcher-owned helpers, run each independent entry and the build-side re-run; green means every invocation exits 0 with a recognised complete result, or with a closing line the loop does not recognise that the recap quotes and a reading by hand finds to be the suite's own zero-failure tally, and no discovery or scheduling probe remains** (never compare against a historical count — assertion totals grow). Adopt results are validated from their result record and closing line; incomplete, failed and probe-failed adopt results are non-green, and the adopt suite reports incomplete while its live consumer integration is outside the supplied grant. An accounted helper carries its parent's coverage state, not an additional pass.
+  Run the block with its two-space indentation removed: the heredoc's terminator must start its line and Python reads indentation. Run it from the vault's root after building `template-export`, as today's loop runs in place, with `TMPDIR` naming an existing scratch directory. Retain the printed log folder for the recap. The loop discovers tests, obtains helper ownership from the dispatcher, supplies adopt arguments and includes the build-side export rerun and the build-side hands-off smoke. The test processes may write their private fixtures; the result validator reads evidence only.
   ```bash
-  n=0; L=$(mktemp -d); while IFS= read -r t; do n=$((n+1)); d=$(dirname "$t"); f=$(basename "$t")
-    case "$f" in *.py) (cd "$d" && python3 "$f") ;; *) (cd "$d" && bash "$f") ;; esac > "$L/$n.log" 2>&1 || echo "SUITE FAILED: $t"
-    echo "$t :: $(grep -E -o 'PASS [0-9]+/[0-9]+|FAIL [0-9]+/[0-9]+|[0-9]+ passed, [0-9]+ failed|[0-9]+/[0-9]+ passed|Ran [0-9]+ tests|^OK$' "$L/$n.log" | tail -1)"
-  done < <(find .claude -type f \( -name 'test_*.sh' -o -name 'test_*.py' \) -not -path '*/__pycache__/*' | sort)
-  echo "suites run: $n"; [ "$n" -gt 0 ] || echo "PROBE FAILED: no suites found"
+  python3 -B - <<'ADOPT_EXPORT_RECAP'
+  import collections
+  import json
+  import os
+  from pathlib import Path
+  import re
+  import stat
+  import subprocess
+  import sys
+  import tempfile
+
+  sys.dont_write_bytecode = True
+  root = Path.cwd().resolve()
+  tmp = os.environ.get('TMPDIR')
+  if not tmp or not Path(tmp).is_dir():
+      print('PROBE FAILED: explicit existing TMPDIR required')
+      raise SystemExit(2)
+  logs = Path(tempfile.mkdtemp(prefix='suite-recap.', dir=tmp))
+  print('suite logs: ' + str(logs))
+  classes = ('SUITE PASS', 'SUITE FAILED', 'SUITE PROBE FAILED', 'SUITE INCOMPLETE')
+  counts = collections.Counter({name: 0 for name in classes})
+  results, delegated, unresolved, scheduling, by_hand = {}, {}, [], [], []
+  adopt = root / '.claude/skills/adopt'
+  register = adopt / 'test_register.py'
+  validator = adopt / 'suite_results.py'
+  prefix = '.claude/skills/adopt/'
+  managed = {prefix + 'test_register.py': 'register', prefix + 'test_adopt.sh': 'register',
+             prefix + 'test_generated_dates.py': 'generated-dates', prefix + 'test_o5.py': 'o5',
+             prefix + 'test_fingerprint.py': 'fingerprint'}
+  link_entry = prefix + 'test_link_roots.py'
+  # Today's verdict tokens, unchanged: a suite's verdict is the last one in its merged log.
+  TOKENS = re.compile(r'PASS [0-9]+/[0-9]+|FAIL [0-9]+/[0-9]+|[0-9]+ passed, [0-9]+ failed|'
+                      r'[0-9]+/[0-9]+ passed|Ran [0-9]+ tests|^OK$', re.M)
+
+  def no_scan(error):
+      raise error
+
+  try:
+      discovered = []
+      if not (root / '.claude').is_dir():
+          raise ValueError('no .claude directory')
+      for parent, dirs, files in os.walk(root / '.claude', onerror=no_scan, followlinks=False):
+          dirs[:] = sorted(d for d in dirs if d != '__pycache__')
+          for name in sorted(files):
+              path = Path(parent) / name
+              if re.fullmatch(r'test_.*\.(?:sh|py)', name) and stat.S_ISREG(path.lstat().st_mode):
+                  discovered.append(path.relative_to(root).as_posix())
+      discovered.sort()
+  except (OSError, ValueError) as error:
+      print('PROBE FAILED: discovery: ' + str(error))
+      raise SystemExit(2)
+  if not discovered:
+      scheduling.append('no suites found')
+
+  def capture(argv, directory, working, merged):
+      directory.mkdir()
+      scratch = directory / 'tmp'
+      scratch.mkdir()
+      env = dict(os.environ, TMPDIR=str(scratch), PYTHONDONTWRITEBYTECODE='1')
+      (directory / 'command.json').write_text(json.dumps({'argv': argv, 'status': None}))
+      try:
+          process = subprocess.run(argv, cwd=working, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT if merged else subprocess.PIPE,
+                                   text=True, errors='replace')
+      except OSError as error:
+          (directory / 'command.json').write_text(json.dumps({'argv': argv, 'status': None, 'error': str(error)}))
+          raise
+      if merged:
+          (directory / 'log').write_text(process.stdout)
+      else:
+          (directory / 'stdout').write_text(process.stdout)
+          (directory / 'stderr').write_text(process.stderr)
+      (directory / 'command.json').write_text(json.dumps({'argv': argv, 'status': process.returncode}))
+      return process
+
+  owners = None
+  if any(path.startswith(prefix) for path in discovered):
+      try:
+          inv = capture([sys.executable, '-B', str(validator), 'inventory', '--suite', 'register',
+                         '--scope', 'all', '--producer', str(register)], logs / 'inventory', root, False)
+          if inv.returncode != 0:
+              raise ValueError('inventory command failed; see inventory logs')
+          packet = json.loads(inv.stdout)
+          if packet['suite'] != 'register' or packet['scope'] != 'all':
+              raise ValueError('wrong inventory scope')
+          owners = {}
+          for family in packet['inventory']:
+              for module in family['modules']:
+                  if module['role'] == 'helper':
+                      if module['path'] in managed or module['path'] == link_entry:
+                          raise ValueError('independent entry declared as a helper')
+                      owners.setdefault(module['path'], []).append(family['id'])
+      except (OSError, ValueError, KeyError, TypeError) as error:
+          owners = None
+          scheduling.append('adopt inventory: ' + str(error))
+
+  def legacy(log, rc, link_roots=False):
+      found = TOKENS.findall(log)
+      token = found[-1] if found else ''
+      last = next((line.strip() for line in reversed(log.splitlines()) if line.strip()), '')
+      seen = token or last or 'empty output'
+      passed = re.fullmatch(r'PASS ([1-9][0-9]*)/([1-9][0-9]*)', token)
+      if link_roots:
+          failed = re.fullmatch(r'FAIL ([1-9][0-9]*)/([1-9][0-9]*)', token)
+          if rc == 0 and passed and passed[1] == passed[2]:
+              return 0, token
+          if rc == 1 and failed and int(failed[1]) <= int(failed[2]):
+              return 1, token
+          if rc == 2 and re.search(r'^PROBE FAILED: ', log, re.M):
+              return 2, last
+          return 2, 'inconsistent link-roots verdict, exit ' + str(rc) + ': ' + seen
+      if rc != 0:
+          return 1, seen
+      pair = re.fullmatch(r'([1-9][0-9]*) passed, 0 failed', token)
+      ratio = re.fullmatch(r'([1-9][0-9]*)/([1-9][0-9]*) passed', token)
+      ran = re.findall(r'^Ran ([0-9]+) tests? in ', log, re.M)
+      unittest = token == 'OK' and bool(ran) and int(ran[-1]) > 0
+      if (passed and passed[1] == passed[2]) or pair or (ratio and ratio[1] == ratio[2]) or unittest:
+          return 0, token
+      return 2, 'unrecognised or incomplete verdict, read by hand: ' + seen
+
+  def invoke(label, argv, working, suite=None, producer=None, link_roots=False):
+      directory = logs / ('suite-' + str(len(results) + 1))
+      raw_status, states, detail = None, None, ''
+      try:
+          process = capture(argv, directory, working, suite is None)
+          raw_status = process.returncode
+          if suite is None:
+              outcome, closing = legacy(process.stdout, raw_status, link_roots)
+          else:
+              command = [sys.executable, '-B', str(validator), 'validate', '--suite', suite,
+                         '--scope', 'all', '--producer', str(producer), '--stdout', str(directory / 'stdout'),
+                         '--status', str(raw_status), '--hook', 'absent']
+              checked = capture(command, directory / 'validation', root, False)
+              if checked.returncode != 0:
+                  raise ValueError('result validation failed; see validation logs')
+              value = json.loads(checked.stdout)
+              outcome, closing, states = value['exit'], value['closing_line'], value['states']
+              for name, field in (('unrun', 'unrun_ids'), ('failed', 'failed_ids'), ('probes', 'probe_keys')):
+                  if value[field]:
+                      detail += ' :: ' + name + ': ' + ', '.join(value[field])
+              if type(outcome) is not int or outcome not in range(4) or outcome != raw_status:
+                  raise ValueError('invalid validated exit')
+              if type(states) is not dict:
+                  raise ValueError('invalid validated states')
+      except (OSError, ValueError, KeyError, TypeError) as error:
+          outcome, closing = 2, 'probe: ' + str(error)
+      category = classes[outcome]
+      counts[category] += 1
+      results[label] = {'class': category, 'status': raw_status, 'states': states}
+      if closing.startswith('unrecognised'):
+          by_hand.append(label)
+      print(label + ' :: ' + category + ' :: ' + closing + detail)
+
+  for relative in discovered:
+      path = root / relative
+      if relative.startswith(prefix):
+          if owners is None:
+              unresolved.append(relative)
+              continue
+          if relative in owners:
+              delegated[relative] = owners[relative]
+              continue
+          if relative not in managed and relative != link_entry:
+              unresolved.append(relative)
+              scheduling.append('no adopt adapter or helper owner: ' + relative)
+              continue
+          argv = ([sys.executable, '-B', str(path)] if path.suffix == '.py'
+                  else ['/bin/sh', str(path)])
+          if relative == prefix + 'test_generated_dates.py':
+              argv += ['--adopt-dir', str(adopt)]
+          if relative in (prefix + 'test_o5.py', link_entry):
+              argv += ['--build', str(adopt.parent)]
+          suite = managed.get(relative)
+          provider = register if suite == 'register' else path
+          invoke(relative, argv, path.parent, suite, provider, relative == link_entry)
+      else:
+          argv = ([sys.executable, '-B', str(path)] if path.suffix == '.py'
+                  else ['/bin/bash', str(path)])
+          invoke(relative, argv, path.parent)
+
+  states = results.get(prefix + 'test_register.py', {}).get('states') or {}
+  for relative, family_ids in sorted(delegated.items()):
+      state = ', '.join(family + '=' + states.get(family, 'coverage unknown') for family in family_ids)
+      print(relative + ' :: accounted by test_register.py :: ' + state)
+      if any(family not in states for family in family_ids):
+          scheduling.append('unverified delegated coverage: ' + relative)
+  for relative in unresolved:
+      print(relative + ' :: unresolved scheduling; no test invoked')
+
+  built = root / 'template-export/.claude/skills/export-template/test_export_template.sh'
+  if built.is_file():
+      invoke('build-side export rerun', ['/bin/bash', str(built)], built.parent)
+  else:
+      scheduling.append('build-side export suite absent')
+  handsoff = root / 'template-export/.claude/skills/delegate/test_handsoff.sh'
+  if handsoff.is_file():
+      # test_handsoff.sh aims at another tree when HANDSOFF, HOOKS_DIR or LANE_PY is set, so the smoke runs without them
+      invoke('build-side hands-off smoke', ['/usr/bin/env', '-u', 'HANDSOFF', '-u', 'HOOKS_DIR', '-u', 'LANE_PY',
+                                            '/bin/bash', str(handsoff), '--leg', 'Kcdbad8e4'], handsoff.parent)
+  else:
+      scheduling.append('build-side hands-off suite absent')
+  for reason in scheduling:
+      print('PROBE FAILED: scheduling: ' + reason)
+  print('discovered: %d; accounted helpers: %d; unresolved: %d' %
+        (len(discovered), len(delegated), len(unresolved)))
+  print('read by hand: ' + str(len(by_hand)) + ''.join('; ' + label for label in by_hand))
+  print('invocations: ' + str(len(results)) + '; ' +
+        '; '.join(name + ': ' + str(counts[name]) for name in classes))
+  if sum(counts.values()) != len(results):
+      raise SystemExit('PROBE FAILED: recap accounting')
+  raise SystemExit(1 if counts['SUITE FAILED'] else
+                   2 if scheduling or counts['SUITE PROBE FAILED'] else
+                   3 if counts['SUITE INCOMPLETE'] else 0)
+  ADOPT_EXPORT_RECAP
   ```
-  Quote the `suite :: verdict` lines in the recap and sum them there, visibly; an empty verdict is a suite whose
-  result line the parser did not recognise, to be read by hand, never a pass. A total carried from an earlier run
-  is not a verification.
-  ```bash
-  (cd template-export/.claude/skills/export-template && bash test_export_template.sh) || echo "SUITE FAILED: export suite INSIDE the build"
-  ```
+  Quote one `suite :: class :: closing line` entry per invocation, with any `unrun`, `failed` and `probes` IDs an adopt entry prints after it, so that a newly unrun obligation shows by name, and give the four class counts, which sum to the invocations. An unrecognised or empty verdict counts under SUITE PROBE FAILED and is listed under `read by hand`; read it from its retained log and quote its last line, as it is not a pass. Give the discovered-file count, each helper's owning family and coverage state, and every unresolved scheduling probe separately. Accounted helpers are not invocations or additional passes. A total carried from an earlier run is not a verification.
   The build-side re-run exists because the copy's premises differ from the vault's (`wiki/` is empty by
   construction): a guard can pass here and fail there; this line makes it repeat.
+  A red hands-off smoke means the built tree cannot run the hands-off machinery: read its retained log, which names the missing hook or the module that does not load, fix the shipped-hook list or the strip, rebuild, and run the recap again.
 - `template-export/wiki` & `/raw` hold only `.gitkeep` (no seed, no `index.md`/`log.md`); the demo is in
   `template-export/examples/seed/`.
 - No personal leak: the payload gate below covers this, deriving your strings from the vault rather
@@ -75,7 +282,8 @@ Produces `template-export/` per `SPEC.md`.
    (`obsidian`, `claude`, `second-brain`, `llm`, `knowledge-management`, `ai-research`).
 4. The README images already ship (`assets/framework_demo.png`, `assets/hero.png`, `assets/three-parts.png` — tracked, referenced
    by `README.md`). To refresh one later, replace it under `assets/` at your vault root (where the README
-   lives), then `--push` again.
+   lives), then `--push` again. A new image also needs its `!/assets/<name>` line in the skill's `payload/gitignore.txt`:
+   without it `publish.sh` stops at its README-image check, naming the image.
 5. Tag the first release, since every copy's session check compares with the newest `v*` tag:
    `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`. `publish.sh` tags every later release.
 
@@ -102,7 +310,7 @@ hand (known-issues 2026-09-08). (§C's first publish is the one
 exception: no clone exists there yet, so there is nothing to pull, overlay or gate.)
 ```bash
 bash .claude/skills/export-template/publish.sh --release <candidate> /path/to/SecondSelf
-#   pull --ff-only → overlay → add -A → drift check → payload gate → release gate → throttle gate → recap,
+#   pull --ff-only → overlay → add -A → README images → drift check → payload gate → release gate → throttle gate → recap,
 #   then STOPS: nothing committed, the recap in output/publish-recap.txt. Read it. Its last line is
 #   `recap-digest <digest>` — the fingerprint of that recap and of the staged tree it describes.
 bash .claude/skills/export-template/publish.sh --release <candidate> --publish "<your word>" --message "<message>" \

@@ -47,14 +47,16 @@ variable the fence reads as an ungranted root (eight denials, 2026-09-06) | in-s
 {{a Codex lane given shell network (`codex-lane.py --network`, with `--write`): one `HOST+: <host>, …` line, unquoted, naming every host the lane may reach as bare host names inside the run's network grant (DW-20261024-2) | no shell network: omit, since a Claude lane gets none}}
 
 DECISIONS
-{{the run decisions that bear on this task, and what sibling lanes hold; "none" is a
+{{the run decisions that bear on this task, the owner's earlier decisions on the same question (a search of decided-work, its closed page and the subject page's dated owner notes), and what sibling lanes hold; "none" is a
 statement, not an omission. A decision this lane needs and cannot find here is a gap to
 report, never one to invent.}}
 Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
 A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 
 FOLD
-<!-- For a fold, fill the hand-off below. For other tasks, replace its entire body with
+<!-- A review's findings go back to the helper that made the work, by a resume whose brief carries
+these same fields (SKILL.md §1). Fill the hand-off below only where a fresh helper takes the fix, and
+say in TASK which of §1's cases sends the fix to a fresh helper. For other tasks, replace its entire body with
 "n/a — not a fold", leaving no unused slots. -->
 - Earlier report: {{literal path}}.
 - Findings to fold: {{each finding, its evidence and overturn condition; label its kind
@@ -90,10 +92,15 @@ Negative control: {{an invented string that must NOT hit / must be caught}}
 {{extra role conduct | —}}
 
 REPORT
+First line: `VERDICT: done` or `VERDICT: not done: <what is missing>` (a reviewer: `VERDICT: ready` or
+`VERDICT: not ready: <n> must-fix`). The lead reads that line first and opens the rest only where it must.
 {{shape — the definition's report shape unless the task needs more}}
 ```
 
-<!-- Spawner checks before sending: spawn-record line written (SKILL.md §3 slot 0); all
+<!-- Spawner checks before sending: spawn-record line written (SKILL.md §3 slot 0), with the job's level and
+its one clause of reason in `--reason` and the pick's reason in `--choice-reason`, the default included
+(SKILL.md §1 and §2); TASK says which kind of job this is where it is not plain, one planned to fit this
+helper's window or a build that manages its own memory (SKILL.md §1, "Memory by kind of job"); all
 eight slots present (GRANTS belongs to slot 2's scope, DECISIONS to slot 8 — neither adds a
 ninth); the GRANTS slot opens with its five labelled lines (Bounds, Pushed, Held by the reviewer, Left out on purpose, Second seat), and a brief that lacks one is named before it is sent, with the lines it lacks (SKILL.md §3, the GRANTS slot's warning, which blocks nothing); no expected answer leaked anywhere; reading list scoped. Control
 strings for greps over the CURRENT session's transcript must be generated at probe time

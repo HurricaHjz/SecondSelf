@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <id>https://arxiv.org/api/fixture-two-versions-latest-v2</id>
+  <title>arXiv Query: search_query=&amp;id_list=2401.00005&amp;start=0&amp;max_results=1</title>
+  <updated>2026-11-19T00:00:00Z</updated>
+  <opensearch:itemsPerPage>1</opensearch:itemsPerPage>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00005v2</id>
+    <title>Abstract Page Capture: A Raw Naming Two Versions</title>
+    <updated>2026-08-10T09:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2026-08-03T09:00:00Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author><name>Ida Fixture</name></author>
+    <author><name>Jon Planted</name></author>
+  </entry>
+</feed>

@@ -207,7 +207,7 @@ class Fixture:
         (self.state / 'calls').write_text('')
 
     def gate(self, expected=0, script=gate):
-        result = run(['/bin/sh', str(script)], env=self.env, cwd=self.root)
+        result = run(['/bin/sh', str(script), str(self.root)], env=self.env, cwd=self.root)
         diagnostic = self.state / 'diagnostics'
         detail = diagnostic.read_text() if result.returncode != expected and diagnostic.exists() else ''
         require(result.returncode == expected,
@@ -734,6 +734,30 @@ try:
         require('must be absolute' in f.gate(2), 'relative index accepted')
         return 'missing tree, failed scan, non-directory lock, relative database all exit 2'
     leg('broken premises never report clean', premises)
+
+    def own_root():
+        # Register 2026-11-14 15:58 b: with no argument the root is the vault holding the script, never the
+        # caller's directory (a bare cd had left the shell in wiki/) nor CLAUDE_PROJECT_DIR. A copy of the gate
+        # sits at the fixture's own skill path; an explicit argument naming another root is the control.
+        f = Fixture()
+        own = f.root / '.claude/skills/qmd-search/qmd-fresh.sh'
+        own.parent.mkdir(parents=True)
+        executable(own, gate.read_text())
+        elsewhere = f.base / 'elsewhere'
+        bare = {k: v for k, v in f.env.items() if k != 'CLAUDE_PROJECT_DIR'}
+        cases = ((bare, str(own)), (dict(f.env, CLAUDE_PROJECT_DIR=str(elsewhere)), str(own)),
+                 (bare, '../.claude/skills/qmd-search/qmd-fresh.sh'))
+        for env, path in cases:
+            env = dict(env, PWD=str(f.root / 'wiki'))
+            result = run(['/bin/sh', path], env=env, cwd=f.root / 'wiki')
+            require(result.returncode == 0 and 'semantic index is current' in result.stdout and not result.stderr,
+                    f'no argument, {path}: exit {result.returncode}: {result.stdout} {result.stderr}')
+        refresh_count(f, ['update', 'embed'])
+        result = run(['/bin/sh', str(own), str(elsewhere)], env=f.env, cwd=f.root / 'wiki')
+        require(result.returncode == 2 and 'wiki directory missing' in result.stdout,
+                f'argument control: exit {result.returncode}: {result.stdout}')
+        return 'no argument from wiki/ (absolute and relative, CLAUDE_PROJECT_DIR absent or elsewhere) reads the script\'s vault; an argument still wins'
+    leg('no argument: the root is the vault holding the script', own_root)
 
     def cache_paths():
         for xdg in (True, False):

@@ -100,8 +100,12 @@ SCOPE (printed per file as `scope: pdf` or `scope: other`, with the evidence in 
   measured in. A file is `pdf` when any of three facts holds: `converted_from:` names a `.pdf`
   (a local file name or a URL whose path ends in `.pdf`); a `.pdf` sibling with the file's own
   stem exists; or `converted_by:` names one of the ingest skill's two document-conversion
-  routes (`markitdown`, `agent`), the routes a PDF can reach `raw/` by. Everything else — a
-  defuddle, Jina, curl or gh capture of a web page — is `other`. The scope never changes the
+  routes (`markitdown`, `agent`), the routes a PDF can reach `raw/` by. A fourth fact makes an
+  arXiv paper `pdf` however its engine string begins: an address in `converted_from:`,
+  `resolved_url:` or `source_url:` whose host is arxiv.org or ar5iv.org or ends in "." plus
+  either, beside a `converted_by:` naming markitdown anywhere (`curl+markitdown (arXiv HTML)`),
+  its HTML version included. Everything else — a defuddle, Jina, curl or gh capture of a web
+  page — is `other`. The scope never changes the
   verdict: a `suspect` outside the derivation scope is still printed and still exits 3, and
   the ingest skill decides what to do with it (its Step 0 text: a `suspect` on `other` is
   reported in the run report and raises no `flagged:` line by itself). Why not
@@ -160,6 +164,7 @@ import re
 import sys
 import unicodedata
 import subprocess
+import urllib.parse
 from functools import lru_cache
 
 # --- derived thresholds (see the docstring for the derivation) ---------------------------
@@ -177,6 +182,7 @@ PDFTOTEXT_TIMEOUT_S = 120  # bound on one pdftotext call — a timeout, set by j
 BLOB_MIN_CHARS = 40        # base64-shaped blob: at least this long — set by judgement, unmeasured
 BLOB_NO_VOWEL_RUN = 6      # …and a run of this many non-vowels — set by judgement, unmeasured
 DOCUMENT_CONVERTERS = ("markitdown", "agent")   # the ingest skill's document-conversion routes (scope pdf)
+ARXIV_HOSTS = ("arxiv.org", "ar5iv.org")   # a host that is one of these or ends in "." plus one is an arXiv host
 REFERENCE_LETTER_DENSITY = 0.306  # compatibility default; set by judgement, unmeasured for a new corpus
 
 LETTER_RUN_RE = re.compile(r"[^\W\d_]+")
@@ -399,6 +405,20 @@ def sibling_pdf(path, frontmatter):
     return cand if os.path.isfile(cand) else None
 
 
+def address_fields(frontmatter):
+    """The values of converted_from:, resolved_url: and source_url:, quotes stripped."""
+    return [m.group(2).strip().strip("\"'") for m in
+            re.finditer(r"^(converted_from|resolved_url|source_url):[ \t]*(.+?)[ \t]*$", frontmatter, re.M)]
+
+
+def is_arxiv(value):
+    """True for an address whose host is an arXiv or ar5iv host (the host itself or any of its subdomains)."""
+    if not URL_RE.match(value):
+        return False
+    host = (urllib.parse.urlsplit(value).hostname or "").lower()
+    return any(host == root or host.endswith("." + root) for root in ARXIV_HOSTS)
+
+
 def scope_of(frontmatter, pdf):
     """('pdf' | 'other', evidence)."""
     if names_pdf(converted_from(frontmatter)):
@@ -411,6 +431,8 @@ def scope_of(frontmatter, pdf):
     first = first.group(0).lower() if first else ""
     if first in DOCUMENT_CONVERTERS:
         return "pdf", f"converted_by {first}"
+    if re.search(r"(?i)markitdown", engine) and any(is_arxiv(value) for value in address_fields(frontmatter)):
+        return "pdf", "arXiv paper converted by markitdown"
     if engine:
         return "other", f"web capture, converted_by {engine[:24]}"
     return "other", "no converted_by and no PDF evidence"

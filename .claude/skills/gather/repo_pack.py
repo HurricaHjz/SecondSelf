@@ -7,6 +7,7 @@ Verbs:
                  [--slice NAME] [--allow-large '<why>'] [--allow-degraded '<why>'] [--capture-write PATH]
                  Emits the pack to a temp file, self-checks it (footer marker · header count == section count),
                  then invokes capture_write.py IN-PROCESS on exit-0, propagating failure. Never a pipe.
+                 The temp file is removed once the write ends, failed or not; --no-write keeps it and prints its path.
                  `--repo` names a clone in the store by slug, or any git working copy by absolute path
                  (the project store's pinned snapshots).
   clean          --repo <slug>                              → removes the clone; refuses any path outside the store
@@ -284,14 +285,18 @@ def cmd_pack(a):
     with os.fdopen(fd, "w") as fh: fh.write(body)
     print(f"pack ok: {n} files · {size} B · sha {sha[:12]} · tmp {tmp}")
     if a.no_write:
-        return
-    prov = provenance(url, sha, a.slice)                                                # guard (c)
-    cw = a.capture_write or os.path.join(os.path.dirname(os.path.abspath(__file__)), "capture_write.py")
-    if not os.path.isfile(cw): die("capture_write.py not found — sole-write rule, STOP")
-    cmd = [sys.executable, cw, "write", "--url", prov, "--engine", "repo-pack", "--ledger-id", a.ledger_id]
-    if a.title: cmd += ["--title", a.title]
-    if a.allow_degraded: cmd += ["--allow-degraded", a.allow_degraded]
-    r = subprocess.run(cmd, stdin=open(tmp), )
+        return                                   # --no-write: the temp file is the pack, kept for the caller to read
+    try:
+        prov = provenance(url, sha, a.slice)                                            # guard (c)
+        cw = a.capture_write or os.path.join(os.path.dirname(os.path.abspath(__file__)), "capture_write.py")
+        if not os.path.isfile(cw): die("capture_write.py not found — sole-write rule, STOP")
+        cmd = [sys.executable, cw, "write", "--url", prov, "--engine", "repo-pack", "--ledger-id", a.ledger_id]
+        if a.title: cmd += ["--title", a.title]
+        if a.allow_degraded: cmd += ["--allow-degraded", a.allow_degraded]
+        with open(tmp) as fh:
+            r = subprocess.run(cmd, stdin=fh)
+    finally:
+        os.remove(tmp)   # written or failed, the pack's temp copy goes: a fenced head cannot remove it from the system temp folder
     sys.exit(r.returncode)
 
 def cmd_clean(a):

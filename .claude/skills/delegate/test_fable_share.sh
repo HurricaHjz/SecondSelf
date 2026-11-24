@@ -474,6 +474,33 @@ record = [
 gone = {"event": "lane-open", "lane": "L-GONE", "reason": "a reason naming no letter at all"}
 dump(os.path.join(root, "record-clean.jsonl"), record)
 dump(os.path.join(root, "record-gap.jsonl"), record + [gone])
+# A headless lane on a second login folder (register entry [2026-11-16 02:01 d]): its lane-open
+# records that folder's projects root, and its transcript sits there alone, never under the
+# meter's --projects-root. Distinct usage (prefix 4,010, out 400) names which file was metered.
+login = os.path.join(root, "login", "projects")
+os.makedirs(os.path.join(login, "login-project"), exist_ok=True)
+dump(os.path.join(login, "login-project", "login-1.jsonl"), [
+    call("2026-01-01T00:02:40Z", "g1", OPU, usage(10, 4000, 0, 0, 400))])
+def own_root(lane_name, sid, value):
+    return [record[0], record[1],
+            {"event": "lane-open", "lane": lane_name, "projects_root": value,
+             "reason": "instrument rule (b)+(d): breadth and context"},
+            {"event": "lane-spawned", "lane": lane_name, "session_id": sid}]
+dump(os.path.join(root, "record-login.jsonl"), own_root("L-LOG", "login-1", login))
+# A recorded root holding no transcript, a non-string, a missing folder and a relative path:
+# each read as absent, the lane then found under the meter's root (headless-1, prefix 3,010).
+os.makedirs(os.path.join(root, "login-empty", "projects", "empty-project"), exist_ok=True)
+for tag, value in (("empty", os.path.join(root, "login-empty", "projects")), ("list", [login]),
+                   ("gone", os.path.join(root, "no-such-login", "projects")),
+                   ("relative", os.path.join("login", "projects"))):
+    dump(os.path.join(root, "record-root-%s.jsonl" % tag), own_root("L-HDL", "headless-1", value))
+# Two hits under the recorded root (prefix 7,010, out 777): neither is taken there.
+two = os.path.join(root, "login-two", "projects")
+for sub in ("p1", "p2"):
+    os.makedirs(os.path.join(two, sub), exist_ok=True)
+    dump(os.path.join(two, sub, "headless-1.jsonl"), [
+        call("2026-01-01T00:02:50Z", "d" + sub, OPU, usage(10, 7000, 0, 0, 777))])
+dump(os.path.join(root, "record-root-two.jsonl"), own_root("L-HDL", "headless-1", two))
 # The reason forms heads write live (register, 2026-09-06): a leading bare letter with a colon
 # or a spaced dash, and the bracketed form; one record per form, so each tallies on its own.
 # The control record carries two letterless reasons: a word that merely starts with a letter,
@@ -1219,6 +1246,36 @@ if [ "$RC" = 0 ] && has "metered 1 of n/a recorded" && has "(reasons: n/a)" && !
   ok "without a spawn record the tally and the recorded count read n/a and nothing is flagged (control)"
 else no "no spawn record  [exit $RC] $OUT"; fi
 
+# 35A (register entry [2026-11-16 02:01 d]) — a headless lane's transcript is looked for under
+#      the projects root its lane-open records first, taken there on exactly one hit, else under
+#      --projects-root as before. A1 must fire: the lane on a second login folder is metered, its
+#      own figures (prefix 4,010, out 400) on its row; the meter used to flag it unmatched.
+run "${SP[@]}" --lanes "$F/nothing/*.jsonl" --spawn-record "$F/record-login.jsonl" --per-agent
+if [ "$RC" = 0 ] && has "metered 2 of 2 recorded" && ! has "MISMATCH" \
+   && has "  L-LOG · claude-test-opus-b:1 · 1 call · prefix 4,010 · peak 4,010 · out 400 · "; then
+  ok "A1 a headless lane whose lane-open records another login's projects root is metered from its transcript there (prefix 4,010), no MISMATCH, under another --projects-root"
+else no "A1 recorded projects_root  [exit $RC] $OUT"; fi
+# A2 (control) — no recorded root: the lane is found under --projects-root as before.
+run "${SP[@]}" --lanes "$F/nothing/*.jsonl" --spawn-record "$F/record-clean.jsonl" --per-agent
+if [ "$RC" = 0 ] && has "metered 2 of 2 recorded" && ! has "MISMATCH" \
+   && has "  L-HDL · claude-test-opus-b:1 · 1 call · prefix 3,010 · "; then
+  ok "A2 (control) a headless lane with no recorded projects root is found under --projects-root (prefix 3,010)"
+else no "A2 no recorded projects_root  [exit $RC] $OUT"; fi
+# A3 (control) and A4 (premise) — a recorded root holding no transcript, one that is not a
+#      string, one naming no directory and a relative one are each read as absent, no error;
+#      two hits under the recorded root are not taken there (prefix 7,010 must not appear).
+for tag in empty list gone relative two; do
+  run "${SP[@]}" --lanes "$F/nothing/*.jsonl" --spawn-record "$F/record-root-$tag.jsonl" --per-agent
+  if [ "$RC" = 0 ] && has "metered 2 of 2 recorded" && ! has "MISMATCH" \
+     && has "  L-HDL · claude-test-opus-b:1 · 1 call · prefix 3,010 · " && ! has "prefix 7,010"; then
+    ok "A3/A4 recorded root ($tag) read as absent or not taken: the lane is found under --projects-root (prefix 3,010), exit 0"
+  else no "A3/A4 recorded root ($tag)  [exit $RC] $OUT"; fi
+done
+run "${SP[@]}" --lanes "$F/login-two/projects/p1/*.jsonl" --per-agent
+if [ "$RC" = 0 ] && has "prefix 7,010"; then
+  ok "A4 (control) a two-hit copy metered by glob prints prefix 7,010, so its absence above is the record path's doing"
+else no "A4 control: the 7,010 copy  [exit $RC] $OUT"; fi
+
 # 35c-35e (2026-09-13, register entry of 2026-09-10 17:43) — a plan-usage lane (a Codex lane:
 #      harness codex on its lane-open, no Claude transcript by design) is counted and named on
 #      the line, never flagged. Must not fire: the clean record plus one Codex lane reads metered
@@ -1739,6 +1796,8 @@ cp -R "$F/projects" "$RO/projects"
 cp "$F/record-gap.jsonl" "$RO/record-gap.jsonl"
 cp "$F/record-seed.jsonl" "$RO/record-seed.jsonl"
 cp "$F/record-laneless-tiered.jsonl" "$RO/record-laneless-tiered.jsonl"
+cp -R "$F/login" "$RO/login"
+sed "s#$F/login#$RO/login#g" "$F/record-login.jsonl" > "$RO/record-login.jsonl"
 cp -R "$F/state" "$RO/state"
 cp "$S" "$ROHOME/fable-share.py"
 cp "$HERE/prices.json" "$ROHOME/prices.json"   # the table the script resolves beside itself
@@ -1783,6 +1842,9 @@ RO_BILLED="$("${RM[@]}" --session tiered --start MARK --end END --lanes none --v
       --spawn-record "$RO/record-laneless-tiered.jsonl" > /dev/null 2>&1
 "${RM[@]}" --session tiered --start MARK --end END --lanes auto --tmp-root "$F/tmp-empty" \
       --spawn-record "$RO/record-laneless-tiered.jsonl" > /dev/null 2>&1
+# the path added 2026-11-22: a headless lane under the projects root its lane-open records.
+RO_LOGIN="$("${RM[@]}" --session spawn --start MARK --end END --lanes auto --tmp-root "$F/tmp-empty" \
+      --spawn-record "$RO/record-login.jsonl" --projects-root "$RO/projects" 2>&1)"
 AFTER="$(manifest "$RO"; manifest "$ROHOME")"
 WRITES=0
 for pat in 'open\([^)]*['"'"'"][wax]' '\bwrite_text\b' '\bwritelines\b' '\.write\(' \
@@ -1793,9 +1855,11 @@ done
 CONTROL="$(grep -cE -- 'open\(' "$S")"
 RO_PRICED=0; printf '%s\n' "$RO_BILLED" | grep -Fq "billed (list, prices" && RO_PRICED=1
 RO_STATE=0; printf '%s\n' "$RO_BILLED" | grep -Fq "delegation multi (head)" && RO_STATE=1
+printf '%s\n' "$RO_LOGIN" | grep -Fq "billed (list, prices" || RO_PRICED=0
+printf '%s\n' "$RO_LOGIN" | grep -Fq "metered 2 of 2 recorded" || RO_PRICED=0   # it hit the recorded root
 if [ "$BEFORE" = "$AFTER" ] && [ "$WRITES" = 0 ] && [ "$CONTROL" -gt 0 ] && [ -n "$BEFORE" ] \
    && [ "$RO_PRICED" = 1 ] && [ "$RO_STATE" = 1 ]; then
-  ok "stdout-only: read-only fixture, projects root, spawn record, session state and script home (with its price table) unchanged after sixteen runs across every mode, billing, a resolved short session id, a skipped seed and a lane-less record included; no write pattern in the source (controls: $CONTROL read-mode open calls found by the same grep; the read-only state file was read, not just present)"
+  ok "stdout-only: read-only fixture, projects root, spawn record, session state and script home (with its price table) unchanged after seventeen runs across every mode, billing, a resolved short session id, a skipped seed, a lane-less record and a lane-open's own projects root included; no write pattern in the source (controls: $CONTROL read-mode open calls found by the same grep; the read-only state file was read, not just present)"
 else no "stdout-only proof  [manifest changed: $([ "$BEFORE" = "$AFTER" ] && echo no || echo yes); write patterns: $WRITES; control opens: $CONTROL; priced on the read-only tree: $RO_PRICED; state read: $RO_STATE]"; fi
 # The write-pattern grep must itself be able to fail: plant every banned pattern in a copy.
 PLANT="$F/planted.py"

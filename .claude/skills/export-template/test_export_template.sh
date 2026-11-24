@@ -52,6 +52,12 @@ build_fake_vault(){
   printf '#!/usr/bin/env python3\nprint("digest")\n' > "$V/.claude/hooks/calendar-digest.py"
   printf '#!/bin/sh\necho suite\n'                   > "$V/.claude/hooks/test_calendar_digest.sh"
   printf '#!/bin/sh\necho local\n'                   > "$V/.claude/hooks/local-only-hook.sh"
+  # every other hook the copied payload list names, as a real vault holds them: the export refuses a listed hook that is absent
+  if [ -f "$V/.claude/skills/export-template/payload/shipped-hooks.txt" ]; then
+    for h in $(grep -vE '^[[:space:]]*(#|$)' "$V/.claude/skills/export-template/payload/shipped-hooks.txt"); do
+      [ -e "$V/.claude/hooks/$h" ] || printf '# %s (a listed hook, fixture)\n' "$h" > "$V/.claude/hooks/$h"
+    done
+  fi
   printf '{ "vault": "own settings" }\n'             > "$V/.claude/settings.json"
   printf '# CALENDAR\n- [ ] 2026-01-01 · owner private item\n' > "$V/CALENDAR.md"
   printf '# CALENDAR-done\n'                          > "$V/CALENDAR-done.md"
@@ -147,6 +153,56 @@ chk "git: CLAUDE tracked"                   '( cd "$BUILT" && git ls-files | gre
 chk "git: screenshot force-tracked"         '( cd "$BUILT" && git ls-files | grep -q "assets/framework_demo.png" )'
 chk "git: user media stays ignored"         '( cd "$BUILT" && cp "$V/assets/my_photo.png" assets/ 2>/dev/null; git check-ignore -q assets/my_photo.png )'
 chk "git: .gitkeep tracked"                 '( cd "$BUILT" && git ls-files | grep -q ".gitkeep" )'
+
+echo "== Phase 1b: the stray-folder guard refuses knowledge-shaped folders and admits only a skill's own fixtures/ =="
+# A copy of the fake vault as Phase 1 left it, so the phases after this one meet the vault they expect.
+GV="$ROOT/guard-vault"; rm -rf "$GV"; cp -R "$V" "$GV"
+# One helper definition, as a real vault holds: the build's closing listing of .claude/agents exits non-zero under
+# pipefail when there is none, and these legs read the build's exit code (Phase 1 does not).
+mkdir -p "$GV/.claude/agents"; printf '# a helper definition\n' > "$GV/.claude/agents/zz-guard-helper.md"
+GSCRIPT="$GV/.claude/skills/export-template/export_template.sh"
+GOUT="$ROOT/guard-out"
+guard_case(){   # $1 label · $2 folder planted under .claude/skills (in the planted skill zz-guard) · $3 refused|built
+  G_PATH="$GV/.claude/skills/zz-guard/$2"      # chk evaluates its test in its own scope: no positional names in it
+  rm -rf "$GV/.claude/skills/zz-guard" "$GOUT"
+  mkdir -p "$G_PATH"; printf '# zz-guard\n' > "$GV/.claude/skills/zz-guard/SKILL.md"
+  G_RC=0; G_OUT="$(bash "$GSCRIPT" "$GOUT" 2>&1)" || G_RC=$?
+  if [ "$3" = refused ]; then
+    chk "$1" '[ "$G_RC" = 1 ] && printf "%s\n" "$G_OUT" | grep -q "knowledge-shaped" && printf "%s\n" "$G_OUT" | grep -qxF "$G_PATH" && [ ! -e "$GOUT/CLAUDE.md" ]'
+  else
+    chk "$1" '[ "$G_RC" = 0 ] && [ -f "$GOUT/CLAUDE.md" ] && ! printf "%s\n" "$G_OUT" | grep -q "knowledge-shaped"'
+  fi
+}
+guard_case "guard: a skill's own wiki/ folder is refused, exit 1, naming it (D1-1)"   "wiki"                 refused
+guard_case "guard: a raw/ folder deeper in a skill is refused (D1-2)"               "sub/raw"              refused
+guard_case "guard: a wiki/ inside the skill's own fixtures/ is built (D1-3)"        "fixtures/v/wiki"      built
+guard_case "guard: a look-alike fixtures-old/ is no exemption (D1-4)"               "fixtures-old/wiki"    refused
+guard_case "guard: a fixtures/ folder deeper than the skill's own is no exemption (D1-4b)" "sub/fixtures/wiki" refused
+guard_case "guard: payload/example/ stays admitted (D1-5)"                          "payload/example/wiki" built
+rm -rf "$GV/.claude/skills/zz-guard" "$GOUT"
+mkdir -p "$GV/.claude/skills/zz-guard/locked/inner"; printf '# zz-guard\n' > "$GV/.claude/skills/zz-guard/SKILL.md"
+chmod 000 "$GV/.claude/skills/zz-guard/locked"
+G_RC=0; G_OUT="$(bash "$GSCRIPT" "$GOUT" 2>&1)" || G_RC=$?
+chmod 700 "$GV/.claude/skills/zz-guard/locked"
+chk "guard: a folder the search cannot read stops the build non-zero, and OUT holds no CLAUDE.md (D1-6)" '[ "$G_RC" -ne 0 ] && [ ! -e "$GOUT/CLAUDE.md" ]'
+chk "control: the same vault with the folder readable builds"  'rm -rf "$GOUT" && bash "$GSCRIPT" "$GOUT" >/dev/null 2>&1 && [ -f "$GOUT/CLAUDE.md" ]'
+
+echo "== Phase 1c: the guard on a copy of the real .claude/skills (known-issues 2026-11-20 18:05) =="
+# The real skills tree the script lives in, copied with the script under test in place of the copy's own, so the
+# guard meets every folder a release would ship. Read-only on the real tree.
+RSK="$(cd "$REALSKILL/.." && pwd)"
+rm -rf "$GV/.claude/skills" "$GOUT"; mkdir -p "$GV/.claude"
+cp -R "$RSK" "$GV/.claude/skills"; chmod -R u+w "$GV/.claude/skills"
+rm -rf "$GV/.claude/skills/export-template"; cp -R "$REALSKILL" "$GV/.claude/skills/export-template"; chmod -R u+w "$GV/.claude/skills/export-template"
+N_FX="$(find "$GV/.claude/skills" -mindepth 2 -type d \( -name wiki -o -name raw -o -name output \) ! -path '*/payload/example/*' | wc -l | tr -d ' ')"
+chk "control: the copy holds the real tree's knowledge-shaped fixture folders ($N_FX)" '[ "$N_FX" -gt 0 ]'
+G_RC=0; G_OUT="$(bash "$GSCRIPT" "$GOUT" 2>&1)" || G_RC=$?
+chk "guard: the real skills tree builds, no knowledge-shaped folder refused (D1-7)" '[ "$G_RC" = 0 ] && [ -f "$GOUT/CLAUDE.md" ] && ! printf "%s\n" "$G_OUT" | grep -q "knowledge-shaped"'
+[ "$G_RC" = 0 ] || printf '%s\n' "$G_OUT" | sed -n '/knowledge-shaped/,$p' | head -30 | sed 's/^/      /'
+mkdir -p "$GV/.claude/skills/zz-guard/output"; printf '# zz-guard\n' > "$GV/.claude/skills/zz-guard/SKILL.md"; rm -rf "$GOUT"
+G_RC=0; G_OUT="$(bash "$GSCRIPT" "$GOUT" 2>&1)" || G_RC=$?
+chk "control: the same copy with a planted zz-guard/output is refused, naming only it" '[ "$G_RC" = 1 ] && [ "$(printf "%s\n" "$G_OUT" | grep -c "^$GV/.claude/skills/")" = 1 ] && printf "%s\n" "$G_OUT" | grep -qxF "$GV/.claude/skills/zz-guard/output"'
+rm -rf "$GV" "$GOUT"
 
 echo "== Phase 2: mutual exclusion (one direction per run) =="
 build_fake_vault
@@ -425,6 +481,25 @@ printf 'plain text that names vault-local:begin in prose stays\n' > "$V/CLAUDE.m
 out="$(bash "$SCRIPT" "$ROOT/built19e" 2>&1)"; rc=$?
 chk "control: prose naming the marker is no marker"       '[ "$rc" = 0 ] && grep -q "names vault-local:begin in prose" "$ROOT/built19e/CLAUDE.md"'
 
+echo "== 19b) the strip writes only when told to: under --in-place, never by default =="
+S19="$ROOT/strip19b"; mkdir -p "$S19"
+printf 'kept\n<!-- vault-local:begin -->\nowner-only\n<!-- vault-local:end -->\nkept too\n' > "$S19/marked.md"
+printf 'a neighbour\n' > "$S19/neighbour.md"
+sums19(){ shasum -a 256 "$S19"/* | sort; }
+M19="$(sums19)"
+out="$(python3 -B "$STRIPPY" "$S19/marked.md" 2>&1)"; rc19=$?
+chk "strip: a FILE with neither flag is refused, exit 2, naming the flag that writes" '[ "$rc19" = 2 ] && echo "$out" | grep -q "PROBE FAILED: usage: strip_vault_local.py --in-place FILE"'
+chk "strip: the refused call leaves its folder byte for byte (checksum manifest)" '[ "$rc19" = 2 ] && [ "$(sums19)" = "$M19" ]'
+printf 'x' >> "$S19/neighbour.md"
+chk "control: the same manifest sees one byte changed in that folder" '[ "$rc19" = 2 ] && [ "$(sums19)" != "$M19" ]'
+H19A="$(hash_of "$S19/marked.md")"
+python3 -B "$STRIPPY" --in-place --stdout "$S19/marked.md" >/dev/null 2>&1; rcf=$?
+H19B="$(hash_of "$S19/marked.md")"
+python3 -B "$STRIPPY" --in-place "$S19/marked.md" >/dev/null 2>&1; rc19=$?
+chk "strip: --in-place rewrites the named file, the block out and the rest kept" '[ "$rc19" = 0 ] && ! grep -q "owner-only" "$S19/marked.md" && grep -qx "kept too" "$S19/marked.md"'
+chk "strip: --in-place takes files only: a flag among them is refused and writes nothing, the file alone is rewritten" \
+    '[ "$rcf" = 2 ] && [ "$H19A" = "$H19B" ] && [ "$rc19" = 0 ] && [ "$(hash_of "$S19/marked.md")" != "$H19B" ]'
+
 echo "== 20) every routing row carries a mark, and the owner's own are held back from the public copy =="
 build_fake_vault
 mkdir -p "$V/.claude/agents"; printf '# an agent\n' > "$V/.claude/agents/a.md"
@@ -587,7 +662,8 @@ chk "deny: one rule per shipped skill"                          '[ "$(grep -c "E
 printf '# one more\n' >> "$V/CLAUDE.md"; mkdir -p "$V/.claude/skills/added"; printf '# added\n' > "$V/.claude/skills/added/SKILL.md"
 bash "$SCRIPT" "$ROOT/built21b" >/dev/null 2>&1
 chk "deny: a new skill gets its rule with no edit"              'grep -q "Edit(/.claude/skills/added/\*\*)" "$ROOT/built21b/.claude/settings.json"'
-sed -i.bak '/^\.claude\/hooks\/$/d' "$V/.claude/skills/export-template/payload/core-paths.txt"
+sed -i.bak '/^\.claude\/hooks\/$/d' "$V/.claude/skills/export-template/payload/core-paths.txt" \
+  && rm -f "$V/.claude/skills/export-template/payload/core-paths.txt.bak"   # sed's backup beside a shipped file would stop the export
 bash "$SCRIPT" "$ROOT/built21c" >/dev/null 2>&1
 chk "deny: a line taken off the core list takes its rules with it, with no code change" '! grep -q "Edit(/.claude/hooks/" "$ROOT/built21c/.claude/settings.json" && grep -q "Edit(/.claude/skills/" "$ROOT/built21c/.claude/settings.json"'
 printf '# only comments\n' > "$V/.claude/skills/export-template/payload/core-paths.txt"
@@ -606,6 +682,127 @@ chk "build: a hook off the list stays home"                     '[ ! -e "$B21E/.
 rm -f "$V/.claude/skills/export-template/payload/shipped-hooks.txt"
 bash "$SCRIPT" "$ROOT/built21f" >/dev/null 2>&1
 chk "build: with no list the calendar's hook still ships"       '[ -f "$ROOT/built21f/.claude/hooks/calendar-digest.py" ] && [ ! -e "$ROOT/built21f/.claude/hooks/plain-listed.py" ]'
+
+echo "== 21b) a backup left beside a shipped file stops the export before it writes anything =="
+build_fake_vault
+mkdir -p "$V/.claude/agents" "$V/.claude/skills/my-own"; printf '# an agent\n' > "$V/.claude/agents/a.md"
+B21B="$ROOT/built21-bak"
+mkdir -p "$B21B"; printf 'an earlier build\n' > "$B21B/CLAUDE.md"; cp -Rp "$B21B" "$B21B.was"
+BAK_RCS=""
+bak_refused(){   # $1 what is planted, $2 its path under the vault
+  printf 'a backup\n' > "$V/$2"
+  WANT="  $2"
+  out="$(bash "$SCRIPT" "$B21B" 2>&1)"; rc=$?; BAK_RCS="$BAK_RCS$rc"
+  chk "backup: $1 stops the build, exit 1, naming it" '[ "$rc" = 1 ] && echo "$out" | grep -q "^ERROR: backup files sit beside shipped files" && echo "$out" | grep -qxF -- "$WANT"'
+  chk "backup: $1 leaves the earlier build byte for byte" '[ "$rc" = 1 ] && diff -r "$B21B.was" "$B21B"'
+  rm -f "$V/$2"
+}
+bak_refused "name.bak"                         ".claude/skills/ingest/SKILL.md.bak"
+bak_refused "name.bak-<tag>, nested (the shape that once shipped)" ".claude/skills/delegate/templates/lane-core.md.bak-20261108-audit2"
+bak_refused "name.pre-<tag>"                   ".claude/skills/query/SKILL.md.pre-fold"
+bak_refused "patch's name.orig"                ".claude/skills/lint/SKILL.md.orig"
+bak_refused "patch's name.rej"                 ".claude/skills/lint/SKILL.md.rej"
+bak_refused "an editor's name~"                ".claude/skills/gather/SKILL.md~"
+bak_refused "an upper-case NAME.BAK"           ".claude/skills/ingest/NOTES.MD.BAK"
+bak_refused "one in the skill payload"         ".claude/skills/export-template/payload/example/note.md.bak"
+bak_refused "a helper definition's backup"     ".claude/agents/a.pre-fold.md"
+mkdir -p "$V/.claude/skills/ingest.bak-1"; printf '# a copy\n' > "$V/.claude/skills/ingest.bak-1/SKILL.md"
+out="$(bash "$SCRIPT" "$B21B" 2>&1)"; rc=$?
+chk "backup: a whole skill folder kept beside it stops the build, naming the folder" '[ "$rc" = 1 ] && echo "$out" | grep -qxF "  .claude/skills/ingest.bak-1" && diff -r "$B21B.was" "$B21B"'
+rm -rf "$V/.claude/skills/ingest.bak-1"
+# Left in place for the control: backups in skills that never ship, and a name that only looks like one.
+printf 'a backup\n' > "$V/.claude/skills/$EXCLUDED_SKILL/SKILL.md.bak"
+printf 'a backup\n' > "$V/.claude/skills/my-own/SKILL.md.orig"
+printf 'repos: []\n' > "$V/.claude/skills/ingest/.pre-commit-config.yaml"
+out="$(bash "$SCRIPT" "$B21B" 2>&1)"; rc=$?
+chk "control: with each backup moved out the same build runs and replaces the earlier one (a backup in a skill that never ships, and .pre-commit-config.yaml, stay quiet)" \
+    '[ "$BAK_RCS" = 111111111 ] && [ "$rc" = 0 ] && ! diff -r "$B21B.was" "$B21B" >/dev/null && [ -f "$B21B/.claude/skills/ingest/.pre-commit-config.yaml" ]'
+# The gate names its skipped skill apart from the copy's skip, so the two are tied here: one backup in
+# every skill folder the build just shipped, read from the build itself, and each one must be named.
+rm -rf "$B21B.was"; cp -Rp "$B21B" "$B21B.was"
+SHIP21B="$(cd "$B21B/.claude/skills" && ls -d */ | tr -d /)"
+for s in $SHIP21B; do printf 'a backup\n' > "$V/.claude/skills/$s/ship-check.md.bak"; done
+out="$(bash "$SCRIPT" "$B21B" 2>&1)"; rc=$?
+MISS21B=""; for s in $SHIP21B; do echo "$out" | grep -qxF "  .claude/skills/$s/ship-check.md.bak" || MISS21B="$MISS21B $s"; done
+for s in $SHIP21B; do rm -f "$V/.claude/skills/$s/ship-check.md.bak"; done
+chk "backup: one in every skill folder the build ships is named, each of them" '[ -n "$SHIP21B" ] && [ "$rc" = 1 ] && [ -z "$MISS21B" ]'
+[ -n "$MISS21B" ] && echo "      not named:$MISS21B"
+# A search that cannot finish is a stop, never a pass: a folder inside a shipped skill it cannot read.
+mkdir -p "$V/.claude/skills/query/unreadable"; printf 'x\n' > "$V/.claude/skills/query/unreadable/note.md"
+chmod 000 "$V/.claude/skills/query/unreadable"
+UNREAD21B=0; ls "$V/.claude/skills/query/unreadable" >/dev/null 2>&1 || UNREAD21B=1
+out="$(bash "$SCRIPT" "$B21B" 2>&1)"; rc=$?
+chmod 755 "$V/.claude/skills/query/unreadable"; rm -rf "$V/.claude/skills/query/unreadable"
+chk "fixture: a folder set to mode 000 cannot be listed (the next leg's premise; a root account breaks it)" '[ "$UNREAD21B" = 1 ]'
+chk "backup: a search that cannot finish stops the build, exit 2, PROBE FAILED, the earlier build byte for byte" \
+    '[ "$rc" = 2 ] && echo "$out" | grep -q "^PROBE FAILED: the search for backup files beside shipped files did not finish" && diff -r "$B21B.was" "$B21B"'
+setup_published
+printf 'a vault edit\n' >> "$V/MANUAL.md"
+printf 'a backup\n' > "$V/.claude/skills/ingest/SKILL.md.bak-x"
+out="$(bash "$SCRIPT" --push "$CLONE" 2>&1)"; rc21p=$?
+chk "backup: one stops a push too, exit 1, and the clone is left as it was" '[ "$rc21p" = 1 ] && echo "$out" | grep -qxF "  .claude/skills/ingest/SKILL.md.bak-x" && [ -z "$(git -C "$CLONE" status --porcelain)" ]'
+rm -f "$V/.claude/skills/ingest/SKILL.md.bak-x"
+out="$(bash "$SCRIPT" --push "$CLONE" 2>&1)"; rc=$?
+chk "control: with it moved out the same status probe sees the overlay" '[ "$rc21p" = 1 ] && [ "$rc" = 0 ] && git -C "$CLONE" status --porcelain | grep -q "MANUAL.md"'
+
+echo "== 21c) a hook on the shipped list that the vault lacks stops the export before it writes anything (known-issues 2026-09-06) =="
+# Before this guard a listed hook missing from the vault shipped silently absent, so the hands-off machinery that
+# loads it could not run on a fresh clone. The hook taken out is head-fence.py, the one the entry records,
+# when the copied payload list names it, and otherwise the first name on that list.
+build_fake_vault
+mkdir -p "$V/.claude/agents"; printf '# an agent\n' > "$V/.claude/agents/a.md"
+L21C="$V/.claude/skills/export-template/payload/shipped-hooks.txt"
+H21C="$(grep -qx 'head-fence.py' "$L21C" && echo head-fence.py || grep -vE '^[[:space:]]*(#|$)' "$L21C" | head -1)"
+chk "fixture: the copied list names a hook and the vault holds it ($H21C)" '[ -n "$H21C" ] && [ -f "$V/.claude/hooks/$H21C" ]'
+B21C="$ROOT/built21-hook"
+mkdir -p "$B21C"; printf 'an earlier build\n' > "$B21C/CLAUDE.md"; rm -rf "$B21C.was"; cp -Rp "$B21C" "$B21C.was"
+mv "$V/.claude/hooks/$H21C" "$ROOT/held-hook"
+out="$(bash "$SCRIPT" "$B21C" 2>&1)"; rc=$?
+chk "hook: a listed hook absent from the vault stops the build, exit 2, naming it" '[ "$rc" = 2 ] && echo "$out" | grep -qF "PROBE FAILED: shipped hook $H21C is on the shipped-hook list but absent from .claude/hooks"'
+chk "hook: the refused build leaves the earlier build byte for byte" '[ "$rc" = 2 ] && diff -r "$B21C.was" "$B21C"'
+mv "$ROOT/held-hook" "$V/.claude/hooks/$H21C"
+out="$(bash "$SCRIPT" "$B21C" 2>&1)"; rc=$?
+chk "control: with the hook back the same build succeeds and ships it" '[ "$rc" = 0 ] && [ -f "$B21C/.claude/hooks/$H21C" ]'
+printf '# only comments\n' > "$L21C"
+out="$(bash "$SCRIPT" "$ROOT/built21-nohooks" 2>&1)"; rc=$?
+chk "control: a list of comments only builds, shipping no listed hook" '[ "$rc" = 0 ] && [ -z "$(ls -A "$ROOT/built21-nohooks/.claude/hooks")" ]'
+# With no list file the calendar default ships what of it is present, as before the guard: only a list file is held to it.
+rm -f "$L21C"; mv "$V/.claude/hooks/test_calendar_digest.sh" "$ROOT/held-default"
+out="$(bash "$SCRIPT" "$ROOT/built21-nolist" 2>&1)"; rc=$?
+mv "$ROOT/held-default" "$V/.claude/hooks/test_calendar_digest.sh"
+chk "hook: with no list, a default hook the vault lacks is skipped as before, the other ships" '[ "$rc" = 0 ] && [ -f "$ROOT/built21-nolist/.claude/hooks/calendar-digest.py" ] && [ ! -e "$ROOT/built21-nolist/.claude/hooks/test_calendar_digest.sh" ]'
+printf '%s\n' "$H21C" > "$L21C"
+rm -rf "$B21C.was"; cp -Rp "$B21C" "$B21C.was"
+chmod 000 "$L21C"
+UNREAD21C=0; cat "$L21C" >/dev/null 2>&1 || UNREAD21C=1
+out="$(bash "$SCRIPT" "$B21C" 2>&1)"; rc=$?
+chmod 644 "$L21C"
+chk "fixture: a list set to mode 000 cannot be read (the next leg's premise; a root account breaks it)" '[ "$UNREAD21C" = 1 ]'
+chk "hook: a list that cannot be read stops the build, exit 2, PROBE FAILED, the earlier build byte for byte" \
+    '[ "$rc" = 2 ] && echo "$out" | grep -q "^PROBE FAILED: payload/shipped-hooks.txt cannot be read" && diff -r "$B21C.was" "$B21C"'
+setup_published
+printf 'a vault edit\n' >> "$V/MANUAL.md"
+H21P="$(grep -qx 'head-fence.py' "$L21C" && echo head-fence.py || grep -vE '^[[:space:]]*(#|$)' "$L21C" | head -1)"
+mv "$V/.claude/hooks/$H21P" "$ROOT/held-hook"
+out="$(bash "$SCRIPT" --push "$CLONE" 2>&1)"; rc21h=$?
+chk "hook: one absent stops a push too, exit 2, naming it, and the clone is left as it was" '[ -n "$H21P" ] && [ "$rc21h" = 2 ] && echo "$out" | grep -qF "shipped hook $H21P is on the shipped-hook list" && [ -z "$(git -C "$CLONE" status --porcelain)" ]'
+mv "$ROOT/held-hook" "$V/.claude/hooks/$H21P"
+out="$(bash "$SCRIPT" --push "$CLONE" 2>&1)"; rc=$?
+chk "control: with it back the same push overlays" '[ "$rc21h" = 2 ] && [ "$rc" = 0 ] && git -C "$CLONE" status --porcelain | grep -q "MANUAL.md"'
+# A pull never reads the vault's own list: the copying pull reads the release's, so only that one can refuse it.
+chmod 000 "$L21C"
+out="$(bash "$SCRIPT" --pull "$CLONE" 2>&1)"; rc21q=$?
+chmod 644 "$L21C"
+chk "pull: a preview with the vault's own list unreadable goes ahead, exit 0" '[ "$rc21q" = 0 ] && ! echo "$out" | grep -q "PROBE FAILED"'
+L21R="$CLONE/.claude/skills/export-template/payload/shipped-hooks.txt"
+rm -rf "$ROOT/v21-was"; cp -Rp "$V" "$ROOT/v21-was"
+chmod 000 "$L21R"
+out="$(bash "$SCRIPT" --pull "$CLONE" --apply 2>&1)"; rc21r=$?
+chmod 644 "$L21R"
+chk "pull: an apply with the release's list unreadable stops, exit 2, PROBE FAILED, the vault byte for byte" \
+    '[ "$rc21r" = 2 ] && echo "$out" | grep -q "^PROBE FAILED: the release.s payload/shipped-hooks.txt cannot be read" && diff -r "$ROOT/v21-was" "$V"'
+out="$(bash "$SCRIPT" --pull "$CLONE" --apply 2>&1)"; rc=$?
+chk "control: with the release's list readable the same apply goes through" '[ "$rc21r" = 2 ] && [ "$rc" = 0 ]'
 
 echo "== 22) the vault is the clone: an update by git =="
 # A release, then a user's vault that IS a clone of it, set up and locked; the next release follows.
@@ -689,6 +886,15 @@ chmod u+w "$UV/.claude/skills/query"
 chk "midway: a merge stopped partway exits 1 at the old commit"  '[ "$rc" = 1 ] && [ "$(git -C "$UV" rev-parse HEAD)" = "$HEAD22" ]'
 chk "control: a working file did change, so nothing changed would be false" 'grep -q "rules two" "$UV/CLAUDE.md"'
 chk "midway: the message says working files may have changed"    'echo "$out" | grep -q "the update failed; working files may have changed" && ! echo "$out" | grep -q "nothing changed"'
+
+echo "== 22b) the vault is the clone: its own hook list unreadable refuses no update, which never reads it =="
+user_vault
+printf '# rules two\n' > "$CLONE/CLAUDE.md"
+next_release v1.1.0
+chmod 000 "$UV/.claude/skills/export-template/payload/shipped-hooks.txt"
+update
+chmod u+r "$UV/.claude/skills/export-template/payload/shipped-hooks.txt"
+chk "update: a preview with the vault's own list unreadable goes ahead, exit 0" '[ "$rc" = 0 ] && echo "$out" | grep -q "PREVIEW only" && ! echo "$out" | grep -q "PROBE FAILED"'
 
 echo "== 24) a separate clone: a vault that is itself a clone refuses; stale files are listed, never deleted =="
 user_vault

@@ -77,7 +77,8 @@ Subcommands
                successor and the supervisor read as the run's envelope (the envelope policy
                below)
   handoff      rewrite named sections or morning-report bullets, atomically; --final records
-               head-exit with --band and requires the next-task pack (D41), and prints the pid
+               head-exit with --band and requires the next-task pack (D41: Next:, Needs:,
+               Decided: and Owed:, `Owed: none` when nothing is due), and prints the pid
                it wrote and why (pid discovery below); where the record already holds this
                stop's head-exit (a `head exited` observation after the head's last start, a
                head-resumed included, and a head-exit after that start, the supervisor's or
@@ -142,8 +143,12 @@ Subcommands
   launch-check the launch kit's start confirmation (register entry 2026-09-17
                16:32: a hand-written single read raced the detached starter): polls the record
                to a deadline (--wait, default LAUNCH_CHECK_WAIT_S) for a head start — a
-               head-successor, a head-resumed, or a run-open or run-resume carrying a pid —
-               whose pid is alive and whose process started when the event says (a reused pid
+               head-resumed, or a run-open or run-resume carrying a pid; a head-successor
+               counts only once its head's own start-up event, the run-resume naming its
+               session, follows it, and a head-resumed only once that session's head has
+               written one, since a live process alone is no finished start
+               (DW-20261103-8) — whose pid is alive and whose process started when the event
+               says (a reused pid
                is named, never counted, and a start whose age or timestamp cannot be read is
                `pid identity unverifiable`, never started); every ps probe bounded by the lower
                of its own cap and the budget left of the one deadline, which successive probes
@@ -716,8 +721,10 @@ head's own pack resets) and records an observation `what: stale-pack`;
 means the pack is fresh by definition; a pack with no stamp at all (a hand-off written by hand,
 or before this guard) is reported `unstamped` and left alone, since re-deriving over it would
 overwrite the head's own judgement. `handoff --inflight-from-record` is the same derivation as a
-command, for a head that wants it, and it keeps the three D41 labels so a re-derived pack passes
-the same label check a head's own pack must pass.
+command, for a head that wants it, and it keeps the four D41 labels so a re-derived pack passes
+the same label check a head's own pack must pass: Owed: is the replaced pack's own line, kept
+verbatim, and where that pack named none, a line saying what is owed is unstated (the record
+holds nothing to derive it from).
 
 Two heads on one run (register entry 2026-09-03): a harness resume can start a second process on
 a session whose first process still runs. `run-resume` and `gate` read the record's last head
@@ -768,7 +775,11 @@ written to the file after that cutoff is covered. A named decisions file that do
 a premise failure (exit 2), since a mistyped path would never hold. A run's file is bound on its
 record, by `run-open --decisions-file` or else by the first gate or accepted ack that names it:
 `gate`, `close`, `decisions-read` and both launchers then find it there, and another path that
-exists is refused (exit 2). `run-is-closed --run R`
+exists is refused (exit 2). `run-open --cited <UTC time>` (repeatable; register entry
+2026-11-09 18:55) refuses the open, before anything is written and in a dry run too, while a
+time the pre-flight cites heads no `## Turn N · <time>` block of that file, the shape
+`extract-transcript --decisions-file` writes; a time quoted in prose does not count, and each
+time found is printed with its file line. `run-is-closed --run R`
 exits 0 on a record with a run-close and 1 on one without (2 with no record), for a wrapper
 that warns before it spawns into a closed run.
 
@@ -1055,6 +1066,10 @@ CONSOLE_CONFIRM_STEP_S = 0.5
 # every probe of every read draws on that one budget: each is bounded by the lower of its own cap
 # and what is left (probe_bound), so two probes cannot each spend the whole remainder, and a
 # start confirmed only after the deadline is not a start (critic review finding 3, pass 2).
+# Since DW-20261103-8 a head-successor is certified only once its head's own start-up event, the
+# run-resume naming its session, follows it, so the deadline must outlast the head's start-up as
+# well as the starter's append; the default stays as it was, and a kit passes --wait above the
+# slowest start-up it accepts.
 LAUNCH_CHECK_WAIT_S = 60
 LAUNCH_CHECK_POLL_S = 1.0
 # The run report's two sections the close patches (register entry 2026-09-10 17:43), matched by
@@ -1211,8 +1226,16 @@ LEDGER_HEADER = ("| Time | Item | Finding | Evidence | Routing |", "|---|---|---
 # The events a head writes about its own work, for the pack-age guard's last-activity anchor;
 # observations are left out, since their author is not on the event (a launcher relays some).
 HEAD_ACTS = START_EVENTS + ("gate", "phase-boundary", "decision")
-PACK_LABELS = ("Next:", "Needs:", "Decided:")   # the next-task pack (design D41)
-PACK_LINE_RE = re.compile(r"^\s*(?:[-*]\s+)?(Next|Needs|Decided):", re.M)
+# The next-task pack (design D41) and its Owed: line, which names each review, step or report line
+# still due, `Owed: none` when nothing is (register entry 2026-11-12 08:19: a line owed to another
+# run was lost between heads while the skill required the label and no check read it).
+PACK_LABELS = ("Next:", "Needs:", "Decided:", "Owed:")
+PACK_LINE_RE = re.compile(r"^\s*(?:[-*]\s+)?(Next|Needs|Decided|Owed):", re.M)
+OWED_FIX = ("add an `Owed:` line naming each review, step or report line still due, or "
+            "`Owed: none` when nothing is")
+OWED_UNSTATED = ("- Owed: unstated — the pack this replaces named no Owed: line and the record "
+                 "carries none, so what is still due is for the next head to reconcile against "
+                 "the record")
 PACK_REMAINING_RE = re.compile(
     r"^[ \t]*(?:[-*][ \t]+)?Remaining:[ \t]*(\d+|\d{1,3}(?:,\d{3})+)"
     r"[ \t]*(k?)(?:[ \t]+tokens)?[ \t]*$", re.M | re.I)
@@ -1976,17 +1999,32 @@ def read_text(path, what):
         die("cannot read %s (%s): %s" % (what, path, exc))
 
 
-def write_atomic(path, text):
+def write_atomic(path, text, mode=None):
     """Temp file in the same directory, then rename: a concurrent reader sees the old file or
-    the new one, never a half-written one."""
+    the new one, never a half-written one. `mode` (EXTRACT_MODE for an extraction, whose text
+    can carry what the owner pasted) is set on the temp file before a byte is written, so the
+    file is never readable more widely; with none, the default mode as before."""
     directory = os.path.dirname(path) or "."
     os.makedirs(directory, exist_ok=True)
     temp = os.path.join(directory, ".%s.%d.tmp" % (os.path.basename(path), os.getpid()))
-    with open(temp, "w", encoding="utf-8") as handle:
+    if mode is not None:
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        os.fchmod(fd, mode)   # the umask can only narrow the creation mode; this sets it exactly
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+    else:
+        handle = open(temp, "w", encoding="utf-8")
+    with handle:
         handle.write(text)
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temp, path)
+
+
+# The extraction's files (turns.md, counts.json, and reflect-inputs' waste-table.md and
+# record-filtered.jsonl) carry human turns verbatim, a pasted credential included, and are written
+# under /tmp by default: owner-only, as the frozen transcript copy beside them is (register entry
+# 2026-11-08 17:26).
+EXTRACT_MODE = 0o600
 
 
 # ------------------------------------------------------------------------ the record -------
@@ -3699,7 +3737,11 @@ def head_start_verdict(events, budget=None):
     """The launch check's reading of one record: (state, detail) with state `started` (a head
     start whose pid is alive and whose process started when the event says — both read),
     `pending` (keep polling: no head start after the last head-exit, or only the seed run-open
-    so far), `unverified` (keep polling while time remains, then a named non-success: the start
+    so far), `starting` (keep polling while time remains, then a named non-success: a
+    head-successor whose pid is alive and verified, while its head has not yet written its own
+    start-up event, the run-resume naming its session, which alone certifies the start; likewise
+    a head-resumed of a session whose head never wrote one, start_up_written),
+    `unverified` (keep polling while time remains, then a named non-success: the start
     names a live pid whose age could not be read inside its probe bound, so a reused pid cannot be
     excluded) or `failed` (a terminal reason the check ends on at once: a run-close, an aborted
     starter, a head that exited or whose pid is dead, a reused pid, a start naming no usable pid
@@ -3773,8 +3815,37 @@ def head_start_verdict(events, budget=None):
     # The second probe of this read draws on what the first left, never on the whole remainder.
     row = ps_row(pid, timeout=probe_bound(PS_TIMEOUT_S, budget() if budget is not None else None))
     model, effort = start_model(events, hi)
-    return "started", "%s · pid %d alive (%s, running %d s) · model %s effort %s" % (
+    seen = "%s · pid %d alive (%s, running %d s) · model %s effort %s" % (
         label, pid, row[2] if row else "command unread", age, model or "none", effort or "none")
+    if ev.get("event") in ("head-successor", "head-resumed") and not start_up_written(events, hi, sid):
+        # The starter writes the head-successor the moment its process exists; the head's own
+        # start-up event, the run-resume naming this session, comes later (DW-20261103-8: a
+        # launch certified "running 1 s" while that event came 20 s on). A head-resumed continues
+        # its session's start-up and writes none of its own (RESUME_NOTE), so it is finished only
+        # where that session's head wrote one (the store holds resumes of a head whose run-resume
+        # never came).
+        if ev.get("event") == "head-successor":
+            return "starting", ("%s, but its head has written no start-up event of its own yet "
+                                "(no run-resume naming session %s after it)" % (seen, sid))
+        return "starting", ("%s, but its session's head has written no start-up event of its own "
+                            "(no run-open or run-resume naming session %s since its "
+                            "head-successor)" % (seen, sid))
+    return "started", seen
+
+
+def start_up_written(events, i, sid):
+    """Whether the head of session `sid`, whose start stands at index i, has written its own
+    start-up event: a run-open or run-resume naming the session, after the session's latest
+    head-successor (a fresh process on it) up to i, i included, so a head-successor at i has none
+    yet. An unreadable session (`?`) names none."""
+    if sid == "?":
+        return False
+    for ev in reversed(events[:i + 1]):
+        if ev.get("event") in ("run-open", "run-resume") and start_session(ev) == sid:
+            return True
+        if ev.get("event") == "head-successor" and start_session(ev) == sid:
+            return False
+    return False
 
 
 # The first batch (owner decision D21 (c) of 2026-10-10, register entry 2026-10-04 01:02): the
@@ -3948,6 +4019,12 @@ def model_unreadable(events, anchor):
     if anchor < 0 or start_model(events, anchor)[0]:
         return None
     ev = events[anchor]
+    if ev.get("event") == "run-resume" and not ev.get("model"):
+        # A head's own run-resume, now the start the check certifies (DW-20261103-8), reads its
+        # model from the start naming its session: name that start and what it recorded.
+        sid = start_session(ev)
+        ev = next((p for p in reversed(events[:anchor]) if p.get("event") in START_EVENTS
+                   and start_session(p) == sid), ev)
     return ("the %s at %s carries no readable model (model_src %s), so it may run on the harness "
             "default: stop it and start it again with --model unless the default was meant, or "
             "name it with `run-resume --model`"
@@ -4009,16 +4086,23 @@ def launch_lanes(a, path, events, bad, lanes, detail, t0, wait, step, reads, bud
     of 2026-10-11)."""
     first = launch_anchor(events)
     bound = event_pid(events[first]) if first >= 0 else None   # the confirmed invocation's pid
+    starting = None   # (anchor, why) of the last re-read that found the replacement starting
     while True:
         elapsed = time.monotonic() - t0
         skipped = " · %d unparseable line(s) skipped" % bad if bad else ""
         anchor = launch_anchor(events)
         ended = launch_ended(events, anchor)
-        pending = None
+        pending = pending_state = None
         if ended is None:
             pid = event_pid(events[anchor])
             if pid is None or pid != bound:
                 state, why = head_start_verdict(events, budget=budget)
+                if state == "starting":
+                    starting = (anchor, why)
+                elif state == "unverified" and starting is not None and starting[0] == anchor:
+                    # The same replacement, verified at an earlier re-read: only this re-read's
+                    # probe ran short of the deadline's budget, as in cmd_launch_check.
+                    state, why = "starting", starting[1]
                 # The verification's probes draw on the shared budget and can run to the deadline
                 # or past it, so the time is read again after them, and a replacement confirmed
                 # past the deadline is refused as the head path refuses a late start (critic
@@ -4034,7 +4118,8 @@ def launch_lanes(a, path, events, bad, lanes, detail, t0, wait, step, reads, bud
                 elif state == "failed":
                     ended = "a newer head start replaced it and could not be confirmed: %s" % why
                 else:
-                    pending = why   # unverified: it certifies nothing while it stands
+                    pending = why   # unverified or starting: it certifies nothing while it stands
+                    pending_state = state
             elif not pid_alive(pid):
                 ended = "its pid %d no longer answers" % pid
         if ended is not None:
@@ -4045,8 +4130,10 @@ def launch_lanes(a, path, events, bad, lanes, detail, t0, wait, step, reads, bud
         if pending is not None:
             if elapsed >= wait:
                 say("launch-check: %s NOT CLEAN · the head started (%s), but a newer head start "
-                    "replaced it and its identity was not verified within the %d s deadline: %s "
-                    "(%d read(s))%s" % (a.run, detail, wait, pending, reads, skipped))
+                    "replaced it and %s within the %d s deadline: %s (%d read(s))%s"
+                    % (a.run, detail, "its head's start-up did not finish"
+                       if pending_state == "starting" else "its identity was not verified",
+                       wait, pending, reads, skipped))
                 return 1
             time.sleep(max(0.0, min(step, wait - elapsed)))
             events, bad = read_record(path)
@@ -4123,7 +4210,9 @@ def inside_head(events):
 def cmd_launch_check(a):
     """`launch-check --run R [--wait S] [--poll-s S] [--detach-safe]`: the launch kit's start
     confirmation. Read-only: it polls the record to the deadline for a head start
-    whose pid is alive and started when the event says, prints one line per outcome and exits 0
+    whose pid is alive and started when the event says — a head-successor only once its head's
+    own run-resume follows it, a head-resumed only once its session's head has written one
+    (DW-20261103-8) — prints one line per outcome and exits 0
     started, 1 not started or with no readable model to certify (model_unreadable), 2 on a premise.
     `--wait 0` performs a single read. The deadline is computed
     ONCE, at the start, and governs every read and every probe inside a read: each `ps` probe is
@@ -4151,10 +4240,18 @@ def cmd_launch_check(a):
                 "successor about itself must never wait on its own replacement, since the "
                 "starter waits for that head to exit; run the check from the launcher's shell, "
                 "or pass --detach-safe when this shell is not that head" % how)
+    starting = None   # (newest head event's index, detail) of the last read that found it starting
     while True:
         state, detail = head_start_verdict(events, budget=budget)
         elapsed, late = past_deadline(t0, wait)   # after this read's probes: the one check
         skipped = " · %d unparseable line(s) skipped" % bad if bad else ""
+        hi = last_index(events, LAUNCH_HEAD_EVENTS)
+        if state == "starting":
+            starting = (hi, detail)
+        elif state == "unverified" and starting is not None and starting[0] == hi:
+            # The same head-successor, verified at an earlier read: only this read's probe ran
+            # short of the deadline's budget, and what the start still lacks is its start-up event.
+            state, detail = "starting", starting[1]
         if state == "started" and late:
             say("launch-check: %s NOT STARTED · %sthe start was confirmed only %.1f s after the "
                 "check began, past the %d s deadline (%s); run the check again with a longer "
@@ -4180,6 +4277,11 @@ def cmd_launch_check(a):
             if state == "unverified":
                 say("launch-check: %s NOT STARTED · %s · %.0f s after the check began (%d read(s))%s"
                     % (a.run, detail, elapsed, reads, skipped))
+                return 1
+            if state == "starting":
+                say("launch-check: %s NOT STARTED · the head's start-up did not finish within the "
+                    "%d s deadline: %s; run the check again with a longer --wait (%d read(s))%s"
+                    % (a.run, wait, detail, reads, skipped))
                 return 1
             say("launch-check: %s NOT STARTED · no live head within the %d s deadline: %s "
                 "(%d read(s))%s" % (a.run, wait, detail, reads, skipped))
@@ -4499,21 +4601,39 @@ def is_plan_lane(events, index, close):
     return bool(opened and opened.get("harness") == "codex")
 
 
-def lane_transcript_bill(close):
+def lane_transcript_bill(close, events=None, index=None):
     """(dollars, how) for a lane-closed that carries no cost, billed from the lane's own
     transcript by the meter; (None, why not) otherwise. A lane CLI killed with its head returns
     no result, so the wrapper records total_cost_usd null, while the transcript survives the
     kill (register entry 2026-09-07). The close's session id names the transcript under the
     projects root; exactly one hit is metered with --lanes none as a head of its own, and the
     billed line's `head $` figure is the lane's cost. No hit, several hits or a meter refusal is
-    a reason, never a zero."""
-    sid = close.get("session_id")
+    a reason, never a zero. A close written without the id (one a recovery wrote for a lane
+    killed with its head) takes it from the same attempt's spawn, the lane's newest
+    lane-spawned or lane-respawned before the close at `index` in `events`, and never from an
+    earlier attempt: the search stops at the lane's latest lane-open or lane-resumed, where this
+    attempt began, or at an earlier close (register entry 2026-11-05 13:07 b)."""
+    sid, spawned = close.get("session_id"), None
+    if not sid and events is not None and index is not None:
+        for ev in reversed(events[:index]):
+            if ev.get("lane") != close.get("lane"):
+                continue
+            if ev.get("event") == "lane-closed" or ev.get("event") in LAUNCH_LANE_STARTS:
+                break
+            if ev.get("event") in LAUNCH_LANE_SPAWNS and ev.get("session_id"):
+                spawned = ev
+                sid = ev.get("session_id")
+                break
     if not isinstance(sid, str) or not TOKEN_RE.fullmatch(sid):
         return None, "the close names no lane session id"
     transcript, why = lane_transcript_path(sid)
     if transcript is None:
         return None, why
-    return session_bill(sid, transcript)
+    usd, how = session_bill(sid, transcript)
+    if spawned is not None:
+        how += " (the session id of its %s at %s)" % (spawned.get("event"),
+                                                       spawned.get("ts", "no ts"))
+    return usd, how
 
 
 def lane_transcript_path(sid):
@@ -4588,7 +4708,7 @@ def price_close(events, index, close, bucket, meter_lanes):
     if not meter_lanes:
         bucket["unmeasured"].append((name, "the close carries no cost and no transcript meter was run"))
         return
-    usd, how = lane_transcript_bill(close)
+    usd, how = lane_transcript_bill(close, events, index)
     if usd is None:
         bucket["unmeasured"].append((name, how))
         return
@@ -5569,6 +5689,45 @@ def require_envelope(value):
             "nothing written" % value)
 
 
+CITED_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$")
+
+
+def check_cited(dfile, cited):
+    """The launch refusal for the owner's cited words (register entry 2026-11-09 18:55): each UTC
+    time in `cited` must head a `## Turn N · <time>` block of the decisions file, the shape
+    `extract-transcript --decisions-file` writes, so a run never opens without the words its
+    pre-flight cites in the file its heads read. A time quoted in prose does not count. Returns the
+    line to print, each time with the file line of its heading; a malformed time, a time no
+    heading carries, or --cited with no --decisions-file is a premise failure, nothing written."""
+    if not dfile:
+        die("--cited needs --decisions-file: the cited turns are looked for in the run's "
+            "decisions file; nothing written")
+    bad = [stamp for stamp in cited if not CITED_RE.match(stamp)]
+    if bad:
+        die("--cited %r is not a UTC time such as 2026-11-20T23:09:23 (seconds, then an optional "
+            "fraction and Z); nothing written" % bad[0])
+    fpath, data, _ = decisions_digest_of(dfile)
+    heads = [(n, m.group(1), m.group(2)) for n, line in
+             enumerate(data.decode("utf-8", "replace").split("\n"), 1)
+             for m in [DECISIONS_TURN_RE.match(line)] if m]
+    found, missing = [], []
+    for stamp in cited:
+        hits = [h for h in heads if h[2].startswith(stamp.rstrip("Z"))]
+        if hits:
+            found.append("%s at line %s (Turn %s)" % (stamp, ", ".join(str(h[0]) for h in hits),
+                                                    hits[0][1]))
+        else:
+            missing.append(stamp)
+    if missing:
+        die("the decisions file %s has no `## Turn N · <time>` heading for the cited time%s %s "
+            "(%d turn heading%s read): copy that session's turns in first (`handsoff.py "
+            "extract-transcript --session <id> --decisions-file <that session's file>`, then that "
+            "file whole under a part heading naming the session); nothing written"
+            % (fpath, "" if len(missing) == 1 else "s", ", ".join(missing), len(heads),
+               "" if len(heads) == 1 else "s"))
+    return "run-open: cited turns found in %s: %s" % (fpath, "; ".join(found))
+
+
 @a3_expose_notices
 def cmd_run_open(a):
     refuse_grants_file(a)
@@ -5593,6 +5752,8 @@ def cmd_run_open(a):
     if not os.path.isfile(handoff):
         die("hand-off document not found: %s" % handoff)
     runbook_note = check_runbook(a)
+    cited = getattr(a, "cited", None)
+    cited_note = check_cited(a.decisions_file, cited) if cited else None
     # The opening reading, after the input checks: it runs while the rest of the open is composed.
     usage = None if a.dry_run else usage_windows.UsageRead(HERE).start()
     if a.session_kind == "seed" and a.pid is None:
@@ -5665,6 +5826,8 @@ def cmd_run_open(a):
         ev["usage_delta"] = usage_windows.sample_delta(None, ev["usage_reading"])
     ev["usage_plan"], ev["usage_plan_sha256"] = plan, plan_sha
     say(runbook_note)
+    if cited_note:
+        say(cited_note)
     if a.dry_run:
         say("run-open: dry run · %s" % json.dumps(ev, ensure_ascii=False))
         if trace_warning(trace, True):
@@ -6113,7 +6276,7 @@ def decisions_pending(events, dfile, content=None):
     return authored, changed, label
 
 
-def decisions_hold(a, path, events, what):
+def decisions_hold(a, path, events, what, own_head=False):
     """The decisions channel before a gate or a close (register entry 2026-09-13 03:53): exit 6
     with the pending lines, writing nothing; None to proceed — when nothing is pending, or once
     --ack's observation is recorded. With --decisions-file the ack also carries --ack-digest, the
@@ -6129,7 +6292,11 @@ def decisions_hold(a, path, events, what):
     DECISIONS_SEEN, the length of the record this call checked, and covers that much and no
     more: a relay appended after the read stays pending for the next call even where the ack
     lands after it, so a close its recheck holds leaves nothing acknowledged that it never showed
-    (decisions_covered)."""
+    (decisions_covered). `own_head` (the gate's): with a decisions file, an ack that stands
+    before this head's run-open or run-resume is an earlier head's and clears nothing
+    (head_unacknowledged), the reading the spawn hold takes (decisions_spawn_state), so the gate
+    and the hold agree on whether a predecessor's ack covers a successor (register entry
+    2026-10-14 01:33 b, the status of 9 November 2026)."""
     ack = getattr(a, "ack", None)
     if ack is not None and not one_line(ack):
         die("--ack is empty: name what was read, in one line")
@@ -6137,6 +6304,11 @@ def decisions_hold(a, path, events, what):
     given = ack_digest_given(ack, dfile, getattr(a, "ack_digest", None))
     content = decisions_digest_of(dfile) if dfile is not None else None
     authored, changed, label = decisions_pending(events, dfile, content)
+    inherited = None
+    if own_head and dfile is not None and not changed and head_unacknowledged(events):
+        inherited = ("this head has acknowledged nothing yet: the ack on the record is an earlier "
+                     "head's, so the whole decisions file %s (%d byte(s), sha256 %s) is unread by "
+                     "this head" % (content[0], len(content[1]), content[2]))
     if ack is not None:
         line = one_line(ack)
         proof, shown = {}, ""
@@ -6150,7 +6322,8 @@ def decisions_hold(a, path, events, what):
         if not a.dry_run:
             own = event(a.run, "observation", phase="", what=ACK_PREFIX + line,
                         note="%s: %d AUTHOR observation(s) after %s%s" % (
-                            what, len(authored), label, "; " + changed if changed else ""),
+                            what, len(authored), label,
+                            "; " + (changed or inherited) if changed or inherited else ""),
                         **proof)
             # What this ack covers is the record this call read, never its own place: a relay
             # appended between the read and this append stays pending (decisions_covered).
@@ -6161,11 +6334,12 @@ def decisions_hold(a, path, events, what):
             % (what, "would be recorded" if a.dry_run else "recorded", line[:80], len(authored),
                " and a changed decisions file" if changed else "", shown))
         return None, content
-    if not authored and not changed:
+    if not authored and not changed and not inherited:
         return None, content
     say("%s: HOLD (decisions channel, exit %d) — %d AUTHOR observation(s)%s after %s: read them, "
         "then re-run with --ack \"<one line naming what was read>\"%s"
-        % (what, EXIT_HOLD, len(authored), " and a changed decisions file" if changed else "",
+        % (what, EXIT_HOLD, len(authored), " and a changed decisions file" if changed else
+           " and a decisions file this head has not acknowledged" if inherited else "",
            label, " --ack-digest <the sha256 decisions-read prints>" if dfile is not None else ""))
     for e in authored:
         text = "%s · %s" % (e.get("ts", "no ts"), one_line(e.get("what") or ""))
@@ -6177,6 +6351,12 @@ def decisions_hold(a, path, events, what):
         start, which = decisions_unread(events, content[1])
         unread = text_lines(content[1][start:])
         say("  %d unread line(s), %s:" % (len(unread), which))
+        for line in unread:
+            say("  | " + line)
+    elif inherited:
+        say("  " + inherited)
+        unread = text_lines(content[1])
+        say("  %d unread line(s), the whole file:" % len(unread))
         for line in unread:
             say("  | " + line)
     if dfile is not None:
@@ -7392,7 +7572,7 @@ def cmd_gate(a):
         stopped = model_verdict(a, path, mc, "gate", "item %s" % a.to)
         if stopped is not None:
             return stopped
-    held, content = decisions_hold(a, path, events, "gate")
+    held, content = decisions_hold(a, path, events, "gate", own_head=True)
     if held is not None:
         return held
     bound = {DECISIONS_FILE: content[0]} if content else {}
@@ -7799,6 +7979,8 @@ def derive_inflight(events, current=None, boundary=None):
     """`## In flight` derived from the run record, under the header the guard writes; the D41
     labels are kept, so a derived pack passes the same label check a head's own pack must pass,
     and an empty class says so rather than going silent.
+    - Owed: the record holds no such line, so it is the replaced pack's own, among the lines kept
+      below; where that pack named none, OWED_UNSTATED says so (register entry 2026-11-12 08:19).
     - Next: at a boundary (`boundary`, its event), that boundary's own `next`; else the newest
       head-written pack's Next where the pack is newer than the last phase-boundary (register
       entry 2026-09-25 17:4x: a day-old boundary's `next` stood in for the dead head's current
@@ -7864,6 +8046,8 @@ def derive_inflight(events, current=None, boundary=None):
     if not decisions:
         lines.append("- Decided: no decision event since the %s"
                      % ("previous boundary" if boundary is not None else "boundary"))
+    if "Owed" not in PACK_LINE_RE.findall("\n".join(kept)):
+        lines.append(OWED_UNSTATED)
     for ev in since:
         if ev.get("event") == "observation" and str(ev.get("what") or "").startswith(ACK_PREFIX):
             lines.append("- Acknowledged: %s (at %s)" % (
@@ -8032,14 +8216,15 @@ def cmd_handoff(a):
                 say(line)
     if a.final and a.inflight is None:
         die("--final needs the next-task pack: --inflight-file PATH (or --inflight TEXT) "
-            "carrying Next:, Needs: and Decided: (D41)")
+            "carrying Next:, Needs:, Decided: and Owed: (D41)")
     if a.inflight is not None:
         if not derived:
             refuse_placeholder("handoff", {"inflight": a.inflight})
         missing = pack_missing(a.inflight)
         if missing and a.final:
             die("the next-task pack lacks %s (each label at the start of a line; an optional "
-                "'- ' bullet is allowed)" % ", ".join(missing))
+                "'- ' bullet is allowed)%s" % (", ".join(missing),
+                                               ": " + OWED_FIX if "Owed:" in missing else ""))
         if missing:
             say("handoff: warn: the in-flight pack lacks %s (a --final pack would be refused)"
                 % ", ".join(missing))
@@ -13256,18 +13441,21 @@ def orientation_rows(events):
     `orientation_tokens`; anything else is `unmeasured` with the reason. One row per session
     id — a head-successor and the run-resume that follows it are two spans of ONE session — and
     a measured figure wins over an unmeasured one, so a resumed head's null does not hide the
-    figure its own first gate recorded."""
+    figure its own first gate recorded; among unmeasured rows, a gate's own reason wins over
+    "no gate event" from another span of the same session, so the reason is picked after every
+    span's gates are read (register entry 2026-11-09 07:39 b: the head-successor's span, which
+    holds no gate, gave its reason though the run-resume's span held the gate and its note)."""
     spans = head_spans(events)
     if not spans:
         return [("orientation cost", "unmeasured · the record names no head session that ran",
                  "structural", FIX_NONE)]
-    found = []       # (session id, row, measured): one row per id survives, measured first
+    found = []       # (session id, row, rank): one row per id survives, the highest rank first
     for sid, i, end in spans:
         item = "orientation cost · head %s" % sid
         gate = next((e for e in events[i:end] if e.get("event") == "gate"), None)
         if gate is None:
             found.append((sid, (item, "unmeasured · no gate event in this head's span",
-                                "structural", FIX_NONE), False))
+                                "structural", FIX_NONE), 0))
             continue
         value = gate.get("orientation_tokens", MISSING)
         source = "gate.orientation_tokens · item %s at %s" % (gate.get("item", "?"),
@@ -13275,21 +13463,21 @@ def orientation_rows(events):
         if value is None:
             note = gate.get("orientation_note") or "the field is null"
             found.append((sid, (item, "unmeasured · %s · %s" % (note, source), "structural",
-                                FIX_NONE), False))
+                                FIX_NONE), 1))
             continue
         if value is MISSING:
-            found.append((sid, (item, "field absent", "structural", FIX_NONE), False))
+            found.append((sid, (item, "field absent", "structural", FIX_NONE), 1))
             continue
         fig, finding = figure(value, "count", source)
         found.append((sid, (item, fig.replace(" · ", " tokens · ", 1), "structural",
-                            FIX_OPEN if finding else FIX_NONE), True))
+                            FIX_OPEN if finding else FIX_NONE), 2))
     chosen = {}
     order = []
-    for sid, row, measured in found:
+    for sid, row, rank in found:
         if sid not in chosen:
             order.append(sid)
-        if sid not in chosen or (measured and not chosen[sid][1]):
-            chosen[sid] = (row, measured)
+        if sid not in chosen or rank > chosen[sid][1]:
+            chosen[sid] = (row, rank)
     return [chosen[sid][0] for sid in order]
 
 
@@ -13340,16 +13528,22 @@ def lane_rows(events, meter_lanes=False):
         if cost is None and is_plan_lane(events, i, ev):
             fig, finding = ("plan usage (a Codex lane): counted, never priced · "
                             "lane-closed.total_cost_usd null · %s%s" % (stamped, note)), False
-        elif cost is None and meter_lanes:
+        elif meter_lanes and (cost is None or (cost is MISSING and not is_plan_lane(events, i, ev))):
             # A close with no cost (a lane killed with its head, register entry 2026-09-07) is
-            # billed from its surviving transcript; a lane that cannot be stays unmeasured.
-            usd, how = lane_transcript_bill(ev)
+            # billed from its surviving transcript; a lane that cannot be stays unmeasured. A close
+            # a recovery wrote has no cost key at all (register entry 2026-11-05 13:07 b): billed
+            # alike, its row says the field is absent, and unbilled it stays `field absent`.
+            usd, how = lane_transcript_bill(ev, events, i)
             if usd is not None:
-                fig, finding = ("metered (transcript) $%.2f · lane-closed.total_cost_usd null · "
-                                "%s · %s%s" % (usd, how, stamped, note)), usd > 0
-            else:
+                fig, finding = ("metered (transcript) $%.2f · lane-closed.total_cost_usd %s · "
+                                "%s · %s%s" % (usd, "null" if cost is None else "absent", how,
+                                               stamped, note)), usd > 0
+            elif cost is None:
                 fig, finding = figure(None, "usd", "lane-closed.total_cost_usd · %s%s · "
                                       "transcript meter: %s" % (stamped, note, how))
+            else:
+                fig, finding = ("field absent · lane-closed.total_cost_usd · %s%s · transcript "
+                                "meter: %s" % (stamped, note, how)), False
         else:
             fig, finding = figure(cost, "usd",
                                   "lane-closed.total_cost_usd · %s%s" % (stamped, note))
@@ -14115,9 +14309,9 @@ def write_extraction(lane, sid, path, out_dir, extra, withheld=None):
                "reconciles": reconciliation(counts)[1] == 0}
     try:
         write_atomic(os.path.join(out_dir, "turns.md"),
-                     extraction_text(sid, path, turns, counts))
+                     extraction_text(sid, path, turns, counts), mode=EXTRACT_MODE)
         write_atomic(os.path.join(out_dir, "counts.json"),
-                     json.dumps(payload, ensure_ascii=False, indent=1) + "\n")
+                     json.dumps(payload, ensure_ascii=False, indent=1) + "\n", mode=EXTRACT_MODE)
     except OSError as exc:
         die("cannot write the extraction under %s: %s" % (out_dir, exc))
     return counts
@@ -14583,12 +14777,13 @@ REFLECTOR_CLASS = "reflector"   # the one lane class whose controls the reflecto
 
 def control_needles(events):
     """The texts the blind reflector must not read, from the record: the `what` and `note` of
-    every observation whose phase starts CONTROL_PHASE, and the `controls_checked` and `plant`
-    values (strings, or lists and mappings of them) of any event not known to be another class's,
-    each at least NEEDLE_MIN characters. A lane's CONTROL+ check is a reading-list check of its
-    own class, never a control the reflector is blind to (register entry 2026-10-23 03:48), so
-    only a `reflector` lane's count; an event whose class cannot be found stays a needle, since
-    this guard errs towards a lost line. A lane-resumed takes its lane's lane-open class."""
+    every observation whose phase starts CONTROL_PHASE, and the `plant` value (a string, or lists
+    and mappings of them) of any event not known to be another class's, each at least NEEDLE_MIN
+    characters. Only a `reflector` lane's plant counts; an event whose class cannot be found stays
+    a needle, since this guard errs towards a lost line. A lane-resumed takes its lane's lane-open
+    class. `controls_checked` is never read: a CONTROL+ check is a phrase its lane must be able to
+    find in its own inputs, never a text a reflector is blind to, and a reflector's own lane-open
+    is written only after its inputs (register entries 2026-10-23 03:48 and 2026-11-10 23:50)."""
     classes = {str(ev["lane"]): ev["class"] for ev in events
                if ev.get("event") == "lane-open" and ev.get("lane") and ev.get("class")}
     found = []
@@ -14610,10 +14805,9 @@ def control_needles(events):
                 and phase.startswith(CONTROL_PHASE):
             add(ev.get("what"))
             add(ev.get("note"))
-        if (ev.get("class") or classes.get(str(ev.get("lane")))) in (None, "", REFLECTOR_CLASS):
-            for key in ("controls_checked", "plant"):
-                if key in ev:
-                    add(ev[key])
+        if (ev.get("class") or classes.get(str(ev.get("lane")))) in (None, "", REFLECTOR_CLASS) \
+                and "plant" in ev:
+            add(ev["plant"])
     return found
 
 
@@ -14795,9 +14989,10 @@ def cmd_reflect_inputs(a):
                                    meter_lanes=not a.no_meter)
     kept, dropped, stripped = blinded_events(events)
     try:
-        write_atomic(os.path.join(out_dir, "waste-table.md"), text)
+        write_atomic(os.path.join(out_dir, "waste-table.md"), text, mode=EXTRACT_MODE)
         write_atomic(os.path.join(out_dir, "record-filtered.jsonl"),
-                     "".join(json.dumps(ev, ensure_ascii=False) + "\n" for ev in kept))
+                     "".join(json.dumps(ev, ensure_ascii=False) + "\n" for ev in kept),
+                     mode=EXTRACT_MODE)
     except OSError as exc:
         die("cannot write the reflection inputs under %s: %s" % (out_dir, exc))
     summary = {"turns": counts["extracted"], "human_turns": counts["human_turns"],
@@ -14940,6 +15135,10 @@ def main():
     p.add_argument("--decisions-file", default=None, metavar="PATH",
                    help="the run's decisions file, bound on the record: gate, close and both "
                         "launchers read it from there; a named file that does not exist is refused")
+    p.add_argument("--cited", action="append", default=[], metavar="UTC",
+                   help="a UTC time the pre-flight cites, as 2026-11-20T23:09:23 (repeatable): "
+                        "the open is refused, nothing written, while it heads no `## Turn N · "
+                        "<time>` block of --decisions-file")
     p.add_argument("--session", required=True)
     p.add_argument("--head", required=True)
     p.add_argument("--regime", required=True, choices=("single", "multi"))
@@ -15097,7 +15296,9 @@ def main():
                        help="effort for the head; absent, the newest head start's effort on the "
                             "record, and with none %s (the owner's head rule)" % HEAD_EFFORT_DEFAULT)
         p.add_argument("--effort-src", default=None, help=argparse.SUPPRESS)
-        p.add_argument("--config-dir", default=None, help="optional; unused by default (a run stays on one login, D28)")
+        p.add_argument("--config-dir", default=None,
+                       help="optional: the login folder (CLAUDE_CONFIG_DIR) the head is started "
+                            "under; absent, the caller's own login")
         p.add_argument("--harness-bin", default=HARNESS, help="the harness binary (a suite substitutes a stub)")
         return p
 
@@ -15191,7 +15392,9 @@ def main():
     p.add_argument("--stop-file", default=None)
     p.add_argument("--reset-at", default=None, metavar="HH:MM|+Ns|ISO")
     p.add_argument("--probe", action="store_true", help="opt in to a $0.05 haiku probe every --probe-interval-s until one succeeds; OFF by default (owner ruling 2026-09-06): without it an unparsed reset records stop-condition limit-unparsed and ends (exit 7), the hand-off being the recovery; a limit scoped to one model records limit-model and ends the same way, with or without the flag")
-    p.add_argument("--config-dir", default=None, help="optional; unused by default (a run stays on one login, D28)")
+    p.add_argument("--config-dir", default=None,
+                   help="optional: the login folder (CLAUDE_CONFIG_DIR) the --probe call runs "
+                        "under; absent, the caller's own login")
     p.add_argument("--probe-interval-s", type=int, default=PROBE_INTERVAL_S)
     p.add_argument("--max-wait-s", type=int, default=8 * 3600, help="give up (exit 7) past this, from the wait's start")
     p.add_argument("--max-block-s", type=int, default=MAX_BLOCK_S, help="one call blocks at most this long")
@@ -15322,7 +15525,9 @@ def main():
     p = common(sub.add_parser("launch-check", help="the launch kit's start confirmation: poll "
                                                    "the record to a deadline for a head start "
                                                    "whose pid is alive and verified (its age "
-                                                   "and the event's timestamp both read); exit "
+                                                   "and the event's timestamp both read), a "
+                                                   "head-successor only once its head's own "
+                                                   "run-resume follows it; exit "
                                                    "0 started, 1 not started (the deadline, an "
                                                    "unverifiable pid, a run-close, an "
                                                    "aborted starter, a dead head, a reused pid), "

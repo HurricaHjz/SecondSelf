@@ -8,7 +8,7 @@ holding the lane-side settings, the fence hook and the contract slices, and no C
 whose context is its brief plus exactly the directories the head grants.
 
     lane.py init   [--home DIR]                    build or refresh the base lane home
-    lane.py spawn  --run ID --lane ID --class CLASS --brief FILE --expect-usd USD --reason "(a) WHY" [options]
+    lane.py spawn  --run ID --lane ID --class CLASS --brief FILE --expect-usd USD --reason "(a) WHY" --choice-reason "WHY" [options]
     lane.py watch  --run ID --lane ID [--silence-s N] [--max-wait-s N]
     lane.py wait   --run ID --lane ID [--silence-s N]
     lane.py resume --run ID --lane ID --brief FILE [--detach [--no-wait]]   (the spawn's reason is carried forward)
@@ -55,11 +55,11 @@ The per-call pick (owner ruling 2026-09-07 17:0x; built 2026-09-08; the tier rul
 line — the row's marked defaults are ANCHORS, and the head picks `--model` and `--effort` per call
 within the row's options. Which model serves which work is the routing table's (`routing.json`, with
 the delegate skill §2): opus 5.5 the anchor on every Claude seat, sonnet per call under that
-section's test (owner ruling 2026-11-01), and fable only on the owner's word
+section's test (owner ruling 2026-11-01), and fable on the owner's word or as the user's own rules set
 (a by-name `--model fable` is recorded as outside the options, never refused); the `top` and `cheap`
 presets resolve the model to opus through the table's `preset_model` (owner rulings 2026-09-22 and
-2026-09-29). Effort on opus: xhigh the anchor, max only after a failed
-xhigh or for a genuinely hard or very extensive task. Every close carries `fallback`, read from the
+2026-09-29). Effort on opus: the row's default the anchor, one rung up after a failed attempt,
+max only after a failed xhigh or for a genuinely hard or very extensive task. Every close carries `fallback`, read from the
 result's modelUsage ids against the alias map in prices.json (`models`): a second non-helper id,
 or one other than the alias's recorded resolution, is a transparent safeguard fallback (Opus 5.5
 re-routes some tasks with no refusal to see); the wrapper then moves the task's remaining work to
@@ -79,14 +79,21 @@ that cannot be read, is not a regular file or does not parse holds every move fo
 missing file holds none. `lane-open` and
 `lane-resumed` record `no_swap`, the flag as this call passed it. The
 `lane-open` line records where each axis came from: `model_src`/`effort_src` read `anchor` (no
-override, or one equal to the anchor), `auto: <text>` (a departure, carrying `--choice-reason`'s
-text), `throttle <name>` (a hand-set preset's own value) or `explicit` (a departure from a
-hand-set preset's value, which needs no reason), and `choice_reason` carries the text or null.
-Under `auto` a departure with no `--choice-reason` is refused exactly as a missing `--reason` is
-(exit 2, before any record line, `--dry-run` included). `--choice-reason` says why this model and
-effort for this task; `--reason` says why a lane at all, stays required, and the two are never
-merged. `resume` makes no new pick: it copies the three fields from the lane's latest
-`lane-open`, `unrecorded` and null for a record from before them.
+override, or one equal to the anchor), `auto: <text>` (a departure under `auto`, carrying
+`--choice-reason`'s text), `throttle <name>` (a hand-set preset's own value) or `explicit` (a
+departure from a hand-set preset's value), and `choice_reason` carries the text. Every spawn names
+its pick (owner ruling 2026-11-20, "Guided judgement": every pick names its option and its reason
+in one clause, the default included): a `--choice-reason` that is absent, empty or only whitespace
+is refused under every throttle, the row's default and the hand-set presets included, exactly as a
+missing `--reason` is (exit 2, before any record line, `--dry-run` included); a departure under
+`auto` keeps its own message naming the axes that depart. The check is of presence, never of
+quality. `--work-kind checkable|open`, optional, is recorded on `lane-open` as `work_kind` (null
+when not given); it changes no pick and never stands in for the reason. `--choice-reason` says why
+this model and effort for this task; `--reason` says why a lane at all, stays required, and the two
+are never merged. `resume` copies `model_src`, `effort_src` and `choice_reason` from the lane's
+latest pick (its `lane-open`, or a `lane-resumed` that raised the effort), `unrecorded` and null
+for a record from before them; its one new pick is a raise of the effort by one rung
+(`resume --effort`, below).
 
 The `lane-open` line's `mode` is the run's delegation regime, `single` or `multi`, with its
 source in `mode_src` (`owner`: the Settings line, or the owner's word for this run; `head`:
@@ -195,10 +202,11 @@ in the caller before any detach, as every other argument, grant and cost check d
 The spawn hold (register 2026-10-14 01:33 b). A spawn, or a resume with a brief, reads the run's
 decisions channel in the caller before any detach, through handsoff.py's `decisions_spawn_state`:
 content no accepted ack covers, an unread `AUTHOR` observation, or a head that has acknowledged
-nothing itself holds the call. Under `enforce` that exits 7 and a state that cannot be read exits 2,
-each with nothing started and no record line; under `trial` (`DECISIONS_HOLD_MODE`) the same text
-prints, one observation per digest and head is written and the call goes on. A dry run prints and
-writes nothing. A plain lane run, a closed run, a no-work beat and a recorded movement are not held.
+nothing itself holds the call. The mode is `enforce` (`DECISIONS_HOLD_MODE`, on the owner's yes of
+19 November 2026, H128): a hold exits 7 and a state that cannot be read exits 2, each with nothing
+started and no record line. Under `trial`, the undo, the same text prints, one observation per
+digest and head is written and the call goes on. A dry run prints and writes nothing. A plain lane
+run, a closed run, a no-work beat and a recorded movement are not held.
 
 The watchdog (D20)
 ------------------
@@ -211,7 +219,9 @@ brief that runs a long suite passes a larger value; `--silence-s 0` disables the
 `--silence-s` a spawn takes its class default and a resume keeps its lane-open's threshold (the
 numbers below). No transcript within `--no-transcript-s` (default 120) of the spawn is a stall of
 reason `no transcript`. Action: SIGTERM to the process group, the kill grace, SIGKILL; a `stall`
-event; `exit_class` `stall`; exit 5.
+event; `exit_class` `stall`; exit 5. A lane whose stop text names a usage limit before the silence
+closes `limit` instead (exit 6, so the limit resume stands), the stall kept as the close's `stall`
+field (register 2026-11-10 21:18).
 
 Keeping the host awake (owner decision of 2026-10-09; register 2026-10-08 21:21). The silence
 watch reads the wall clock, so a host that sleeps while a lane runs has the sleep recorded as a
@@ -326,15 +336,22 @@ A warning is any stderr notice the caller printed before the worker's launch, th
 outcomes and the worker-started line set aside (`CallerSummary`), so a warning added later is named
 with no change to the summary. Arguments that do not parse but name `--detach` are a refusal too.
 
-A second pass on a helper's work goes to a fresh helper with a compact hand-off: the earlier
-report's path, the findings to fold, the held files and what must not change. Use `resume`
-only for a long write cut short by a usage limit, whose work is on disk and checked, or for
-the multi-expert panel's round 2. These are recommendations; the resume checks are unchanged.
+A review's findings go back to the helper that made the work, by `resume`, with one rung more
+effort where the review failed on depth; a fresh helper with a compact hand-off (the earlier
+report's path, the findings to fix, the held files and what must not change) is started only where
+that helper's record is gone, its context is spent, or the review asks, with its reason, for the
+fix to go to a seat that has not seen the work. A second pass that no review asked for, such as a
+clean-up's pass 2, still goes to a fresh helper. `resume` also serves a long write cut short by a
+usage limit, whose work is on disk and checked, and the multi-expert panel's round 2. These are
+recommendations; the resume's checks stand, and since 2026-11-21 a resume may raise the effort
+one rung (`--effort`) and be made past the cache window (`--late`), each with `--choice-reason`
+(below).
 
 `resume` (D25) re-enters a finished lane's session (`--resume <session id>`, the continuation
 brief on standard input) with the model, effort, tools, grants and settings its `lane-open`
-recorded, refusing when the lane's last call (`lane-closed.ts`) is older than the resume
-window, since the cache has lapsed by then and a fresh spawn costs less. It records
+recorded (the effort a resume raised, below), refusing when the lane's last call
+(`lane-closed.ts`) is older than the resume window, since the cache has lapsed by then, unless
+`--late` names why a late resume beats a fresh helper (below). It records
 `lane-resumed` BEFORE the process starts, as a spawn records `lane-open`, then `lane-respawned`
 carrying the process's `pid` and `wrapper_pid`, and a new `lane-closed` (2026-09-13: the pid moved
 from `lane-resumed` to `lane-respawned`, the pair codex-lane.py already writes).
@@ -343,6 +360,32 @@ and `lane-resumed` carries `after_limit` and `age_s`; a lane whose transcript ca
 re-spawned, never resumed (exit 2). The window's reference is the lane's last call: its
 `lane-closed.ts`, or a later successful `hold-beat` (below), whichever is later, and
 `lane-resumed.age_src` names which.
+A resume's own pick (2026-11-21; the agreed way of working sends a review's findings back to the
+helper that made the work, one rung higher after a review that failed on depth). `--effort RUNG`
+raises the effort by exactly one rung above the lane's recorded effort — the next entry of the
+routing table's `order.effort` (the table the lane-open recorded, else the one beside this
+script), within the class's effort options — and needs `--choice-reason`; the same effort, a lower
+one, more than one rung, a rung outside the options or a value outside the order is refused, exit
+2, before any record line, and a table that cannot be read or a recorded effort outside its order
+is a premise failure. The raise yields to a preset floor: under `fast` and `cheap-fast`, whose
+effort floor the owner wrote, it is refused and the message says to fold at the recorded effort.
+The throttle is the Settings line in force when the resume is made, read as a start reads it, not
+the one the lane opened under; with no line, or a value that names no preset, it reads `auto`
+and the raise is admitted.
+A resume takes no `--model`. The lane's recorded effort is that of its latest
+`lane-resumed` carrying `effort`, else its lane-open's, so a later resume keeps a raised rung. The
+cost: the effort is part of the session's configuration, so the lane's context is written again
+on that call (`config_match` false; the delegate skill records an effort switch rewriting the
+context once and carrying it once, and the meter counts such a rewrite as `switch`).
+`lane-resumed` then carries `effort`, `effort_src` `resume: <text>` and `choice_reason`. `--late`
+with `--choice-reason` (why a late resume beats a fresh helper) resumes past the window instead of
+refusing: the context is written again (one stderr line says so), the transcript check is D29's
+(missing or unparseable refuses), and `lane-resumed` carries `late` true, `late_reason` and
+`age_s`; without the flag the
+refusal stays and names it, and where the window has not passed or a limit or network close waives
+it, `--late` is not needed (one stderr note, nothing recorded). `--choice-reason` alone, and any of
+the three beside `--beat`, is refused. The beat keeps the lane-open's configuration byte for byte,
+so on a lane a resume raised, its next beat runs at the lane-open's effort.
 
 `resume --beat` (the held-lane beat, 2026-09-17) is the no-work resume handsoff.py's
 supervisor issues for a held lane: the same command line as a resume — the lane-open's model,
@@ -491,8 +534,9 @@ control. The core comes from `--append-core FILE`, then the lane-home copy, then
 `templates/lane-core.md`. `--no-core` drops the core and keeps the slices. Every spawn records
 `appended` and `appended_bytes` so its actual context remains auditable. A lane-home core that
 differs from its template draws one stderr line at the spawn, naming whether it is older than the
-template or matches neither the template nor its recorded build (a hand edit in the built copy):
-`init` rebuilds it, and the line never stops a spawn.
+template or matches neither the template nor its recorded build (a hand edit in the built copy),
+and the spawn appends the template instead of that copy, as codex-lane.py does (register
+2026-10-04 00:09): `init` rebuilds it, and the line never stops a spawn.
 
     So the appended file is the single carrier. Per spawn the wrapper concatenates the lane
     core, then every slice the class row's `skills.default` names, then any `--skill` extra it
@@ -568,7 +612,6 @@ NO_TRANSCRIPT_S = 120           # see the derivation above
 REPORT_WORDS = None             # The default report is complete; previews require an explicit request.
 RESUME_WINDOW_S = 55 * 60       # the 1-hour cache tier less 5 min headroom (design D25)
 ORIENTATION_TOKENS = 85000      # fallback only when first_call_context is absent; set by judgement, unmeasured for a new deployment
-ADVISE_REPORT_MIN_BYTES = 400   # a wrapper placeholder report is shorter; a lane's real report is longer (set by judgement, unmeasured)
 LIMIT_TEXT_WORDS = 60           # see the derivation above
 WATCH_MAX_WAIT_S = 570          # see the derivation above
 WATCH_APPEAR_S = 5              # record-appearance wait; set by judgement, unmeasured for a new installation
@@ -580,8 +623,9 @@ EXIT_STILL_RUNNING = 8
 EXIT_DECISIONS_HOLD = 7
 # The spawn hold's one mode. `trial` logs what it would have held and holds nothing, as a new check
 # that can block first must; anything else holds. One constant, so no record can lose a mode: the
-# owner's word to enforce is this one word, at an install.
-DECISIONS_HOLD_MODE = "trial"
+# owner's word to enforce is this one word, at an install. Enforcing since the owner's yes of 19
+# November 2026 (H128); `trial` is the undo.
+DECISIONS_HOLD_MODE = "enforce"
 EXIT_UNCONFIRMED = 4            # a detached call's worker lives but its acknowledgement was not seen: the lowest code neither wrapper uses (they use 0, 2, 3, 5, 6, 7 and 8; 1 is Python's own for an uncaught error)
 ACK_WAIT_S = 60                 # see the derivation above: how long --detach --no-wait waits for this call's acknowledgement
 ACK_POLL_S = 0.25               # record reads while it waits; set by judgement, unmeasured
@@ -1202,9 +1246,10 @@ def strip_vault_local(text, label):
 
 
 def core_drift_note(home, vault):
-    """One line when the lane-home core differs from its template, else None. The home core is what a
-    spawn appends, so a template edit reaches no lane until `init` rebuilds it (register 2026-10-04 00:09).
-    It tells a stale build from a hand edit by the sha `init` recorded. A note, never a stop."""
+    """One line when the lane-home core differs from its template, else None. When it fires, the spawn
+    appends the template's core instead of the home copy, so a template edit reaches the next lane
+    before `init` rebuilds the home (register 2026-10-04 00:09; it recurred on 15 November 2026). It
+    tells a stale build from a hand edit by the sha `init` recorded. A note, never a stop."""
     home_core, template = os.path.join(home, CORE_NAME), core_source(vault)
     if not (os.path.isfile(home_core) and os.path.isfile(template)):
         return None
@@ -1213,9 +1258,11 @@ def core_drift_note(home, vault):
         return None
     recorded = (load_state(home).get(CORE_NAME) or {}).get("out_sha")
     if current == recorded:
-        return "lane.py: the lane-home core is older than its template; `lane.py init` rebuilds it"
+        return ("lane.py: the lane-home core is older than its template; this spawn appends the template; "
+                "`lane.py init` rebuilds it")
     return ("lane.py: the lane-home core matches neither its recorded build nor its template (a hand "
-            "edit in the built copy?); `lane.py init` rebuilds it, so carry such an edit into the template first")
+            "edit in the built copy?); this spawn appends the template; `lane.py init` rebuilds it, so "
+            "carry such an edit into the template first")
 
 
 def item_name(value):
@@ -3028,6 +3075,18 @@ def find_transcript(projects_root, home, session_id):
     return hits[0] if hits else None
 
 
+def refuse_session_in_use(session_id, projects_root):
+    """Exit 2 when a spawn's --session-id names a session whose transcript already stands under the
+    projects root, in the folders find_transcript searches: the close finds a transcript by its id
+    across them all, so it could read another session's report and peak (register 2026-11-10
+    13:56, a head that passed its own id). The caller's check, before any record line."""
+    hits = sorted(globmod.glob(os.path.join(projects_root, "*", "%s.jsonl" % globmod.escape(session_id))))
+    if hits:
+        die("--session-id %s is already in use: its transcript stands at %s%s — leave --session-id out "
+            "(a fresh id is the default) or pass a new one, never the calling session's own"
+            % (session_id, hits[0], "" if len(hits) == 1 else " (and %d more)" % (len(hits) - 1)))
+
+
 def resume_transcript_error(path):
     """D29: require one parseable session record, tolerating torn or malformed other lines."""
     if not path or not os.path.isfile(path):
@@ -3181,7 +3240,7 @@ def a3_native_evidence(raw, harness):
     if isinstance(raw, str):
         raw = raw.encode("utf-8")
     messages, order, refusals, refusal_texts = {}, [], {}, []
-    last_refusal = last_completion = last_work = 0
+    last_refusal = last_completion = last_work = last_model_work = 0
     turn = 0
     refusal_turn = None
     final_turn = None
@@ -3224,6 +3283,10 @@ def a3_native_evidence(raw, harness):
                          "terminal_synthetic_text": text.strip() if model.startswith("<synthetic") and zero else None,
                          "terminal_synthetic_event": {"uuid": event.get("uuid"), "order": position}}
             last_work = position
+            # The lane's own work past a refusal (a3_refusal_recovered): never the harness's
+            # synthetic stop record, nor a later record of a message already refused.
+            if not synthetic["synthetic_stop"] and not refused and str(message_id) not in refusals:
+                last_model_work = position
             if message.get("stop_reason") == "end_turn":
                 last_completion = position
         elif harness == "codex":
@@ -3278,6 +3341,7 @@ def a3_native_evidence(raw, harness):
             "refusal": bool(refusals), "refusal_count": len(refusals),
             "refusal_evidence": list(refusals.values()), "last_refusal": last_refusal,
             "last_completion": last_completion, "last_work": last_work,
+            "last_model_work": last_model_work,
             "final_turn": final_turn, "later_completion": last_completion > last_refusal > 0,
             "same_turn_completion": bool(harness == "codex" and refusals and
                                           refusal_turn == turn and last_completion > last_refusal),
@@ -3315,6 +3379,26 @@ def a3_stop_evidence(evidence, harness):
         text = terminal_stop_text(*args)
         limit, network = limit_signal(*args), network_signal(*args)
     return {"terminal_stop_text": text, "limit_signal": limit, "network_signal": network}
+
+
+A3_STOPS_OVER_REFUSAL = ("limit", "network")   # the close classes a recovered refusal yields to
+
+
+def a3_refusal_recovered(evidence):
+    """The lane worked on past its last refusal: a later message of its own model stands after it
+    (`last_model_work`, which Claude transcripts carry; a Codex pass has none, so it never reads as
+    recovered here)."""
+    return evidence.get("last_model_work", 0) > evidence.get("last_refusal", 0) > 0
+
+
+def a3_refusal_ended_work(evidence):
+    """Whether the pass's refusal is what ended its work, so that it classes the close `refusal`
+    and can move the task: any refusal, unless the lane recovered from it and a usage-limit or
+    network stop then ended the pass, which outranks it; the refusal count stays as evidence
+    (register 2026-10-25 08:16: such a close was classed refusal and moved to the other family)."""
+    return bool(evidence.get("refusal_count")) and not (
+        (evidence.get("limit_signal") or evidence.get("network_signal"))
+        and a3_refusal_recovered(evidence))
 
 
 def a3_final_success(harness, evidence, process_exit, successful_result=True, stopped=False):
@@ -3848,7 +3932,7 @@ def a3_family_rule_context(journal):
     """N5 belongs to this pass's saved ancestry, never to its later successors."""
     history = a3_pass_history(journal)
     evidence, outcome = journal.get("evidence") or {}, journal.get("outcome") or {}
-    triggered = evidence.get("refusal_count") or (outcome.get("fallback") or {}).get("verdict") == "fallback"
+    triggered = a3_refusal_ended_work(evidence) or (outcome.get("fallback") or {}).get("verdict") == "fallback"
     if journal.get("kind") == "beat" or journal["disposition"].get("decision") == "moved" \
             or not triggered or {row["family"] for row in history} != {"claude", "codex"}:
         return None
@@ -4242,11 +4326,10 @@ class A3Owner:
         if not journal.get("stop_cause"):
             self.stop("infrastructure-failure")
         if self.process is not None and self.process.poll() is None:
-            signal_group(self.process.pid, signal.SIGTERM)
-            try:
-                self.process.wait(timeout=KILL_GRACE_S)
-            except subprocess.TimeoutExpired:
-                signal_group(self.process.pid, signal.SIGKILL)
+            # The shared stop, waiting rather than draining: a stream settler may own the pipes.
+            entries = stop_proven_group(process=self.process, drain=False)
+            self.process._lane_stop_group = (getattr(self.process, "_lane_stop_group", None) or []) + entries
+            if self.process.poll() is None:
                 self.process.wait(timeout=KILL_GRACE_S)
         settled = self.journal["evidence"].get("settled", False)
         if self.process is not None and not settled:
@@ -4280,7 +4363,7 @@ class A3Owner:
         close = dict(journal.get("outcome") or {})
         close["native_error"] = close.get("error")
         close.update({"event": "lane-closed", "ts": now(), "run": journal["run"], "lane": journal["lane"],
-                 "exit_class": "refusal" if journal["evidence"].get("refusal_count") else
+                 "exit_class": "refusal" if a3_refusal_ended_work(journal["evidence"]) else
                                "error" if journal["child_started"] or unknown_launch else "setup-failed", "exit_code": 3,
                  "process_exit": self.process.returncode if self.process is not None else None,
                  "error": str(exc), "report": journal["report"], "class": journal["start"].get("class"),
@@ -4469,7 +4552,7 @@ def a3_fallback_writes(journal):
 def a3_prepare_disposition(journal, allow_move=True):
     outcome, evidence = journal.get("outcome") or {}, journal["evidence"]
     fallback = outcome.get("fallback") or {}
-    detected = bool(evidence.get("refusal_count"))
+    detected = a3_refusal_ended_work(evidence)
     confirmed = fallback.get("verdict") == "fallback"
     if not detected and not confirmed:
         if not evidence.get("settled") or evidence.get("uncertainty"):
@@ -4764,10 +4847,26 @@ def a3_request_stop(record, run, lane_id, pass_id, cause, reason, explicit=False
         return True, journal
 
 
+def a3_record_stop_group(record, pass_id, entries):
+    """Append a stop's stop_group entries (stop_proven_group) to the pass's journal, under the record
+    lock with a fresh read, as a3_request_stop writes its intent, for a stop that runs outside the
+    wrapper. A failure to write is reported on stderr and changes no signal already sent."""
+    if not entries:
+        return
+    try:
+        with a3_record_lock(record):
+            journal = a3_read_journal(record, pass_id)
+            journal["stop_group"] = (journal.get("stop_group") or []) + list(entries)
+            a3_save_journal(journal)
+    except (A3Premise, OSError, ValueError) as exc:
+        sys.stderr.write("lane.py: the stop's stop_group was not recorded (%s)\n" % exc)
+
+
 def a3_exit_code(journal):
     """Pending or uncertain public outcomes use the existing refusal/orphan status, 3 (E6)."""
     close = journal.get("close") or journal.get("outcome") or {}
-    if close.get("refusal_count") or journal["evidence"].get("uncertainty") or not a3_committed(journal):
+    refused = close.get("refusal_count") and close.get("exit_class") not in A3_STOPS_OVER_REFUSAL
+    if refused or journal["evidence"].get("uncertainty") or not a3_committed(journal):
         return 3
     return close.get("exit_code", 3)
 
@@ -4985,7 +5084,7 @@ def a3_recover(args, harness, explicit_kill=False):
                            explicit=explicit_kill, reason=args.reason)
                 if a3_process_identity(child["pid"]) != child:
                     raise A3Premise("child identity changed before signal")
-                kill_pid_group(child["pid"])
+                a3_record_stop_group(record, args.pass_id, kill_pid_group(child["pid"], identity=child))
                 if a3_liveness(child) != "dead":
                     print("recovery pending: child death is not proved")
                     return 3
@@ -5049,13 +5148,13 @@ def a3_recover(args, harness, explicit_kill=False):
                 close = dict(journal.get("outcome") or {})
                 close.update({"event": "lane-closed", "ts": now(), "run": args.run, "lane": args.lane,
                               "exit_class": "killed" if explicit_kill else
-                              "refusal" if evidence.get("refusal_count") else "error",
+                              "refusal" if a3_refusal_ended_work(evidence) else "error",
                               "exit_code": 3, "process_exit": close.get("process_exit"),
                               "report": journal["report"], "recovered_by": os.getpid(),
                               "process_outcome": "unknown" if close.get("process_exit") is None else "observed"})
                 if not explicit_kill and evidence.get("native_exit_class"):
                     close["exit_class"] = evidence["native_exit_class"]
-                elif not explicit_kill and not evidence.get("refusal_count"):
+                elif not explicit_kill and not a3_refusal_ended_work(evidence):
                     if evidence.get("limit_signal"):
                         close["exit_class"] = "limit"
                     elif evidence.get("network_signal"):
@@ -5144,7 +5243,15 @@ def a3_kill(args, harness):
             return 3
         child = journal.get("child")
         if child and a3_liveness(child) == "alive" and a3_process_identity(child["pid"]) == child:
-            signal_group(child["pid"], signal.SIGTERM)
+            if harness == "claude":
+                # The whole stop, not a bare SIGTERM: a leader that exits on it at once leaves lane.py's
+                # wrapper on its normal-exit path, where no stop of its own runs (known-issues
+                # [2026-11-10 13:17]).
+                a3_record_stop_group(record, journal["pass_id"], stop_proven_group(pid=child["pid"], identity=child))
+            else:
+                # codex-lane.py's runner ends the group itself once it sees this stop's intent, its
+                # leader gone or not (its own fix of the same race), and records the proof on its close.
+                signal_group(child["pid"], signal.SIGTERM)
         deadline = time.monotonic() + KILL_GRACE_S
         while time.monotonic() < deadline:
             journal = a3_read_journal(record, journal["pass_id"])
@@ -5374,22 +5481,33 @@ def limit_signal(parsed, result_text, stderr_text, subtype, failed, result_is_er
 
 
 def classify(killed, stall, parsed, result, subtype, returncode, parse_error, stderr):
-    """The close line's exit_class and, for a limit, the evidence."""
+    """The close line's exit_class and, for a limit or network stop, its text. The stop text is
+    read first: a usage-limit or network stop outranks a refusal the lane recovered from
+    (a3_refusal_recovered; register 2026-10-25 08:16), and a usage-limit stop text outranks the
+    silence watch that fired after it, the stall staying on the close as its `stall` field
+    (register 2026-11-10 21:18)."""
+    failed = bool(result.get("is_error")) or returncode != 0
+    result_is_error = bool(result.get("is_error")) or subtype.startswith("error")
+    network = network_signal(parsed, result.get("result") or "", stderr, subtype, failed, result_is_error)
+    signal_text = limit_signal(parsed, result.get("result") or "", stderr, subtype, failed, result_is_error)
     if parsed.get("refusal"):
         succeeded = bool(result) and result.get("subtype") == "success" and not result.get("is_error")
         stopped = bool(killed or stall or "max_budget" in subtype or "max_turns" in subtype)
         continued = a3_final_success("claude", parsed, returncode, succeeded, stopped)
-        return "refusal-continued" if continued else "refusal", None
+        if continued:
+            return "refusal-continued", None
+        if (network or signal_text) and a3_refusal_recovered(parsed):
+            return ("network", network) if network else ("limit", signal_text)
+        return "refusal", None
     if stall:
+        # Only a stop text that names a usage limit, never the bare synthetic-stop shape.
+        if signal_text and USAGE_STOP_RE.search(signal_text):
+            return "limit", signal_text
         return "stall", None
     if killed:
         return "deadline", None
-    failed = bool(result.get("is_error")) or returncode != 0
-    result_is_error = bool(result.get("is_error")) or subtype.startswith("error")
-    network = network_signal(parsed, result.get("result") or "", stderr, subtype, failed, result_is_error)
     if network:
         return "network", network
-    signal_text = limit_signal(parsed, result.get("result") or "", stderr, subtype, failed, result_is_error)
     if signal_text:
         return "limit", signal_text
     if "max_budget" in subtype:
@@ -5628,36 +5746,212 @@ def signal_pid(pid, sig):
         return False
 
 
+GROUP_LIST_MAX = 4096   # pids read per group listing, as codex-lane.py's; set by judgement, unmeasured: a lane's group holds tens
+
+
+def group_members(pgid):
+    """The pids in process group `pgid` (a list, empty when the group has none), or None where this
+    platform gives no listing; a stop then proves its group by the leader alone. Darwin: libproc's
+    proc_listpids with type 2, PROC_PGRP_ONLY in that ABI (a zombie is listed too); Linux: the pgrp
+    field of each /proc/<pid>/stat. Copied from codex-lane.py, which imports this module, so it cannot
+    be imported from there (known-issues [2026-11-10 13:17])."""
+    try:
+        if sys.platform == "darwin":
+            import ctypes
+            library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            buf = (ctypes.c_int * GROUP_LIST_MAX)()
+            got = library.proc_listpids(2, int(pgid), buf, ctypes.sizeof(buf))
+            if got < 0:
+                return None
+            return sorted(p for p in buf[:got // ctypes.sizeof(ctypes.c_int)] if p > 0)
+        if sys.platform.startswith("linux"):
+            out = []
+            for name in os.listdir("/proc"):
+                if not name.isdigit():
+                    continue
+                try:
+                    with open("/proc/%s/stat" % name, encoding="ascii", errors="replace") as handle:
+                        fields = handle.read().rsplit(")", 1)[1].split()
+                except (OSError, IndexError):
+                    continue
+                if len(fields) > 2 and fields[2] == str(pgid):   # state, ppid, pgrp after the name
+                    out.append(int(name))
+            return sorted(out)
+    except (OSError, ValueError, AttributeError):
+        return None
+    return None
+
+
+def lane_group_at_start(process):
+    """A helper's process group id, read as soon as its process exists: start_new_session makes the
+    child a session and group leader, so the id is its pid. An exited leader is still unreaped here,
+    so its id is its pid; any other answer is None, and a stop then signals the leader alone
+    (codex-lane.py's _group_at_start)."""
+    pid = process.pid
+    try:
+        return pid if os.getpgid(pid) == pid else None
+    except ProcessLookupError:
+        return pid
+    except OSError:
+        return None
+
+
+def lane_leader_held(process, pid, identity):
+    """True while the leader still holds its pid, so no other process can be given that id and no other
+    group carry it: the wrapper's own child is unreaped (Popen sets returncode only when it reaps), or,
+    from outside the wrapper, the process at `pid` still has the recorded birth identity."""
+    if process is not None:
+        return process.returncode is None
+    return bool(identity) and a3_process_identity(pid) == identity
+
+
+def lane_group_census(pgid, seen, process=None, pid=None, identity=None):
+    """While the leader holds its pid, each live member's birth identity where the member is still in
+    the helper's session and group; a census that finds none keeps `seen` as it was. The proof for a
+    stop after the leader is gone (codex-lane.py's _census_group)."""
+    if pgid is None or not lane_leader_held(process, pid, identity):
+        return seen
+    found = {}
+    for member in group_members(pgid) or []:
+        birth = a3_process_identity(member)
+        try:
+            inside = os.getsid(member) == pgid and os.getpgid(member) == pgid
+        except OSError:
+            inside = False
+        if birth and inside:
+            found[member] = birth
+    return found or seen
+
+
+def lane_own_group(pgid, seen, process=None, pid=None, identity=None):
+    """(proven, why): the group `pgid` names is still the helper's own, checked before every signal to
+    it, so a group whose id may have been reused is never signalled (codex-lane.py's _own_group). (a)
+    The leader holds its pid. (b) Once it does not: a member the census saw is the same process (birth
+    identity unchanged) and still in the helper's session and in the group; a process enters a session
+    only by being born in it, so every process in the helper's session descends from the helper."""
+    if pgid is None:
+        return False, "no group id recorded at the start"
+    if lane_leader_held(process, pid, identity):
+        return True, ("the leader is unreaped" if process is not None
+                      else "the leader still has its recorded birth identity")
+    for member, birth in sorted((seen or {}).items()):
+        if a3_process_identity(member) != birth:
+            continue
+        try:
+            if os.getsid(member) == pgid and os.getpgid(member) == pgid:
+                return True, ("the leader is gone; member %d, seen in the group while the leader held its "
+                              "pid, is still in it" % member)
+        except OSError:
+            continue
+    return False, ("the leader is gone and no member seen before that is still in the helper's session: "
+                   "not signalled")
+
+
+def lane_signal_proven(sig, pgid, seen, process=None, pid=None, identity=None):
+    """One stop signal to the helper's whole group by its recorded id, sent only once lane_own_group
+    proves the group the helper's; with no group id, the leader alone while it holds its pid. Returns
+    the stop_group entry (codex-lane.py's _signal_group)."""
+    pid = process.pid if process is not None else pid
+    proven, why = lane_own_group(pgid, seen, process, pid, identity)
+    sent = False
+    if proven:
+        try:
+            os.killpg(pgid, sig)
+            sent = True
+        except ProcessLookupError:
+            why += "; the group was already empty"
+        except PermissionError:
+            # Darwin answers EPERM for a group whose one member is the unreaped leader's zombie.
+            why += "; nothing in the group but the leader's exit status"
+    elif pgid is None and lane_leader_held(process, pid, identity):
+        sent = signal_pid(pid, sig)
+        why += "; the leader alone was signalled"
+    return {"signal": signal.Signals(sig).name, "pgid": pgid, "sent": sent,
+            "leader_reaped": not lane_leader_held(process, pid, identity), "proof": why}
+
+
+def stop_proven_group(process=None, pid=None, identity=None, drain=True):
+    """The one stop for every stop path (known-issues [2026-11-10 13:17]): a census, SIGTERM to the
+    helper's proven group, up to KILL_GRACE_S while the leader lives, then SIGKILL to the proven group
+    whether or not the leader has exited, since a member that ignores SIGTERM outlives a leader that
+    exits on it. Returns the stop_group entries. The wrapper path (`process`, its own child) proves the
+    group by the unreaped leader and its census; with `drain` it reads the pipes through the grace, as
+    communicate() always did, and keeps what it read as process._lane_grace_output (None if the grace
+    ran out); without it, it waits as infrastructure_failure always did, leaving the pipes to their
+    reader. The outside paths (`pid` with its recorded `identity`: lane.py kill, the recovery stop)
+    take the group id while that identity holds, and only if it equals the pid, as start_new_session
+    makes it; otherwise the leader alone is signalled while its identity holds."""
+    if process is not None:
+        pid = process.pid
+        if not hasattr(process, "_lane_pgid"):
+            process._lane_pgid = lane_group_at_start(process) if process.returncode is None else None
+        pgid = process._lane_pgid
+        seen = lane_group_census(pgid, getattr(process, "_lane_group_seen", None) or {}, process)
+        process._lane_group_seen = seen
+    else:
+        pgid, seen = None, {}
+        if lane_leader_held(None, pid, identity):
+            try:
+                pgid = pid if os.getpgid(pid) == pid else None
+            except OSError:
+                pgid = None
+        seen = lane_group_census(pgid, seen, None, pid, identity)
+    entries = [lane_signal_proven(signal.SIGTERM, pgid, seen, process, pid, identity)]
+    if process is not None and drain:
+        try:
+            process._lane_grace_output = process.communicate(timeout=KILL_GRACE_S)
+        except subprocess.TimeoutExpired:
+            process._lane_grace_output = None
+    elif process is not None:
+        try:
+            process.wait(timeout=KILL_GRACE_S)
+        except subprocess.TimeoutExpired:
+            pass
+    else:
+        waited = 0.0
+        while waited < KILL_GRACE_S and lane_leader_held(None, pid, identity):
+            time.sleep(0.05)  # poll interval set by judgement, unmeasured
+            waited += 0.05
+    entries.append(lane_signal_proven(signal.SIGKILL, pgid, seen, process, pid, identity))
+    return entries
+
+
 def kill_group(process):
-    """SIGTERM the lane's process group, wait the grace, SIGKILL; returns (stdout, stderr)."""
-    signal_group(process.pid, signal.SIGTERM)
+    """SIGTERM the lane's process group, wait the grace, SIGKILL the group whether or not the leader
+    has exited, each signal after its proof (stop_proven_group); returns (stdout, stderr). The stop's
+    entries are kept as process._lane_stop_group for the close line."""
+    entries = stop_proven_group(process=process)
+    process._lane_stop_group = (getattr(process, "_lane_stop_group", None) or []) + entries
+    output = getattr(process, "_lane_grace_output", None)
+    if output is not None:
+        return output
     try:
         return process.communicate(timeout=KILL_GRACE_S)
-    except subprocess.TimeoutExpired:
-        signal_group(process.pid, signal.SIGKILL)
-        try:
-            return process.communicate(timeout=KILL_GRACE_S)
-        except subprocess.TimeoutExpired as exc:
-            process._a3_stream_incomplete = True
-            for pipe in (process.stdout, process.stderr):
-                if pipe:
-                    pipe.close()
-            process.wait(timeout=KILL_GRACE_S)
-            return output_text(exc.output), output_text(exc.stderr)
+    except subprocess.TimeoutExpired as exc:
+        process._a3_stream_incomplete = True
+        for pipe in (process.stdout, process.stderr):
+            if pipe:
+                pipe.close()
+        process.wait(timeout=KILL_GRACE_S)
+        return output_text(exc.output), output_text(exc.stderr)
 
 
-def kill_pid_group(pid, group=True):
-    """The same sequence for a lane the wrapper does not own (watch's orphan path): SIGTERM,
-    up to KILL_GRACE_S of waiting, then SIGKILL. `group=False` signals the one process instead
-    of its group, which is what `kill` does to a WRAPPER pid — see signal_pid."""
-    send = signal_group if group else signal_pid
-    send(pid, signal.SIGTERM)
+def kill_pid_group(pid, group=True, identity=None):
+    """The same stop for a lane the wrapper does not own (the recovery stop): with `group`,
+    stop_proven_group from outside the wrapper by the recorded birth `identity` (read here when the
+    caller passes none, which proves only the process now at pid), returning its stop_group entries.
+    `group=False` signals the one process instead of its group, which is what `kill` does to a
+    WRAPPER pid — see signal_pid: SIGTERM, up to KILL_GRACE_S of waiting, then SIGKILL; returns []."""
+    if group:
+        return stop_proven_group(pid=pid, identity=identity or a3_process_identity(pid))
+    signal_pid(pid, signal.SIGTERM)
     waited = 0.0
     while waited < KILL_GRACE_S and pid_alive(pid):
         time.sleep(0.5)
         waited += 0.5
     if pid_alive(pid):
-        send(pid, signal.SIGKILL)
+        signal_pid(pid, signal.SIGKILL)
+    return []
 
 
 def boxed(command, env):
@@ -6230,10 +6524,13 @@ def start_lane_process(command, cwd, env, stdin_text):
 
     threading.Thread(target=feed, name="lane-stdin", daemon=True).start()
     try:
-        return subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True, text=True,
-                                stdin=read_end, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True, text=True,
+                                   stdin=read_end, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     finally:
         os.close(read_end)
+    # The group a stop proves before it signals (stop_proven_group), read before anything reaps it.
+    process._lane_pgid = lane_group_at_start(process)
+    return process
 
 
 def wait_process(process, started, deadline, silence, poll, no_transcript_s, locate, progress,
@@ -6244,6 +6541,10 @@ def wait_process(process, started, deadline, silence, poll, no_transcript_s, loc
     stdout = stderr = None
     exited_at = None
     while True:
+        # The census (stop_proven_group's proof once the leader is reaped), each tick while it is not.
+        if process.returncode is None and getattr(process, "_lane_pgid", None) is not None:
+            process._lane_group_seen = lane_group_census(
+                process._lane_pgid, getattr(process, "_lane_group_seen", None) or {}, process)
         if owner:
             evidence = parse_transcript(locate(), owner.journal["boundary"])
             if evidence.get("refusal_count"):
@@ -6460,6 +6761,8 @@ def run_lane(ctx):
             report_written is not None, exit_class)
     close_line["report_scope"] = ctx.get("a3_report_scope", "whole current pass")
     close_line["stop_cause"] = owner.refresh().get("stop_cause")
+    if getattr(process, "_lane_stop_group", None):
+        close_line["stop_group"] = process._lane_stop_group     # each stop signal and its proof
     fallback = close_line.get("fallback") or {}
     if fallback.get("detected"):
         fallback_decide(ctx, fallback)
@@ -6552,6 +6855,8 @@ def run_beat(ctx):
                 reply=reply[:80], limit_signal=limit_text, timed_out=timed_out,
                 parse_error=parse_error, stderr_tail=(stderr or "").strip()[-400:] or None)
     line.update(beat_awake_fields(awake_fields))
+    if getattr(process, "_lane_stop_group", None):
+        line["stop_group"] = process._lane_stop_group           # each stop signal and its proof
     line = owner.finish_beat(line)
     ok, exit_class = line["ok"], line["exit_class"]
     usage = line["usage"] or {}
@@ -6631,7 +6936,7 @@ def watch_lane(run, lane, record_path, home, projects_root, silence, poll, no_tr
         if closed:
             cls = closed.get("class") or (opened or {}).get("class")
             summary = summary_of(run, lane, cls, (opened or {}).get("model"),
-                                 (opened or {}).get("effort"), closed)
+                                 latest_pick(records, lane, opened or {}).get("effort"), closed)
             emit(summary, closed, report_words, fmt, opened)
             if stalled:
                 return EXIT_CODES["stall"]
@@ -7246,11 +7551,15 @@ def pick_sources(throttle, model, effort, row_default, choice_reason):
       anchor           under `auto`: no override, or one equal to the row default (the anchor)
       auto: <text>     under `auto`: an override departing from the anchor; the --choice-reason text
       throttle <name>  under a hand-set preset: no override, or one equal to the preset's value
-      explicit         under a hand-set preset: a departure; a reason is recorded if given, never required
-    Under `auto` a departure with no --choice-reason (absent or whitespace) is refused exactly as
-    a missing --reason is — exit 2, before any record line, --dry-run included — and the refusal
-    names every axis that departs. An out-of-range value is a departure like any other here; its
-    `outside_options` note stays the caller's."""
+      explicit         under a hand-set preset: a departure
+    Every pick names its reason (owner ruling 2026-11-20, "Guided judgement": every pick names its
+    option and its reason in one clause, the default included): a --choice-reason that is absent or
+    only whitespace is refused under every throttle exactly as a missing --reason is — exit 2,
+    before any record line, --dry-run included. A departure under `auto` keeps its own message,
+    naming every axis that departs; any other start gets one naming what it would resolve to. The
+    check is of presence, never of quality. Written for the leads of November 2026 (Opus 5.5, Fable
+    5.2), on whom a default could swallow the step up. An out-of-range value is a departure like any
+    other here; its `outside_options` note stays the caller's."""
     reason = (choice_reason or "").strip()
     sources, departures = {}, []
     for axis, value in (("model", model), ("effort", effort)):
@@ -7264,21 +7573,87 @@ def pick_sources(throttle, model, effort, row_default, choice_reason):
             sources[axis] = "explicit"
     if departures and not reason:
         die("%s under throttle auto; pass --choice-reason" % " and ".join(departures))
+    if not reason:
+        die("no --choice-reason: every start names why this model and effort, the row's default "
+            "included (this start resolves to %s · %s under throttle %s)" % (model, effort, throttle))
     return sources["model"], sources["effort"]
 
 
 def recorded_source(opened, key):
     """The pick source a lane-open recorded, or `unrecorded` for a record from before the pick
-    fields (every lane opened before 2026-09-08). A resume makes no new pick: it copies."""
+    fields (every lane opened before 2026-09-08). A resume copies it, unless it raises the effort
+    (`resume --effort`, its one new pick)."""
     value = opened.get(key)
     return value if isinstance(value, str) and value else "unrecorded"
+
+
+def latest_pick(records, lane_id, opened):
+    """The lane's latest pick: its latest `lane-resumed` carrying an `effort` key (a pass at
+    another effort than the open's, 2026-11-21), else its lane-open. A resume runs at that effort,
+    so a second resume never drops silently back below a raised rung."""
+    latest = opened
+    for row in records:
+        if row.get("lane") == lane_id and row.get("event") == "lane-resumed" \
+                and isinstance(row.get("effort"), str) and row["effort"]:
+            latest = row
+    return latest
+
+
+def require_one_rung(opened, current, wanted):
+    """`resume --effort`: exactly one rung above the lane's recorded effort in the routing table's
+    `order.effort`, within the class row's effort options, or exit 2 before any record line. The
+    table is the one the lane-open recorded (`routing_path`), else the one beside this script; a
+    table that cannot be read, a class it lacks or a recorded effort outside its order is a
+    premise failure, never a guess. The throttle is the one in force when the resume is made, read
+    as a start reads it (the Settings line, `auto` where it is missing, an unknown value treated as
+    `auto` with the start's note), never the one the lane opened under: a pick is governed by the
+    setting when it is made (the lead's decision HD-15, provisional, listed for the owner's undo).
+    Under `fast` and `cheap-fast` the owner's preset holds the class's effort at its weakest
+    option, and "a floor the owner wrote binds on its axis (`cheap-fast` for the model, `fast` and
+    `cheap-fast` for effort)" (the delegate skill §2), so a raise is refused there. Where the
+    throttle names no floor, an unknown or missing one included, the raise is admitted. Returns the
+    throttle it acted on, which the raised resume records as `throttle` on `lane-resumed`, since the
+    governing input is no longer the record's own lane-open line (2026-11-22)."""
+    throttle = customisation_value("throttle", "auto")
+    if throttle not in THROTTLES:
+        sys.stderr.write("lane.py: unknown throttle %r, treated as `auto`\n" % throttle)
+        throttle = "auto"
+    if throttle in ("fast", "cheap-fast"):
+        die("--effort under throttle %s: the owner's preset holds this class's effort at its weakest "
+            "option, and a floor the owner wrote binds on its axis (`fast` and `cheap-fast` for "
+            "effort, the delegate skill §2), never answered by a reason; a resume raises no rung "
+            "here, so fold at the recorded effort %s (the throttle is the Settings line in force "
+            "now, not the one the lane opened under)" % (throttle, current))
+    path = opened.get("routing_path") or os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                      "routing.json")
+    routing = load_routing(path)
+    order, cls = routing["order"]["effort"], opened.get("class")
+    row = routing["classes"].get(cls)
+    if not isinstance(row, dict):
+        die("class `%s` is not in the routing table %s, so the rung above cannot be read" % (cls, path))
+    options = field(row, cls, "effort", "options")
+    if current not in order:
+        die("the lane's recorded effort %r is not in the routing table's order.effort %r"
+            % (current, order))
+    if wanted not in order:
+        die("--effort %r is not an effort in the routing table's order.effort %r" % (wanted, order))
+    step = order.index(wanted) - order.index(current)
+    if step <= 0:
+        die("--effort %s is not above the lane's recorded effort %s: a resume raises the effort, "
+            "never lowers or repeats it" % (wanted, current))
+    if step > 1:
+        die("--effort %s is %d rungs above the lane's recorded effort %s: a resume raises it by "
+            "exactly one rung (%s)" % (wanted, step, current, order[order.index(current) + 1]))
+    if wanted not in options:
+        die("--effort %s is outside class `%s`'s effort options %r" % (wanted, cls, options))
+    return throttle
 
 
 def resolve_spawn_pick(args):
     """The class row, its tier under the throttle and the per-call pick, resolved before anything
     else a spawn does: (routing, row, cls, pick). `pick` holds the lane-open fields `throttle`,
-    `throttle_note`, `model`, `effort`, `row_default`, `outside`, `model_src`, `effort_src` and
-    `choice_reason`. Resolving it first is what lets an unreasoned departure under `auto` be
+    `throttle_note`, `model`, `effort`, `row_default`, `outside`, `model_src`, `effort_src`,
+    `choice_reason` and `work_kind`. Resolving it first is what lets a start with no reason be
     refused before the detach, before --dry-run prints and before any record line."""
     routing_path = args.routing or os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                 "routing.json")
@@ -7312,7 +7687,8 @@ def resolve_spawn_pick(args):
     return routing, row, cls, {
         "throttle": throttle, "throttle_note": throttle_note, "model": model, "effort": effort,
         "row_default": row_default, "outside": outside, "model_src": model_src,
-        "effort_src": effort_src, "choice_reason": (args.choice_reason or "").strip() or None}
+        "effort_src": effort_src, "choice_reason": (args.choice_reason or "").strip() or None,
+        "work_kind": getattr(args, "work_kind", None)}
 
 
 def grants_from_lane(args, record_path):
@@ -7537,7 +7913,7 @@ def cmd_spawn(args):
             drift = core_drift_note(home, vault)
             if drift and not args.as_worker:
                 sys.stderr.write(drift + "\n")
-            if not os.path.isfile(core_path):
+            if drift or not os.path.isfile(core_path):
                 core_path = core_source(vault)
         if not os.path.isfile(core_path):
             if CORE_SLICE in defaults:
@@ -7595,6 +7971,8 @@ def cmd_spawn(args):
     soft_usd, soft_src = soft_line(args.expect_usd)
     budget = hard_usd
     projects_root = projects_root_for(args.projects_root, config_dir)
+    if args.session_id and not args.as_worker:   # a worker always carries the caller's id
+        refuse_session_in_use(args.session_id, projects_root)
     progress = progress_path(args.run, args.lane)
 
     # The lane's own input directory: the brief copied in, the head's hand inputs beside it,
@@ -7644,7 +8022,7 @@ def cmd_spawn(args):
         "definition_sha256": definition_sha, "definition_copy": paths["definition_copy"],
         "model": model, "effort": effort, "throttle": throttle, "row_default": row_default,
         "model_src": pick["model_src"], "effort_src": pick["effort_src"],
-        "choice_reason": pick["choice_reason"], "tools": tools,
+        "choice_reason": pick["choice_reason"], "work_kind": pick["work_kind"], "tools": tools,
         "grants": reals(grants), "writes": reals(writes),
         "grants_files": files_of(grants), "writes_files": files_of(writes),
         "add_dirs": add_dirs, "input_dir": paths["input_dir"],
@@ -7826,7 +8204,9 @@ def cmd_watch(args):
             opened, spawned, closed = lane_state(load_record(paths["record"]), args.lane)
     if closed:
         summary = summary_of(args.run, args.lane, closed.get("class") or opened.get("class"),
-                             opened.get("model"), opened.get("effort"), closed)
+                             opened.get("model"),
+                             latest_pick(load_record(paths["record"]), args.lane, opened).get("effort"),
+                             closed)
         emit(summary, closed, args.report_words, args.format, opened)
         die("lane %s/%s is already closed (%s at %s)"
             % (args.run, args.lane, closed.get("exit_class"), closed.get("ts")))
@@ -7847,6 +8227,79 @@ def cmd_kill(args):
 
 # ---------------------------------------------------------------------- resume --------------
 
+# A `## Heading` a report shape names, up to a separator or the prose after it (`## Controls.`).
+REPORT_HEADING_RE = re.compile(r"#{2,4} [^`·()\n.,;:]*[^`·()\n.,;:\s]")
+SECTION_LINE_RE = re.compile(r"[A-Z][A-Z0-9 &/+-]{2,}")       # a brief's section line: TASK, SCOPE, REPORT
+
+
+def shape_headings(text):
+    """The `## ` headings a stretch of text names, in order, each once."""
+    return list(dict.fromkeys(match.strip() for match in REPORT_HEADING_RE.findall(text or "")))
+
+
+def brief_report_shape(text):
+    """The headings a brief's REPORT section names: from its last line reading `REPORT` to the next
+    section line or fence; [] when there is no such section or it names none."""
+    lines = (text or "").splitlines()
+    starts = [i for i, line in enumerate(lines) if line.strip() == "REPORT"]
+    if not starts:
+        return []
+    body = []
+    for line in lines[starts[-1] + 1:]:
+        if SECTION_LINE_RE.fullmatch(line.strip()) or line.startswith("```"):
+            break
+        body.append(line)
+    return shape_headings("\n".join(body))
+
+
+def lane_report_shape(opened):
+    """(headings, where from) for the report a lane was asked for: its brief's REPORT section, else
+    its class definition's `Report shape:` line; ([], None) when neither names a heading."""
+    for key in ("brief_copy", "brief"):
+        path = opened.get(key)
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                shape = brief_report_shape(handle.read())
+        except (OSError, TypeError):
+            continue
+        if shape:
+            return shape, "its brief's REPORT section"
+        break
+    cls = opened.get("class")
+    if cls:
+        try:
+            with open(os.path.join(vault_root(), ".claude", "agents", "%s.md" % cls),
+                      encoding="utf-8", errors="replace") as handle:
+                found = re.search(r"^Report shape:(.*?)(?:\n\s*\n|\Z)", handle.read(), re.S | re.M)
+        except (OSError, TypeError):
+            found = None
+        shape = shape_headings(found.group(1)) if found else []
+        if shape:
+            return shape, "the %s definition's report shape" % cls
+    return [], None
+
+
+def report_on_disk(report, opened):
+    """(counts, why not) for advise: a report is the lane's work on disk only when it carries a
+    heading of the report shape the lane was asked for, never by its size (register 2026-11-14
+    15:58: a cut helper's 1,035 bytes of progress lines counted). `why` is None when there is no
+    report file to judge."""
+    if not (report and os.path.isfile(report)):
+        return False, None
+    shape, source = lane_report_shape(opened)
+    if not shape:
+        return False, "no report shape to read it against (no heading in the brief's REPORT section or the class definition)"
+    try:
+        with open(report, encoding="utf-8", errors="replace") as handle:
+            lines = [line.strip() for line in handle]
+    except OSError as exc:
+        return False, "it cannot be read (%s)" % exc
+    if any(line == heading or line.startswith(heading + " ") or line.startswith(heading + ":")
+           for line in lines for heading in shape):
+        return True, None
+    return False, "it carries none of the headings of %s (%s)" % (source, ", ".join(shape))
+
+
 def cmd_advise(args):
     """The head's resume-or-restart recommendation for a closed lane, computed from the record
     (2026-09-14): the stop reason first, then the cost. Prints one
@@ -7854,7 +8307,9 @@ def cmd_advise(args):
     with no close, or a close with no usable figures, reads `unknown` with the reason (never a
     guess). D29's window in `resume` stays the enforced rule; this is the head's counsel. The
     age is measured from the lane's last call on `resume`'s own reference — the close, or a later
-    successful `hold-beat` — and the line names which (critic F8, 2026-09-17)."""
+    successful `hold-beat` — and the line names which (critic F8, 2026-09-17). Work on disk is a
+    report carrying a heading of the lane's report shape (report_on_disk) or a stage holding a
+    non-empty file; a report that does not count is named with why."""
     paths = store_paths(args.run, args.lane, args.record)
     if not os.path.isfile(paths["record"]):
         die("no spawn record at %s" % paths["record"])
@@ -7889,7 +8344,8 @@ def cmd_advise(args):
         orientation = ORIENTATION_TOKENS
     report = args.report or closed.get("report") or paths.get("report")
     on_disk = []
-    if report and os.path.isfile(report) and os.path.getsize(report) > ADVISE_REPORT_MIN_BYTES:
+    counted, uncounted = report_on_disk(report, opened or {})
+    if counted:
         on_disk.append("report")
     if args.stage and os.path.isdir(args.stage) and any(
             os.path.getsize(os.path.join(r, f)) > 0 for r, _, fs in os.walk(args.stage) for f in fs):
@@ -7898,6 +8354,8 @@ def cmd_advise(args):
         cls, "unknown" if age is None else "%.0f s" % age, age_src,
         "unknown" if memory is None else format(memory, ","),
         ", ".join(on_disk) if on_disk else "nothing")
+    if uncounted:
+        inputs += " · report not counted: %s" % uncounted
     if cls == "network":
         inputs += " · wait until the API answers; no usage-limit reset wait"
     if cls == "refusal":
@@ -7923,10 +8381,12 @@ def cmd_advise(args):
               "inside its window" % inputs)
         return 0
     if cls == "completed":
-        print("advise: restart · %s · a second pass goes to a fresh helper with a compact hand-off: "
-              "the earlier report's path, the findings to fold, the held files and what must not change. "
-              "Use `resume` only for a long write cut short by a usage limit or dropped connection, whose work is on disk "
-              "and checked, or for the multi-expert panel's round 2" % inputs)
+        print("advise: resume · %s · a review's findings go back to the helper that made the work; a "
+              "fresh helper with a compact hand-off only where its record is gone, its context is spent, "
+              "or the review asks, with its reason, for the fix to go to a seat that has not seen the work%s"
+              % (inputs, "; past the %d-minute cache window the resume takes --late with "
+                 "--choice-reason, and the helper's context is written again" % (RESUME_WINDOW_S // 60)
+                 if age is not None and age > RESUME_WINDOW_S else ""))
         return 0
     if age is None:
         print("advise: unknown · %s · the close carries no parseable ts" % inputs)
@@ -8026,6 +8486,28 @@ def cmd_resume(args):
         die("lane %s/%s closed %s: a beat re-enters only a close in %s (a limit or budget close "
             "is resumed by the head's own decision, never beaten)"
             % (args.run, args.lane, closed.get("exit_class") or "unstated", "/".join(BEAT_EXITS)))
+    # A resume's own pick (2026-11-21): one rung more effort, or a resume past the cache window,
+    # each named with its reason; never on a beat, which carries the spawn's configuration. Grounds:
+    # the delegate skill §1, "Findings go back to the helper that made the work" (owner, 2026-11-20),
+    # and §2's escalation decision table, "Any depth finding | One rung up" (owner, 2026-10-05), with
+    # its "The rung, ceiling and permission rules still apply"; the reason is the owner's "Guided
+    # judgement" rule: every pick names its option and its reason, the default included (2026-11-20).
+    raise_to, late = getattr(args, "effort", None), bool(getattr(args, "late", False))
+    resume_reason = (getattr(args, "choice_reason", None) or "").strip()
+    if beat and (raise_to or late or getattr(args, "choice_reason", None) is not None):
+        die("--beat takes no --effort, --late or --choice-reason: a beat carries the spawn's "
+            "configuration byte for byte")
+    if (raise_to or late) and not resume_reason:
+        die("%s on a resume needs --choice-reason (why this rung, or why a late resume beats a "
+            "fresh helper); absent or whitespace-only is refused"
+            % " and ".join(f for f, on in (("--effort", raise_to), ("--late", late)) if on))
+    if getattr(args, "choice_reason", None) is not None and not (raise_to or late):
+        die("--choice-reason on a resume goes with --effort or --late; a plain resume copies its "
+            "pick from the lane's record")
+    pick_from = latest_pick(records, args.lane, opened)
+    raise_throttle = None
+    if raise_to:
+        raise_throttle = require_one_rung(opened, pick_from.get("effort"), raise_to)
     if not beat and not args.as_worker:
         decisions_spawn_check(paths["record"], args.run, args.lane, verb="resume")
     last = parse_ts(closed.get("ts"))
@@ -8048,12 +8530,23 @@ def cmd_resume(args):
     # per lane, against the whole task re-run that a re-spawn would cost.
     after_limit = closed.get("exit_class") == "limit"
     after_network = closed.get("exit_class") == "network"
-    if age > RESUME_WINDOW_S and not (after_limit or after_network):
+    # The gate reads only its own names (test_fix_c A28 runs this slice alone): `--late` from args.
+    if age > RESUME_WINDOW_S and not (after_limit or after_network) and not getattr(args, "late", False):
         die("lane %s/%s: last call %.0f min ago (%s), over the %d-minute resume window — the "
             "cache has lapsed; %s"
             % (args.run, args.lane, age / 60.0, age_src, RESUME_WINDOW_S // 60,
                "nothing is warm to beat" if beat
-               else "re-spawn with the finding in the brief instead"))
+               else "re-spawn with the finding in the brief instead, or resume late with --late "
+                    "and --choice-reason (the lane's context is written again)"))
+    late_used = late and age > RESUME_WINDOW_S and not (after_limit or after_network)
+    if late and not late_used:
+        sys.stderr.write("lane.py: --late not needed: %s; nothing extra is recorded\n"
+                         % ("a %s close waives the window (D29)" % closed.get("exit_class")
+                            if after_limit or after_network else "the last call is within the window"))
+    if late_used:    # on stderr, so a `--format json` stdout stays parseable
+        sys.stderr.write("lane.py: lane %s/%s: last call %.0f min ago — the %d-minute cache window is "
+                         "passed by --late; expect the lane's context to be written again on this "
+                         "first call\n" % (args.run, args.lane, age / 60.0, RESUME_WINDOW_S // 60))
     if after_limit and age > RESUME_WINDOW_S:
         print("lane %s/%s: closed on a limit %.0f min ago — the %d-minute cache window is waived "
               "(D29); expect a cold re-read of the lane's context on this first call"
@@ -8118,6 +8611,8 @@ def cmd_resume(args):
 
     cls = opened.get("class")
     model, effort = opened.get("model"), opened.get("effort")
+    if not beat:     # the beat keeps the lane-open's configuration byte for byte
+        effort = raise_to or pick_from.get("effort")
     tools = opened.get("tools") or []
     if not (cls and model and effort and tools):
         die("lane %s/%s: lane-open lacks class, model, effort or tools" % (args.run, args.lane))
@@ -8130,7 +8625,7 @@ def cmd_resume(args):
     # D29: a resume re-enters a session by its transcript. No transcript, no session to re-enter —
     # the harness would start a fresh one under the old id and the lane would answer from nothing.
     transcript = find_transcript(projects_root, home, session_id)
-    problem = (resume_transcript_error(transcript) if after_limit or after_network
+    problem = (resume_transcript_error(transcript) if after_limit or after_network or late_used
                else "no transcript" if not transcript else None)
     if problem:
         die("lane %s/%s: %s for session %s under %s — the session cannot be re-entered; "
@@ -8308,16 +8803,25 @@ def cmd_resume(args):
                            "soft_src": soft_src, "expect_usd": expect,
                            "deadline_s": deadline, "silence_s": silence,
                            "silence_src": silence_src, "definition_sha256": definition_sha,
-                           # No new pick on a resume: the open's pick fields are copied, and a
-                           # record from before them reads `unrecorded` (2026-09-08).
+                           # The pick fields are copied from the lane's latest pick (its open, or a
+                           # resume that raised the effort), and a record from before them reads
+                           # `unrecorded` (2026-09-08); a raise is the resume's one new pick.
                            "model_src": recorded_source(opened, "model_src"),
-                           "effort_src": recorded_source(opened, "effort_src"),
-                           "choice_reason": (opened.get("choice_reason")
-                                             if isinstance(opened.get("choice_reason"), str) else None)},
+                           "effort_src": ("resume: %s" % resume_reason if raise_to
+                                          else recorded_source(pick_from, "effort_src")),
+                           "choice_reason": (resume_reason if raise_to
+                                             else pick_from.get("choice_reason")
+                                             if isinstance(pick_from.get("choice_reason"), str) else None)},
            "close_extra": {"resumed": True, "resume_n": resume_n},
            "soft_usd": soft_usd, "soft_src": soft_src, "controls_pending": controls_pending}
     # The resume's network fields (DW-20261024-2): the inherited grant removed, the guard's verdict.
     ctx["pre_event"].update(claude_network_fields((), False, None, network_dropped, network_guard))
+    if effort != opened.get("effort"):    # a pass at another effort than the open's says so (the console reads it)
+        ctx["pre_event"]["effort"] = effort
+    if raise_to:    # the throttle the raise's floor check acted on (the Settings line in force, after its fallback)
+        ctx["pre_event"]["throttle"] = raise_throttle
+    if late_used:
+        ctx["pre_event"].update(late=True, late_reason=resume_reason)
     # The session is claimed HERE, immediately before the first thing this resume writes or
     # starts, and not only checked at the top (critic finding 2 of review): a beat that took the
     # session while this call was preparing must turn it back at the door, whichever of the two
@@ -8417,6 +8921,10 @@ def build_parser():
     spawn.add_argument("--brief", required=True)
     spawn.add_argument("--model")
     spawn.add_argument("--effort")
+    spawn.add_argument("--work-kind", choices=("checkable", "open"),
+                       help="optional: the kind of work, checkable or open, as the delegate skill's "
+                            "section 2 names them; recorded on lane-open as work_kind (null when "
+                            "not given). It changes no pick and never stands in for --choice-reason")
     spawn.add_argument("--viewer", choices=("terminal", "none"),
                        help="the run's console window: opened on this spawn when none is alive "
                             "(default: the grants file's viewer key, else terminal); none opts "
@@ -8450,12 +8958,12 @@ def build_parser():
                             "Omitted, whitespace-only and letterless take one refusal (exit 2), "
                             "before any record line" % REASON_FORMS)
     spawn.add_argument("--choice-reason", default="",
-                       help="why THIS model and effort for this task (distinct from --reason, "
-                            "which says why a lane at all). Under throttle auto a --model or "
-                            "--effort departing from the row's anchor is refused without it "
-                            "(exit 2, before any record line); recorded on lane-open as "
-                            "choice_reason and, for a departing axis, as `auto: <text>` in "
-                            "model_src/effort_src. Never required under a hand-set preset")
+                       help="REQUIRED: why THIS model and effort for this task, in one clause, the "
+                            "row's default included (distinct from --reason, which says why a lane "
+                            "at all). Omitted, empty and whitespace-only take one refusal (exit 2) "
+                            "under every throttle, before any record line, --dry-run included; "
+                            "recorded on lane-open as choice_reason and, for an axis departing "
+                            "from the anchor under auto, as `auto: <text>` in model_src/effort_src")
     spawn.add_argument("--plant", default="",
                        help="a test device the owner has explicitly permitted, recorded on the lane's record; "
                             "leave empty otherwise (CLAUDE.md section 12)")
@@ -8473,7 +8981,11 @@ def build_parser():
     spawn.add_argument("--deadline-s", type=int)
     spawn.add_argument("--baseline-lane", default="",
                        help="raise the stall threshold to 1.5 x this lane's recorded duration")
-    spawn.add_argument("--session-id")
+    spawn.add_argument("--session-id",
+                       help="the new lane's own session id (a UUID); default a fresh one. Never the "
+                            "calling session's id: an id whose transcript already stands under the "
+                            "projects root is refused (exit 2), since the close reads the lane's "
+                            "report by its id")
     spawn.add_argument("--throttle")
     spawn.add_argument("--routing")
     spawn.add_argument("--source-pass", help=argparse.SUPPRESS)
@@ -8555,10 +9067,9 @@ def build_parser():
     kill.add_argument("--home")
     kill.set_defaults(func=cmd_kill)
 
-    resume_help = ("resume a long write cut short by a usage limit, with work "
-                   "on disk and checked, or the multi-expert panel's round 2; "
-                   "a second pass goes to a fresh helper with a compact hand-off "
-                   "(D29: after a `limit` close the cache window is "
+    resume_help = ("resume a helper with a review's findings on its own work, a long write cut "
+                   "short by a usage limit, with work on disk and checked, or the multi-expert "
+                   "panel's round 2 (D29: after a `limit` close the cache window is "
                    "waived and `lane-resumed` records after_limit and "
                    "age_s; after a `budget` close only a raised "
                    "--budget-usd resumes the lane; existing per-pass report or brief paths refuse before writes)")
@@ -8584,6 +9095,34 @@ def build_parser():
     resume.add_argument("--expect-usd", type=float,
                         help="optional soft-line estimate for this pass; defaults to lane-open "
                              "expect_usd. The hard base always uses the lane-open estimate")
+    resume.add_argument("--effort", default=None,
+                        help="raise the effort by exactly one rung above the lane's recorded effort "
+                             "(the routing table's order, within the class's options), with "
+                             "--choice-reason; the same, a lower one or more than one rung is "
+                             "refused before any record line, and a resume takes no --model. The "
+                             "raise yields to a preset floor: under the fast and cheap-fast "
+                             "presets, whose effort floor the owner wrote, it is refused, so fold "
+                             "at the recorded effort; the throttle is the Settings line in force "
+                             "when the resume is made, as a start reads it, not the lane-open's. "
+                             "When it cannot decide (no Settings line, or a value that names no "
+                             "preset, read as auto), the raise is admitted, whatever throttle the "
+                             "lane opened under, none included. Cost: the effort is part of the session's "
+                             "configuration, so the lane's context is written again on this first "
+                             "call (config_match false); a held lane's beats keep the lane-open's "
+                             "effort, so each beat after a raise may write it again too. "
+                             "lane-resumed records effort, effort_src `resume: <text>` and "
+                             "choice_reason; later resumes keep the raised effort")
+    resume.add_argument("--late", action="store_true",
+                        help="a late (cold) resume past the %d-minute cache window, with "
+                             "--choice-reason saying why it beats a fresh helper: the cache has "
+                             "lapsed, so the lane's context is written again on this first call; "
+                             "lane-resumed records late, late_reason and age_s. Without it such a "
+                             "resume is refused; after a limit or network close it is not needed "
+                             "(D29)" % (RESUME_WINDOW_S // 60))
+    resume.add_argument("--choice-reason", default=None,
+                        help="with --effort or --late only: why this rung, or why a late resume "
+                             "beats a fresh helper; absent or whitespace-only beside either is "
+                             "refused, and alone it is refused")
     resume.add_argument("--reason", default="",
                         help="NOT needed in the ordinary case: `lane-resumed` carries the reason "
                              "the lane-open recorded. Pass it only where that record names no "

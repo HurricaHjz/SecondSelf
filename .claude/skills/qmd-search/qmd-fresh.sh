@@ -1,7 +1,8 @@
 #!/bin/sh
 # Refresh the optional qmd index immediately before each search.
 # Usage: /bin/sh qmd-fresh.sh [vault-root]
-# Root: argument, then CLAUDE_PROJECT_DIR, then PWD. Search from that same root
+# Root: the argument, else the vault holding this script (three levels up), never
+# the caller's directory (register 2026-11-14 15:58 b). Search from that same root
 # with the same qmd environment. This gate uses the default index, not --index.
 # Cache: ${XDG_CACHE_HOME:-$HOME/.cache}/qmd, matching qmd. INDEX_PATH, when
 # supplied, gets its own adjacent stamp and lock; use it for isolated indexes.
@@ -40,7 +41,8 @@ qf_plain() {
 }
 
 [ "$#" -le 1 ] || qf_probe 'usage: qmd-fresh.sh [vault-root]'
-qf_root=${1:-${CLAUDE_PROJECT_DIR:-$PWD}}
+qf_root=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)} ||
+    qf_probe 'vault root not found from the script path'
 if ! command -v qmd >/dev/null 2>&1; then
     qf_plain 'qmd absent'
 fi

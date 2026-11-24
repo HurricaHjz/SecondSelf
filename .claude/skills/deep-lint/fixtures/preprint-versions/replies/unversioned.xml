@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <id>https://arxiv.org/api/fixture-unversioned</id>
+  <title>arXiv Query: search_query=&amp;id_list=2401.00003,2401.00004,2401.00006,2401.00007,2401.00011&amp;start=0&amp;max_results=5</title>
+  <updated>2026-11-19T00:00:00Z</updated>
+  <opensearch:itemsPerPage>5</opensearch:itemsPerPage>
+  <opensearch:totalResults>5</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00003v2</id>
+    <title>Unversioned Capture: Dated by Its Raws' converted_on</title>
+    <updated>2026-10-25T17:59:59Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-03T09:00:00Z</published>
+    <arxiv:primary_category term="cs.AI"/>
+    <author><name>Dee Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00004v2</id>
+    <title>Unversioned Capture: Dated by the Page's created</title>
+    <updated>2026-11-07T12:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-04T09:00:00Z</published>
+    <arxiv:primary_category term="cs.SE"/>
+    <author><name>Eli Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00006v2</id>
+    <title>Unversioned Capture: Converted After the Latest Version</title>
+    <updated>2026-09-28T08:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-06T09:00:00Z</published>
+    <arxiv:primary_category term="stat.ML"/>
+    <author><name>Fay Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00007v1</id>
+    <title>Unversioned Capture: A Preprint With One Version Only</title>
+    <updated>2026-09-01T09:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2026-09-01T09:00:00Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author><name>Gus Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00011v2</id>
+    <title>Unversioned Capture: Converted the Day the Latest Version Was Processed</title>
+    <updated>2026-10-05T14:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-11T09:00:00Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author><name>Hal Fixture</name></author>
+  </entry>
+</feed>

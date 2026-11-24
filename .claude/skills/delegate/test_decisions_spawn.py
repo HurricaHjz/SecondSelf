@@ -31,7 +31,12 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_a3 import Fixture, events_for, rows  # noqa: E402
 
-MODE_LINE = 'DECISIONS_HOLD_MODE = "trial"'
+# The mode lane.py ships with, the suite's one pin. Each half runs on a copy with this line set to
+# its own mode, so a change of the shipped mode is this one word here and the one in lane.py.
+SHIPPED_MODE = "enforce"
+MODE_LINE = 'DECISIONS_HOLD_MODE = "%s"' % SHIPPED_MODE
+ENFORCE_LINE = 'DECISIONS_HOLD_MODE = "enforce"'
+TRIAL_LINE = 'DECISIONS_HOLD_MODE = "trial"'
 SUMMARY = "lane.py: summary: "
 
 
@@ -289,7 +294,8 @@ class Suite:
             edit(copy)
         return copy
 
-    def enforcing(self, name="enforce", edit=None):
+    def moded(self, name, line, edit=None):
+        """A copy of the wrappers whose lane.py reads `line` for its mode (and `edit` applied)."""
         if (self.root / name).is_dir():
             return self.root / name
 
@@ -297,11 +303,19 @@ class Suite:
             path = copy / "lane.py"
             text = path.read_text(encoding="utf-8")
             if text.count(MODE_LINE) != 1:
-                raise SystemExit("PROBE FAILED: lane.py holds %d mode line(s)" % text.count(MODE_LINE))
-            path.write_text(text.replace(MODE_LINE, 'DECISIONS_HOLD_MODE = "enforce"'), encoding="utf-8")
+                print("PROBE FAILED: lane.py holds %d shipped mode line(s) (%s)"
+                      % (text.count(MODE_LINE), MODE_LINE), flush=True)
+                raise SystemExit(2)
+            path.write_text(text.replace(MODE_LINE, line), encoding="utf-8")
             if edit:
                 edit(copy)
         return self.wrapper_copy(name, flip)
+
+    def enforcing(self, name="enforce", edit=None):
+        return self.moded(name, ENFORCE_LINE, edit)
+
+    def trialing(self, name="trial", edit=None):
+        return self.moded(name, TRIAL_LINE, edit)
 
     def finish(self):
         total = self.passed + self.failed
@@ -323,7 +337,48 @@ def unimportable(copy):
     (copy / "handsoff.py").write_text("def broken(:\n", encoding="utf-8")
 
 
+def shipped_case(s, family):
+    """A spawn on the wrappers as shipped, not a copy, after an unread line: (call, case). Run
+    before any mode copy, so on a file whose mode differs from the pin it reports before the pin's
+    probe stops the part."""
+    c = Case(s)
+    c.bound()
+    c.ack()
+    with c.dec.open("a") as handle:
+        handle.write("an owner line the shipped file reads\n")
+    return c.spawn(family), c
+
+
+def shipped_holds(call, c, opened):
+    """Whether a call on the shipped wrappers did what SHIPPED_MODE says: enforce holds it (exit 7,
+    nothing started, no trial line); trial lets it on with the trial line."""
+    if SHIPPED_MODE == "enforce":
+        return call.returncode == 7 and "HOLD (decisions channel)" in call.stderr \
+            and "nothing held" not in call.stderr and not c.trials() and opened() == []
+    return call.returncode == 0 and "trial, nothing held" in call.stderr and len(c.trials()) == 1
+
+
 def part_lane(s):
+    shipped, c = shipped_case(s, "claude")
+    try:
+        s.check("G44s lane.py as shipped holds as its pinned mode says (%s)" % SHIPPED_MODE,
+                shipped_holds(shipped, c, c.lanes_opened), "rc %s %s" % (shipped.returncode, shipped.stderr))
+        c.ack()
+        c.add({"event": "run-resume", "session": "sid-next", "head": "next head", "pid_src": "none"})
+        fresh = c.spawn(scenario=False)
+        c.ack("the next head's own read")
+        admitted = c.spawn()
+        want = (7, 0) if SHIPPED_MODE == "enforce" else (0, 0)
+        s.check("G44h lane.py as shipped: a successor head's first spawn before its own ack is held as its mode "
+                "says (enforce: exit 7, 'this head has acknowledged nothing yet', the read and ack commands), "
+                "and its own ack admits the next",
+                (fresh.returncode, admitted.returncode) == want
+                and "this head has acknowledged nothing yet" in fresh.stderr
+                and "handsoff.py decisions-read --run fixture" in fresh.stderr
+                and "handsoff.py decisions-ack --run fixture" in fresh.stderr,
+                "rc %s %s | %s" % (fresh.returncode, admitted.returncode, fresh.stderr))
+    finally:
+        c.close()
     c = Case(s, s.enforcing())
     try:
         c.bound()
@@ -459,7 +514,7 @@ def part_lane(s):
     finally:
         c.close()
 
-    t = Case(s)
+    t = Case(s, s.trialing())
     try:
         t.bound()
         t.ack()
@@ -497,7 +552,7 @@ def part_lane(s):
         s.check("G25t trial: the same unknown logs once a head", len(t.trials()) == logged + 1, len(t.trials()))
     finally:
         t.close()
-    t = Case(s)     # the closing summary under trial, on a fixture of its own (the F5 counts above stay whole)
+    t = Case(s, s.trialing())     # the closing summary under trial, on a fixture of its own (the F5 counts above stay whole)
     try:
         t.bound()
         t.ack()
@@ -532,7 +587,7 @@ def part_lane(s):
                 "%s %s %s | %s | %s" % (rc2, rc3, resumed, last2, last3))
     finally:
         t.close()
-    t = Case(s, s.wrapper_copy("trial-broken", broken_state))
+    t = Case(s, s.trialing("trial-broken", broken_state))
     try:
         t.bound()
         crashed = t.spawn()
@@ -543,12 +598,24 @@ def part_lane(s):
         t.close()
     source = (s.wrappers / "lane.py").read_text(encoding="utf-8")
     enforced = (s.root / "enforce" / "lane.py").read_text(encoding="utf-8")
-    s.check("G44 the shipped mode is trial, one word from enforce (control: the copy reads enforce)",
-            source.count(MODE_LINE) == 1 and 'DECISIONS_HOLD_MODE = "enforce"' in enforced
-            and MODE_LINE not in enforced)
+    trialled = (s.root / "trial" / "lane.py").read_text(encoding="utf-8")
+    other = TRIAL_LINE if SHIPPED_MODE == "enforce" else ENFORCE_LINE
+    s.check("G44 the shipped mode is the pinned one, one word from the other (controls: the enforce copy "
+            "reads enforce, the trial copy trial)",
+            source.count(MODE_LINE) == 1 and other not in source
+            and enforced.count(ENFORCE_LINE) == 1 and TRIAL_LINE not in enforced
+            and trialled.count(TRIAL_LINE) == 1 and ENFORCE_LINE not in trialled,
+            "shipped %s, pinned %s" % (re.findall(r'DECISIONS_HOLD_MODE = "[^"]*"', source), SHIPPED_MODE))
 
 
 def part_codex(s):
+    shipped, c = shipped_case(s, "codex")
+    try:
+        s.check("G44c codex-lane.py as shipped reads lane.py's one mode constant and holds as it says (%s)"
+                % SHIPPED_MODE, shipped_holds(shipped, c, c.lanes_opened),
+                "rc %s %s" % (shipped.returncode, shipped.stderr))
+    finally:
+        c.close()
     c = Case(s, s.enforcing())
     try:
         c.bound()
@@ -575,7 +642,7 @@ def part_codex(s):
         s.check("G25c a bound file gone exits 2 enforcing on Codex", gone.returncode == 2, gone.stderr)
     finally:
         c.close()
-    t = Case(s)
+    t = Case(s, s.trialing())
     try:
         t.bound()
         went = t.spawn("codex")

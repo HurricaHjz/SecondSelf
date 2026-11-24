@@ -21,7 +21,8 @@ checks that same file:
               copy, never the URL, so nothing is fetched twice. Engine: PLAIN_ENGINE.
 THE CHECK reads the fetched ORIGINAL, never the normalised copy, so a normaliser that drops or
 mispairs content cannot supply its own answer. It looks for every collapsed container's text in the
-capture, whatever its length, in its own order within that container; for every tab label directly
+capture, whatever its length, in its own order within that container, and a text several units share
+as often as they hold it; for every tab label directly
 before its own panel's content, after the previous panel's; and for any relative link destination
 that survived (the sanitisers downstream defang or strand one). The comparison keeps
 every character that carries a value: a table cell holding only a symbol (a check mark, a cross,
@@ -762,6 +763,15 @@ def find_free(hay, needle, start):
     return -1
 
 
+def count_free(hay, needle):
+    """How many times needle occurs in hay as find_free finds it, no two occurrences overlapping."""
+    n, i = 0, find_free(hay, needle, 0)
+    while i != -1:
+        n += 1
+        i = find_free(hay, needle, i + len(needle))
+    return n
+
+
 def _core(text):
     i = 0
     while i < len(text) and not text[i].isalnum():
@@ -873,6 +883,19 @@ def check_capture(page_text, base_url, markdown):
             named = "; ".join('"' + clip(t.text, 80) + '"' for t in found[:SHOW_MAX])
             more = f" (+{len(found) - SHOW_MAX} more)" if len(found) > SHOW_MAX else ""
             report["failures"].append(f"{what}: {named}{more}")
+    # Each container's search starts afresh, so one copy of a text two units share answered for both: a text the
+    # page holds in several units must occur as often in the capture.
+    # shortcut: a copy also found inside a longer text of the capture still counts; upgrade if a capture shows it.
+    expected, gone, short = collections.Counter(t.norm for t in collapsed + paired), {t.norm for t in missing}, []
+    for t in collapsed + paired:
+        n = expected.pop(t.norm, 0)
+        kept = count_free(hay, t.norm) if n > 1 and t.norm not in gone else n
+        if kept < n:
+            short.append(f'"{clip(t.text, 80)}" (page {n}, capture {kept})')
+    if short:
+        more = f" (+{len(short) - SHOW_MAX} more)" if len(short) > SHOW_MAX else ""
+        report["failures"].append("repeated text kept fewer times than the page holds it: "
+                                  + "; ".join(short[:SHOW_MAX]) + more)
     cursor, current = 0, ""
     for k, tok in enumerate(paired):
         if tok.kind == "label":

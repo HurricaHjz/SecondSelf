@@ -2,7 +2,7 @@
 name: memory-hunter
 description: Memory retrieval lane — given a spec (a consumer's question + task), hunts the wiki for the relevant slices and returns a curated context pack. Serves the head agent pre-spawn (provisioning a worker's brief) or mid-task (self-provisioning); never called by workers (№77-gated). Packs carry sources and reasons, never conclusions; excerpts are pointers, never deciding evidence. Routing range and anchor: `.claude/skills/delegate/routing.json`, rendered in the delegate skill's §2; the active throttle writes the current values.
 model: opus
-effort: xhigh
+effort: high
 tools: Read, Grep, Glob
 disallowedTools: Edit, Write, NotebookEdit, Agent, SendMessage, WebFetch, WebSearch, Skill
 ---

@@ -6,7 +6,8 @@ Fill `{{slots}}`; replace the paste marker with the `_inherited.md` block; delet
 <!-- Spawner: fill the first-line model/effort slots from the spawn record (lanes copy them
 into every registry/ledger config field). Escalate the spawn to model: opus for research-depth papers (routing table).
 VAULT-ROOT GRANT: a headless compile lane that writes its own log entry (the ingest exception) or sorts also takes `--grant-vault-root` (read-only): `vault-writes.py log-append` and `sort_check.py` take the vault root as their `--vault` argument, and the fence refuses an ungranted one, so without the grant the head appends the lane's entries and sorts for it.
-ONE-LANE BATCH: apply the ingest Pacing section’s batch precedence: a batch compiles in a lane by default, and this brief is that case. The pre-flight records the standing instrument-rule reason satisfying `single`: (d) a batch longer than the head can afford, or (b) breadth one context cannot hold; the Routing note at Step 3 applies its head-compile rule under `single` to the single-source path. The owner’s word, else the head’s pre-flight judgement by converted bytes, chooses one-lane or parallel; that batch shape takes precedence over the older per-source `auto` sequence. For one-lane, assign the whole batch to this lane and set siblings to none. The lane compiles the batch serially, writes its source pages and warranted shared pages itself (no claims, no merge, no conflict lane), and writes its own index lines and log entry under the explicit §2.2 ingest exception. Grant those pages and raw pairs in the whitelist, choose the sorting option, and delete the parallel-only LEDGER & CLAIMS block. The lane sorts each raw pair after its own Step 7 self-check; one verify lane follows over all its pages before the head accepts the run, under the ingest Verify step. Carry these duties in the filled TASK, SCOPE and REGISTRIES slots. The head’s retained brief, verification, merge, sorting, Step 7 and registry duties remain as assigned by Routing and the chosen shape, including registries where the ingest exception is not granted.
+ONE-LANE BATCH: apply the ingest Pacing section’s batch precedence: a batch compiles in a lane by default, and this brief is that case. The pre-flight records the standing instrument-rule reason satisfying `single`: (d) a batch longer than the head can afford, or (b) breadth one context cannot hold; the Routing note at Step 3 applies its head-compile rule under `single` to the single-source path. The owner’s word, else the head’s pre-flight judgement by the bytes the size rule counts, chooses one-lane or parallel; that batch shape takes precedence over the older per-source `auto` sequence. For one-lane, assign the whole batch to this lane and set siblings to none. The lane compiles the batch serially, writes its source pages and warranted shared pages itself (no claims, no merge, no conflict lane), and writes its own index lines and log entry under the explicit §2.2 ingest exception. Grant those pages and raw pairs in the whitelist, choose the sorting option, and delete the parallel-only LEDGER & CLAIMS block. The lane sorts each raw pair after its own Step 7 self-check; one verify lane follows over all its pages before the head accepts the run, under the ingest Verify step. Carry these duties in the filled TASK, SCOPE and REGISTRIES slots. The head’s retained brief, verification, merge, sorting, Step 7 and registry duties remain as assigned by Routing and the chosen shape, including registries where the ingest exception is not granted.
+RUN MARKER: touch the ingest Verify step's run marker before the first compile spawn of the batch, one-lane or parallel.
 TOOL-MARKUP GATE: fill `{{vault root}}` with the vault root, literal. A headless lane also takes
 `--grant {{vault root}}/.claude/skills/lint/check-tool-markup.py`, a file grant with the reason
 "the output gate runs it": the class row grants `wiki` and the raws only, and the script finds its
@@ -41,7 +42,7 @@ FIDELITY (gate G3's two clauses, 2026-09-02; the wiki-state clause and Anomalies
 quotation-locator rule in templates/lane-core.md, and the product-name clause in the compile-core
 slice; keep this block whole for an IN-SESSION lane, which carries neither. The table-summary
 sentence in the second bullet is in neither carrier: keep it for a headless lane too. -->
-<!-- The sentences after the table-summary sentence (a whole-source universal, a word absent from a collapsed cell, a Related gloss's tables, an attribute of a named work) and after the computed-number sentence (a vault-state sentence's command and scope, a comparison with other sources) are in neither carrier either: keep them for a headless lane too. -->
+<!-- The sentences after the table-summary sentence (a whole-source universal, a word absent from a collapsed cell, a Related gloss's tables, a gloss on a network page, an attribute of a named work) and after the computed-number sentence (every count as such a number, a vault-state sentence's command and scope, a comparison with other sources) are in neither carrier either: keep them for a headless lane too. -->
 - The source page states the source's own provenance as the raw states it — publisher,
   publication date and URL — in frontmatter (`source_url:`) AND in one sentence of
   `## Summary` (standard, concise) or `## Citation` (research); a provenance fact the raw lacks
@@ -54,18 +55,24 @@ sentence in the second bullet is in neither carrier: keep it for a headless lane
   A cell from a column-collapsed table is quoted only with its row and column labels verified in the raw, never with a superlative or a row label the table does not print.
   A word or unit absent from a collapsed cell is never supplied: the cell is quoted as printed and the gap marked `unverified`.
   A `## Related` gloss that says where a metric or method appears lists the tables or sections it rests on, each one checked in the raw.
-  An attribute of a named work, person or organisation (a novel, a paper, a startup, a professor) comes from the raw or is left out.
+  Every gloss you write on a network page, an Appears in line included, uses only what the raw states.
+  An attribute of a named work, person or organisation (a novel, a paper, a startup, a professor), a gendered pronoun included, comes from the raw or is left out.
+  Who built, ran or evaluated something comes from the source or is left out; a range or grouping the page derives is computed from the cited cells and shown with them.
 - Never assert what the wiki does or does not hold ("the wiki's only record", "nothing in the
   wiki covers X"): state the check you ran and its result instead ("no other page names this
   route except `<page>`, which derives from the same capture — grep `<pattern>`, N hits"). A
   claim about the vault's state is a claim like any other and needs its evidence on the page
   or in the report (G3r re-gate, 2026-09-03). A number you computed over a set (files, hits,
   list lengths) is copied from the command's printed output in this call, never recalled or taken
-  from this brief. Re-run the count before the report and correct the sentence if it changed.
+  from this brief. Every count you write is such a number: how many figures, tables, sections or references a source has, how often a label occurs, and what a grep you cite returned are each produced by a command you run for that sentence, with the printed count quoted; a count from reading is not written. Re-run the count before the report and correct the sentence if it changed.
   A count of a Markdown table's rows excludes both the header row and the `| --- |` separator row,
   so a grep for lines starting `|` minus one header overcounts by one.
   A vault-state sentence names the exact command and the scope it ran over; "wiki/" in such a sentence means the whole tree, so a count taken over your index slice or the pages you read names that narrower scope instead.
   A comparison with other sources, sibling captures included, names the check behind it, and no attribute is inferred from an identifier such as a path or a host name.
+- An attribution of a table, case or example to a source benchmark, dataset or task ("the source of", "generated from", "taken from") is written only where the raw prints that attribution for that very table or case; a table that names no source is said to name none.
+- In an update compile, where a source page is brought up to a newer version of its source, every claim about what a version added or changed ("added in", "new in") is checked against the earlier version's raw, and a sentence saying the wiki holds no page for something is checked against the index (a fixed-string grep of wiki/index.md for its `[[Name]]` link).
+- A sentence about what several sources together do or do not contain, measure or compare ("no source compiled here measures X") is a universal over each of them: it is written only after each raw has been checked for X, with the check named beside it; otherwise state only what each source reports. A sentence that ranks or sums results across a table ("takes the largest losses", "ahead of baselines") is a direction over that table: write the cells it rests on instead, as the table-summary sentence above sets.
+- Research-depth source pages keep the template's section order: `## Key Findings` before `## Data / Setup`.
 - A product name is a model mention: a source that names an LLM product or family even once,
   even as a licence or plan name (ChatGPT Edu, GPT-4o), links the family's model page from
   `## Related` — ChatGPT and every GPT-n fold into `[[GPT]]` — and says on the page what the
@@ -98,7 +105,7 @@ GRANTS
 - Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
 - Left out on purpose: {{what, and why | none}}
 - Second seat: {{none, or the rule that earns it and what that seat checks against}}
-DECISIONS: {{the run's decisions that bear on this task, and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
+DECISIONS: {{the run's decisions that bear on this task, the owner's earlier decisions on the same question (a search of decided-work, its closed page and the subject page's dated owner notes), and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
 Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
 A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 {{headless lanes: the read directories, the write scope and any add-on granted beyond the
@@ -136,15 +143,17 @@ LEDGER & CLAIMS <!-- parallel ingest runs only; delete this block for serial/one
 - **Never create or edit shared-type pages** (entity/concept/model/benchmark). Emit claims
   instead — in your report, mirrored under `claims` in the `claims_emitted` checkpoint: `{name · type ·
   kind: create|update · target (canonicalised against index.md — GPT-4o → update [[GPT]]) ·
-  facts[] with per-fact source locators · links[] · appears_in[] · confidence (§4.6) ·
+  facts[] with per-fact source locators · links[] · appears_in[] · page_tier (§4.6: the tier you propose for the target page, or `keep` to leave it; never how sure you are of a fact, which `unverified` marks) ·
   from: source-page · source: raw identity · diff: absolute path · base: sha256 prefix · diff_hash: sha256 prefix}`; mark shaky facts `unverified`. Write one unified diff beside each claim in the granted diff directory. An update uses the page exactly as read; `base` is the first 16 sha256 hex digits, matching the de-dup probe's `source_hash` length. A create uses a new-file diff and the full schema's frontmatter and sections, with `aliases:` holding the acronym and expansion wherever the source gives both. Mirror `diff`, `base` and the diff's own sha256 prefix in each object under the checkpoint's `claims` key. Never apply these diffs yourself.
 - Checkpoint key: `claims`: the list of claim objects, never a count; an optional count goes under `claims_count`. Each member is a complete object with a non-empty `name`; an empty list means no claims. Never use `claim_objects` as a substitute key. Shape-only example for a source with no claims (add the run and write-time timestamp):
   `{"event":"checkpoint","stage":"claims_emitted","lane":"<lane>","source":"<raw identity>","claims":[],"claims_count":0}`
-- After every `claims_emitted` append, run the mandatory read-only assertion in compile-core §5 against this ledger, lane and exact source identity. An in-session lane reads that assertion from the delegate skill's `lane-home-src/compile-core/SKILL.md`. Record its `claims-shape:` and `controls:` lines in the lane's final report under a `## Controls` heading, with one unquoted line `claims-shape: checkpoints N · objects M · invalid 0`. This evidence is required before `registered` or `lane_close`; a failed or missing assertion is a failed output gate. The verifier consumes these report lines.
+- After every `claims_emitted` append, run the mandatory read-only assertion in compile-core §5 against this ledger, lane and exact source identity. An in-session lane reads that assertion from the delegate skill's `lane-home-src/compile-core/SKILL.md`. Record its `claims-shape:` and `controls:` lines in the lane's final report under a `## Controls` heading, each one plain line, no list marker, with one unquoted line `claims-shape: checkpoints N · objects M · invalid 0`. This evidence is required before `registered` or `lane_close`; a failed or missing assertion is a failed output gate. The verifier consumes these report lines.
 - Before each `claims_emitted` append, run compile-core §5's claims-locator check on the checkpoint you are about to append (`raw_slices.py --check-claims` with `--event` and that exact JSON) and append that line only on its exit 0; after the append, run it again in ledger mode beside the shape assertion. Each fact's locator sits under the key `locator` (never `loc` or `location`), and each claim's `from` names this source page and its `source` this raw. Record the ledger-mode run's `locators:` line for each raw under `## Controls` beside `claims-shape:`, copied whole: it names this lane, the raw and its source page, which the verifier matches raw by raw; a failed or missing check is a failed output gate, as a failed shape assertion is.
 - Your Step 7 link check becomes: every link resolves to a real page OR to a target in your
   emitted claims. A conflict never pauses you: keep both statements in the claim, append the
-  `conflict` event, report at close.
+  `conflict` event, report at close. Where the source gives a newer state of the same thing, with
+  the standing to change it, write `newer state` as the event's `disposition`, so that the merge
+  replaces the older statement and does not keep both.
 
 VERIFICATION
 - Output gate: {{N}} source pages, each with §4.1 frontmatter including depth +
@@ -174,8 +183,10 @@ Negative control: {{an invented string that must NOT hit / must be caught}}
 Role delta: compile only from the assigned sources — a gap is reported, never filled.
 Assign `confidence` per §4.6, which settles every grade on its own: a tier off its default
 carries its ground on its `confidence:` line, and delegation never raises a tier. Report each
-page's tier with its reason. A conflict never pauses you: write the §4.4 block, continue, and
-report it under `## Conflicts`. {{extra conduct | —}}
+page's tier with its reason. A conflict never pauses you: write the §4.4 block, continue, and report
+it under `## Conflicts`. A newer state of the same thing is no conflict (§4.4): leave it as it
+stands, report the pair under `## Replaced (proposed)` with the page's path, and continue.
+{{extra conduct | —}}
 
 REPORT
 Pages written (depth + confidence each) · proposed registry diffs or grep-verification ·

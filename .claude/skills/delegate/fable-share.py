@@ -108,8 +108,9 @@ Billing definitions, each with its derivation:
 Lane discovery by id (`--spawn-record <path>`): an in-session lane is matched by its
 `agent_id` to `<project-dir>/<session>/subagents/<agent-id>.jsonl` — the session of its own
 partition, which is the metered one unless the paragraph below says otherwise — a headless lane by its
-`session_id` to `<projects-root>/*/<session-id>.jsonl` — any project directory under
-`--projects-root`, never a guessed one. Record-resolved lanes are metered alongside whatever
+`session_id` to `<projects-root>/*/<session-id>.jsonl` — any project directory under the
+projects root its `lane-open` records (an absolute directory, taken on exactly one hit), else
+under `--projects-root`, never a guessed one. Record-resolved lanes are metered alongside whatever
 `--lanes` finds, de-duplicated by content identity as usual, and `metered n of m recorded`
 states how many `lane-open` events were matched to a metered transcript. A mismatch is a
 flag on the line, not a premise failure: the figures printed are still real, and the exit
@@ -1065,10 +1066,12 @@ def read_spawn_record(path):
                 name = str(name)
                 reason = rec.get("reason")
                 tier = rec.get("cache_tier_expected")
+                root = rec.get("projects_root")
                 lane = {"name": name, "reason": reason if isinstance(reason, str) else "",
                         "agent_id": None, "session_id": None, "partition": current,
                         "harness": rec.get("harness") if isinstance(rec.get("harness"), str) else None,
                         "cache_tier": tier if isinstance(tier, str) else None,
+                        "projects_root": root if isinstance(root, str) and root else None,
                         "pick": pick_fields(rec),
                         "spans": [{"partition": current, "ts": parse_ts(rec.get("ts")),
                                    "event": "lane-open"}]}
@@ -1238,8 +1241,14 @@ def resolve_recorded_lanes(lanes, project_dir, session, projects_root):
                 notes["not_found"] += mine
         elif session_id:
             # A headless lane writes its own top-level transcript, in whichever project
-            # directory the wrapper ran under: searched, never guessed.
-            hits = sorted(glob.glob(os.path.join(projects_root, "*", session_id + ".jsonl")))
+            # directory the wrapper ran under: searched, never guessed. A lane on another login
+            # folder writes it under the projects root its lane-open records (register entry
+            # [2026-11-16 02:01 d]), taken there on exactly one hit; else this meter's root.
+            own = os.path.expanduser(lane.get("projects_root") or "")
+            hits = (sorted(glob.glob(os.path.join(own, "*", session_id + ".jsonl")))
+                    if os.path.isabs(own) and os.path.isdir(own) else [])
+            if len(hits) != 1:
+                hits = sorted(glob.glob(os.path.join(projects_root, "*", session_id + ".jsonl")))
             if len(hits) == 1:
                 paths.setdefault(hits[0], lane)
                 lane["path"] = hits[0]

@@ -15,6 +15,7 @@ each tool's procedure is its own file.
 | The rule register's one pass | `rule_register.py weekly` lists what the rule register finds, inside the audit (`AUDIT.md`, step 8). It only lists. | `rule_register.py`'s own docstring |
 | The clean-up's listing | `rule_register.py cleanup` prints the store sizes and the old records no wiki page, calendar line or open register entry names, for the weekly review's clean-up step. It lists and deletes nothing. | `rule_register.py`'s own docstring |
 | The waste report | Recorded helper consumption and operational outcomes across runs, from the run records alone. It judges nothing. | `README.md` and `FIELDS.md`, with `weekly-waste.py` |
+| The weekly read | Five counts from the records, each with its source and its week: the owner's corrections, faults found after work was called done, first reviews failed per kind of helper, cost and time per job, and the picks per option. A count is a prompt to look, never a verdict: it writes no rule, moves no default and files no fault entry. A source it could not read prints "not read" and exit 1. Run `python3 -B <store>/tools/weekly-read/weekly-read.py` after the waste report and read its "look:" lines with the owner. | `weekly-read.py`'s own docstring, in `<store>/tools/weekly-read/` (outside this folder; a fresh copy has none) |
 
 ## Where things live
 

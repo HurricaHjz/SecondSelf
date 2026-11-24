@@ -54,6 +54,12 @@ What it denies, in this order, so the reason names the real cause:
      computed format is unresolvable. A documented standard-output target creates no file;
   3. a relative path token that escapes the working directory (a `..` component);
   4. an absolute path token outside the read grants.
+  5. a `mktemp` whose created path lies outside the write set, read from its template or its `-p`
+     folder; one that names neither (or uses `-t`) would create under $TMPDIR, outside every grant,
+     and is denied with the fix: give it a template under a granted folder (`mktemp_targets`).
+  6. a write an escaped quote (`\\'`, `\\"`) hid from checks 2 to 5: a command they cleared that holds
+     one is re-spelled with no escaped quote left (`escaped_quote_view`) and read by the write checks
+     once more, and their refusal is this one's (DW-20261109-31). It adds refusals and removes none.
 
 Between checks 1 and N, the ssh-family classifier separates local shell I/O, then returns
 connection hosts, local reads, local writes and unresolved syntax. Local copy endpoints and
@@ -453,6 +459,149 @@ def strip_heredocs(text):
                 if (body.lstrip("\t") if dash else body) == word:
                     break
     return "\n".join(out)
+
+
+# DW-20261109-31: the shell reads a quote as a literal character in three places — `\'` or `\"`
+# outside quotes, `\"` inside double quotes, and `\'` inside ANSI-C quoting (`$'…'`). The flat quote
+# readers below pair such a quote with a real one, so text the shell runs can be read as quoted data
+# and a write in it is never tested. `escaped_quote_view` re-spells each such quote as a quoted
+# character, by the quote state it stands in, and `check` runs its write checks on the result.
+ESCAPED_QUOTE_SPELLING = {("unquoted", "'"): "\"'\"", ("unquoted", '"'): "'\"'",
+                          ("double", '"'): "\"'\"'\"", ("ansi", "'"): "'\"'\"$'"}
+
+
+def unmodelled_double_span(span):
+    """True when a double-quoted span, read flat as the readers pair it, holds a command
+    substitution, a braced expansion or a backtick substitution whose own quoting the flat reading
+    cannot follow: one the span does not close, or one holding a single quote or a backtick inside its
+    own extent. An escaped character opens nothing (`\\$(`, `` \\` `` are text in double quotes)."""
+    span = re.sub(r"\\.", "  ", span, flags=re.S)
+    i, n = 0, len(span)
+    while i < n:
+        if span.startswith(("$(", "${"), i):
+            opener = span[i + 1]
+            closer = ")" if opener == "(" else "}"
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += (span[j] == opener) - (span[j] == closer)
+                j += 1
+            if depth or "'" in span[i:j] or "`" in span[i:j]:
+                return True
+            i = j
+        elif span[i] == "`":
+            j = span.find("`", i + 1)
+            if j < 0 or "'" in span[i:j]:
+                return True
+            i = j + 1
+        else:
+            i += 1
+    return False
+
+
+def escaped_quote_view(text):
+    """(view, count, undecided): `text` with every escaped quote outside single quotes and heredoc
+    bodies re-spelled, how many were, and whether part of it was read as unquoted (below). One pass,
+    nothing evaluated. Per state, as the shell reads it:
+      unquoted  `\\'` → `"'"`, `\\"` → `'"'`; any other escape is copied; `$'` opens ANSI-C, `'` single
+                and `"` double quotes; a `#` starting a word runs a comment to its newline, KEPT with
+                its quote characters blanked (never dropped, so no text escapes both readings); a
+                newline ends the logical line, whose heredoc bodies (`heredoc_markers`, read on the
+                re-spelled line) are copied verbatim up to their terminators;
+      double    `\\"` → `"'"'"`; any other escape is copied, so `\\\\"` still closes;
+      ANSI-C    `\\'` → `'"'"$'`; any other escape is copied;
+      single    copied up to its `'`.
+    The invariant, which the suite tests: no backslash-quote remains outside single quotes and
+    heredoc bodies, and every quote is paired as the readers pair it (flat). In flat context each
+    re-spelling is the same word to the shell; inside a substitution or expansion nested in double
+    quotes, or straight after an unquoted `$`, it need not be — the view is never run, only read.
+    Cannot-decide cases, each read as UNQUOTED (every quote character blanked, so no reader can pair
+    anything there and every write in it is tested), and flagged `undecided`:
+      - a double-quoted span `unmodelled_double_span` calls unmodelled: from its opening quote to the
+        end of the text;
+      - the text ends inside a quote: from that quote's opening to the end.
+    No length bound: the pass is one linear scan, and a cut-off would leave the text past it unread."""
+    out, count, undecided = [], 0, False
+    state, opened, line_mark = "unquoted", 0, 0
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if undecided:
+            if ch == "\\" and i + 1 < n and text[i + 1] in "'\"":
+                count += 1
+                out.append("  ")
+                i += 2
+                continue
+            out.append(" " if ch in "'\"" else ch)
+            i += 1
+            continue
+        if state == "single":
+            out.append(ch)
+            state = "unquoted" if ch == "'" else state
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            spelling = ESCAPED_QUOTE_SPELLING.get((state, text[i + 1]))
+            count += spelling is not None
+            out.append(spelling or text[i:i + 2])
+            i += 2
+            continue
+        if state != "unquoted":
+            out.append(ch)
+            closes = '"' if state == "double" else "'"
+            state = "unquoted" if ch == closes else state
+            i += 1
+            continue
+        if text.startswith("$$", i):
+            out.append("$$")
+            i += 2
+            continue
+        if text.startswith("$'", i):
+            out.append("$'")
+            state, opened = "ansi", len(out) - 1
+            i += 2
+            continue
+        if ch == "'":
+            out.append(ch)
+            state, opened = "single", len(out) - 1
+            i += 1
+            continue
+        if ch == '"':
+            close = i + 1
+            while close < n and text[close] != '"':
+                close += 2 if text[close] == "\\" else 1
+            if unmodelled_double_span(text[i + 1:close]):
+                undecided = True
+                out.append(" ")
+            else:
+                out.append(ch)
+                state, opened = "double", len(out) - 1
+            i += 1
+            continue
+        if ch == "#" and (i == 0 or text[i - 1] in " \t\n;&|()<>"):
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            comment = text[i:end]
+            count += comment.count("\\'") + comment.count('\\"')
+            out.append(comment.replace("'", " ").replace('"', " "))
+            i = end
+            continue
+        out.append(ch)
+        i += 1
+        if ch == "\n":
+            for word, dash in heredoc_markers("".join(out[line_mark:])[:-1]):
+                while i < n:
+                    end = text.find("\n", i)
+                    end = n if end < 0 else end
+                    body = text[i:end]
+                    out.append(text[i:end + 1])
+                    i = end + 1
+                    if (body.lstrip("\t") if dash else body) == word:
+                        break
+            line_mark = len(out)
+    if state != "unquoted" and not undecided:
+        undecided = True
+        out[opened:] = [piece.replace("'", " ").replace('"', " ") for piece in out[opened:]]
+    return "".join(out), count, undecided
 
 
 def slash_pattern(content):
@@ -1166,11 +1315,50 @@ def _strip_outer_quote(word):
     return word
 
 
-def interpreter_payloads(command):
+def view_word_value(word):
+    """One word of the escaped-quote view as the shell hands it over: quotes removed, an escape
+    reduced as the shell reduces it, ANSI-C `\\\\` and quote escapes decoded, nothing expanded (`$`,
+    backticks and glob characters stay as written). The second reading's check 2b reads a program
+    word this way (review B1): the first reading's `_strip_outer_quote` leaves a re-spelled word as
+    glued quoted spans, which the call patterns cannot match. `ssh_literal` is not used here because
+    it refuses `$`, backticks, ANSI-C quoting and unquoted glob characters."""
+    out, quote, i, n = [], None, 0, len(word)
+    while i < n:
+        ch = word[i]
+        if quote in ("'", "$'"):
+            if ch == "'":
+                quote = None
+            elif quote == "$'" and ch == "\\" and i + 1 < n:
+                out.append(word[i + 1] if word[i + 1] in "\\'\"" else word[i:i + 2])
+                i += 1
+            else:
+                out.append(ch)
+        elif ch == "\\" and i + 1 < n:
+            if quote == '"' and word[i + 1] not in '$`"\\\n':
+                out.append(ch)
+            if word[i + 1] != "\n":
+                out.append(word[i + 1])
+            i += 1
+        elif ch == '"':
+            quote = None if quote else '"'
+        elif quote is None and word.startswith("$'", i):
+            quote = "$'"
+            i += 1
+        elif quote is None and ch == "'":
+            quote = "'"
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def interpreter_payloads(command, decode=False):
     """Every interpreter PROGRAM TEXT in `command`: the argument behind an interpreter's `-c`/`-e`/
     `-E` flag, and every heredoc body on a command line whose command is an interpreter (so a body
     fed to `cat` is not read as a program). Bodies are consumed in marker order like `strip_heredocs`,
-    so a terminator appearing inside a body ends it there and cannot swallow the rest."""
+    so a terminator appearing inside a body ends it there and cannot swallow the rest. `decode`, for
+    the escaped-quote second reading only, reads a program word with `view_word_value`."""
+    program = view_word_value if decode else _strip_outer_quote
     payloads = []
     for words in shell_segments(command):
         index, base = segment_command(words)
@@ -1188,9 +1376,9 @@ def interpreter_payloads(command):
                 continue
             tail = match.group(1) if match else ""
             if tail:
-                payloads.append(_strip_outer_quote(tail))
+                payloads.append(program(tail))
             elif j + 1 < len(words):
-                payloads.append(_strip_outer_quote(words[j + 1]))
+                payloads.append(program(words[j + 1]))
             break
     lines = command.split("\n")
     index = 0
@@ -1214,12 +1402,12 @@ def interpreter_payloads(command):
     return payloads
 
 
-def interpreter_write_literals(command):
+def interpreter_write_literals(command, decode=False):
     """(call, literal target) for every write-opening call in an interpreter payload whose target is
     a string literal (register fix b). Comment lines are dropped first. A variable target matches no
-    pattern here and is the stated residual."""
+    pattern here and is the stated residual. `decode` as in `interpreter_payloads`."""
     out = []
-    for payload in interpreter_payloads(command):
+    for payload in interpreter_payloads(command, decode):
         text = "\n".join(l for l in payload.split("\n") if not l.lstrip().startswith("#"))
         for match in _OPEN_CALL.finditer(text):
             target, mode = _first_literal(match.groups(), 0), _first_literal(match.groups(), 2)
@@ -3046,12 +3234,24 @@ def lane_override_reason(command):
     return LANE_OVERRIDE_REASON if refused else None
 
 
-def check(event, grants, writes, head=False, network=None):
+ESCAPED_QUOTE_REASON = ("an escaped quote (\\' or \\\") hid a write from this checker's first reading; "
+                        "read as the shell reads it, ")
+# B6 — the owner's choice; this is the provisional default the review found the code supports. When
+# the escaped-quote second reading itself raises, the helper role refuses ("… failed — fail-closed").
+# In the lead's role, True lets the exception through to head-fence.py, which allows the call and logs
+# it as it does for any checker failure (`allow-unarmed`, "checker … unusable"); False refuses there too.
+ESCAPED_QUOTE_HEAD_FAILS_OPEN = True
+
+
+def check(event, grants, writes, head=False, network=None, view=False):
     """The whole decision as a pair — ("deny", reason), ("allow", reason) or ("silent", "") —
     computed, never printed and never exited, so head-fence.py can IMPORT this module and call
     this one function instead of paying a second interpreter start (D34 as amended, N8).
     `grants` and `writes` are lists of real paths; `network` is the run's `network` grant (a list of
-    hosts, empty or None meaning no network); `head` selects the head role."""
+    hosts, empty or None meaning no network); `head` selects the head role. `view` is the
+    escaped-quote second reading's own call (one call site, in step 6 below): it runs the write
+    checks — the record writer's grant, ssh-family local writes, 2, 2b (programs decoded), 2c and 5 —
+    and skips the lane override, check 1, the ssh-family refusals, check N and checks 3 and 4."""
     network = network or []
     def denial(reason):
         return "deny", "%s %s" % (FENCE, reason)
@@ -3072,10 +3272,11 @@ def check(event, grants, writes, head=False, network=None):
         return denial("non-text command in hook input — fail-closed")
     if not command.strip():
         return "silent", ""               # writes nothing, reads nothing
+    original_command = command
 
     # In the lane role, no change to the helper's environment may reach the record writer.
     # The lead's role never reaches this rule.
-    if not head:
+    if not head and not view:
         override = lane_override_reason(command)
         if override:
             return denial(override)
@@ -3095,21 +3296,23 @@ def check(event, grants, writes, head=False, network=None):
     body = strip_heredocs(command)
 
     # 1 — a lane never spawns a lane. Off in the head role: a head spawns lanes for a living.
-    if not head:
+    if not head and not view:
         for token in tokens_of(check1_text(body)):
             if os.path.basename(token.rstrip(os.sep)) == "claude":
                 return denial("a lane may not invoke `claude` (no nested spawns)")
 
     original_body = body
     body, ssh_hosts, ssh_reads, ssh_writes, ssh_errors, ssh_active = ssh_command_view(body)
-    if ssh_errors:
+    if ssh_errors and not view:
         return denial(ssh_errors[0])
-    if ssh_active:
+    if ssh_active and not view:
         heredoc_error = ssh_heredoc_error(command)
         if heredoc_error:
             return denial(heredoc_error)
     for kind, paths, roots in (("write", ssh_writes, write_roots),
                                ("read", ssh_reads, read_roots + [norm(os.getcwd())])):
+        if view and kind == "read":
+            continue
         for origin, target in paths:
             if origin == "client program" and any(target.startswith(p) for p in SYSTEM_BIN) and os.path.exists(target):
                 continue
@@ -3122,9 +3325,9 @@ def check(event, grants, writes, head=False, network=None):
     for payload in interpreter_payloads(command):
         local_payload, _, _, _, errors, used = ssh_command_view(payload)
         if used:
-            if errors:
+            if errors and not view:
                 return denial(errors[0])
-            if not ssh_active or payload not in inline_payloads:
+            if (not ssh_active or payload not in inline_payloads) and not view:
                 return denial("unresolved ssh-family interpreter or heredoc wrapper grammar")
             local_command = local_command.replace(payload, local_payload)
     network_text = body if ssh_active else local_command
@@ -3134,7 +3337,7 @@ def check(event, grants, writes, head=False, network=None):
     #     client, or an interpreter payload that imports a network module, is denied unless the run's
     #     `network` grant names the host it addresses. An absent or empty `network` grant means no
     #     network at all; a network command that names no host under a grant is unresolvable.
-    if ssh_hosts or is_network_command(body, local_command):
+    if not view and (ssh_hosts or is_network_command(body, local_command)):
         hosts = sorted({h.lower() for h in
                         ssh_hosts + command_hosts(body) + command_hosts(network_text) + network_operand_hosts(body)
                         if h})
@@ -3248,14 +3451,14 @@ def check(event, grants, writes, head=False, network=None):
     # 2b — an interpreter's OWN write (register fix b): a write-opening call in a `-c`/`-e` program
     #      or a heredoc body whose target is a string literal, checked against the write roots. A
     #      variable target is the stated residual. Scanned on the ORIGINAL command, heredocs intact.
-    for call, target in interpreter_write_literals(local_command):
+    for call, target in interpreter_write_literals(local_command, decode=view):
         if not target:
             continue
         interpreter_body = strip_heredocs(local_command)
         contexts = [(interpreter_body[words[0][1]:words[-1][2]], base)
                     for words, base in command_base_segments(interpreter_body)]
         matching = [base for text, base in contexts
-                    if (call, target) in interpreter_write_literals(text)]
+                    if (call, target) in interpreter_write_literals(text, decode=view)]
         if not matching:
             matching = [base for text, base in contexts if heredoc_markers(text)]
         # Multiple matching payloads all have to grant the target; an unknown base refuses.
@@ -3283,7 +3486,7 @@ def check(event, grants, writes, head=False, network=None):
     # `read_tokens` returns (token, fragment) pairs: a `/`-led FRAGMENT is the residue of cutting a
     # longer word at a non-glob metacharacter (half an awk/sed/perl program) and is not a path; a
     # token the shell would hand over whole is tested, `ls /` included (review F2a).
-    tokens = [(unescape_token(token), fragment) for token, fragment in read_tokens(body)]
+    tokens = [] if view else [(unescape_token(token), fragment) for token, fragment in read_tokens(body)]
     tokens = [(token, fragment) for token, fragment in tokens
               if not (fragment and token.startswith("/"))]
 
@@ -3307,6 +3510,39 @@ def check(event, grants, writes, head=False, network=None):
             continue                      # within_leaf: a leaf not yet created, by its parent (fix 4)
         return denial("`%s` is outside the granted directories — report the gap "
                       "(`needs: <path> because <reason>`) instead of working around it" % token)
+
+    # 5 — `mktemp` (register entry [2026-11-12 08:19 b]): the path it creates is read from its template
+    #     or its `-p` folder and must lie inside the write roots; one that names no folder this fence
+    #     can place is denied with the fix. It runs after checks 1 to 4, so each refusal they make keeps
+    #     its own reason.
+    for segment_text, base in local_segments:
+        for _, path in mktemp_targets(segment_text):
+            if path is None:
+                return denial(MKTEMP_REASON)
+            if "$" in path or "`" in path:
+                return denial("`mktemp` takes the template or folder `%s`, which carries a variable or a "
+                              "substitution this fence cannot resolve — write the literal path (N3)" % path)
+            resolved = resolve_command_path(path, base)
+            if resolved is None:
+                return denial("unresolved local write base after compound or missing cd")
+            if not within(resolved, write_roots):
+                return denial("`mktemp` creates `%s`, which is %s" % (path, scope))
+
+    # 6 — the escaped-quote second reading (DW-20261109-31). Only a command the checks above cleared
+    #     and that holds an escaped quote gets here. Its re-spelling (`escaped_quote_view`) is read
+    #     by the write checks once more, and their refusal is this one's. It can only add refusals.
+    if not view and ("\\'" in original_command or '\\"' in original_command):
+        try:
+            text, count, _ = escaped_quote_view(original_command)
+            if count:
+                second = check(dict(event, tool_input=dict(tool_input, command=text)), grants, writes,
+                               head=head, network=network, view=True)
+                if second[0] == "deny":
+                    return denial(ESCAPED_QUOTE_REASON + second[1][len(FENCE) + 1:])
+        except Exception:
+            if head and ESCAPED_QUOTE_HEAD_FAILS_OPEN:
+                raise                     # B6: head-fence.py allows and logs, as for any checker failure
+            return denial("the escaped-quote reading failed — fail-closed")
 
     # Cleared. A lane gets the explicit allow its permission flow needs; a head gets silence, an
     # explicit allow there being read by the harness as auto-approval (C1 F1).
@@ -3540,6 +3776,126 @@ def mutator_targets(text):
                     operands = operands[-1:]  # only the last is created; the rest are reads
         for target in targets + operands:
             out.append((mutator, target))
+    return out
+
+
+# Register entry [2026-11-12 08:19 b]: `mktemp` creates a file or a directory, and given no template it
+# names no target word at all: the platform's temporary folder receives it ($TMPDIR; on macOS the
+# per-user folder under /var/folders, which `temp_roots` keeps out on purpose), outside every grant.
+MKTEMP_REASON = ("`mktemp` names no folder this fence can place (no template and no `-p` folder, or "
+                 "`-t`), so it would create its file under the platform's temporary folder, outside the "
+                 "granted directories — give it a template under a granted folder: "
+                 "`mktemp -d <granted folder>/x.XXXXXX` (on macOS a `-p` folder alone is not enough: "
+                 "add a template)")
+
+
+def double_quoted_substitutions(raw):
+    """The inside of every `$( … )` that opens inside a double-quoted part of one raw word, in order.
+    A single-quoted or backslash-escaped `$(` is text, not a substitution, and yields nothing. Inside
+    the substitution, quotes start afresh, so a `)` within its own quotes does not close it."""
+    found, quote, i, n = [], None, 0, len(raw)
+    while i < n:
+        ch = raw[i]
+        if quote == "'":
+            quote = None if ch == "'" else quote
+        elif ch == "\\":
+            i += 1
+        elif quote == '"' and raw.startswith("$(", i):
+            depth, inner, j = 1, None, i + 2
+            while j < n:
+                c = raw[j]
+                if inner == "'":
+                    inner = None if c == "'" else inner
+                elif c == "\\":
+                    j += 1
+                elif inner == '"':
+                    inner = None if c == '"' else inner
+                elif c in "'\"":
+                    inner = c
+                elif c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                    if not depth:
+                        break
+                j += 1
+            found.append(raw[i + 2:j])
+            i = j
+        elif ch == '"':
+            quote = None if quote else '"'
+        elif ch == "'" and quote is None:
+            quote = "'"
+        i += 1
+    return found
+
+
+def mktemp_targets(text):
+    """(command word, path) for every `mktemp` in the text's segments: each path it creates, read from
+    its templates (relative to the segment's directory) and its `-p DIR` or `--tmpdir=DIR` folder; or
+    (word, None) when it names no folder this checker can place — no template and no `-p` folder, a
+    bare or empty `--tmpdir`, an empty `-p`, or `-t` in any form, whose file goes to $TMPDIR (on macOS
+    to the per-user temporary folder, ahead of TMPDIR and `-p`). On macOS a `-p` folder with no
+    template is None as well: its manual states the `-t tmp` default only for a call with no
+    arguments or `-d` alone and is silent on this one, and no probe here settled it, so it is refused;
+    a template under the same folder does the same work. Any `--t…` abbreviation of `--tmpdir` is read
+    as it, as option parsers accept. `--help` and `--version` create nothing, so a call holding one is
+    passed over only when it names no template and no folder. A template given with `-p` is tested
+    both as `os.path.join` reads it and prefixed whole, since the platforms differ on an absolute one.
+    A `$( … )` standing inside a double-quoted word (`T="$(mktemp -d)"`) is read too:
+    `shell_segments` keeps that quoted span whole, so its inside is read here."""
+    out = []
+    for words in shell_segments(text):
+        for raw in words:
+            for inner in double_quoted_substitutions(raw):
+                out.extend(mktemp_targets(inner))
+        index, base = segment_command(words)
+        if base != "mktemp":
+            continue
+        word = unquote_token(words[index]).strip()
+        folder, templates, implicit, inert = None, [], False, False
+        i, end_of_flags = index + 1, False
+        while i < len(words):
+            raw = words[i]
+            i += 1
+            if raw[:1] in "<>":
+                if "&" not in raw and i < len(words):
+                    i += 1                    # a redirection and its target belong to check 2
+                continue
+            value = unquote_token(raw).strip()
+            if not value:
+                continue
+            if end_of_flags or not value.startswith("-") or value == "-":
+                templates.append(value)
+            elif value == "--":
+                end_of_flags = True
+            elif value.startswith("--"):
+                name, sep, given = value.partition("=")
+                if len(name) > 2 and "--tmpdir".startswith(name):
+                    folder = given if sep else ""
+                elif name in ("--help", "--version"):
+                    inert = True
+                elif name == "--suffix" and not sep:
+                    i += 1                    # its value is a suffix, not a template
+            else:
+                for position in range(1, len(value)):
+                    if value[position] == "t":
+                        implicit = True
+                    elif value[position] == "p":
+                        tail = value[position + 1:]
+                        if not tail and i < len(words):
+                            tail = unquote_token(words[i]).strip()
+                            i += 1
+                        folder = tail
+                        break
+        if inert and not templates and folder is None:
+            continue
+        if implicit or folder == "" or (not templates and (folder is None or sys.platform == "darwin")):
+            out.append((word, None))
+            continue
+        for template in templates or ["tmp.XXXXXXXXXX"]:
+            paths = [template] if folder is None else [os.path.join(folder, template),
+                                                       folder.rstrip(os.sep) + os.sep + template]
+            out.extend((word, path) for path in dict.fromkeys(paths))
     return out
 
 

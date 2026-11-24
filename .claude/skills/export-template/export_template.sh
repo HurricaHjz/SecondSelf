@@ -59,19 +59,31 @@ list_agents() {  # echo EVERY subagent definition FILE under $1/.claude/agents �
 # payload without that list ships the calendar's reminder hook and its suite.
 shipped_hooks() {   # $1 the payload folder to read
   if [ -f "$1/shipped-hooks.txt" ]; then
-    grep -vE '^[[:space:]]*(#|$)' "$1/shipped-hooks.txt" || true
+    grep -vE '^[[:space:]]*(#|$)' "$1/shipped-hooks.txt" || [ $? -eq 1 ]   # 1: comments only; 2: unreadable
   else
     printf '%s\n' calendar-digest.py test_calendar_digest.sh
   fi
 }
-SHIPPED_HOOKS="$(shipped_hooks "$KIT")"
+SHIPPED_HOOKS="$(shipped_hooks "$KIT")" || SHIPPED_HOOKS_UNREAD=1   # refused below for a build or a push; a pull reads the release's list, or none
 
 # ── vault-owned framework files: vault → $1  (build & push) ─────────────────────────────────
 copy_framework() {
-  local D="$1" s STRAY
+  local D="$1" s STRAY KEPT rest
   # cwd-shift guard (known-issues 2026-08-21→23): a wiki/raw/output tree nested in a skill dir means a
   # relative write landed inside shipped machinery — refuse to package knowledge. payload/example/ is the demo seed.
+  # A find that cannot read a folder fails here, and set -e stops the build before anything is copied.
   STRAY="$(find "$SRC/.claude/skills" -mindepth 2 -type d \( -name wiki -o -name raw -o -name output \) ! -path '*/payload/example/*')"
+  # A skill's own fixtures/ folder holds the test vaults its suites read: a folder is admitted only when the second
+  # component of its path under .claude/skills is exactly `fixtures` (<skill>/fixtures/...). Deeper fixtures folders
+  # (<skill>/sub/fixtures/...), look-alike names (fixtures-old) and everything else are refused as before.
+  KEPT=""
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    rest="${s#"$SRC/.claude/skills/"}"
+    case "${rest#*/}" in fixtures/*) continue ;; esac
+    KEPT="$KEPT$s"$'\n'
+  done <<< "$STRAY"
+  STRAY="${KEPT%$'\n'}"
   [ -n "$STRAY" ] && { echo "ERROR: knowledge-shaped dirs inside .claude/skills — fix before shipping:"; echo "$STRAY"; exit 1; }
   cp "$SRC/CLAUDE.md" "$SRC/MANUAL.md" "$D/"
   mkdir -p "$D/.claude/skills"
@@ -281,7 +293,7 @@ PY_PRICES_PUBLIC
   # future vault-specific block ships nothing by wrapping it (added 2026-08-26). strip_vault_local.py is
   # the one implementation: publish.sh's drift check runs the same strip before it compares a marked file.
   find "$D" -type f \( -name '*.md' -o -name '*.py' -o -name '*.sh' -o -name '*.txt' \) -print0 \
-    | xargs -0 python3 "$SCRIPT_DIR/strip_vault_local.py"
+    | xargs -0 python3 "$SCRIPT_DIR/strip_vault_local.py" --in-place
 }
 
 # ── pull publish files from the repo: README/LICENSE → vault root, screenshot → assets/, rest → payload ──
@@ -358,7 +370,8 @@ if [ "$WANT_PULL" = 1 ]; then
   fi
   echo "PULL ← $REPO   (your knowledge — wiki/ raw/ output/ + your assets media — and .obsidian config are never touched)"
   git -C "$REPO" pull --ff-only || { echo "ERROR: 'git pull' failed; resolve it in $REPO, then retry."; exit 1; }
-  SHIPPED_HOOKS="$(shipped_hooks "$REPO/.claude/skills/export-template/payload")"   # the release's own list, read after the pull so a hook new in it arrives
+  SHIPPED_HOOKS="$(shipped_hooks "$REPO/.claude/skills/export-template/payload")" \
+    || { echo "PROBE FAILED: the release's payload/shipped-hooks.txt cannot be read, so the pull cannot say which hooks ship"; exit 2; }   # the release's own list, read after the pull so a hook new in it arrives
 
   echo "--- framework changes pull would apply to your vault ---"
   CHG=0
@@ -425,6 +438,41 @@ fi
 # Check routing before either overlaying a clone or resetting a fresh-build destination.
 if [ -f "$SRC/.claude/skills/delegate/routing.json" ]; then
   python3 "$SCRIPT_DIR/routing_marks.py" --check "$SRC/.claude/skills/delegate/routing.json"
+fi
+
+# A backup an install or a patch leaves beside a file ships with the folder copy_framework copies whole,
+# so it is refused at the same point, before anything is written. The names refused are the ones such
+# leftovers take: name.bak, name.bak-<tag>, name.pre-<tag>, name.orig and name.rej (patch's) and name~
+# (an editor's), a file or a folder, in every skill that ships and among the helper definitions.
+shipped_backups() {
+  local roots=() s a
+  for s in $(list_skills "$SRC"); do
+    case "$s" in professor-loop) continue ;; esac   # the one skill copy_framework leaves out
+    roots+=("$SRC/.claude/skills/$s")
+  done
+  for a in $(list_agents "$SRC"); do roots+=("$SRC/.claude/agents/$a"); done
+  [ "${#roots[@]}" -gt 0 ] || return 0
+  find "${roots[@]}" \( -iname '*.bak' -o -iname '*.bak-*' -o -iname '?*.pre-*' -o -iname '*.orig' \
+    -o -iname '*.rej' -o -name '*~' \) -print
+}
+BACKUPS="$(shipped_backups)" \
+  || { echo "PROBE FAILED: the search for backup files beside shipped files did not finish, so the export cannot say none would ship"; exit 2; }
+if [ -n "$BACKUPS" ]; then
+  echo "ERROR: backup files sit beside shipped files and would ship with them; move each out of the vault, then re-run:"
+  while IFS= read -r b; do echo "  ${b#"$SRC"/}"; done <<< "$BACKUPS"
+  exit 1
+fi
+
+# A hook on the shipped list that the vault lacks would ship silently absent, and the hands-off machinery
+# that loads it could not run on a fresh clone (known-issues 2026-09-06), so it is refused here too. Only a
+# list file is held to this: a payload without one keeps its calendar default, copied where present.
+[ "${SHIPPED_HOOKS_UNREAD:-0}" = 0 ] \
+  || { echo "PROBE FAILED: payload/shipped-hooks.txt cannot be read, so the export cannot say which hooks ship; nothing was copied"; exit 2; }
+if [ -f "$KIT/shipped-hooks.txt" ]; then
+  for h in $SHIPPED_HOOKS; do
+    [ -f "$SRC/.claude/hooks/$h" ] \
+      || { echo "PROBE FAILED: shipped hook $h is on the shipped-hook list but absent from .claude/hooks; nothing was copied"; exit 2; }
+  done
 fi
 
 # ── PUSH mode (vault → repo) ────────────────────────────────────────────────────────────────

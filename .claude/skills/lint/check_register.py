@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check_register.py — two consistency checks over the known-issues register (lint Step 2).
+"""check_register.py — two consistency checks and one listing over the known-issues register (lint Step 2).
 
 Stdout-only by construction: reads the register, prints, writes nothing.
 
@@ -21,12 +21,21 @@ checks key on the two observables:
      surfaces share a file name. Closed entries are left out of the pairing because line numbers
      drift as files change, so a closed entry's locator names an older text; the number of
      locators an Open entry shares with a Closed one prints as information.
+  3. MORE THAN ONE STATUS (a listing, never a finding): an entry under `## Open` holding more than
+     one status line: its Status field (`- **Status**: …`, or a `- **Severity**: … **Status**: …`
+     line) and every dated status note (`- **Status 2026-09-02 …:**`), each a bullet at the start
+     of a line. An open entry keeps one status, what blocks it now, who proposes the next step and
+     when (the stale-information design, 21 November 2026); `register annotate --kind Status`
+     replaces it, so a layered status comes from a hand edit or from before that change. Listed
+     so that a reader brings the entry to one status; it never sets the exit code, since the
+     register held many such entries when the listing was added.
 Entry headings (`### `) inside fenced code blocks, such as the register's format example, are
 not entries.
 
 Controls, in memory, before the scan: a register holding a closed Status under `## Open` and two
 Open entries citing one locator in two spellings must produce one finding of each kind, and a
-closed Status under `## Closed` must not be one. A control that does not behave is PROBE FAILED
+closed Status under `## Closed` must not be one; of its Open entries exactly one, the one with a
+Status field and a dated status note, is listed as holding more than one status. A control that does not behave is PROBE FAILED
 (exit 2).
 
 Capability arm (`--capability`): a separate read of the structured capability register through
@@ -59,6 +68,8 @@ SECTION_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*$")          # `### x` never match
 ENTRY_RE = re.compile(r"^###[ \t]+(.+?)[ \t]*$")
 FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
 STATUS_RE = re.compile(r"\*\*Status\*\*:[ \t]*(.*)")
+# A status line of an entry, for the listing: its Status field in either form, or a dated note.
+STATUS_LINE_RE = re.compile(r"^- \*\*Status\b|^- \*\*Severity\*\*:.*?\*\*Status\*\*:")
 # The three words the register closes an entry with; the word must open the Status value.
 CLOSED_RE = re.compile(r"^[*_`\s]*(?:closed|fixed|resolved)\b", re.I)
 OPEN_SECTION_RE = re.compile(r"^open\b", re.I)
@@ -88,6 +99,10 @@ CONTROL_REGISTER = """# Register
 
 ### [2026-01-05] a script — resolved and left under Open (minor)
 - **Status**: *resolved* 2026-01-06 — the entry was never moved
+
+### [2026-01-06] a page — two statuses layered on one entry (minor)
+- **Status**: open — fix shape: a later status went beside this one
+- **Status 2026-01-07 10:00 GMT:** still open, the newer status
 
 ## Closed
 
@@ -159,13 +174,16 @@ def parse(text):
             continue
         e = ENTRY_RE.match(line)
         if e:
-            current = {"section": section, "line": n, "title": e.group(1), "status": [], "locators": {}}
+            current = {"section": section, "line": n, "title": e.group(1), "status": [], "locators": {},
+                       "status_lines": []}
             entries.append(current)
         if current is None:
             continue
         if not e:
             for sm in STATUS_RE.finditer(line):
                 current["status"].append((n, sm.group(1).strip()))
+            if STATUS_LINE_RE.match(line):
+                current["status_lines"].append(n)
         for lm in LOCATOR_RE.finditer(line):
             current["locators"].setdefault((lm.group(1), int(lm.group(2))), n)
     return entries, sections
@@ -213,6 +231,11 @@ def check(text):
         1 for a in opened for b in closed for la in a["locators"] for lb in b["locators"]
         if same_locator(la, lb) in ("exact", "suffix"))
     return entries, sections, closed_under_open, shared, possible, open_closed_shared
+
+
+def more_than_one_status(entries):
+    """The Open entries holding more than one status line (the listing, never a finding)."""
+    return [e for e in entries if in_section(e, OPEN_SECTION_RE) and len(e["status_lines"]) > 1]
 
 
 def show(text, width):
@@ -297,6 +320,10 @@ def main():
     if len(c_shared) != 1:
         probe_failed("the in-memory control's two Open entries citing one file:line in two spellings "
                      "were not paired exactly once")
+    c_layered = more_than_one_status(parse(CONTROL_REGISTER)[0])
+    if [e["title"] for e in c_layered] != ["[2026-01-06] a page — two statuses layered on one entry (minor)"]:
+        probe_failed("the in-memory control's one Open entry with two status lines was not the one entry "
+                     "listed as holding more than one status")
 
     try:
         text = read_text(register)
@@ -317,7 +344,7 @@ def main():
     print("CONTROL: in-memory register: a closed, a fixed and a resolved Status under ## Open -> each caught; "
           "an open Status naming those words later -> not a finding; two Open entries citing one file:line in "
           "two spellings -> paired; a closed Status under ## Closed and inside the fenced format example -> "
-          "not a finding")
+          "not a finding; the one Open entry with two status lines -> listed, its neighbours with one -> not")
     print(f"CLOSED STATUS UNDER OPEN: {len(closed_under_open)}")
     for e, ln, value in closed_under_open:
         print(f"  {label}:{ln} · {show(e['title'], 90)} · **Status**: {show(value, 60)}")
@@ -330,6 +357,11 @@ def main():
         print(f"  {locator_text(la)} ~ {locator_text(lb)} · {label}:{a['line']} | {label}:{b['line']}")
     print(f"INFO: {open_closed_shared} locator(s) an Open entry shares with a Closed one "
           f"(line numbers drift as files change; never a finding)")
+    layered = more_than_one_status(entries)
+    print(f"MORE THAN ONE STATUS: {len(layered)} Open entr{'y' if len(layered) == 1 else 'ies'} holding more "
+          f"than one status line (a listing, never a finding: each is brought to one status)")
+    for e in layered:
+        print(f"  {label}:{e['line']} · {show(e['title'], 90)} · {len(e['status_lines'])} status lines")
     return 1 if (closed_under_open or shared) else 0
 
 

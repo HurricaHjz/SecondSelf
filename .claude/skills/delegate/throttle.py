@@ -57,7 +57,7 @@ Resolution rule (the routing contract selection rule; the `auto` row is task-dep
   `auto` is the default preset: the Settings default from 2026-09-08 once the owner runs
   `set auto`, and what a missing Settings line reads as. Under it the head picks model and
   effort PER CALL within the row's options (`resolve` prints the options beside the anchors,
-  and lane.py records every departure with its `--choice-reason`); the row default is the
+  and lane.py records every pick with its `--choice-reason`, the default included); the row default is the
   anchor and strong reference, never a pin, and `set auto` writes the anchors into the
   definitions so that an in-session spawn, which reads its definition, starts from them. The
   other five presets are hand-set overrides: `set <name>` writes their resolution once and
@@ -185,8 +185,8 @@ V2_FIELDS = ("model", "effort", "grants", "writes", "tools", "skills", "mcp", "c
 # The head's own tier under each throttle. A recommendation the head carries in its
 # hand-off line; the head's real model and effort are the owner's client settings. Opus
 # under every throttle since the owner's ruling of 2026-09-29 (opus 5.5 is the default Claude
-# model, the heads of hands-off and multi-agent runs included; fable only when he asks for it by
-# name, owner ruling of 2026-11-02). The line serves the next session a hand-off names, whatever
+# model, the heads of hands-off and multi-agent runs included; fable on the owner's word or as the
+# user's own rules set, owner ruling of 2026-11-02 and those rules). The line serves the next session a hand-off names, whatever
 # its kind.
 HEAD_LINE = {"auto": "head: opus · max",
              "top": "head: opus · max",

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <id>https://arxiv.org/api/fixture-partial</id>
+  <title>arXiv Query: search_query=&amp;id_list=2401.00001,2401.00002&amp;start=0&amp;max_results=2</title>
+  <updated>2026-11-19T00:00:00Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=&amp;id_list=2401.00001,2401.00002&amp;start=0&amp;max_results=2" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>2</opensearch:itemsPerPage>
+  <opensearch:totalResults>2</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00001v2</id>
+    <title>Planted Preprint: A Fixture for the Version Check</title>
+    <updated>2026-10-01T09:30:00Z</updated>
+    <link href="https://arxiv.org/abs/2401.00001v2" rel="alternate" type="text/html"/>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-01T09:00:00Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author><name>Ada Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/api/errors#incorrect_id_format_for_2401.00002</id>
+    <title>Error</title>
+    <summary>incorrect id format for 2401.00002</summary>
+    <updated>2026-11-19T00:00:00-05:00</updated>
+    <link href="http://arxiv.org/api/errors#incorrect_id_format_for_2401.00002" rel="alternate" type="text/html"/>
+    <author><name>arXiv api core</name></author>
+  </entry>
+</feed>

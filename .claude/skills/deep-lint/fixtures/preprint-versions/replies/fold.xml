@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <id>https://arxiv.org/api/fixture-fold</id>
+  <title>arXiv Query: search_query=&amp;id_list=2401.00013,2401.00014,2401.00015,2401.00016,2401.00017,2401.00018,2401.00019&amp;start=0&amp;max_results=7</title>
+  <updated>2026-11-20T00:00:00Z</updated>
+  <opensearch:itemsPerPage>7</opensearch:itemsPerPage>
+  <opensearch:totalResults>7</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00013v2</id>
+    <title>Three Captures: A Newer Version Posted Between Them</title>
+    <updated>2026-09-01T10:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-13T09:00:00Z</published>
+    <arxiv:primary_category term="cs.SE"/>
+    <author><name>Ivy Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00014v2</id>
+    <title>An Unrelated Older Raw</title>
+    <updated>2026-09-01T10:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-14T09:00:00Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author><name>Jon Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00015v2</id>
+    <title>Raws That Name No Id</title>
+    <updated>2026-09-01T10:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-15T09:00:00Z</published>
+    <arxiv:primary_category term="cs.AI"/>
+    <author><name>Kay Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00016v2</id>
+    <title>Created After the Latest Version</title>
+    <updated>2026-10-01T10:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-16T09:00:00Z</published>
+    <arxiv:primary_category term="cs.CL"/>
+    <author><name>Lou Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00017v2</id>
+    <title>A Flag List With an Older Flag First</title>
+    <updated>2026-10-12T10:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-17T09:00:00Z</published>
+    <arxiv:primary_category term="cs.LG"/>
+    <author><name>Max Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00018v2</id>
+    <title>A Raw Missing or Outside the Vault</title>
+    <updated>2026-10-01T10:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-18T09:00:00Z</published>
+    <arxiv:primary_category term="stat.ML"/>
+    <author><name>Ned Fixture</name></author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2401.00019v2</id>
+    <title>An Undated Unversioned Page</title>
+    <updated>2026-10-01T10:00:00Z</updated>
+    <summary>A planted abstract for a fixture reply.</summary>
+    <published>2024-01-19T09:00:00Z</published>
+    <arxiv:primary_category term="cs.SE"/>
+    <author><name>Oda Fixture</name></author>
+  </entry>
+</feed>

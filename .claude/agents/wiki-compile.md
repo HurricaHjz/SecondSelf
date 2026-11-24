@@ -2,7 +2,7 @@
 name: wiki-compile
 description: Write-scoped wiki compile lane — spawn under an explicit lane contract (file whitelist, link whitelist, boundary clause) to compile pre-scoped sources into wiki pages per the preloaded ingest skill. Registries are propose-don't-write unless the brief grants the §2.2 ingest exception. Routing range and anchor: `.claude/skills/delegate/routing.json`, rendered in the delegate skill's §2; the active throttle writes the current values.
 model: opus
-effort: xhigh
+effort: high
 disallowedTools: Agent, SendMessage, WebFetch, WebSearch, Skill
 skills:
   - ingest

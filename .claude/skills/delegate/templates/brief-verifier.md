@@ -12,6 +12,7 @@ any passage on containment or model routing (CUSTOMISATION.md, "Safety-FP postur
 quote both rules in TASK: "Rounds are judged by progress, not counted" and "Stopped designs"
 (2026-11-09: a staged reviewer asked to read "Stopped designs" could not weigh its stop grounds). -->
 
+
 ```
 You are verifier (definition: .claude/agents/verifier.md), lane {{LANE_ID}} of run
 {{RUN_ID}}.
@@ -24,6 +25,7 @@ what to do with a refuted claim belongs to the head agent.
 CLAIMS
 {{numbered claim list — discrete, each independently checkable, with the file/surface it
 is checkable against}}
+Each change's required behaviour is quoted from its design with path:line; a purpose the head adds is labelled as the head's own and is never a stop ground.
 
 SCOPE
 - Reading list (pre-scoped): {{the surfaces the claims are checkable against}}
@@ -34,6 +36,7 @@ SCOPE
   `<depth>` the leading components to strip (4 for `a/.claude/skills/<skill>/<file>`).
 - Scratch under /tmp goes through Bash: the file tools refuse it unless the head granted
   `/tmp/{{RUN_ID}}-{{LANE_ID}}/` with `--write`.
+- A lane that runs a script of its own over files needs that folder granted with `--write`: on a write-less lane the fence refuses a script run with a file argument (register entry [2026-09-11 00:01]).
 
 GRANTS
 - Bounds: {{the job page's Bounds and lesson index (path); the hard limits that apply, each naming its source: the owner's strict mark, an approved rule, or the lead's own choice}}
@@ -41,7 +44,7 @@ GRANTS
 - Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
 - Left out on purpose: {{what, and why | none}}
 - Second seat: {{this seat is one: the rule that earns it, and what it checks against}}
-DECISIONS: {{the run's decisions that bear on this task, and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
+DECISIONS: {{the run's decisions that bear on this task, the owner's earlier decisions on the same question (a search of decided-work, its closed page and the subject page's dated owner notes), and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
 Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
 A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 {{headless lanes: the read directories, the write scope and any add-on granted beyond the
@@ -62,6 +65,8 @@ Negative control: {{a pattern that must NOT hit, proving the probe discriminates
 Role delta: never soften a refutation. {{extra conduct | —}}
 
 REPORT
+First line: `VERDICT: ready` (every claim confirmed) or `VERDICT: not ready: <n> refuted, <n> unverifiable`,
+which the lead reads first.
 ## Summary (n/n/n) · ## Verdicts (one block per claim) · ## Controls
 ```
 

@@ -108,11 +108,12 @@ the vault root, and only a fresh build stops on it, naming that pull.
 When the user wants to publish/update the public repo (`/export-template publish`, "push the latest
 framework"), do it end-to-end but **pause once for confirmation before anything goes public**:
 **Run the chain, never its steps (2026-09-08).** `bash .claude/skills/export-template/publish.sh --release <candidate> <repo>`
-runs steps 1 and 2 as one `&&` chain — pull, overlay, stage, drift check, payload gate, release gate, throttle gate —
+runs steps 1 and 2 as one `&&` chain — pull, overlay, stage, README images, drift check, payload gate, release gate, throttle gate —
 prints the recap, writes it to `output/publish-recap.txt` and STOPS there with nothing committed. Its last line is
 `recap-digest <digest>`: the fingerprint of that recap and of the staged tree it describes, which step 4 hands back.
 Step 3 stays yours — the script never asks. Every failed step ends it non-zero (1 = a gate refused, 2 = a broken
-premise, 3 = a git step failed), so failed gates cannot be passed over (known-issues 2026-09-08).
+premise, 3 = a git step failed or the overlay refused, as it does a backup file beside a shipped file), so failed gates
+cannot be passed over (known-issues 2026-09-08).
 A STOP leaves the clone with the overlay staged and uncommitted
 (`git -C <repo> reset -q` clears the index). The numbered steps below are what it runs, and what to read when it stops.
 Suite: `test_publish_sh.sh`.

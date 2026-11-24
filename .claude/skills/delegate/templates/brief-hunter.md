@@ -29,7 +29,7 @@ GRANTS
 - Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
 - Left out on purpose: {{what, and why | none}}
 - Second seat: {{none, or the rule that earns it and what that seat checks against}}
-DECISIONS: {{the run's decisions that bear on this task, and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
+DECISIONS: {{the run's decisions that bear on this task, the owner's earlier decisions on the same question (a search of decided-work, its closed page and the subject page's dated owner notes), and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
 Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
 A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 {{headless lanes: the read directories, the write scope and any add-on granted beyond the

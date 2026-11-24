@@ -56,6 +56,18 @@ Collect candidates of four kinds. The first two matter most often; the last is t
 - **Method / process lesson** — something about how to work that would change a future session.
 - **Defect** — a fault in a framework surface (the schema, a skill, a script).
 
+**The pages this session edited.** Read the wiki pages the session wrote to, as its edits name them,
+for an old state left beside the newer one. Leave out `wiki/index.md`, `wiki/log.md`, and the fault
+list with its closed page where it exists, and the work list with its closed page: the first two
+state nothing about a subject, and their
+primitives, and `check_register.py` for the fault list, guard the other two. Read a page of up to
+30,000 bytes whole; of a larger page, read the sections the session edited. Stop at 300,000 bytes in
+all, and name the pages not read: deep-lint's changed pool takes them by their `updated:` date (both
+limits set by judgement). For each state the session replaced, search the wiki once for another page
+that still states the old one. Each one found is a certain fix (the `--yes` section): the older
+statement is held first, as `wiki/developments/stale-marks.md` sets, then replaced, and the change
+is logged with its `Replaced` line under this reflection's entry.
+
 **Horizon, measured every run.** Earlier turns may have been compacted out of context, so measure the
 boundary against the on-disk session transcript instead of asserting it: `echo` a fresh nonce in shell,
 then grep for it **in a later call** under the harness transcript directory (the transcript records a
@@ -198,10 +210,12 @@ In priority order. Say which rule sent it there.
 its moment. If none reads it then, route it again. Knowledge and working-context candidates keep their
 own routing tests and show `not a doing lesson`.
 
-**Contradictions.** A candidate that conflicts with something a page already claims never silently
-overwrites it. Add a `## Conflicts / Open Questions` block keeping both statements and contrasting them
-(CLAUDE.md §4.4), and say so at the preview. This is the common shape for an owner correction that
-disagrees with a sourced claim.
+**Replacements and contradictions.** A candidate that gives a newer state of something a page states
+(the owner's own world or decisions, a measurement taken again) replaces the older statement under
+CLAUDE.md §6, once the older text is held as `wiki/developments/stale-marks.md` sets, and the
+preview shows the old and the new side by side. A candidate that disagrees with a sourced claim,
+with neither replacing the other, opens a `## Conflicts / Open Questions` block keeping both
+statements (CLAUDE.md §4.4), and the preview says so.
 
 **Sources.** A conversation here almost always rests on wiki pages, so cite them: `## Sources Used` plus
 `sources:` in frontmatter. Where a finding is genuinely original with nothing prior to cite, that is a
@@ -276,9 +290,10 @@ head is unsure of goes under Decide instead. What each mode admits:
 |---|---|---|
 | Attended `/reflect`, with its critic | Checked lessons, within the bound | Preview and approval as above |
 | An attended session's own cross-reflection with `--yes`, or its eligible successor | Checked lessons, within the bound | The reflector proposes; the head re-verifies and writes |
+| A close that a helper session runs over another session's transcript, or the own close of a session that runs without the owner and is no hands-off run (a hands-off close keeps the two rows below) | None | The `--yes` section's records, certain fixes, register lines and corrections of working records are written at once and listed under Undo if you disagree. Knowledge, lessons (the experience bound included) and any change to how the agent works wait under Approve, each with its exact edit. The close's independent reviewer sorts each proposed write into one of the two groups in its table before anything is written, a write it has not sorted waits, and the close's report gives each write the group the reviewer gave it and names the reviewer's report (owner ruling 19 November 2026; the sorting seat is the reviewer since the closing order of 20 November 2026, which keeps a separate checker only for a lesson that would be written without the owner's yes) |
 | A hands-off close with `--yes` | Checked lessons, within the bound | Its other writes stay inside the `--yes` bounds beside it (delegate skill §5); checked lessons are listed in the morning report under Undo if you disagree, what the bound excludes waits there under Approve with its exact edit, and a hands-off close records a waiting lesson there, not in the register |
 | A hands-off close without `--yes` | None | The whole table goes to the morning report, each lesson under Approve with its exact edit, and a waiting lesson is recorded there, not in the register |
-| Any other run, such as another session's cross run, a read-only reflector lane, a headless head without `--yes`, or a run with `--no-critic` | None | Findings and exact proposals, which prevents applying a lesson without its required authority or check |
+| Any other run, such as another session's cross run that is no close of the kinds above, a read-only reflector lane, a headless head without `--yes`, or a run with `--no-critic` | None | Findings and exact proposals, which prevents applying a lesson without its required authority or check |
 
 The register duty above also takes a lesson that must wait (a new page's yes, his decision, a missing
 grant or input): one entry per feature, in the same pass, listed as `register (§12)`, so nothing rests
@@ -302,8 +317,7 @@ only in a reply (widened to waiting lessons on 7 November 2026, provisional).
   bound creates neither a page nor a pointer.
 - **Experience writes.** One anchored edit inside `## Rules`, by the bound. Re-judge `confidence:`, stamp
   `audited:`, and keep `sources:` and `## Sources Used` to the evidence the remaining entries cite. An
-  addition moves `entry added` and `last label`, and a label is never reused. A new lesson's bracket gives, after its date, the model that learnt it and the kind of evidence behind it (a fault aiMyth made, the owner's request, others' practice, or it worked in use), in the template's order; an older entry without them reads as `model not recorded`. A retirement removes the
-  entry and keeps its complete text, date and reason in the log entry. Log a lesson change as
+  addition moves `entry added` and `last label`, and a label is never reused. A new lesson's bracket gives, after its date, the model that learnt it and the kind of evidence behind it (a fault aiMyth made, the owner's request, others' practice, or it worked in use), in the template's order; an older entry without them reads as `model not recorded`. A reworded entry's bracket states the ground of the rule as it now stands, and is never extended with how the entry changed. A retirement removes the entry once its text is held, as `wiki/developments/stale-marks.md` sets; the log entry names the lesson in a few words, its date and the reason. Log a lesson change as
   `synthesis`. An `owner` change is outside this step: its exact text goes to him (CLAUDE.md §12).
 - **Repeats and uses.** A repeat the checker confirms adds one to `repeats` on the `Measures` line in the
   same pass, as a records-only edit, which changes no claim and stamps neither `confidence:` nor
@@ -316,7 +330,8 @@ only in a reply (widened to waiting lessons on 7 November 2026, provisional).
 - **Every write carries its clock time** (owner instruction 2026-09-05): beside the date, the local time of the
   write and the run or lane id — on a register entry's `Where observed` line, in a rule addition's dated note,
   in an appended block's heading, in a dated owner note's recording line (apart from the date of his words,
-  CLAUDE.md §4.7), in the dated note on a change that keeps a page current — so a parallel session's
+  CLAUDE.md §4.7), in the log entry of a change that keeps a page current, which leaves no dated
+  note on the page — so a parallel session's
   earlier fix or later edit can be ordered against it;
   an agent that finds the item already fixed reads the two stamps and keeps the later state.
 - **A certain fix this run may not make** (it lies outside `wiki/` and is no correction the `--yes`
@@ -367,11 +382,10 @@ conduct faults become recordable.
 **Scope v1:** the head transcript only; lane-internal events appear only as the lane reports
 embedded in it. **Output:** findings, never writes — the FULL named candidate table including every
 discard with the page that killed it (an aggregate count hides the dedup evidence). Step 5b is not
-re-run on cross output — duplicative cost, since the head's re-verify widens instead: dedup checks
-AND a re-read of each cited transcript span before the preview, done by a read-only checking helper that quotes each span's deciding line, under CUSTOMISATION.md's Transcripts rule, using a helper independent of the reflection, and only where the reflection proposes a write: a reflection that proposes none takes no such helper (owner ruling 2026-11-13; it returns once a reflection with no proposed write is found to have missed a fault or a lesson, one case being enough, as the closing reflection's row of `wiki/developments/check-lifecycle.md` records); that helper also answers Step 5b's experience questions, and a lesson it has not answered is not applied; before applying an item the head lists
-the fresh dedup probe it ran for it and the span it re-read, and a correction to an existing line is
+re-run on cross output — duplicative cost, since the fix that follows the review widens instead (owner, 20 November 2026: an independent review, then a fixer).
+At a session's close the head that runs the close is the fixer: it applies each accepted item and checks it against the record as it writes, by a fresh dedup probe AND a re-read of the cited transcript span, under CUSTOMISATION.md's Transcripts rule, and lists both before the write. A separate read-only checking helper, independent of the reflection, reads only a lesson that would be written without the owner's yes (the experience bound): it quotes each span's deciding line and answers Step 5b's experience questions, and a lesson it has not answered is not applied. Until that date the helper read every reflection that proposed a write (owner ruling 2026-11-13); it returns to that reach once a write the fixer made is found wrong where a separate check would have caught it, one case being enough, as the closing reflection's row of `wiki/developments/check-lifecycle.md` records. A cross run with `--yes` that is no session's close keeps that helper wherever the reflection proposes a write (owner ruling 2026-11-13; a reflection that proposes none takes no such helper, and that lapse returns once such a reflection is found to have missed a fault or a lesson, one case being enough). A correction to an existing line is
 logged as its own synthesis entry. Owner approval stays line-by-line for what needs it;
-the head writes approved items and what the experience bound admits under Step 7, each write clock-stamped. **`--yes` never applies to cross runs.** **Qualified 2026-09-06 (owner ruling):** it does apply to the hands-off boundary form, where a reflector lane reads the head's OWN session at the head's request — the lane proposes, the head re-verifies each proposal (dedup, evidence) and writes only within the `--yes` bounds (design D36). **Qualified 2026-10-01 (owner ruling), with its reach settled on 10 October 2026 (a provisional choice under the owner's rule on provisional choices):** an attended session's own cross-reflection may run with `--yes` under the same bounds, and so may that cross-reflection when the session's successor runs it over the session's transcript (for example because the session's context was full); the head re-verifies each proposal as above, and every write it makes is listed in its report so the owner can strike any one (owner ruling 23 October 2026, as the agent read it).
+the head writes approved items and what the experience bound admits under Step 7, each write clock-stamped. **`--yes` never applies to cross runs.** **Qualified 2026-09-06 (owner ruling):** it does apply to the hands-off boundary form, where a reflector lane reads the head's OWN session at the head's request — the lane proposes, the head re-verifies each proposal (dedup, evidence) and writes only within the `--yes` bounds (design D36). **Qualified 2026-10-01 (owner ruling), with its reach settled on 10 October 2026 (a provisional choice under the owner's rule on provisional choices):** an attended session's own cross-reflection may run with `--yes` under the same bounds, and so may that cross-reflection when the session's successor runs it over the session's transcript (for example because the session's context was full); the head re-verifies each proposal as above, and every write it makes is listed in its report so the owner can strike any one (owner ruling 23 October 2026, as the agent read it). **Qualified 2026-11-19 (owner ruling):** two more close forms write under `--yes`, within narrower bounds: a close that a helper session runs over another session's transcript, and the own close of a session that runs without the owner and is no hands-off run. Step 6's table sets what they write at once and what waits. The close's independent reviewer, the reflector, sorts each proposed write for them in its table, and its brief asks for it in these words: "For each proposed write, say which it is: a record of the owner's words or decisions, a certain fix, a register line, a correction of a working record, or anything else, which waits for the owner."
 
 **Hands-off boundaries (2026-09-05, hands-off design D36; `--yes` admitted for this form by owner
 ruling 2026-09-06).** A hands-off run reflects once, at its close (owner ruling 2026-09-19), and the
@@ -394,7 +408,7 @@ re-verification, with the full named table for the owner's line-by-line approval
 report under Approve, each with its exact edit, for the session that walks it to apply on his yes.
 Without `--yes` the head applies nothing and the whole table goes to the
 morning report. An ineligible cross run has no automatic experience grant, which prevents applying
-another session's lessons without its required authority. Any other cross run over another session's transcript stays outside `--yes` whatever the run.
+another session's lessons without its required authority. Any cross run over another session's transcript that is none of the forms above stays outside `--yes` whatever the run.
 
 ## `--yes` — opt-in auto-approval (off by default)
 Set per run (`/reflect --yes`) or as a standing owner setting. It means **writing without waiting, never
@@ -407,19 +421,22 @@ read it): inside `wiki/` only these classes, and outside it only the corrections
 listed with the evidence that admitted it. It may write:
 - **Records of the owner's own words and decisions, at once, wherever they belong.** A record missing
   from the page or register entry that waits for it is written in this run, `wiki/developments/` pages
-  and `known-issues.md` included: a dated owner note (CLAUDE.md §4.7) or a dated decision status line.
+  and `known-issues.md` included: a dated owner note (CLAUDE.md §4.7), the decision itself written
+  into the text it changes, or an open entry's one status.
   His words are quoted verbatim from their record, and a reading of them is a named, dated reading,
   never his ruling (CLAUDE.md §1, "Recording the owner"). Every page that states a current state,
   including an existing `wiki/user/` page, is kept current by judgement, not only appended to (the
   owner's answer of 24 October 2026, as the agent read it): text his later words overtake, judged as
-  §4.7's "Later words" sets, is brought up to date, replaced where nothing still needs it or kept beside
-  the new where it may, and each change carries a dated note citing the owner note it rests on, as §4.7
-  asks of text built on the notes; the dated owner notes themselves stay as written. Records (the log,
-  the issue register, dated notes, decisions files) keep their history. Where no page waits, Step 4
+  §4.7's "Later words" sets, is brought up to date, replaced, the older text held first as
+  `wiki/developments/stale-marks.md` sets, and the text built on his notes cites the note it rests
+  on, as §4.7 asks; a note his later words replace is merged under the note that stands, its
+  quotation unaltered. The log and decisions files keep their history, and the issue register keeps
+  one status per open entry. Where no page waits, Step 4
   routes the record. Step 2b's waste table is also written as the run's record of its waste.
 - **Certain fixes inside `wiki/`**, made rather than registered (CLAUDE.md §12, "Act now if you can;
-  park only with a reason"): a fix whose target is resolved and whose effect is checked, such as a stale
-  claim marked superseded by a dated status fact or a `flagged:` line (§6), a broken link, path, index
+  park only with a reason"): a fix whose target is resolved and whose effect is checked, such as a
+  replaced state brought up to date, held and logged as `wiki/developments/stale-marks.md` sets
+  (§6), a broken link, path, index
   line or frontmatter value repaired, or a register entry closed on its fix. A fix that rests on a guess
   stays a finding; a certain fix these bounds leave out is handed by name (Step 7).
 - **Knowledge**: new pages in `wiki/concepts/`, `wiki/entities/`, `wiki/tools/`, `wiki/models/`,
@@ -451,16 +468,18 @@ does not make.
 It never writes, whatever the class:
 - **Rule text or a design's direction**: `CLAUDE.md`, `CUSTOMISATION.md` and its definitions file, a
   skill line that states the owner's ruling, a wiki passage those files name as a rule's home (the
-  experience bound's `lesson` entries apart), or `wiki/developments/owner-rulings-history.md`, which takes
-  replaced rule text only in the pass of a rule change he approved (CLAUDE.md §12); a design's approach,
+  experience bound's `lesson` entries apart); a design's approach,
   scope, requirements or plan, or an open choice his words do not settle (recording his decision is not
   revising the design). Each goes to the report with its exact wording, for his yes.
 - **`wiki/user/` beyond the records class**: no fix, knowledge append or new page, and no change but
   keeping a page current with his own words; a certain fix there goes to the report.
 - **A deletion**: no file, page, section, dated record or quotation of the owner is removed or moved (a
-  register close moves its entry only within the register, and an experience retirement removes only its
-  `lesson` entry, its text kept in the log); a repair replaces only the faulty token, and a page kept
-  current only the text his later words overtake, its old text listed in the report.
+  register close moves its entry only within the register, and an experience retirement removes only
+  its `lesson` entry, its text held as `wiki/developments/stale-marks.md` sets); a repair replaces
+  only the faulty token, and a page kept
+  current only the text his later words overtake, its old text held as
+  `wiki/developments/stale-marks.md` sets and named in the report; a replaced state held so is no
+  deletion.
 - **Outside `wiki/`, beyond the corrections above** (`.claude/**`, `MANUAL.md` and `README.md` included). A
   wiki write that would oblige a change outside it, such as a page whose maintained derivative in
   `output/` must follow (CLAUDE.md §2), is handed by name with that change, never split. The session's own
@@ -497,7 +516,8 @@ own stamp), clock-stamped, and listed in the report, so it is always traceable.
   own words or decisions is written in the run, a certain fix is made inside `wiki/` or handed by name,
   the register takes only what a named reason blocks, and every write is listed so he can strike any
   one. The agent's bounds hold in every `--yes` run: outside `wiki/` it writes only the corrections of
-  aiMyth's own working records its section names, and no file, page, section, dated record or quotation
-  of his is deleted.
+  aiMyth's own working records its section names, and no file, page, section, dated record or
+  quotation of his is deleted, a replaced state held as `wiki/developments/stale-marks.md` sets
+  apart.
 - Write in British/UK English.
 

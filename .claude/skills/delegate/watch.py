@@ -192,9 +192,13 @@ def dashed(path):
     return re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(path))
 
 
-def head_transcript_for(sid, vault):
+def head_transcript_for(sid, vault, events=None):
     """handsoff.py `transcript_for`, run against the vault this console was given: the vault's
-    project directory first, then a unique hit across the projects root, else the direct path."""
+    project directory first, then a unique hit across the projects root, else the direct path.
+    The projects root is handsoff.py's `head_projects_root` for the run's events when the module
+    has it (a head on a login folder, register entry [2026-11-12 02:38 b]), taken only when the
+    transcript is there; a miss, its (None, why) answer, or a module without it, keeps the
+    module's own root, so the folder only ever adds a find."""
     if not sid:
         return ""
     module = handsoff()
@@ -202,6 +206,12 @@ def head_transcript_for(sid, vault):
         keep = os.environ.get("CLAUDE_PROJECT_DIR")
         os.environ["CLAUDE_PROJECT_DIR"] = vault             # its vault_root() reads this first
         try:
+            if hasattr(module, "head_projects_root"):
+                root = module.head_projects_root(events, sid)[0]
+                if root:
+                    found = module.transcript_for(sid, root=root)
+                    if os.path.isfile(found):
+                        return found
             return module.transcript_for(sid)
         finally:
             if keep is None:
@@ -984,6 +994,7 @@ class Run:
         self.t0 = parse_ts(events[0].get("ts")) if events else None
         self.item_order = sorted(self.names, key=item_sort_key)
         self.item_start, self.item_end, self.gates, self.waits, self.marks = {}, {}, [], [], []
+        self.gate_head = None   # the head session current at the last gate
         self.heads, self.meters, self.closed_at = [], [], None
         self.unresolved = set()                        # started, no explicit completion, at the close
         self.last_item_at = None                       # the newest gate, boundary, item-done or --item
@@ -1048,6 +1059,7 @@ class Run:
             if ev == "gate" and item_key(e.get("item")):
                 key = item_key(e["item"])
                 self.gates.append((ts, key, e.get("percent")))
+                self.gate_head = self.head_session()
                 if not settled:
                     if before_first_work_gate:
                         if isinstance(e.get("orientation_tokens"), (int, float)):
@@ -1244,7 +1256,7 @@ class Run:
         return None
 
     def head_transcript(self):
-        return head_transcript_for(self.head_session(), self.vault)
+        return head_transcript_for(self.head_session(), self.vault, self.events)
 
     def head_stopped(self):
         """True when the record's last head event is a stop: a `stop-condition` or a
@@ -1311,7 +1323,8 @@ class Run:
         return "billed ▲%s%s%s: " % (when, span_txt, tail)
 
     def context_pct(self):
-        return self.gates[-1][2] if self.gates else None
+        # An earlier head's gate figure is not this head's context (register 2026-11-14 13:57).
+        return self.gates[-1][2] if self.gates and self.gate_head == self.head_session() else None
 
 
 _LIVE_MODEL = {}   # pid -> (model, effort) or None: one ps read per head pid, never per refresh (2026-09-10)

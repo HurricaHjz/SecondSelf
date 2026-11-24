@@ -574,6 +574,52 @@ def _webflow_answers_lost():
 
 leg("Webflow FAQ shape: the extractor's body, questions kept and every answer gone, gives the check a finding naming an "
     "answer, and stamp prints suspected loss (it warns, exit 0)", _webflow_answers_lost)
+# Two questions answered alike: each container's search started afresh, so one copy answered for both and the loss
+# of either passed.
+REPEAT_ANSWER = "Yes, the same form covers both, through the online portal."
+REPEAT_PAIRS = (("Can I apply online?", REPEAT_ANSWER), ("Is there a deadline?", "Applications close on the last day of March."),
+                ("Can I resubmit online?", REPEAT_ANSWER))
+REPEAT_URL = "https://www.example.org/residency/faq-repeated"
+REPEAT_FAQ = webflow_page("<h2>Applying</h2>" + "".join(webflow_item(q, a) for q, a in REPEAT_PAIRS), "Applying questions")
+
+
+def _without_copy(md, which):
+    """md without the first (which 0) or the last (which -1) copy of the repeated answer."""
+    i = md.find(REPEAT_ANSWER) if which == 0 else md.rfind(REPEAT_ANSWER)
+    return md[:i] + md[i + len(REPEAT_ANSWER):]
+
+
+def _repeated_first():
+    proc, work, res = capture(REPEAT_URL, spec({"body": REPEAT_FAQ}))
+    count_conversion(res)
+    STATE["repeat"] = (work, res)
+    md = read(os.path.join(work, "capture.md"))
+    lost = _without_copy(md, 0)
+    r = run_check(REPEAT_FAQ, lost, REPEAT_URL)
+    return (proc.returncode == 0 and res["route"] == "ROUTE" and res["check"]["verdict"] == "no loss found"
+            and md.count(REPEAT_ANSWER) == 2 and lost.count(REPEAT_ANSWER) == 1 and r.returncode == 1
+            and "repeated text kept fewer times" in r.stdout and REPEAT_ANSWER in r.stdout), r.stdout + proc.stdout
+
+
+leg("repeated answer: a Webflow FAQ answering two questions alike is captured with no loss found, and that capture "
+    "without the first copy of the answer gives the check a finding naming it (suspected loss, exit 1)", _repeated_first)
+
+
+def _repeated_last():
+    work, res = STATE["repeat"]
+    lost = _without_copy(read(os.path.join(work, "capture.md")), -1)
+    r = run_check(REPEAT_FAQ, lost, REPEAT_URL)
+    s = stamp_cmd(os.path.join(work, "result.json"), put(os.path.join(T, "repeat-lost.md"), lost), REPEAT_URL,
+                  engine=res["engine"])
+    w = write_cw(REPEAT_URL, res["engine"], lost, "--slug", "repeat-lost", "--probe-result", os.path.join(work, "result.json"))
+    written = raw_stamp("repeat-lost")
+    return (lost.count(REPEAT_ANSWER) == 1 and r.returncode == 1 and "repeated text kept fewer times" in r.stdout
+            and s.returncode == 0 and stamp_printed(s).startswith(LOSS) and "repeated text" in stamp_printed(s)
+            and w.returncode == 0 and written.startswith(LOSS) and "repeated text" in written), r.stdout + stamp_printed(s) + written
+
+
+leg("repeated answer: without its last copy instead, the check finds it too, and both save paths warn: ingest's stamp "
+    "and gather's writer record suspected loss naming the repeated text (exit 0 each)", _repeated_last)
 
 
 def _limits():

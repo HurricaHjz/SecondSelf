@@ -1942,6 +1942,11 @@ hm = [ev(0, "run-open", session="k-head-1", handoff=two, regime="multi"),
 write("run-hm", hm)
 write("run-hm-later", hm + [ev(5, "head-resumed", session_id="k-head-2", pid=REAPED)])
 write("run-hm-none", [e for e in hm if e["event"] != "head-successor"])
+# CX: the header's context share is the current head's own gate figure (register 2026-11-14 13:57)
+cx = [hm[0], ev(1, "gate", item="item1", percent=22),
+      ev(5, "head-successor", session_id="k-head-2", pid=REAPED)]
+write("run-cx", cx)
+write("run-cx-own", cx + [ev(6, "gate", item="item2", percent=41)])
 
 # F4: the console marks a never-run item done at the close (register 2026-09-17 12:51). A
 # six-item pack; items 0 to 2 gated and worked; the closing boundary names item3 as the bare
@@ -2144,6 +2149,90 @@ if grep -q '^│ head k-head-1 · model unrecorded · turn ' "$T/hm3.txt"; then
   ok "HM03 a record whose only head start (run-open) carries no keys reads model unrecorded"
 else
   no "HM03 the header reads: $(grep -m1 '^│ head k' "$T/hm3.txt")"
+fi
+# LG01-LG02: a head on a login folder (register [2026-11-12 02:38 b], recurrence of 14 November).
+# The record's head-successor names config_dir <fixture>/login and the head transcript sits only
+# under <fixture>/login/projects; HOME is a fixture folder, so the default root holds nothing.
+LG="$T/lgstore"
+mkdir -p "$LG/spawn-records" "$T/lghome"
+python3 -B - "$T" <<'PY_LGFIX'
+import json, os, re, sys
+T = sys.argv[1]
+login = os.path.join(T, "login")
+folder = os.path.join(login, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.path.join(T, "vault"))))
+os.makedirs(folder, exist_ok=True)
+with open(os.path.join(folder, "lg-head-2.jsonl"), "w", encoding="utf-8") as fh:
+    for n in range(3):
+        fh.write(json.dumps({"type": "assistant", "timestamp": "2026-01-01T00:0%d:00Z" % n,
+                             "message": {"role": "assistant", "content": [{"type": "text", "text": "login head %d" % n}]}}) + "\n")
+import time
+ts = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 60))
+rows = [{"ts": ts, "event": "run-open", "session": "lg-head-1", "regime": "multi"},
+        {"ts": ts, "event": "head-successor", "session_id": "lg-head-2", "config_dir": login}]
+with open(os.path.join(T, "lgstore", "spawn-records", "run-lg.jsonl"), "w", encoding="utf-8") as fh:
+    for row in rows:
+        fh.write(json.dumps(dict(row, run="run-lg")) + "\n")
+print("login fixtures written")
+PY_LGFIX
+[ $? -eq 0 ] || { printf 'PROBE FAILED: the login fixture generator did not run\n'; exit 2; }
+env -u AIMYTH_PROJECTS_DIR -u CLAUDE_CONFIG_DIR HOME="$T/lghome" LLM_WIKI_STORE="$LG" AIMYTH_WATCH_NOTIFY=0 \
+    COLUMNS=150 LINES=60 python3 -B "$WATCH" --vault "$T/vault" --run run-lg --once --plain > "$T/lg.txt" 2>&1
+env HOME="$T/lghome" LLM_WIKI_STORE="$LG" AIMYTH_PROJECTS_DIR="$T/login/projects" AIMYTH_WATCH_NOTIFY=0 \
+    COLUMNS=150 LINES=60 python3 -B "$WATCH" --vault "$T/vault" --run run-lg --once --plain > "$T/lg2.txt" 2>&1
+if grep -q '^│ head lg-head- · .* · turn 3 · ' "$T/lg.txt"; then
+  ok "LG01 a head-successor's config_dir names the login folder: the console finds that head's transcript there (turn 3), no AIMYTH_PROJECTS_DIR or CLAUDE_CONFIG_DIR"
+else
+  no "LG01 the login head reads: $(grep -m1 '^│ head lg' "$T/lg.txt")"
+fi
+if grep -q '^│ head lg-head- · .* · turn 3 · ' "$T/lg2.txt"; then
+  ok "LG02 (control) the same record with AIMYTH_PROJECTS_DIR naming the login projects folder reads turn 3"
+else
+  no "LG02 the login head with the variable reads: $(grep -m1 '^│ head lg' "$T/lg2.txt")"
+fi
+# LG03 (control, review CR-MINOR MF2): the record names no login (config_dir null) and the
+# console's own environment sets CLAUDE_CONFIG_DIR to an empty fixture login, while the head's
+# transcript sits under $HOME/.claude/projects, where today's search finds it. The new folder is
+# taken only on a find, so the console still reads turn 3 there.
+LG3="$T/lg3store"
+mkdir -p "$LG3/spawn-records" "$T/lg3login"
+python3 -B - "$T" <<'PY_LG3FIX'
+import json, os, re, sys, time
+T = sys.argv[1]
+folder = os.path.join(T, "lg3home", ".claude", "projects",
+                      re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.path.join(T, "vault"))))
+os.makedirs(folder, exist_ok=True)
+with open(os.path.join(folder, "lg3-head-2.jsonl"), "w", encoding="utf-8") as fh:
+    for n in range(3):
+        fh.write(json.dumps({"type": "assistant", "timestamp": "2026-01-01T00:0%d:00Z" % n,
+                             "message": {"role": "assistant", "content": [{"type": "text", "text": "default head %d" % n}]}}) + "\n")
+ts = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 60))
+rows = [{"ts": ts, "event": "run-open", "session": "lg3-head-1", "regime": "multi"},
+        {"ts": ts, "event": "head-successor", "session_id": "lg3-head-2", "config_dir": None}]
+with open(os.path.join(T, "lg3store", "spawn-records", "run-lg3.jsonl"), "w", encoding="utf-8") as fh:
+    for row in rows:
+        fh.write(json.dumps(dict(row, run="run-lg3")) + "\n")
+print("default-login fixtures written")
+PY_LG3FIX
+[ $? -eq 0 ] || { printf 'PROBE FAILED: the default-login fixture generator did not run\n'; exit 2; }
+env -u AIMYTH_PROJECTS_DIR HOME="$T/lg3home" CLAUDE_CONFIG_DIR="$T/lg3login" LLM_WIKI_STORE="$LG3" \
+    AIMYTH_WATCH_NOTIFY=0 COLUMNS=150 LINES=60 python3 -B "$WATCH" --vault "$T/vault" --run run-lg3 --once --plain > "$T/lg3.txt" 2>&1
+if grep -q '^│ head lg3-head · .* · turn 3 · ' "$T/lg3.txt"; then
+  ok "LG03 (control) no recorded login and CLAUDE_CONFIG_DIR naming an empty login: the console falls back to today's folder and finds the head's transcript (turn 3)"
+else
+  no "LG03 the default-login head reads: $(grep -m1 '^│ head lg3' "$T/lg3.txt")"
+fi
+
+# CX01: an earlier head's gate figure never sits beside the current head (register 2026-11-14 13:57).
+# Planted: run-cx's only gate (22 %) is head k-head-1's. Controls: the new head's own gate (41 %),
+# and run-hm-later, where the same head k-head-2 resumed after its own gate (5 %).
+kwatch --run run-cx --once --plain > "$T/cx.txt" 2>&1
+kwatch --run run-cx-own --once --plain > "$T/cx2.txt" 2>&1
+if grep -q '^│ head k-head-2 · .* · context - · ' "$T/cx.txt" && ! grep -q 'context 22 %' "$T/cx.txt" &&
+   grep -q '^│ head k-head-2 · .* · context 41 % · ' "$T/cx2.txt" &&
+   grep -q '^│ head k-head-2 · .* · context 5 % · ' "$T/hm2.txt"; then
+  ok "CX01 the header shows no context share from an earlier head's gate, and shows the current head's own (41 %, and 5 % across its own resume)"
+else
+  no "CX01 the headers read: $(grep -h -m1 '^│ head k' "$T/cx.txt" "$T/cx2.txt" "$T/hm2.txt" | tr '\n' '|')"
 fi
 
 # RW01-RW03: a live console waits for a record its detached lane has not written yet

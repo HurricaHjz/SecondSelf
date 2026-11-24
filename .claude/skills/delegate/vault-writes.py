@@ -12,12 +12,13 @@ refuses rather than guesses.
   register add       insert one entry at the top of `## Open` in
                      `wiki/developments/known-issues.md`.
   register close     move one `## Open` entry to the top of `## Closed`, dating its Status.
-  register annotate  append one dated, clock-stamped note to one `## Open` entry.
+  register annotate  replace one `## Open` entry's one Status (`--kind Status`), or append one
+                     dated, clock-stamped Recurrence or Correction note to it.
   ideas annotate     append ` *(agent DATE TIME: NOTE)*` to one numbered IDEAS bullet.
   decided add        insert one line under `## To build` in `wiki/developments/decided-work.md`,
                      with the next unused id for its date on that page and its closed page.
-  decided status     append one dated, clock-stamped status clause to one open line.
-  decided state      replace one open line's state, recording the earlier state in a status.
+  decided status     set one open line's one dated, clock-stamped status clause.
+  decided state      replace one open line's state, and set its status clause to the reason.
   decided close      close one open line onto `wiki/developments/decided-work-done.md`.
 
 The catalogue, `wiki/index.md`, is updated by anchored edits (CLAUDE.md §5), with no verb here.
@@ -34,7 +35,9 @@ The clock, and why it is not an argument
     register close     the status fact as `closed DATE HH:MM — …`: the time is inserted after
                        the date the caller's `--status` already opens with (`closed DATE …`),
                        and otherwise the whole stamp is prefixed to the caller's text.
-    register annotate  `- **KIND DATE HH:MM ZONE (BY):** NOTE`, ` (BY)` omitted when absent.
+    register annotate  `--kind Status`: the entry's Status field reads `NOTE (set DATE HH:MM
+                       ZONE by BY)`, ` by BY` omitted when absent; a Recurrence or Correction
+                       note is `- **KIND DATE HH:MM ZONE (BY):** NOTE`, ` (BY)` omitted likewise.
     ideas annotate     `*(agent DATE HH:MM: NOTE)*`.
     log-append         one further bullet, `- **Clock**: HH:MM ZONE`, written through the
                        `--extra` path between Changed and Conflicts. The `## [DATE] ACTION |
@@ -42,7 +45,7 @@ The clock, and why it is not an argument
     decided add        a last field `recorded by BY at HH:MM ZONE`, with ` on D Month YYYY`
                        when the clock's date is not the decision's (`--date`).
     decided status     ` · status D Month YYYY, HH:MM ZONE (BY): NOTE`, date and time both
-    decided state      the clock's (the state verb's clause adds the earlier state).
+    decided state      the clock's.
     decided close      the closing clause `KIND D Month YYYY: EVIDENCE (closed HH:MM ZONE by BY)`.
 
   In the decided verbs a time with seconds (`00:51:57`) is a citation of the owner's words
@@ -67,8 +70,10 @@ The clock, and why it is not an argument
 One stamp, one entry (register add)
 
   A pointer that cites an entry by its stamp alone must find one heading. So `register add`
-  reads the stamp of every heading in the register, Open, Closed and elsewhere, before it
-  writes its own. The first entry of a minute keeps the bare stamp; a later one in the same
+  reads the stamp of every heading in the register, Open, Closed and elsewhere, and on the
+  register's closed page (`known-issues-closed.md` beside it, where sweep_closed.py moves the
+  closed entries with their headings unchanged), before it writes its own. The first entry of
+  a minute keeps the bare stamp; a later one in the same
   minute takes a space and the first free letter from b to z inside the brackets,
   `### [2026-10-03 07:48 b] …`; the heading on the reported line, or a dry run, shows which.
   Every reader of the register reads a heading by its `### [` opening or as a whole line, so
@@ -105,6 +110,25 @@ The lines an entry owns (register close, register annotate)
   line that is not its own. A close also refuses an entry with no Status field. A note never
   carries the field marker `**Status**:` itself (the register's lint reads that marker as a
   Status wherever it stands), so `register annotate` refuses one.
+
+One status (register annotate --kind Status, decided status, decided state)
+
+  An open entry and an open work line each keep one status: what blocks it now, who proposes
+  the next step and when (the stale-information design, 21 November 2026). So a Status write
+  replaces the status and no longer appends a dated one beside it. On the register it rewrites
+  the entry's one Status field, the bullet `- **Status**: …` or the `**Status**: …` part of a
+  `- **Severity**: …` line, from the marker to the end of that line, and changes no other line;
+  an entry with no Status field, or with two, refuses. Dated `- **Status DATE …:**` notes an
+  entry already holds stay where they are: folding them is a clean's work, by judgement. A
+  Recurrence or Correction note is a record of an event or of a fix to the entry's own text and
+  is still appended, removing nothing. On the work list a status clause is a field after the
+  `recorded by` field opening `status D Month YYYY`; `decided status` and `decided state` remove
+  every such clause the line holds and append the one new clause, and `decided state` writes the
+  caller's note alone, no longer the earlier state. A replaced status is the one text removed
+  with no hold checked, on purpose: it is working state, replaced within hours or days, and no
+  reader needs an earlier one once the entry's symptom, cause and close are kept. Each such
+  write names on stderr what it replaced (`replaced: …`), and on the work list each other field
+  that stood among the status clauses, which it keeps (`kept: …`).
 
 Concurrent writers
 
@@ -230,8 +254,10 @@ Decided work (the decided verbs)
              state is one the page lists, never `later:`. A pre-existing id on two lines is
              named on stderr (`malformed:`) and stops nothing; the owner's quoted words
              already on another line are named on stderr (`duplicate:`) and stop nothing.
-    status   appends one clause to the end of the one line for the id.
-    state    replaces the line's fourth field. It refuses a fourth field that is not a state
+    status   sets the line's one status clause: every status clause it holds goes, and the
+             new one is appended at its end (One status, above).
+    state    replaces the line's fourth field and sets its status clause to the note, as
+             status does. It refuses a fourth field that is not a state
              the page lists, `later:` on a To build line and anything else on a Later line:
              moving a line between sections is not a state edit.
     close    counts `**ID**` on the closed page first. On 0, the complete line with its box
@@ -320,6 +346,7 @@ NOTE_KINDS = ("Status", "Recurrence", "Correction")
 # Paths are derived from the vault root the caller passes: no absolute path is written here.
 LOG_REL = os.path.join("wiki", "log.md")
 REGISTER_REL = os.path.join("wiki", "developments", "known-issues.md")
+CLOSED_REL = os.path.join("wiki", "developments", "known-issues-closed.md")   # swept closed entries
 DECIDED_REL = os.path.join("wiki", "developments", "decided-work.md")
 DONE_REL = os.path.join("wiki", "developments", "decided-work-done.md")
 
@@ -1167,7 +1194,7 @@ def open_entry(verb, lines, open_at, closed_at, match):
     return hits[0]
 
 
-def unique_stamp(verb, lines, date, hm):
+def unique_stamp(verb, lines, date, hm, closed=()):
     """The stamp `register add` writes: `DATE HH:MM`, or that and a suffix letter when another
     heading already carries it (see the docstring). Refuses where it cannot tell.
 
@@ -1176,7 +1203,9 @@ def unique_stamp(verb, lines, date, hm):
     closes it on any form but the bare stamp or one suffix letter, cannot be read."""
     base = "%s %s" % (date, hm)
     taken = {}
-    for number, line in enumerate(lines, 1):
+    places = [("line %d" % n, line) for n, line in enumerate(lines, 1)]
+    places += [("closed page line %d" % n, line) for n, line in enumerate(closed, 1)]
+    for where, line in places:
         found = STAMP_OPEN_RE.match(line.rstrip("\r"))
         if not found:
             continue
@@ -1185,8 +1214,8 @@ def unique_stamp(verb, lines, date, hm):
             continue
         closing = opened.find("]")
         if closing < 0:
-            die(verb, "line %d heads an entry whose stamp opens with %s and never closes its bracket "
-                      "([%s), a form this check cannot read; nothing written" % (number, base, short(opened)))
+            die(verb, "%s heads an entry whose stamp opens with %s and never closes its bracket "
+                      "([%s), a form this check cannot read; nothing written" % (where, base, short(opened)))
         inner = " ".join(opened[:closing].split())
         rest = inner[len(base):] if inner.startswith(base) else None
         if rest == "":
@@ -1194,8 +1223,8 @@ def unique_stamp(verb, lines, date, hm):
         elif rest is not None and len(rest) == 2 and rest[0] == " " and rest[1] in STAMP_SUFFIXES:
             suffix = rest[1]
         else:
-            die(verb, "line %d heads an entry [%s], a form of the stamp %s this check cannot read; "
-                      "nothing written" % (number, short(inner), base))
+            die(verb, "%s heads an entry [%s], a form of the stamp %s this check cannot read; "
+                      "nothing written" % (where, short(inner), base))
         taken[suffix] = taken.get(suffix, 0) + 1
     for suffix in sorted(taken):
         if taken[suffix] > 1:
@@ -1207,6 +1236,22 @@ def unique_stamp(verb, lines, date, hm):
         if suffix not in taken:
             return base + (" " + suffix if suffix else "")
     die(verb, "the stamp %s and every suffix from b to z already head entries; nothing written" % base)
+
+
+def closed_page_lines(verb, vault):
+    """The register's closed page, as lines, for the one-stamp check: an entry swept there keeps its
+    stamp, and a pointer that cites the stamp must still find one heading. Absent, no lines; present
+    and unreadable, refuse, since the check could not see its stamps. The sweep takes this tool's
+    lock on the same folder, so the page cannot change between this read and the write."""
+    path = os.path.join(vault, CLOSED_REL)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "rb") as handle:
+            return handle.read().decode("utf-8").split("\n")
+    except (OSError, UnicodeDecodeError) as exc:
+        die(verb, "cannot read the closed page %s (%s), so the stamp check cannot see its stamps; "
+                  "nothing written" % (path, exc))
 
 
 def cmd_register_add(args):
@@ -1241,7 +1286,7 @@ def cmd_register_add(args):
     snap = read_snapshot(verb, path)
     lines = snap.text.split("\n")
     open_at, _ = register_anchors(verb, lines)
-    stamp = unique_stamp(verb, lines, date, clock_hm(now))
+    stamp = unique_stamp(verb, lines, date, clock_hm(now), closed_page_lines(verb, args.vault))
 
     block = ["### [%s] %s (%s)" % (stamp, surface, args.severity)]
     if where:
@@ -1335,7 +1380,26 @@ def cmd_register_annotate(args):
     lines = snap.text.split("\n")
     open_at, closed_at = register_anchors(verb, lines)
     start = open_entry(verb, lines, open_at, closed_at, match)
-    last, _, _ = entry_structure(verb, lines, start, closed_at)
+    last, _, fields = entry_structure(verb, lines, start, closed_at)
+    if args.kind == "Status":
+        # The entry keeps one status (see "One status"): its field is rewritten, nothing appended.
+        if len(fields) != 1:
+            die(verb, "the entry '%s' carries %d '**Status**' fields, not 1, so there is no one status "
+                      "to replace; nothing written" % (short(lines[start]), len(fields)))
+        at = fields[0]
+        tail = line_terminator(lines[at])
+        own = lines[at][:len(lines[at]) - len(tail)]
+        cut = own.index(STATUS_MARKER) + len(STATUS_MARKER)
+        stamp = "set %s %s %s%s" % (date, clock_hm(now), clock_zone(now), " by %s" % by if by else "")
+        edited = "%s %s (%s)%s" % (own[:cut], text, stamp, tail)
+        note("replaced", "the Status of '%s' read: %s" % (short(lines[start]), short(own[cut:].strip())))
+        preview = [short(lines[start]), edited.rstrip("\r")]
+        if args.dry_run:
+            report(verb, path, at + 1, preview, True)
+            return
+        atomic_write(verb, snap, "\n".join(lines[:at] + [edited] + lines[at + 1:]))
+        report(verb, path, at + 1, preview, False)
+        return
     tail = line_terminator(lines[last])
     added = "- **%s %s %s %s%s:** %s%s" % (args.kind, date, clock_hm(now), clock_zone(now),
                                           " (%s)" % by if by else "", text, tail)
@@ -1387,6 +1451,9 @@ def cmd_ideas_annotate(args):
 # --------------------------------------------------------------------- decided ---------
 
 BOLD_ID_RE = re.compile(r"\*\*(DW-[0-9]{8}-[0-9]+)\*\*")
+# A status clause as status_clause writes one, and as the page's hand-written ones open: of the
+# 116 status clauses on the open page's lines (21 November 2026), 97 carry a time and 19 do not.
+STATUS_CLAUSE_RE = re.compile(r"^status \d{1,2} (?:%s) \d{4}\b" % "|".join(MONTHS))
 NOTICE_MAX = 3                          # a notice names at most this many lines, then a count
 
 
@@ -1571,6 +1638,30 @@ def status_clause(now, by, text):
                                            clock_zone(now), by, text)
 
 
+def one_status(fields, clause):
+    """The line's fields with every status clause removed and `clause` appended (see "One
+    status"), the clauses removed, and the other fields that stood after the first of them. A
+    status clause stands after the `recorded by` field, or after the fourth field where a line has
+    none, and opens `status D Month YYYY`."""
+    recorded = [i for i, field in enumerate(fields) if field.startswith("recorded by ")]
+    first = recorded[0] + 1 if recorded else 4
+    gone = [field for field in fields[first:] if STATUS_CLAUSE_RE.match(field)]
+    kept = fields[:first] + [field for field in fields[first:] if not STATUS_CLAUSE_RE.match(field)]
+    at = [i for i in range(first, len(fields)) if STATUS_CLAUSE_RE.match(fields[i])]
+    amid = [field for field in fields[at[0]:] if not STATUS_CLAUSE_RE.match(field)] if at else []
+    return kept + [clause[len(FIELD_SEP):]], gone, amid
+
+
+def note_replaced(ident, gone, amid):
+    if gone:
+        note("replaced", "%s held %d status clause%s, now one: %s" % (
+            ident, len(gone), "" if len(gone) == 1 else "s", " | ".join(short(g) for g in gone)))
+    # Kept, the safe direction: such a field may be part of a status or a record of its own.
+    for field in amid:
+        note("kept", "%s: a field among its status clauses opens no `status D Month YYYY` and stays, "
+                     "before the new clause: %s" % (ident, short(field)))
+
+
 def remove_line(lines, at):
     """The lines without lines[at]; when that leaves two blank lines together, one goes too, so
     an emptied section keeps one blank line before its next heading."""
@@ -1752,8 +1843,10 @@ def cmd_decided_status(args):
     # The line keeps its own terminator: a CR closing it stays its last byte, never mid-line.
     tail = line_terminator(lines[at])
     own = lines[at][:len(lines[at]) - len(tail)]
-    edited = own + clause + tail
-    check_fields(verb, edited, len(own.split(FIELD_SEP)) + 1, "edited line")
+    fields, gone, amid = one_status(own.split(FIELD_SEP), clause)
+    edited = FIELD_SEP.join(fields) + tail
+    check_fields(verb, edited, len(fields), "edited line")
+    note_replaced(ident, gone, amid)
     if args.dry_run:
         report(verb, path, at + 1, [short(lines[at]), clause.lstrip(" ·")], True)
         return
@@ -1801,9 +1894,10 @@ def cmd_decided_state(args):
     if state == old:
         die(verb, "the state of %s already reads '%s'; nothing written" % (ident, short(old)))
     fields[3] = state
-    edited = (FIELD_SEP.join(fields) + status_clause(now, by, "%s; its earlier state read \"%s\"" % (text_note, old))
-              + tail)
-    check_fields(verb, edited, len(fields) + 1, "edited line")
+    fields, gone, amid = one_status(fields, status_clause(now, by, text_note))
+    edited = FIELD_SEP.join(fields) + tail
+    check_fields(verb, edited, len(fields), "edited line")
+    note_replaced(ident, gone, amid)
     if args.dry_run:
         report(verb, path, at + 1, ["state: %s" % state, "earlier: %s" % old], True)
         return
@@ -1973,7 +2067,7 @@ def build_parser():
 
     add = register_verbs.add_parser("add", help="a new entry at the top of the Open section")
     add.add_argument("--vault", required=True)
-    add.add_argument("--date", required=True)
+    add.add_argument("--date", required=True, help="the date only, YYYY-MM-DD; the tool stamps the time")
     add.add_argument("--surface", required=True, help="surface — short title")
     add.add_argument("--symptom", required=True)
     add.add_argument("--cause", required=True)
@@ -1989,13 +2083,13 @@ def build_parser():
     close = register_verbs.add_parser("close", help="move one entry to the Closed section")
     close.add_argument("--vault", required=True)
     close.add_argument("--match", required=True, help="text of exactly one Open heading")
-    close.add_argument("--date", required=True)
+    close.add_argument("--date", required=True, help="the date only, YYYY-MM-DD; the tool stamps the time")
     close.add_argument("--status", required=True,
                        help="the text of the dated line; the clock stamps its time")
     close.add_argument("--dry-run", action="store_true", help="print the change, write nothing")
 
     annotate_entry = register_verbs.add_parser(
-        "annotate", help="append one dated note to one Open entry")
+        "annotate", help="replace one Open entry's Status, or append one dated note to it")
     annotate_entry.add_argument("--vault", required=True)
     annotate_entry.add_argument("--match", required=True, help="text of exactly one Open heading")
     annotate_entry.add_argument("--kind", required=True, help="one of: %s" % " ".join(NOTE_KINDS))
@@ -2029,14 +2123,14 @@ def build_parser():
     d_add.add_argument("--by", required=True, help="who records the line")
     d_add.add_argument("--dry-run", action="store_true", help="print the line, write nothing")
 
-    d_status = decided_verbs.add_parser("status", help="append one status clause to one open line")
+    d_status = decided_verbs.add_parser("status", help="set one open line's one status clause")
     d_status.add_argument("--vault", required=True)
     d_status.add_argument("--id", required=True, help="DW-YYYYMMDD-n")
     d_status.add_argument("--note", required=True)
     d_status.add_argument("--by", required=True)
     d_status.add_argument("--dry-run", action="store_true", help="print the clause, write nothing")
 
-    d_state = decided_verbs.add_parser("state", help="replace one open line's state")
+    d_state = decided_verbs.add_parser("state", help="replace one open line's state and set its status clause")
     d_state.add_argument("--vault", required=True)
     d_state.add_argument("--id", required=True, help="DW-YYYYMMDD-n")
     d_state.add_argument("--state", required=True)

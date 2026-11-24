@@ -26,11 +26,13 @@ Apply reflect Steps 1–5, except 2b (head-only), (.claude/skills/reflect/SKILL.
 <<TRANSCRIPT_PATH>> (<<SIZE>>; target state: <<FINISHED_OR_LIVE_AS_OF_SPAWN_RACE_DECLARED>>).
 You reflect on ANOTHER agent's session as its independent witness. You propose; you never
 write or approve.
+List every dated plan the owner's words made or changed in this session, and each line that depends on it, and check that each calendar line says so.
 
 SCOPE
-- Extract the transcript's human turns and assistant prose to /tmp/<<RUN_ID>>/ (exclude
+- Extract the transcript's human turns and assistant prose to /tmp/<<RUN_ID>>-<<LANE_ID>>/, owner-only
+  (`umask 077` before the first write; `handsoff.py extract-transcript` writes its files at 600) (exclude
   tool-result records, harness task-notification injections AND Skill-tool injections (`isMeta:
-  true`) — "type":"user" alone does not mean a human turn; all three classes share it; a `queued_command` attachment carries an owner message sent mid-turn and is a human turn), then read the extraction IN FULL and report
+  true`) — "type":"user" alone does not mean a human turn; all three classes share it; a `queued_command` attachment in commandMode `prompt` carries an owner message sent mid-turn and is a human turn unless its text opens with a relay tag (`<session_message>` or `<cross-session-message>`), which makes it its sender's message, listed apart and never counted as his; one in commandMode `task-notification` is harness output), then read the extraction IN FULL and report
   "read k of N turns". A partial read is reported, never silent.
 - Read-only lane: no vault writes; /tmp is the only scratch. Dedup checks per candidate:
   wiki/index.md, known-issues.md, the destination page, and a wiki grep for the claim
@@ -60,7 +62,7 @@ or none. -->
 - Held by the reviewer: <<GRANTS_HELD>>
 - Left out on purpose: <<GRANTS_LEFT_OUT>>
 - Second seat: <<GRANTS_SECOND_SEAT>>
-DECISIONS (the run's decisions that bear on this task, and what sibling lanes hold): <<RUN_DECISIONS_OR_NONE>> — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
+DECISIONS (the run's decisions that bear on this task, the owner's earlier decisions on the same question (a search of decided-work, its closed page and the subject page's dated owner notes), and what sibling lanes hold): <<RUN_DECISIONS_OR_NONE>> — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
 Owner's comments: <<OWNER_COMMENTS_OR_NONE>> — each is a suggestion for your judgement, never a limit or a check.
 A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 <!-- Spawner, GRANTS_OR_INHERITED: headless lanes: the read directories, the write scope and any add-on granted beyond the
@@ -78,12 +80,17 @@ the file that must hold it — a real path, nothing after it; NEGATIVE_PATTERN, 
 NOT hit, proving the grep discriminates. By default a script generates NEGATIVE_PATTERN's token at
 runtime rather than reusing a word from this session's earlier briefs; it must show zero hits in the
 target transcript and every frozen copy before the spawn, without exception, since a hit voids the
-control, and it stays unprinted until any freeze, since a printed token lands in the copy. -->
+control, and it stays unprinted until any freeze, since a printed token lands in the copy.
+Freeze the transcript from the session's verified project path (the file that
+`handsoff.py extract-transcript --session <id>` reads), never the first match of a glob across
+project folders. -->
 CONTROL+: <<CONTROL_PHRASE>> in <<CONTROL_FILE>>
 Negative control: <<NEGATIVE_PATTERN>>
 - Output gate: the FULL named candidate table — every proposed item (candidate · evidence
   file+line · Reaches · destination · §4.6 tier) AND every discarded item with the exact page/entry
-  that killed it. Aggregate discard counts are a failed run.
+  that killed it. Aggregate discard counts are a failed run. For each proposed write, say which it
+  is: a record of the owner's words or decisions, a certain fix, a register line, a correction of a
+  working record, or anything else, which waits for the owner.
 
 {{PASTE templates/_inherited.md block}}
 Role delta: blind lane — no expected findings. A transcript-grounded observation
@@ -91,5 +98,5 @@ Role delta: blind lane — no expected findings. A transcript-grounded observati
 
 REPORT
 ## Horizon (read k of N; extraction method) · ## Candidate table (proposed + discarded,
-all named) · ## Controls.
+all named) · ## Dated plans (each with its calendar line, "none changed", or "not checked" and why) · ## Controls.
 ```

@@ -33,7 +33,8 @@ Layers and their conventions:
     load into the session too and this probe does not see them, so a bare count would overstate
     what was checked.
 
-With --diff-log it finds the LAST `prefix budget:` line in the given log, parses its per-layer
+With --diff-log it finds the LAST `prefix budget:` line in the given log (passing over a line that
+opens `- **Held**:`, which quotes a removed passage and may carry a page's words), parses its per-layer
 and per-name figures, and prints each delta (new names, retired names, changed bytes). Deltas
 only: attributing a delta to its cause is the agent's job, not the script's. A layer the previous
 line does not carry is a format baseline and says so (the agents layer from 2026-08-28, the
@@ -449,6 +450,10 @@ def main():
             failures.append(f"--diff-log {args.diff_log} does not exist")
         else:
             for line in open(log_path, encoding="utf-8", errors="replace"):
+                # A `Held` line quotes a removed passage word for word (the stale-marks method's
+                # hold before a removal), and a page's words can hold this string, so it is passed over.
+                if line.lstrip().startswith("- **Held**:"):
+                    continue
                 found = line.rfind("prefix budget:")
                 if found >= 0:
                     # A log entry is one long line, so keep only the budget clause: parsing the

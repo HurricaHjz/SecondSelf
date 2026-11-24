@@ -8,7 +8,12 @@ Checks:
              line can be written after the file last changed), or later than the `ts` of a line
              appended after it by more than ORDER_TOLERANCE
   config     a `model` or `effort` string on lane L's event that is not the model/effort slot on
-             the first line of L's brief (brief-compile: copy the slots verbatim or omit the field)
+             the first line of L's brief (brief-compile: copy the slots verbatim or omit the field);
+             a `verify` event's L is the lane its `verifier` field names, since its `lane` is the
+             compile lane it scored and its model and effort are the verifier's; a `verify` event
+             whose `verifier` field is present but is not a string with non-space content is listed
+             UNCHECKED, never judged against its compile lane's brief (an absent field still reads
+             the event's own lane)
 A lane's brief: `--brief LANE=PATH` (repeatable), else a `brief` field on its lane_open event.
 
 Usage:
@@ -17,7 +22,8 @@ A bare run id resolves to ~/.llm-wiki/ingest-runs/<run-id>.jsonl.
 Output: OFFENCE and UNCHECKED lines, then a summary line and a controls line.
 Exit 0 = every event checked, no offence; 1 = offences; 2 = PROBE FAILED (ledger unreadable or
 without events, a planted control not caught, or no offence but something left unchecked: a
-malformed line, an absent or unparseable ts, a lane carrying config with no usable brief).
+malformed line, an absent or unparseable ts, a lane carrying config with no usable brief, a verify
+event whose verifier field is unusable).
 Reads only: it creates, modifies, moves and deletes nothing.
 """
 import argparse, datetime, json, os, re, sys
@@ -102,6 +108,21 @@ def config_reasons(ev, slots):
     return out
 
 
+def config_lane(ev):
+    """(lane, problem): the lane whose brief holds the event's slots, a verify event's verifier,
+    else its own lane. A verify event whose verifier field is present but unusable has no lane:
+    the problem says why, and the event is listed unchecked, never read against its compile lane."""
+    own = ev.get("lane") or "(no lane)"
+    if ev.get("event") != "verify" or "verifier" not in ev:
+        return own, None
+    verifier = ev["verifier"]
+    if isinstance(verifier, str) and verifier.strip():
+        return verifier, None
+    return None, ("the verify event's verifier field is present but unusable (%s): its brief cannot be "
+                  "chosen, so it is not judged against compile lane %s's"
+                  % (json.dumps(verifier, ensure_ascii=False)[:80], own))
+
+
 def controls():
     """Planted cases through the same functions: each must fire, and the clean case must not."""
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -119,6 +140,11 @@ def controls():
         bad.append("clean config flagged")
     if parse_ts("2026-09-01T11:24+0100") is None or parse_ts("2026-09-01T11:24") is not None:
         bad.append("ts parser")
+    if (config_lane({"event": "verify", "lane": "C1", "verifier": "V1"}) != ("V1", None)
+            or config_lane({"event": "lane_open", "lane": "C1", "verifier": "V1"}) != ("C1", None)
+            or config_lane({"event": "verify", "lane": "C1"}) != ("C1", None)
+            or config_lane({"event": "verify", "lane": "C1", "verifier": 7})[0] is not None):
+        bad.append("verify event read through its verifier field")
     return bad
 
 
@@ -187,12 +213,15 @@ def main(argv=None):
         if later_min is None or ts < later_min[0]:
             later_min = (ts, i)
 
-    cache, lane_problem, cfg_checked, cfg_lanes = {}, {}, 0, set()
+    cache, lane_problem, cfg_checked, cfg_lanes, cfg_unchecked = {}, {}, 0, set(), []
     if not a.no_config:
         for i, ev in events:
             if ev.get("model") is None and ev.get("effort") is None:
                 continue
-            lane = ev.get("lane") or "(no lane)"
+            lane, unusable = config_lane(ev)
+            if unusable:
+                cfg_unchecked.append((i, unusable))
+                continue
             if lane not in briefs:
                 lane_problem.setdefault(lane, "no brief named (pass --brief LANE=PATH)")
                 continue
@@ -204,7 +233,8 @@ def main(argv=None):
             cfg_lanes.add(lane)
             why = config_reasons(ev, slots)
             if why:
-                offences.setdefault(i, [ev, []])[1].append(f"config: lane {lane} " + "; ".join(why))
+                scored = f" (verifier of lane {ev.get('lane')})" if lane != (ev.get("lane") or "(no lane)") else ""
+                offences.setdefault(i, [ev, []])[1].append(f"config: lane {lane}{scored} " + "; ".join(why))
 
     for i in sorted(offences):
         ev, why = offences[i]
@@ -213,6 +243,8 @@ def main(argv=None):
         print(f"UNCHECKED line {i} malformed JSON")
     for i, why in sorted(unchecked):
         print(f"UNCHECKED line {i} {why}")
+    for i, why in cfg_unchecked:
+        print(f"UNCHECKED line {i} config: {why}")
     for lane, why in sorted(lane_problem.items()):
         print(f"UNCHECKED lane {lane} config: {why}")
     n_future = sum(1 for _ev, why in offences.values() for w in why if w.startswith("future-ts"))
@@ -220,11 +252,13 @@ def main(argv=None):
     cfg = "skipped (--no-config)" if a.no_config else f"{cfg_checked} events over {len(cfg_lanes)} lanes checked"
     print(f"summary: {os.path.basename(path)} · events {len(events)} · malformed {len(malformed)} · ts checked {ts_checked}"
           f" · future-ts offences {n_future} · config {cfg} · config offences {n_config}"
-          f" · unchecked ts {len(unchecked)} · unchecked config lanes {len(lane_problem)}")
-    print("controls: planted future ts (clock, mtime, later line) and config mismatch caught; clean config not flagged; ts parser ok")
+          f" · unchecked ts {len(unchecked)} · unchecked config lanes {len(lane_problem)}"
+          f" · unchecked config events {len(cfg_unchecked)}")
+    print("controls: planted future ts (clock, mtime, later line) and config mismatch caught; clean config not flagged; ts parser ok;"
+          " a verify event read through its verifier field; an unusable verifier left unchecked")
     if offences:
         sys.exit(1)
-    left = len(malformed) + len(unchecked) + len(lane_problem)
+    left = len(malformed) + len(unchecked) + len(lane_problem) + len(cfg_unchecked)
     if left:
         fail(f"no offence, but {left} items unchecked (listed above) - the ledger is not proven clean")
 

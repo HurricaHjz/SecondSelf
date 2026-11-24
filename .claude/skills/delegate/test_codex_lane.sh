@@ -3247,6 +3247,36 @@ if [ "$NGUARD_RC" != 0 ] && ! grep -q '^BAD ' "$T/network-guard.log"; then
   fail "host guard harness failed" "$(tail -3 "$T/network-guard.log")"
 fi
 
+# CX-CORE (register 2026-10-04 00:09): a home core that has drifted from its template never reaches
+# a Codex lane; core_text hands over the template's text instead, as lane.py's spawn does. The
+# fixture home carries a planted line the template lacks; the control home holds the template's bytes.
+CXCORE=$("$PY" - "$ADAPTER" "$T" <<'CXCORE_END'
+import importlib.util, os, shutil, sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+spec = importlib.util.spec_from_file_location("codex_cx", sys.argv[1])
+adapter = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(adapter)
+root = os.path.join(sys.argv[2], "cx-core")
+vault = os.path.join(root, "vault")
+template = os.path.join(vault, ".claude", "skills", "delegate", "templates", "lane-core.md")
+os.makedirs(os.path.dirname(template))
+with open(template, "w") as handle:
+    handle.write("LANE CORE\nthe template's own line\n")
+home = os.path.join(root, "home")
+os.makedirs(home)
+os.environ["LLM_WIKI_LANE_HOME"] = home
+shutil.copyfile(template, os.path.join(home, "lane-core.md"))
+clean_path, clean = adapter.core_text(vault, None)
+with open(os.path.join(home, "lane-core.md"), "a") as handle:
+    handle.write("HOME-ONLY-DRIFT-LINE\n")
+drift_path, drift = adapter.core_text(vault, None)
+print("%s|%s|%s|%s" % (clean_path == os.path.join(home, "lane-core.md"), drift_path == template,
+                       "HOME-ONLY-DRIFT-LINE" in drift, "the template's own line" in drift))
+CXCORE_END
+)
+if [ "$CXCORE" = "True|True|False|True" ]; then pass "CX-CORE a home core drifted from its template yields to the template's text in a Codex lane's prompt (control: an undrifted home core is read from the home)"; else fail "CX-CORE the drifted core" "[$CXCORE]"; fi
+
 SOURCE_AFTER=$(shasum "$ADAPTER" "$HERE/lane.py" "$0")
 if [ "$SOURCE_BEFORE" = "$SOURCE_AFTER" ] && [ -n "$SOURCE_BEFORE" ]; then pass "W2-C06 shipped sources unchanged"; else fail "W2-C06 source manifest" "changed"; fi
 TOTAL=$((PASSES+FAILS))

@@ -262,8 +262,10 @@ split_line = line(r, "split: ")
 check("N03 a 900000-byte source is reported by a split: line with the ceiling's derivation; the rest planned; exit 3",
       r.returncode == 3 and plan(r) == ([(3000, md(d, "b", "a"))], [(900000, md(d, "big chapter's book"))], [])
       and all(s in split_line for s in ["stem big chapter's book", "900000 bytes above the ceiling of 800000 bytes",
-                                       DERIVATION, "not compiled this run; kept in the inbox until a parts procedure exists"])
-      and "split by chapter before compiling" not in split_line
+                                       DERIVATION, "not compiled this run; it stays in the inbox and is named in the run's report"])
+      # N03 updated with the update count: the parts procedure is retired (known-issues, closed 2026-11-20),
+      # so the line no longer promises one.
+      and "split by chapter before compiling" not in split_line and "parts procedure" not in split_line
       and "controls: sources 2 assigned exactly once · sources 1 reported exactly once, none also assigned"
       " · duplicate caught · omission caught · clean assignment passed" in r.stdout
       and r.stdout.splitlines()[-1].endswith(" · split 1 · group-over-ceiling 0 (members 0)"), r.stdout)
@@ -381,18 +383,211 @@ r = run("--inbox", d, "--lanes", 2)
 check("N19 --lanes still reports a unit above CEILING and plans the rest; exit 3",
       r.returncode == 3 and plan(r) == ([(2000, md(d, "b")), (1000, md(d, "a"))], [(900000, md(d, "big"))], []), r.stdout)
 r = run("--inbox", raw)
+SHIPPED_BASIS = "set by judgement for English prose and Markdown, unmeasured on paper captures"
+BASIS = SHIPPED_BASIS
 check("N20 the plan header prints PACK, CEILING with its derivation, and the effective budget",
       r.returncode == 0 and r.stdout.splitlines()[:3] == [
           "pack: 250000 bytes (--max-bytes; default 250000, set by judgement, unmeasured)",
           "ceiling: 800000 bytes = " + DERIVATION + ", rounded down (share: --ceiling-share, default 0.2, set by "
           "judgement, unmeasured; window: --window-tokens, the compile model's context window, default 1000000; "
-          "bytes per token: set by judgement, unmeasured)",
+          "bytes per token: " + BASIS + ")",
           "budget: 250000 bytes = min(pack 250000, ceiling 800000); a unit above it gets a helper of its own, "
           "a unit above the ceiling is reported"], r.stdout)
+# The export removes each vault-local block as whole comment-marker lines (export-template's strip): the program
+# so stripped must still run, and its ceiling line must state the shipped figure with no vault's record.
+STRIP = re.compile(r"^[ \t]*# +<!-- *vault-local:begin *-->[ \t]*\n.*?^[ \t]*# +<!-- *vault-local:end *-->[ \t]*(?:\n|$)",
+                   re.S | re.M)
+shipped = root / "n20-shipped-partition.py"
+shipped.write_text(STRIP.sub("", script.read_text()))
+s = run("--inbox", raw, helper=shipped)
+check("N20 stripped of its vault-local blocks, as the export ships it, the program runs and its ceiling line states the shipped figure alone",
+      s.returncode == 0 and line(s, "ceiling: ").endswith("; bytes per token: " + SHIPPED_BASIS + ")")
+      and "known-issues" not in s.stdout and not s.stderr, s.stdout + s.stderr)
 check("N21 help documents the ceiling flags, the split: and group-over-ceiling: lines and exit 3",
       all(s in " ".join(help_result.stdout.split()) for s in
           ["--window-tokens", "--ceiling-share", "in (0, 1]", "split: line", "group-over-ceiling: line",
            "exit 3 prints a plan", "min(PACK, CEILING)", "never splits a source or a group"]), help_result.stdout)
+
+# The update count (known-issues 2026-11-20 06:29 d): an update compile also reads its earlier version and its
+# existing page, so --update counts them in the unit's size; an update above the ceiling is planned alone at the
+# alone share, and one above that waits. Each V leg fails on the partitioner that had no --update.
+def earlier(name, sizes):
+    """Earlier files outside the inbox: {stem: [bytes, ...]} -> {stem: [paths]}."""
+    directory = root / (name + "-earlier")
+    directory.mkdir()
+    found = {}
+    for stem, lengths in sizes.items():
+        found[stem] = []
+        for k, size in enumerate(lengths):
+            path = directory / ("%s-%d.md" % (stem, k))
+            path.write_bytes(b"y" * size)
+            found[stem].append(path)
+    return found
+
+
+def update_file(name, entries, text=None):
+    path = root / (name + "-updates.txt")
+    path.write_text(text if text is not None else "".join(
+        shlex.quote(stem) + " " + " ".join(shlex.quote(str(p)) for p in paths) + "\n" for stem, paths in entries.items()))
+    return path
+
+
+def alone_lines(result):
+    return [(int(tokens[1]), tokens[2:]) for text in result.stdout.splitlines() if re.match(r"A\d+:", text)
+            for tokens in [shlex.split(text, comments=True)]]
+
+
+def reported(result, prefix):
+    return [(int(tokens[1]), tokens[2:]) for text in result.stdout.splitlines() if text.startswith(prefix + ": ")
+            for tokens in [shlex.split(text, comments=True)]]
+
+
+d = inbox("v01", {"a": 100000, "b": 100000})
+old = earlier("v01", {"a": [100000, 20000], "b": [100000, 20000]})
+r = run("--inbox", d)
+check("V01 control: without --update the two update sources pack as one helper of 200000 (the miscount)",
+      r.returncode == 0 and plan(r) == ([(200000, md(d, "a", "b"))], [], []), r.stdout)
+r = run("--inbox", d, "--update", update_file("v01", old))
+check("V01 with --update each counts 220000 and the two take a helper each",
+      r.returncode == 0 and plan(r) == ([(220000, md(d, "a")), (220000, md(d, "b"))], [], []), r.stdout)
+d = inbox("v02", {"p%d" % i: 150000 for i in range(4)})
+old = earlier("v02", {"p%d" % i: [140000, 15000] for i in range(4)})
+r = run("--inbox", d, "--max-bytes", 800000, "--update", update_file("v02", old))
+check("V02 the C-CAP-1 shape at --max-bytes 800000: four updates of 305000 counted plan as two helpers of 610000",
+      r.returncode == 0 and [size for size, _ in plan(r)[0]] == [610000, 610000], r.stdout)
+d = inbox("v03", {"big": 300000, "s": 1000})
+old = earlier("v03", {"big": [300000, 250000]})
+r = run("--inbox", d, "--update", update_file("v03", old))
+a_line = line(r, "A1: ")
+check("V03 an update counted at 850000 is planned alone (A1), not in a lane; exit 0; its comment gives the parts",
+      r.returncode == 0 and alone_lines(r) == [(850000, md(d, "big"))] and plan(r) == ([(1000, md(d, "s"))], [], [])
+      and all(s in a_line for s in ["update of big", "new 300000 + earlier 550000 bytes", "above the ceiling of 800000",
+                                    "planned alone", "share 0.3 (limit 1200000 bytes)", "its verifier serves it alone"])
+      and line(r, "alone: ").startswith("alone: 1200000 bytes = share 0.3 × window 1000000 tokens × 4 bytes per token")
+      and "both versions in view" in line(r, "alone: ") and "lanes 1 · sources 2" in r.stdout and " · alone 1" in r.stdout, r.stdout)
+r = run("--inbox", d)
+check("V03 control: the same source without --update plans at 300000 in a helper of its own",
+      r.returncode == 0 and plan(r)[0][0] == (300000, md(d, "big")) and not alone_lines(r), r.stdout)
+d = inbox("v04", {"huge": 600000, "s": 1000})
+old = earlier("v04", {"huge": [600000, 50000]})
+r = run("--inbox", d, "--update", update_file("v04", old))
+w_line = line(r, "wait: ")
+check("V04 an update counted at 1250000, above the alone limit, waits: a wait: line, no lane or A line; exit 3",
+      r.returncode == 3 and reported(r, "wait") == [(1250000, md(d, "huge"))] and not alone_lines(r)
+      and plan(r) == ([(1000, md(d, "s"))], [], [])
+      and all(s in w_line for s in ["update of huge", "new 600000 + earlier 650000 bytes", "above the alone limit of 1200000",
+                                    "would not fit its helper's limit even alone", "name it in the run's report"])
+      and " · wait 1" in r.stdout and "parts procedure" not in r.stdout, r.stdout)
+r = run("--inbox", d, "--update", update_file("v04b", old), "--alone-share", "0.5")
+check("V06 --alone-share 0.5 raises the limit to 2000000, so the same update is planned alone; exit 0",
+      r.returncode == 0 and alone_lines(r) == [(1250000, md(d, "huge"))] and "limit 2000000 bytes" in r.stdout, r.stdout)
+rejects("V06 an --alone-share equal to the ceiling share is refused", ["--inbox", d, "--alone-share", "0.2"],
+        "--alone-share 0.2 must exceed the ceiling share 0.2")
+rejects("V06 an --alone-share above 1 is refused", ["--inbox", d, "--alone-share", "1.5"], "ceiling share in (0, 1]")
+r = run("--inbox", d, "--ceiling-share", "0.5")
+check("V06 control: a ceiling share raised above the alone default is not refused (the alone default follows it)",
+      r.returncode == 0, r.stdout)
+d = inbox("v05", {"novel": 900000, "s": 1000})
+r = run("--inbox", d)
+check("V05 a new source above the ceiling: split:, it stays in the inbox, no parts procedure named; exit 3",
+      r.returncode == 3 and "it stays in the inbox and is named in the run's report" in line(r, "split: ")
+      and "parts procedure" not in r.stdout and not alone_lines(r), r.stdout)
+d = inbox("v07", {"a": 100000, "b": 100000, "c": 5000})
+old = earlier("v07", {"a": [100000, 20000], "b": [100000, 20000]})
+r = run("--inbox", d)
+check("V07 with no --update the header says none were named, after the three size lines",
+      r.returncode == 0 and r.stdout.splitlines()[3] == "updates: none named (--update absent): every unit is sized by its "
+      "own converted bytes, as a new compile" and not line(r, "alone: "), r.stdout)
+r = run("--inbox", d, "--update", update_file("v07", old))
+check("V07 with --update the header counts the sources and earlier files, and prints the alone: line",
+      r.returncode == 0 and r.stdout.splitlines()[3] == "updates: 2 sources sized with 4 earlier files (+240000 bytes) from --update"
+      and r.stdout.splitlines()[4].startswith("alone: 1200000 bytes"), r.stdout)
+check("V09 accounting: the printed sizes sum to the source bytes plus the earlier files the fixture wrote",
+      sum(size for size, _ in plan(r)[0]) == 205000 + 240000, r.stdout)
+# The controls clause "sizes add up" compared the plan's count with itself (review advice A6): it is gone, and
+# V09 above is the sum check, made from the fixture's own byte counts.
+check("V14 the controls line makes no size-accounting claim; the sum is V09's, made from the fixture's byte counts",
+      r.returncode == 0 and line(r, "controls: ") and "sizes add up" not in r.stdout and "earlier-file bytes counted" not in r.stdout,
+      r.stdout)
+r0 = run("--inbox", d)
+check("V09 control: the same sum over the plan that leaves the earlier files out does not add up",
+      r0.returncode == 0 and sum(size for size, _ in plan(r0)[0]) == 205000 != 205000 + 240000, r0.stdout)
+# Premise failures of --update: each exits 2 with PROBE FAILED and prints no plan.
+d = inbox("v08", {"a": 1000, "b": 1000})
+old = earlier("v08", {"a": [500]})
+unreadable = root / "v08-unreadable.md"; unreadable.write_text("z"); unreadable.chmod(0)
+cases = [("a missing earlier file", "a " + shlex.quote(str(root / "v08-absent.md")) + "\n", "missing file or not a regular file"),
+         ("a directory named as an earlier file", "a " + shlex.quote(str(root)) + "\n", "missing file or not a regular file"),
+         ("an unreadable earlier file", "a " + shlex.quote(str(unreadable)) + "\n", "unreadable file"),
+         ("an empty --update file", "", "empty --update file"),
+         ("a comments-only --update file", "# none\n\n", "empty --update file"),
+         ("a stem with no earlier file", "a\n", "names a and no earlier file"),
+         ("an unknown stem", "zz " + shlex.quote(str(old["a"][0])) + "\n", "--update names unknown stem: zz"),
+         ("a stem on two lines", ("a " + shlex.quote(str(old["a"][0])) + "\n") * 2, "--update names stem a on two lines"),
+         ("an earlier file that is an inbox source", "a " + shlex.quote(str(d / "b.md")) + "\n", "is one of this run's inbox sources"),
+         ("an unbalanced quote", "a '" + str(old["a"][0]) + "\n", "--update line 1 does not parse")]
+for n, (label, text, message) in enumerate(cases):
+    rejects("V08 --update refuses " + label, ["--inbox", d, "--update", update_file("v08-%d" % n, {}, text)], message)
+rejects("V08 an unreadable --update file is refused", ["--inbox", d, "--update", root / "v08-no-such-updates.txt"],
+        "unreadable --update file")
+unreadable.chmod(0o644)
+amb = root / "v08amb"; (amb / "raw" / "x").mkdir(parents=True); (amb / "raw" / "y").mkdir(parents=True)
+(amb / "raw" / "x" / "same.md").write_text("one"); (amb / "raw" / "y" / "same.md").write_text("two")
+(amb / "led.jsonl").write_text(json.dumps({"event": "run_open", "inbox": ["raw/x/same.md", "raw/y/same.md"]}) + "\n")
+rejects("V08 an ambiguous stem (two inbox sources named same) is refused",
+        ["--ledger", amb / "led.jsonl", "--vault", amb, "--update", update_file("v08amb", {}, "same " + shlex.quote(str(old["a"][0])) + "\n")],
+        "--update names ambiguous stem: same")
+d = inbox("v10", {"a": 300000, "b": 100000, "c": 100000})
+old = earlier("v10", {"b": [100000]})
+r = run("--inbox", d, "--lanes", 3, "--update", update_file("v10", old))
+check("V10 --lanes 3 keeps the exact count with the earlier file counted: 300000 alone, then 200000 and 100000",
+      r.returncode == 0 and plan(r) == ([(300000, md(d, "a")), (200000, md(d, "b")), (100000, md(d, "c"))], [], []), r.stdout)
+r = run("--inbox", d, "--lanes", 2, "--update", update_file("v10b", old))
+check("V10 --lanes 2 on that load fails with the bounds message (b and c share 300000, above the budget)",
+      r.returncode == 2 and "a lower bound" in r.stdout and "300000 bytes in one helper" in r.stdout, r.stdout)
+d = inbox("v10c", {"big": 300000, "s": 1000})
+old = earlier("v10c", {"big": [300000, 250000]})
+r = run("--inbox", d, "--lanes", 2, "--update", update_file("v10c", old))
+check("V10 an alone unit stays outside the --lanes count: two lanes printed, one of them empty, and A1",
+      r.returncode == 0 and len(plan(r)[0]) == 2 and alone_lines(r) == [(850000, md(d, "big"))], r.stdout)
+d = inbox("v11", {"g1": 300000, "g2": 300000})
+old = earlier("v11", {"g1": [300000]})
+groups = root / "v11-groups.txt"; groups.write_text("g1\ng2\n")
+r = run("--inbox", d, "--group", groups, "--update", update_file("v11", old))
+check("V11 a group whose member has an update counts it, and over the ceiling prints group-over-ceiling:, never A or wait:; exit 3",
+      r.returncode == 3 and plan(r)[2] == [(900000, md(d, "g1", "g2"))] and not alone_lines(r) and not line(r, "wait: ")
+      and "g1 600000" in line(r, "group-over-ceiling: "), r.stdout)
+lv = root / "v12vault"; (lv / "raw" / "2-papers").mkdir(parents=True); (lv / "wiki" / "sources").mkdir(parents=True)
+(lv / "raw" / "x.md").write_bytes(b"n" * 100000)
+(lv / "raw" / "2-papers" / "x-v1.md").write_bytes(b"o" * 90000); (lv / "wiki" / "sources" / "x.md").write_bytes(b"p" * 10000)
+(lv / "led.jsonl").write_text(json.dumps({"event": "run_open", "inbox": ["x.md"]}) + "\n")
+r = run("--ledger", lv / "led.jsonl", "--vault", lv, "--update", update_file("v12", {}, "x raw/2-papers/x-v1.md wiki/sources/x.md\n"))
+check("V12 ledger mode reads --update paths relative to --vault and counts them",
+      r.returncode == 0 and plan(r)[0] == [(200000, [str(lv / "raw" / "x.md")])]
+      and "update: x +100000 " + str(lv / "raw" / "2-papers" / "x-v1.md") + " " + str(lv / "wiki" / "sources" / "x.md") in r.stdout, r.stdout)
+d = inbox("v13", {"a": 100000, "b": 100000})
+shared_page = root / "v13-shared-page.md"; shared_page.write_bytes(b"q" * 30000)
+r = run("--inbox", d, "--update", update_file("v13", {"a": [shared_page], "b": [shared_page]}))
+check("V13 an earlier file named for two units is counted in each, and both update: lines name it",
+      r.returncode == 0 and sorted(size for size, _ in plan(r)[0]) == [130000, 130000]
+      and r.stdout.count(str(shared_page)) == 2, r.stdout)
+r = run("--inbox", d, "--update", update_file("v13b", {"a": [shared_page, shared_page]}))
+check("V13 a file named twice within one unit counts once (a 130000 packs with b 100000)",
+      r.returncode == 0 and "update: a +30000 " in r.stdout and plan(r)[0] == [(230000, md(d, "a", "b"))]
+      and "1 sources sized with 1 earlier files (+30000 bytes)" in r.stdout, r.stdout)
+# The updates: header counts as the plan counts (review advice A7): a file shared by two members of one group
+# counts once in that unit, and a file named for two separate units counts in each.
+d = inbox("v15", {"g1": 100000, "g2": 100000})
+v15_groups = root / "v15-groups.txt"; v15_groups.write_text("g1\ng2\n")
+v15_page = root / "v15-shared-page.md"; v15_page.write_bytes(b"q" * 30000)
+r = run("--inbox", d, "--group", v15_groups, "--update", update_file("v15", {"g1": [v15_page], "g2": [v15_page]}))
+check("V15 a file shared by two members of one group: the header counts it once (+30000), as the group's size does",
+      r.returncode == 0 and plan(r)[0] == [(230000, md(d, "g1", "g2"))]
+      and line(r, "updates: ") == "updates: 2 sources sized with 1 earlier files (+30000 bytes) from --update", r.stdout)
+r = run("--inbox", d, "--update", update_file("v15b", {"g1": [v15_page], "g2": [v15_page]}))
+check("V15 control: the same file named for two separate units counts in each, in the header (+60000) and the plan",
+      r.returncode == 0 and sum(size for size, _ in plan(r)[0]) == 260000
+      and line(r, "updates: ") == "updates: 2 sources sized with 2 earlier files (+60000 bytes) from --update", r.stdout)
 
 # Enable part 8 checks when its independent text diff is installed.
 if os.environ.get("INGEST_TEXT_CHECKS") == "1":
@@ -426,7 +621,7 @@ if os.environ.get("INGEST_TEXT_CHECKS") == "1":
     removed = precedence_probe(pacing.replace(precedence + "\n", ""))
     check("T06 F2 removed precedence sentence fails the same probe", removed.returncode == 1
           and not removed.stdout and not removed.stderr and present.returncode == 0)
-    counter_case = ("A two-source batch compiled in a lane under `single` uses `one-lane` where its converted bytes fit the source budget, "
+    counter_case = ("A two-source batch compiled in a lane under `single` uses `one-lane` where the bytes the size rule counts fit the source budget, "
                     "with its standing instrument-rule reason recorded in the pre-flight; the owner’s word or the head’s "
                     "pre-flight judgement can select `parallel`. The same batch under `multi` follows the same shape rule.")
     check("T07 F2 single, multi and explicit-owner counter-cases are settled", counter_case in pacing
@@ -447,17 +642,21 @@ if os.environ.get("INGEST_TEXT_CHECKS") == "1":
            "chooses one-lane or parallel", "per-source `auto` sequence"])
           and "A batch compiled in a lane follows the precedence in **Pacing**" in parallel)
     partition_step = skill.split("1. **Partition", 1)[1].split("**Then the brief check", 1)[0]
+    # T09 updated with the update count: the retired parts procedure's phrases leave the rule, and the
+    # outcomes for an oversize update (planned alone, or waiting) join it.
     rule = ["**The size rule** (stated here once; every other mention points here)",
             "`PACK` is `--max-bytes` (default 250000 bytes, set by judgement, unmeasured",
             "`--ceiling-share` (default 0.2, set by judgement, unmeasured", "`--window-tokens` (the compile model's context window",
             "4 bytes per token (set by judgement, unmeasured), which is 800000 bytes by default",
             "min(`PACK`, `CEILING`)", "never refused and never split", "first fit's count as an upper bound",
             "exit 3 is a plan", "**A `split:` line**", "this run does not compile it", "leaves it in the inbox",
-            "chapter parts kept outside `raw/`", "a verification path of its own", "the run's log entry",
+            "The parts procedure for such a source is retired", "**An `A<n>:` line**", "`--alone-share`",
+            "**A `wait:` line**", "the run's log entry",
             "**A `group-over-ceiling:` line**", "never splits a group", "larger-window model", "release the grouping",
             "on the group's members alone"]
     missing = [s for s in rule if s not in partition_step]
-    withdrawn = [s for s in ("part 1's helper owns the source page", "exactly one part", "split by chapter before compiling")
+    withdrawn = [s for s in ("part 1's helper owns the source page", "exactly one part", "split by chapter before compiling",
+                             "It is compiled only once a parts procedure exists")
                  if s in skill]
     once = [(n, skill.count(n), partition_step.count(n)) for n in ("250000", "800000")]
     check("T09 the size rule is stated once, in Partition, with its split: deferral and group-over-ceiling: handling; the withdrawn parts procedure is gone",
@@ -468,6 +667,17 @@ if os.environ.get("INGEST_TEXT_CHECKS") == "1":
           all(s in verifier for s in ["raw bytes one verifier may need to read whole", "that verifier model's `CEILING`",
                                       "every compile still checked"])
           and "up to six compile lanes" not in skill and "a seventh opens" not in skill, verifier[:400])
+
+    def update_clause(step):
+        """The update count's clause: the earlier files named with --update, under the everything-in-view principle."""
+        return all(s in step for s in ["A compile needs everything in view", "`--update <file>`",
+                                       "that paper's earlier converted version and its existing source page",
+                                       "a source it does not name is sized as a new compile"])
+    check("T11 the size rule names the update count and its principle; the retired parts-procedure promise is gone",
+          update_clause(partition_step) and "It is compiled only once a parts procedure exists" not in skill
+          and "the verifier of an `A<n>:` unit serving it alone" in verifier, partition_step[:300])
+    check("T11 control: the same probe fails on the step with the update clause taken out",
+          not update_clause(partition_step.replace("`--update <file>`", "", 1)))
 
 else:
     print("text checks skipped (INGEST_TEXT_CHECKS unset)")
@@ -505,6 +715,34 @@ dead = [p for p, c in zip(patterns, controls) if not re.search(p, c)]
 hits = [m.group(0) for p in patterns for m in re.finditer(p, source)]
 print("  source grep: patterns %d · dead %d · hits %d" % (len(patterns), len(dead), len(hits)))
 check("W03 source write-pattern grep is zero; every pattern hits its positive control", not dead and not hits, str(hits))
+# W04: the --update plans (packed, alone, waiting) on a read-only copy write nothing; a byte changed there is caught.
+ro4 = root / "readonly-update"
+(ro4 / "inbox").mkdir(parents=True)
+(ro4 / "earlier").mkdir()
+shutil.copy(script, ro4 / "partition.py")
+for stem, size in (("u1", 100000), ("u2", 300000), ("u3", 600000)):
+    (ro4 / "inbox" / (stem + ".md")).write_bytes(b"x" * size)
+    (ro4 / "earlier" / (stem + "-v1.md")).write_bytes(b"y" * {"u1": 100000, "u2": 550000, "u3": 650000}[stem])
+(ro4 / "packed.txt").write_text("u1 earlier/u1-v1.md\n")
+(ro4 / "alone.txt").write_text("u1 earlier/u1-v1.md\nu2 earlier/u2-v1.md\n")
+(ro4 / "wait.txt").write_text("u1 earlier/u1-v1.md\nu2 earlier/u2-v1.md\nu3 earlier/u3-v1.md\n")
+for p in sorted(ro4.rglob("*"), reverse=True):
+    p.chmod(0o555 if p.is_dir() else 0o444)
+ro4.chmod(0o555)
+before4 = manifest(ro4)
+codes4 = [run("--inbox", ro4 / "inbox", "--vault", ro4, "--update", ro4 / name, helper=ro4 / "partition.py").returncode
+          for name in ("packed.txt", "alone.txt", "wait.txt")]
+after4 = manifest(ro4)
+victim4 = ro4 / "packed.txt"
+ro4.chmod(0o755); victim4.chmod(0o644)
+victim4.write_bytes(b"X" + victim4.read_bytes()[1:])
+victim4.chmod(0o444); ro4.chmod(0o555)
+check("W04 --update plans on a read-only copy exit 0, 0 and 3 with the manifest unchanged; a byte changed there is caught",
+      codes4 == [0, 0, 3] and before4 == after4 and len(before4) == 10 and manifest(ro4) != before4,
+      "codes %s · files %d" % (codes4, len(before4)))
+ro4.chmod(0o755)
+for p in ro4.rglob("*"):
+    p.chmod(0o755 if p.is_dir() else 0o644)
 print("%s %d/%d" % ("FAIL" if failed else "PASS", failed if failed else passed, passed + failed))
 sys.exit(bool(failed))
 PARTITION_SUITE_PY

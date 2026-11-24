@@ -253,8 +253,10 @@ class Suite(BaseSuite):
         records = ([assistant(text, "<synthetic>")] if family == "claude" else
                    [{"type": "turn.failed", "error": {"message": text}}])
         if costly:
-            # Above the measured first-call cost, with a report exceeding the advice threshold.
-            first = assistant("partial work " * 50, identity="first")
+            # Above the measured first-call cost, with a report in its brief's shape: advise counts
+            # a report as work on disk by its shape, never its size (register 2026-11-14 15:58).
+            f.brief.write_text(f.brief.read_text() + "\nREPORT\n## Findings\n")
+            first = assistant("## Findings\n" + "partial work " * 50, identity="first")
             last = assistant("saved work " * 50, identity="last")
             first["message"]["usage"]["input_tokens"] = 1000
             last["message"]["usage"]["input_tokens"] = 100000

@@ -594,6 +594,34 @@ else
   no 'M2-real-scanned-pair: the supplied scanned conversion must be a readable file'
 fi
 
+echo '--- scope of an arXiv paper converted by markitdown (known-issues 2026-11-09 00:12 c) ---'
+SA="$T/scope-arxiv"; mkdir -p "$SA"
+scope_case(){ printf -- "---\n%s\n---\n\n%s\n" "$2" "$PROSE" > "$SA/$1.md"; score "$SA/$1.md" | grep -o 'scope: [a-z]* ([^)]*)'; }
+eq "SC1 an arXiv HTML capture through curl+markitdown reads scope pdf" 'scope: pdf (arXiv paper converted by markitdown)' \
+   "$(scope_case html 'converted_from: https://arxiv.org/abs/2611.00001
+resolved_url: https://arxiv.org/html/2611.00001v1
+converted_by: curl+markitdown (arXiv HTML)')"
+eq "SC2 an arXiv PDF through curl+markitdown reads scope pdf" 'scope: pdf (arXiv paper converted by markitdown)' \
+   "$(scope_case pdf 'converted_from: https://arxiv.org/abs/2611.00001
+converted_by: curl+markitdown (arXiv PDF)')"
+eq "SC3 an export.arxiv.org address reads scope pdf (the host keyed on its suffix)" 'scope: pdf (arXiv paper converted by markitdown)' \
+   "$(scope_case export 'source_url: https://export.arxiv.org/abs/2611.00001
+converted_by: curl+markitdown')"
+eq "SC4 an ar5iv address reads scope pdf" 'scope: pdf (arXiv paper converted by markitdown)' \
+   "$(scope_case ar5iv 'converted_from: https://ar5iv.org/abs/2611.00001
+converted_by: curl+markitdown')"
+eq "SC5 control: a defuddle capture of an arXiv page stays other" 'scope: other (web capture, converted_by defuddle)' \
+   "$(scope_case defuddle 'converted_from: https://arxiv.org/abs/2611.00001
+converted_by: defuddle')"
+eq "SC6 control: the structural route on another site stays other" 'scope: other (web capture, converted_by curl+markitdown (structu)' \
+   "$(scope_case structural 'converted_from: https://example.org/page
+converted_by: curl+markitdown (structural route)')"
+eq "SC7 control: a look-alike host (notarxiv.org) stays other" 'scope: other (web capture, converted_by curl+markitdown)' \
+   "$(scope_case lookalike 'converted_from: https://notarxiv.org/abs/1
+converted_by: curl+markitdown')"
+OUT="$(score "$SA/html.md")"; rc=$?
+eq "SC8 the scope changes no verdict: the arXiv capture of plain prose stays clean, exit 0" '0-1' "$rc-$(has '^clean .*scope: pdf (arXiv paper converted by markitdown)' "$OUT")"
+
 echo '--- deciding numbers carry their derivation or the words set by judgement ---'
 LABELS="$("$PY" -B - "$SCORE" <<'PY_OPERATIONAL_LABELS'
 import ast, sys

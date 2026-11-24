@@ -52,7 +52,7 @@ Before **every** `qmd search`, `qmd vsearch` or `qmd query`, run the gate in the
 ## Refresh before search — one-shot, never resident
 **Confidence still refreshes on write.** For every created or changed page, the agent assigns or confirms `confidence` and stamps `audited:` per CLAUDE.md §4.6, independently of qmd.
 
-**The turn-end refresh is retired.** No write operation, ingest completion or turn end starts `qmd update` or `qmd embed`. Immediately before every qmd search, run this gate from the vault root, with the same environment as the search:
+**The turn-end refresh is retired.** No write operation, ingest completion or turn end starts `qmd update` or `qmd embed`. Immediately before every qmd search, run this gate from the vault root, with the same environment as the search, in the foreground with the Bash tool's `timeout` set to 300000 ms (a catch-up measured 2 min 52 s on 29 September, past the tool's 120 s default, which moves the call to the background):
 ```sh
 /bin/sh .claude/skills/qmd-search/qmd-fresh.sh
 ```

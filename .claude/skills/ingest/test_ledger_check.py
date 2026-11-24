@@ -157,6 +157,108 @@ planted = mod.controls()
 mod.future_reasons = real
 check("F11 the controls catch a planted dead future-ts check, and pass the real one", len(planted) == 3 and mod.controls() == [], repr(planted))
 
+print("== a verify event from another model family (judged against its verifier's brief) ==")
+C1_BRIEF = brief("brief-C1.md", "You are wiki-compile (definition: .claude/agents/wiki-compile.md), lane C1 of run\n"
+                                "run-fixture · model opus · effort xhigh.")
+V1_BRIEF = brief("brief-V1.md", "You are verifier (definition: .claude/agents/verifier.md), lane V1 of run\n"
+                                "run-fixture · model other-family-1 · effort xhigh.")
+V1_OPUS = brief("brief-V1-opus.md", "You are verifier (definition: .claude/agents/verifier.md), lane V1 of run\n"
+                                    "run-fixture · model opus · effort xhigh.")
+# The ledger shape of the register entry: compile lane C1 on opus, verifier V1 on another family, and the
+# head-written verify event carrying lane C1, verifier V1 and the verifier's model and effort.
+CROSS = [dict(OPEN, ts=stamp(at(0))),
+         {"event": "lane_open", "lane": "C1", "role": "compile", "ts": stamp(at(1)), "model": "opus", "effort": "xhigh"},
+         {"event": "lane_close", "lane": "C1", "ts": stamp(at(2))},
+         {"event": "lane_open", "lane": "V1", "role": "verify", "ts": stamp(at(3)), "model": "other-family-1", "effort": "xhigh"},
+         {"event": "verify", "lane": "C1", "verifier": "V1", "ts": stamp(at(4)), "model": "other-family-1", "effort": "xhigh"},
+         {"event": "lane_close", "lane": "V1", "ts": stamp(at(5))}]
+p = cross = ledger("cross.jsonl", CROSS, mtime_min=10)
+r = run(p, "--brief", f"C1={C1_BRIEF}", "--brief", f"V1={V1_BRIEF}")
+check("X1 a verify event on model other-family-1 for compile lane C1 (opus) is judged against verifier V1's brief -> exit 0",
+      r.returncode == 0 and "config offences 0" in r.stdout and "3 events over 2 lanes checked" in r.stdout and "UNCHECKED" not in r.stdout, out(r))
+r = run(p, "--brief", f"C1={C1_BRIEF}", "--brief", f"V1={V1_OPUS}")
+check("X1 control: the same event against a verifier brief whose slot is opus fires on the verify line, naming V1",
+      r.returncode == 1 and 5 in offence_lines(r)
+      and re.search(r'(?m)^OFFENCE line 5 config: lane V1 \(verifier of lane C1\) model "other-family-1" absent', r.stdout) is not None, out(r))
+p = ledger("noverifier.jsonl", [dict(OPEN, ts=stamp(at(0))),
+                                {"event": "lane_open", "lane": "C1", "ts": stamp(at(1)), "model": "opus", "effort": "xhigh"},
+                                {"event": "verify", "lane": "C1", "ts": stamp(at(2)), "model": "other-family-1", "effort": "xhigh"}], mtime_min=5)
+r = run(p, "--brief", f"C1={C1_BRIEF}")
+r1 = run(cross, "--brief", f"C1={C1_BRIEF}", "--brief", f"V1={V1_BRIEF}")
+check("X2 the verifier field decides the brief: with it the event reads V1's (clean), without it its own lane C1's (fires)",
+      r1.returncode == 0 and r.returncode == 1 and offence_lines(r) == [3]
+      and 'OFFENCE line 3 config: lane C1 model "other-family-1" absent' in r.stdout, out(r1) + out(r))
+r = run(ledger("cross-nobrief.jsonl", CROSS, mtime_min=10), "--brief", f"C1={C1_BRIEF}")
+check("X3 a verifier with no brief leaves its lane unchecked (exit 2), never judged against the compile brief",
+      r.returncode == 2 and "UNCHECKED lane V1 config: no brief named" in r.stdout and "OFFENCE" not in r.stdout, out(r))
+real_lane, dead, shape = getattr(mod, "config_lane", None), None, None
+if real_lane:
+    # The wrong lane in the right return type (review advice A5), so only a control that checks which lane
+    # was chosen can catch it; a control that checks the return type alone passes it.
+    mod.config_lane = lambda ev: (ev.get("lane") or "(no lane)", None)
+    dead = mod.controls()
+    # The right lane in the wrong return type: caught on its type alone, and told apart from the leg above.
+    mod.config_lane = lambda ev: (ev["verifier"] if ev.get("event") == "verify" and isinstance(ev.get("verifier"), str)
+                                  and ev["verifier"].strip() else ev.get("lane") or "(no lane)")
+    shape = mod.controls()
+    mod.config_lane = real_lane
+check("X4 the controls catch a planted check that reads a verify event's lane, not its verifier, in the right return type, and pass the real one",
+      real_lane is not None and dead == ["verify event read through its verifier field"] and mod.controls() == [], repr(dead))
+check("X4 control: the controls also catch the right lane returned as a bare string, a fault of type, not of lane choice",
+      real_lane is not None and shape == ["verify event read through its verifier field"], repr(shape))
+
+print("== a verify event whose verifier field is present but unusable (left unchecked, never read as its compile lane) ==")
+# The planted harm: the verify event's model and effort equal compile brief C1's slots, so a check that falls
+# back to the compile lane reads it clean against the wrong brief.
+def unusable_ledger(name, verifier, extra=(), model="opus"):
+    rows = [dict(OPEN, ts=stamp(at(0))),
+            {"event": "lane_open", "lane": "C1", "role": "compile", "ts": stamp(at(1)), "model": "opus", "effort": "xhigh"},
+            {"event": "lane_close", "lane": "C1", "ts": stamp(at(2))},
+            {"event": "lane_open", "lane": "V1", "role": "verify", "ts": stamp(at(3)), "model": "other-family-1", "effort": "xhigh"},
+            {"event": "verify", "lane": "C1", "verifier": verifier, "ts": stamp(at(4)), "model": model, "effort": "xhigh"},
+            {"event": "lane_close", "lane": "V1", "ts": stamp(at(5))}] + list(extra)
+    return ledger(name, rows, mtime_min=10)
+
+
+for n, (label, value) in enumerate([("an integer", 7), ("an empty string", ""), ("null", None), ("a list", ["V1"]),
+                                    ("an object", {"lane": "V1"}), ("a whitespace string", "   ")]):
+    r = run(unusable_ledger("unusable-%d.jsonl" % n, value), "--brief", f"C1={C1_BRIEF}", "--brief", f"V1={V1_BRIEF}")
+    check("X5 a verifier field holding " + label + " -> exit 2, the verify line UNCHECKED, no offence, not proven clean",
+          r.returncode == 2 and re.search(r"(?m)^UNCHECKED line 5 config: the verify event's verifier field is present but unusable", r.stdout) is not None
+          and "not proven clean" in r.stdout and "OFFENCE" not in r.stdout, out(r))
+r = run(unusable_ledger("usable.jsonl", "V1", model="other-family-1"), "--brief", f"C1={C1_BRIEF}", "--brief", f"V1={V1_BRIEF}")
+check("X6 control: a usable verifier V1 whose event carries V1's own model -> exit 0, nothing unchecked",
+      r.returncode == 0 and "UNCHECKED" not in r.stdout and "config offences 0" in r.stdout, out(r))
+r = run(unusable_ledger("usable-wrong.jsonl", "V1"), "--brief", f"C1={C1_BRIEF}", "--brief", f"V1={V1_BRIEF}")
+check("X6 control: a usable verifier V1 with the compile lane's model fires against V1's brief, never reads clean as C1",
+      r.returncode == 1 and re.search(r'(?m)^OFFENCE line 5 config: lane V1 \(verifier of lane C1\) model "opus" absent', r.stdout) is not None
+      and "UNCHECKED" not in r.stdout, out(r))
+future = {"event": "checkpoint", "lane": "C1", "ts": stamp(NOW + datetime.timedelta(hours=3))}
+r = run(unusable_ledger("unusable-offence.jsonl", 7, [future]), "--brief", f"C1={C1_BRIEF}", "--brief", f"V1={V1_BRIEF}")
+check("X7 an unusable verifier beside a real offence -> exit 1, the OFFENCE and the UNCHECKED line both listed",
+      r.returncode == 1 and "OFFENCE line 7" in r.stdout and "UNCHECKED line 5 config:" in r.stdout, out(r))
+r = run(unusable_ledger("unusable-summary.jsonl", None), "--brief", f"C1={C1_BRIEF}", "--brief", f"V1={V1_BRIEF}")
+check("X8 the summary counts the unusable verifier as an unchecked config event",
+      re.search(r"(?m)^summary: .* · unchecked config events 1$", r.stdout) is not None, out(r))
+real_lane = mod.config_lane
+# The planted copy keeps the signature of the module under test, so only the fallback differs and a
+# signature change alone can never make this leg pass.
+PAIRED = isinstance(real_lane({"event": "lane_open", "lane": "C1"}), tuple)
+
+
+def old_fallback(ev):
+    """Today's fallback, in the tested module's own signature: an unusable verifier reads the compile lane."""
+    verifier = ev.get("verifier")
+    lane = verifier if ev.get("event") == "verify" and isinstance(verifier, str) and verifier else (ev.get("lane") or "(no lane)")
+    return (lane, None) if PAIRED else lane
+
+
+mod.config_lane = old_fallback
+planted_old = mod.controls()
+mod.config_lane = real_lane
+check("X9 the controls catch a planted copy with the new signature and today's fallback, and pass the real one",
+      planted_old == ["verify event read through its verifier field"] and mod.controls() == [], repr(planted_old))
+
 print("== the check wrote nothing ==")
 ro = os.path.join(TMP, "readonly")
 os.makedirs(ro)
@@ -195,9 +297,50 @@ control = 'open(p, "w")\nos.replace(a, b)\nshutil.rmtree(d)\nfh.write(x)\n'
 check("W2 write-pattern grep: 0 hits in the check's source, control snippet hits 4",
       hits == [] and len(WRITES.findall(control)) == 4, f"source hits {hits}")
 
-os.chmod(ro, 0o755)
-for f in os.listdir(ro):
-    os.chmod(os.path.join(ro, f), 0o644)
+ro2 = os.path.join(TMP, "readonly-cross")
+os.makedirs(ro2)
+for name in ("cross.jsonl", "brief-C1.md", "brief-V1.md"):
+    shutil.copy2(os.path.join(TMP, name), os.path.join(ro2, name))
+before2 = manifest(ro2)
+for f in os.listdir(ro2):
+    os.chmod(os.path.join(ro2, f), 0o444)
+os.chmod(ro2, 0o555)
+code = run(os.path.join(ro2, "cross.jsonl"), "--brief", f"C1={os.path.join(ro2, 'brief-C1.md')}",
+           "--brief", f"V1={os.path.join(ro2, 'brief-V1.md')}").returncode
+after2 = manifest(ro2)
+victim = os.path.join(ro2, "brief-V1.md")    # control: one byte changed in the same folder, modes put back
+os.chmod(ro2, 0o755); os.chmod(victim, 0o644)
+with open(victim, "r+b") as fh:
+    first = fh.read(1); fh.seek(0); fh.write(b"X" if first != b"X" else b"Y")
+os.chmod(victim, 0o444); os.chmod(ro2, 0o555)
+changed = manifest(ro2)
+check("W3 the cross-family run on a read-only copy exits 0 with its manifest identical; a byte changed there is caught",
+      code == 0 and before2 == after2 and len(before2) == 4 and changed != before2, f"exit {code} · {len(before2)} / {len(after2)} rows")
+
+ro3 = os.path.join(TMP, "readonly-unusable")
+os.makedirs(ro3)
+for name in ("unusable-0.jsonl", "brief-C1.md", "brief-V1.md"):
+    shutil.copy2(os.path.join(TMP, name), os.path.join(ro3, name))
+before3 = manifest(ro3)
+for f in os.listdir(ro3):
+    os.chmod(os.path.join(ro3, f), 0o444)
+os.chmod(ro3, 0o555)
+code3 = run(os.path.join(ro3, "unusable-0.jsonl"), "--brief", f"C1={os.path.join(ro3, 'brief-C1.md')}",
+            "--brief", f"V1={os.path.join(ro3, 'brief-V1.md')}").returncode
+after3 = manifest(ro3)
+victim3 = os.path.join(ro3, "brief-C1.md")    # control: one byte changed in the same folder, modes put back
+os.chmod(ro3, 0o755); os.chmod(victim3, 0o644)
+with open(victim3, "r+b") as fh:
+    first = fh.read(1); fh.seek(0); fh.write(b"X" if first != b"X" else b"Y")
+os.chmod(victim3, 0o444); os.chmod(ro3, 0o555)
+changed3 = manifest(ro3)
+check("W4 the unusable-verifier run on a read-only copy exits 2 with its manifest identical; a byte changed there is caught",
+      code3 == 2 and before3 == after3 and len(before3) == 4 and changed3 != before3, f"exit {code3} · {len(before3)} / {len(after3)} rows")
+
+for top in (ro, ro2, ro3):
+    os.chmod(top, 0o755)
+    for f in os.listdir(top):
+        os.chmod(os.path.join(top, f), 0o644)
 shutil.rmtree(TMP)
 print(f"PASS {P}/{P + F}" if not F else f"FAIL {F}/{P + F}")
 sys.exit(1 if F else 0)

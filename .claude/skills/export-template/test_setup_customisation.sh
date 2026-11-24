@@ -180,32 +180,42 @@ fresh; ( cd "$ROOT" && bash setup.sh >/dev/null 2>&1 )
 KI="$ROOT/wiki/developments/known-issues.md"; SM="$ROOT/wiki/developments/stale-marks.md"; RH="$ROOT/wiki/developments/owner-rulings-history.md"
 chk "seed: known-issues has its two sections"          'grep -qx "## Open" "$KI" && grep -qx "## Closed" "$KI"'
 chk "seed: known-issues states its entry format"       'grep -qF "### [YYYY-MM-DD] <surface>" "$KI"'
-chk "seed: the stale-marks method page"                'grep -qx "## Who marks" "$SM" && grep -qx "## Who clears it" "$SM"'
-chk "seed: the rulings-history page"                   'grep -q "old wording moves here" "$RH"'
+chk "seed: the stale-marks method page"                'grep -qx "## Who replaces, and who flags" "$SM" && grep -qx "## How the older text is held" "$SM" && grep -qx "## Who clears it" "$SM"'
+# The stale-information design (21 November 2026): a newer state replaces the older one, the older text
+# held outside the page first; no replaced wording is kept on a page, so no history page is seeded.
+chk "seed: stale-marks holds the older text outside the page before it goes" 'grep -qF "the older text is removed only once it is held outside the page" "$SM" && grep -qF "whose \`Replaced\` line ends \`held below\`" "$SM"'
+chk "seed: stale-marks keeps no replaced state on the page" '! grep -qF "keeps its old wording as a record" "$SM" && ! grep -qF "keeps a dated status line in its place" "$SM" && ! grep -qF "takes a dated status line instead" "$SM"'
+chk "control: the same search finds a line the seed does hold" 'grep -qF "Clearing removes the line and leaves the page stating what holds now" "$SM"'
+chk "seed: no rulings-history page is seeded"          '[ ! -e "$RH" ]'
+chk "seed: no seed names the rulings-history page"     '! grep -rqF "owner-rulings-history" "$ROOT/wiki"'
+chk "seed: the lifecycle page holds a retired rule's wording as CLAUDE.md §12 sets" 'grep -qF "its replaced wording held as that clause sets" "$ROOT/wiki/developments/check-lifecycle.md"'
 chk "seed: wiki/experience exists"                     '[ -d "$ROOT/wiki/experience" ]'
 chk "seed: output/reports exists"                      '[ -d "$ROOT/output/reports" ]'
-for p in check-lifecycle known-issues stale-marks owner-rulings-history; do
+for p in check-lifecycle known-issues stale-marks; do
   chk "seed: $p has its registry line"                 "grep -qF '[[$p]]' \"\$ROOT/wiki/index.md\""
 done
-for f in "$KI" "$SM" "$RH"; do
+chk "seed: the stale-marks index line names the method as the page opens, not who marks a page" 'grep -qF "[[stale-marks]] — the method: who replaces, what is logged, when a flag is used and who clears it." "$ROOT/wiki/index.md" && ! grep -qF "who marks a page" "$ROOT/wiki/index.md"'
+for f in "$KI" "$SM"; do
   n="${f##*/}"
   chk "seed: $n carries the schema frontmatter"        "head -12 \"$f\" | grep -q '^confidence: ' && head -12 \"$f\" | grep -q '^audited: ' && head -12 \"$f\" | grep -q '^type: development'"
   chk "seed: $n has a Related section with a link"     "sed -n '/^## Related/,\$p' \"$f\" | grep -q '\[\['"
 done
 # A seed links only pages a fresh vault holds.
-SEEDLINKS=$(cat "$KI" "$SM" "$RH" | grep -oE '\[\[[^]]+\]\]' | sort -u | tr -d '[]')
-chk "control: the seeds link at least three pages"     '[ "$(printf "%s\n" "$SEEDLINKS" | grep -c .)" -ge 3 ]'
+SEEDLINKS=$(cat "$KI" "$SM" | grep -oE '\[\[[^]]+\]\]' | sort -u | tr -d '[]')
+chk "control: the seeds link at least two pages"       '[ "$(printf "%s\n" "$SEEDLINKS" | grep -c .)" -ge 2 ]'
 MISSING=""
 for l in $SEEDLINKS; do [ -f "$ROOT/wiki/developments/$l.md" ] || MISSING="$MISSING $l"; done
 chk "seed: every link in a seed resolves in a fresh vault" '[ -z "$MISSING" ]'
 [ -z "$MISSING" ] || echo "      links to nothing:$MISSING"
 IDX1=$(grep -c . "$ROOT/wiki/index.md")
-printf '\nMY NOTE\n' >> "$KI"; printf '\nMY NOTE\n' >> "$SM"; printf '\nMY NOTE\n' >> "$RH"
+# A vault that already holds a rulings-history page keeps it: setup seeds only what is absent and removes nothing.
+printf -- '---\ntitle: "Owner rulings history"\ntype: development\n---\nMY NOTE\n' > "$RH"
+printf '\nMY NOTE\n' >> "$KI"; printf '\nMY NOTE\n' >> "$SM"
 HK=$(hash_of "$KI"); HS=$(hash_of "$SM"); HR=$(hash_of "$RH")
 ( cd "$ROOT" && bash setup.sh >/dev/null 2>&1 )
 chk "seed: a re-run keeps an edit to known-issues"     '[ "$(hash_of "$KI")" = "$HK" ]'
 chk "seed: a re-run keeps an edit to stale-marks"      '[ "$(hash_of "$SM")" = "$HS" ]'
-chk "seed: a re-run keeps an edit to the rulings page" '[ "$(hash_of "$RH")" = "$HR" ]'
+chk "seed: a re-run keeps a rulings page the vault already holds" '[ "$(hash_of "$RH")" = "$HR" ]'
 chk "seed: a re-run adds no second registry line"      '[ "$(grep -c . "$ROOT/wiki/index.md")" = "$IDX1" ]'
 printf 'changed\n' >> "$KI"
 chk "control: the same hash sees a changed page"       '[ "$(hash_of "$KI")" != "$HK" ]'

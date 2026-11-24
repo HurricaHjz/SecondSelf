@@ -1029,6 +1029,12 @@ vws register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --
 eq2 "S3 a stamp carried only under Closed counts too" "$(awk 'NR==7' "$REG")" "### [2026-09-05 $M0 b] upsilon surface (minor)" "### [2026-09-05 $M1 b] upsilon surface (minor)"
 fixture "$W/fix"
 MM=$(minute_pair); M0=${MM% *}; M1=${MM#* }
+printf '%s\n' '---' 'title: closed entries' '---' '' '## Closed entries' "### [2026-09-05 $M0] swept heading (minor)" '- **Status**: closed' '' "### [2026-09-05 $M1] swept heading (minor)" '- **Status**: closed' > "$VAULT/wiki/developments/known-issues-closed.md"
+vws register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "psi surface" --symptom "s" --cause "c" --severity minor --status "open"
+eq2 "S3c a stamp carried only on the closed page, where the sweep moved its entry, counts too" "$(awk 'NR==7' "$REG")" "### [2026-09-05 $M0 b] psi surface (minor)" "### [2026-09-05 $M1 b] psi surface (minor)"
+rm -f "$VAULT/wiki/developments/known-issues-closed.md"
+fixture "$W/fix"
+MM=$(minute_pair); M0=${MM% *}; M1=${MM#* }
 plant_heads 7 "2026-09-05 $M0" "2026-09-05 $M1"
 cp "$REG" "$W/reg.sdry"
 vws register add --vault "$VAULT" --why-not-fixed-now "$WN" --date 2026-09-05 --surface "phi surface" --symptom "s" --cause "c" --severity minor --status "open" --dry-run
@@ -1289,10 +1295,10 @@ xfixture "$W/fix"
 T0=$(now_hm)
 vw register annotate --vault "$VAULT" --match "first surface" --kind Status --note "checked again" --date 2026-09-05
 T1=$(now_hm)
-eq2 "N2 without --by the note omits it, and lands above the unheaded entry that follows" "$(awk 'NR==10' "$REG")" "- **Status 2026-09-05 $T0 $Z:** checked again" "- **Status 2026-09-05 $T1 $Z:** checked again"
-eq "N2b the unheaded entry still follows after one blank line" "$(awk 'NR==11 || NR==12' "$REG" | tr '\n' '|')" "|- 2026-09-09 · surface: an unheaded one-line entry · symptom: it would be swept|"
+eq2 "N2 a Status write replaces the entry's one Status field in place; without --by the stamp omits it" "$(awk 'NR==9' "$REG")" "- **Status**: checked again (set 2026-09-05 $T0 $Z)" "- **Status**: checked again (set 2026-09-05 $T1 $Z)"
+eq "N2b the unheaded entry still follows after one blank line" "$(awk 'NR==10 || NR==11' "$REG" | tr '\n' '|')" "|- 2026-09-09 · surface: an unheaded one-line entry · symptom: it would be swept|"
 vw register close --vault "$VAULT" --match "first surface" --date 2026-09-05 --status "closed after a note"
-eq "N8 the noted entry still closes: a dated Status note is not its Status line" "$RC$(inclosed '- **Status**: open — fix shape: first *(2026-09-05: closed 2026-09-05 ')$(inclosed 'checked again')$(inopen 'checked again')" "0110"
+eq "N8 the entry still closes, the close dating its one replaced Status field" "$RC$(inclosed '- **Status**: checked again (set 2026-09-05 ')$(inclosed ' *(2026-09-05: closed 2026-09-05 ')$(inopen 'checked again')" "0110"
 xfixture "$W/fix"
 cp "$REG" "$W/reg.n"
 vw register annotate --vault "$VAULT" --match "second surface" --kind Note --note "n"
@@ -1324,7 +1330,7 @@ vw register annotate --vault "$VAULT" --match "second surface" --kind Correction
 eq "N6 a dry run names the line the note would take, writing nothing" "$RC$(grep -c "^dry-run register-annotate $REG:18$" "$OUT")$(unchanged "$W/reg.n" "$REG")" "01same"
 PLANT="$(plant_hour):3x"
 vws register annotate --vault "$VAULT" --match "second surface" --kind Status --note "seen at $PLANT"
-eq "N9 the note is scanned for clock tokens, and still written" "$RC$(nlines "$SERR")$(inopen "seen at $PLANT")" "011"
+eq "N9 the note is scanned for clock tokens, and still written: stderr is two lines, one clock: and one replaced:" "$RC$(nlines "$SERR")$(grep -c '^clock:' "$SERR")$(grep -c '^replaced:' "$SERR")$(inopen "seen at $PLANT")" "02111"
 xfixture "$W/fix"
 vw register annotate --vault "$VAULT" --match "second surface" --kind Status --note "the **Status** field above and the **Symptom** text were stale"
 eq "N13 a note quoting the field names **Status** and **Symptom** is written" "$RC$(inopen 'the **Status** field above and the **Symptom** text were stale')" "01"
@@ -1332,7 +1338,7 @@ T0=$(now_hm)
 vw register close --vault "$VAULT" --match "second surface" --date 2026-09-05 --status "closed after a quoting note"
 T1=$(now_hm)
 eq "N13b and the entry stays closable: the close dates its one Status field" "$RC$(inclosed 'second surface')$(inclosed 'the **Status** field above')" "011"
-eq2 "N13c the dated line is the Status field, not the note, and the quoting note moved with it" "$(grep -F -- 'fix shape: second' "$REG")|$(inclosed 'the **Status** field above and the **Symptom** text were stale')" "- **Status**: open — fix shape: second *(2026-09-05: closed 2026-09-05 $T0 — closed after a quoting note)*|1" "- **Status**: open — fix shape: second *(2026-09-05: closed 2026-09-05 $T1 — closed after a quoting note)*|1"
+eq "N13c the dated line is the one Status field, which holds the quoting note" "$(inclosed '- **Status**: the **Status** field above and the **Symptom** text were stale (set ')$(grep -F -- '- **Status**: the **Status** field above' "$REG" | grep -c -F -- ' — closed after a quoting note)*')$(grep -c -F -- 'fix shape: second' "$REG")" "110"
 yfixture "$W/fix"
 cp "$REG" "$W/reg.ny"
 vw register annotate --vault "$VAULT" --match "seventh surface" --kind Status --note "n"
@@ -1340,6 +1346,49 @@ eq "N15 an entry with two Status fields is refused as close refuses it, writing 
 cp "$W/reg.ny" "$REG"   # each refusal leg starts from the same bytes, so one cannot leak into the next
 vw register annotate --vault "$VAULT" --match "eighth surface" --kind Status --note "n"
 eq "N16 a Status field below an unheaded entry refuses the note as it refuses the close, writing nothing" "$RC$(grep -c "field at line 15, below line 14" "$OUT")$(unchanged "$W/reg.ny" "$REG")" "21same"
+
+echo "== register annotate --kind Status: one status per open entry (stale-information design, item 3) =="
+
+# xrepl FILE OLD NEW: an exact replacement that must find its text exactly once (prepl, below, is
+# defined later in this file); XNL is a line break inside a replacement.
+XNL=$(printf '\nx'); XNL=${XNL%x}
+xrepl() {
+	"$PY" -B -c 'import sys
+path, old, new = sys.argv[1:4]
+text = open(path, encoding="utf-8").read()
+if text.count(old) != 1:
+    sys.exit("xrepl: %r found %d times in %s" % (old, text.count(old), path))
+open(path, "w", encoding="utf-8").write(text.replace(old, new))' "$1" "$2" "$3" || no "fixture edit: $2 (not found exactly once)"
+}
+
+xfixture "$W/fix"; cp "$REG" "$W/reg.s0"
+vw register annotate --vault "$VAULT" --match "second surface" --kind Status --note "blocked on the fixture; the lead proposes the fix on 1 October" --by lead --date 2026-09-05
+vws register annotate --vault "$VAULT" --match "second surface" --kind Status --note "unblocked; the fix lands next run" --by lead --date 2026-09-06
+entry_of() { awk -v m="$1" 'index($0, m) && /^### /{f=1; next} /^#/{f=0} f' "$REG"; }
+eq "NS1 after two status writes the entry holds one status, the newer" "$RC$(entry_of 'second surface' | grep -c -- '^- \*\*Status')$(entry_of 'second surface' | grep -c -F -- '- **Status**: unblocked; the fix lands next run (set 2026-09-06 ')$(grep -c -F 'blocked on the fixture' "$REG")" "0110"
+eq "NS2 no other line changed: one line differs from the fixture, in place, and the line count holds" "$(diff "$W/reg.s0" "$REG" | grep -c '^>')$(diff "$W/reg.s0" "$REG" | grep -c '^<')$( [ "$(nlines "$REG")" = "$(nlines "$W/reg.s0")" ] && echo same-count)" "11same-count"
+eq "NS3 the Recurrence note beside it is untouched" "$(entry_of 'second surface' | grep -c -F -- '- **Recurrence 2026-10-09 00:37 BST (session x):** it came back')" "1"
+eq "NS4 stderr names the status it replaced" "$(grep -c -F -- "replaced: the Status of " "$SERR")$(grep -c -F -- 'read: blocked on the fixture' "$SERR")" "11"
+eq "NS5 the ok line names the field's line, which keeps its place" "$(sed 's#.*/##' "$SOUT")" "known-issues.md:15"
+xfixture "$W/fix"
+xrepl "$REG" "- **Status**: open — fix shape: second" "- **Status**: open — fix shape: second$XNL- **Status 2026-09-12 10:00 BST (session y):** an earlier dated layer"
+cp "$REG" "$W/reg.s1"
+vw register annotate --vault "$VAULT" --match "second surface" --kind Status --note "the one status now" --date 2026-09-05
+eq "NS6 a dated Status note the entry already holds stays as it is: only the field is rewritten (folding it is a clean's work)" "$RC$(entry_of 'second surface' | grep -c -F -- '- **Status 2026-09-12 10:00 BST (session y):** an earlier dated layer')$(entry_of 'second surface' | grep -c -F -- '- **Status**: the one status now (set 2026-09-05 ')$(diff "$W/reg.s1" "$REG" | grep -c '^<')" "0111"
+yfixture "$W/fix"; cp "$REG" "$W/reg.s2"
+vw register annotate --vault "$VAULT" --match "ninth surface" --kind Status --note "open — the combined line's status" --date 2026-09-05
+eq "NS7 on a combined Severity and Status line only the Status part is rewritten" "$RC$(grep -c -F -- '- **Severity**: minor (quoted). **Status**: open — the combined line'"'"'s status (set 2026-09-05 ' "$REG")$(grep -c -F 'fix shape: ninth' "$REG")$(diff "$W/reg.s2" "$REG" | grep -c '^<')" "0101"
+xfixture "$W/fix"
+xrepl "$REG" "- **Status**: open — fix shape: sixth" "- **Symptom**: s6"
+xrepl "$REG" "a plain paragraph that is none of the entry's own lines$XNL" ""
+cp "$REG" "$W/reg.s3"
+vw register annotate --vault "$VAULT" --match "sixth surface" --kind Status --note "n"
+eq "NS8 an entry with no Status field is refused for a Status write, writing nothing" "$RC$(grep -c "carries 0 '\*\*Status\*\*' fields, not 1, so there is no one status to replace" "$OUT")$(unchanged "$W/reg.s3" "$REG")" "21same"
+vw register annotate --vault "$VAULT" --match "sixth surface" --kind Correction --note "the symptom was s6" --date 2026-09-05
+eq "NS9 control: the same entry still takes a Correction note, appended, removing nothing" "$RC$(grep -c -F -- '- **Correction 2026-09-05 ' "$REG")$(diff "$W/reg.s3" "$REG" | grep -c '^<')" "010"
+xfixture "$W/fix"; cp "$REG" "$W/reg.s4"
+vw register annotate --vault "$VAULT" --match "second surface" --kind Status --note "dry" --dry-run
+eq "NS10 a dry run of a Status write names the field's line and writes nothing" "$RC$(grep -c "^dry-run register-annotate $REG:15$" "$OUT")$(grep -c -F -- '| - **Status**: dry (set ' "$OUT")$(unchanged "$W/reg.s4" "$REG")" "011same"
 
 echo "== concurrent writers: the check, the lock and the window (D21 (a)) =="
 
@@ -1923,6 +1972,16 @@ eq "E12 log-append has help" "$RC" "0"
 has "E13 the help names the vault argument" "--vault"
 vw register close --help
 eq "E14 the nested verb has help too" "$RC" "0"
+# DH1 (register 2026-11-10 23:50 b): register add and close --help say --date is the date only and the tool stamps the
+# time; annotate's own --date line is the control that the probe reads a help line. Spaces and line breaks are dropped
+# first, so argparse's wrapping at any width cannot split the phrase.
+vw register add --help
+DH_ADD=$(tr -d ' \n' < "$OUT" | grep -c -- '--dateDATEthedateonly,YYYY-MM-DD;thetoolstampsthetime')
+vw register close --help
+DH_CLOSE=$(tr -d ' \n' < "$OUT" | grep -c -- '--dateDATEthedateonly,YYYY-MM-DD;thetoolstampsthetime')
+vw register annotate --help
+DH_CTL=$(tr -d ' \n' < "$OUT" | grep -c -- '--dateDATEYYYY-MM-DD;todaywhenabsent')
+eq "DH1 register add and close --help say --date takes the date only, YYYY-MM-DD, and the tool stamps the time (control: annotate's --date line)" "$DH_ADD$DH_CLOSE$DH_CTL" "111"
 vw
 eq "E15 no verb at all is refused" "$RC" "2"
 vw register
@@ -2169,6 +2228,20 @@ T1=$(now_hm)
 eq "DS1 a status lands on the one line for its id" "$RC$(oks)" "0ok decided-status decided-work.md:14"
 eq2 "DS1b the clause closes that line: the clock's date, time and zone, who, the note" "$(awk 'NR==14' "$DW")" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · blocked: a fixture reason · other homes: the fixture register · status $TL, $T0 $Z (run-suite): a fixture note" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · blocked: a fixture reason · other homes: the fixture register · status $TL, $T1 $Z (run-suite): a fixture note"
 eq "DS1c exactly one line changed" "$(diff "$W/dw.orig" "$DW" | grep -c '^>')$(diff "$W/dw.orig" "$DW" | grep -c '^<')" "11"
+cp "$DW" "$W/dw.one"; T0=$(now_hm)
+vws decided status --vault "$VAULT" --id DW-20260905-2 --note "a second note" --by run-suite
+T1=$(now_hm)
+eq2 "DS1d a second status replaces the first: the line keeps one status clause (stale-information design, item 4)" "$(awk 'NR==14' "$DW")" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · blocked: a fixture reason · other homes: the fixture register · status $TL, $T0 $Z (run-suite): a second note" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · blocked: a fixture reason · other homes: the fixture register · status $TL, $T1 $Z (run-suite): a second note"
+eq "DS1e stderr names the clause it replaced, and no other line changed" "$(grep -c -F -- 'replaced: DW-20260905-2 held 1 status clause, now one: status ' "$SERR")$(grep -c -F -- 'a fixture note' "$SERR")$(diff "$W/dw.one" "$DW" | grep -c '^<')" "111"
+dfixture "$W/fix"
+prepl "$DW" "· other homes: the fixture register" "· other homes: the fixture register · recorded by f at 10:00 GMT · status 6 September 2026 (by hand): an undated-time clause · status 7 September 2026, 09:00 GMT (f): a timed clause"
+vws decided status --vault "$VAULT" --id DW-20260905-2 --note "the one status" --by run-suite
+eq "DS1f a line holding two status clauses keeps one: both go, the new one is last, the recorded field stays" "$RC$(awk 'NR==14' "$DW" | grep -o ' · status ' | wc -l | tr -d ' ')$(awk 'NR==14' "$DW" | grep -c -F -- ' · recorded by f at 10:00 GMT · status ')$(awk 'NR==14' "$DW" | grep -c -F -- '(run-suite): the one status')$(grep -c -F -- 'held 2 status clauses, now one' "$SERR")" "01111"
+eq "DS1f2 with no other field among the status clauses no kept: line is written (must not)" "$(grep -c '^kept:' "$SERR")" "0"
+dfixture "$W/fix"
+prepl "$DW" "· other homes: the fixture register" "· other homes: the fixture register · recorded by f at 10:00 GMT · status 6 September 2026 (by hand): a first clause · his choice of 7 September 2026 for the reader · status 8 September 2026, 09:00 GMT (f): a second clause"
+vws decided status --vault "$VAULT" --id DW-20260905-2 --note "the one status" --by run-suite
+eq "DS1g a field standing among the status clauses is kept, before the new clause, and named on stderr (kept:)" "$RC$(awk 'NR==14' "$DW" | grep -c -F -- ' · recorded by f at 10:00 GMT · his choice of 7 September 2026 for the reader · status ')$(grep -c '^kept: DW-20260905-2: ' "$SERR")$(grep '^kept:' "$SERR" | grep -c -F -- 'his choice of 7 September 2026 for the reader')$(grep -c -F -- 'held 2 status clauses, now one' "$SERR")" "01111"
 dfixture "$W/fix"
 vws decided status --vault "$VAULT" --id DW-20260901-1 --note "still later" --by run-suite
 eq "DS2 a Later line takes a status too" "$RC$(oks)" "0ok decided-status decided-work.md:20"
@@ -2197,8 +2270,10 @@ dfixture "$W/fix"; cp "$DW" "$W/dw.orig"; T0=$(now_hm)
 vws decided state --vault "$VAULT" --id DW-20260905-2 --state "in run-suite, item 4" --note "taken by the plan of record" --by run-suite
 T1=$(now_hm)
 eq "DS5 a state edit lands on the one line for its id" "$RC$(oks)" "0ok decided-state decided-work.md:14"
-eq2 "DS5b field 4 is replaced and a status clause records the earlier state" "$(awk 'NR==14' "$DW")" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · in run-suite, item 4 · other homes: the fixture register · status $TL, $T0 $Z (run-suite): taken by the plan of record; its earlier state read \"blocked: a fixture reason\"" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · in run-suite, item 4 · other homes: the fixture register · status $TL, $T1 $Z (run-suite): taken by the plan of record; its earlier state read \"blocked: a fixture reason\""
+eq2 "DS5b field 4 is replaced and the status clause gives the note alone, not the earlier state (stale-information design, item 4)" "$(awk 'NR==14' "$DW")" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · in run-suite, item 4 · other homes: the fixture register · status $TL, $T0 $Z (run-suite): taken by the plan of record" "- [ ] **DW-20260905-2** · beta work · decided 5 September 2026 (fixture decision 2) · in run-suite, item 4 · other homes: the fixture register · status $TL, $T1 $Z (run-suite): taken by the plan of record"
 eq "DS5c exactly one line changed" "$(diff "$W/dw.orig" "$DW" | grep -c '^>')$(diff "$W/dw.orig" "$DW" | grep -c '^<')" "11"
+vws decided state --vault "$VAULT" --id DW-20260905-2 --state "to build: released by the suite" --note "released again" --by run-suite
+eq "DS5d a second state edit keeps one status clause, the newer, and no earlier state in it" "$RC$(awk 'NR==14' "$DW" | grep -o ' · status ' | wc -l | tr -d ' ')$(awk 'NR==14' "$DW" | grep -c -F -- '(run-suite): released again')$(awk 'NR==14' "$DW" | grep -c -F -- 'earlier state')" "0110"
 dfixture "$W/fix"
 vws decided state --vault "$VAULT" --id DW-20260904-1 --state "to build: released by run-suite's close" --note "released at the close" --by run-suite
 eq "DS6 a returned line takes 'to build: REASON'" "$RC$(awk 'NR==16' "$DW" | grep -c ' · to build: released by run-suite.s close · status ')" "01"

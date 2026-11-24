@@ -1134,6 +1134,28 @@ r="$r$(want "$P2" '  agents: no figure in the previous line — format baseline,
 r="$r$(want "$P2" '  MCP: 0 -> 1 declared (+1)')"
 leg "24 --diff-log deltas: changed, new, retired, format baseline" "$r"
 
+# A hold entry's `Held` line quotes a removed passage word for word (the stale-information design,
+# 21 November 2026), and a page can hold the string `prefix budget:`, so the reader passes over a line
+# that opens `- **Held**:`. Must pass: the budget line before such a line is the one read. Must not:
+# change what it reads where no Held line stands (leg 24), or skip the string on any other line.
+HV="$TMP/heldvault"; rm -rf "$HV"; cp -R "$PV" "$HV"
+printf '\n## [2026-09-03] framework | hold: wiki/developments/x.md\n- **Changed**: nothing yet\n- **Replaced**: wiki/developments/x.md · an old figure → a new one · held below\n- **Held**: the page said prefix budget: CLAUDE.md 1 B · skills 1 B (alpha 1) · customisation 1 B · MCP 9 declared · total ≈1 tok/request\n- **Conflicts**: none\n' >> "$HV/wiki/log.md"
+rc_ph=$(run ph.txt "$PY" "$PREFIX" --vault "$HV" --diff-log wiki/log.md)
+r=""
+r="$r$(wantrc "$rc_ph" 0)"
+r="$r$(want "$OUT/ph.txt" "  CLAUDE.md: 1000 -> $exp_claude B")"
+r="$r$(want "$OUT/ph.txt" '  MCP: 0 -> 1 declared (+1)')"
+r="$r$(notwant "$OUT/ph.txt" 'CLAUDE.md: 1 -> ')"
+r="$r$(notwant "$OUT/ph.txt" 'MCP: 9 -> ')"
+leg "24b --diff-log passes over a Held line that quotes the string: the budget line before it is read" "$r"
+H2="$TMP/heldvault2"; rm -rf "$H2"; cp -R "$PV" "$H2"
+printf '\n## [2026-09-04] deep-lint | fixture\n- **Structural**: a note, then prefix budget: CLAUDE.md 2000 B · skills 1 B (alpha 1) · customisation 1 B · MCP 0 declared · total ≈1 tok/request\n' >> "$H2/wiki/log.md"
+rc_ph2=$(run ph2.txt "$PY" "$PREFIX" --vault "$H2" --diff-log wiki/log.md)
+r=""
+r="$r$(wantrc "$rc_ph2" 0)"
+r="$r$(want "$OUT/ph2.txt" "  CLAUDE.md: 2000 -> $exp_claude B")"
+leg "24c control: the string anywhere in any other line is still read, the last one winning" "$r"
+
 cp -R "$PV" "$NC"
 rm -f "$NC/CUSTOMISATION.md"
 rc_p3=$(run p3.txt "$PY" "$PREFIX" --vault "$NC")
@@ -1622,6 +1644,22 @@ mk r-auto AA1 2026-09-06T13:00+0100 opus xhigh auto "(a) x" "$RDA" ',"model_src"
 mk r-auto AD1 2026-09-06T13:00+0100 sonnet high auto "(a) x" "$RDA" ',"model_src":"auto: closed one-leg task","effort_src":"auto: closed one-leg task","choice_reason":"closed one-leg task"'
 mk r-auto AB1 2026-09-06T13:00+0100 fable max auto "(a) x" "$RDA" ',"model_src":"anchor","effort_src":"anchor","choice_reason":null'
 mk r-auto AP1 2026-09-06T13:00+0100 sonnet high auto "(a) x" "$RDA"
+# Under a hand-set preset (owner ruling 2026-11-20, "Guided judgement": every pick names its option
+# and its reason, the default included): a line carrying the pick fields answers the below-default
+# phrase check with its choice_reason; with no reason it is still caught; a floor the owner wrote is
+# never answered by a reason.
+mk r-preset PR1 2026-11-21T13:00+0000 sonnet high default "(a) x" "$RDJ" ',"model_src":"explicit","effort_src":"explicit","choice_reason":"closed one-leg task"'
+mk r-preset PN1 2026-11-21T13:00+0000 sonnet high default "(a) x" "$RDJ" ',"model_src":"explicit","effort_src":"explicit","choice_reason":"   "'
+# The acceptance is dated: the same reasoned pick opened before the ruling keeps the phrase check.
+mk r-preset PRD 2026-09-06T13:00+0100 sonnet high default "(a) x" "$RDJ" ',"model_src":"explicit","effort_src":"explicit","choice_reason":"closed one-leg task"'
+mk r-preset PF1 2026-09-06T13:00+0100 opus max cheap "(a) x" '{"model":"sonnet","effort":"high"}' ',"model_src":"explicit","effort_src":"throttle cheap","choice_reason":"important"'
+# A pass a resume raised (`lane.py resume --effort`, 2026-11-21): its lane-resumed names the effort,
+# and the close of that pass is compared with it, not with the lane-open's.
+for rs in RS1:max RS2:xhigh; do
+  mk r-raised "${rs%%:*}" 2026-09-06T13:00+0100 opus xhigh auto "(a) x" "$RDA" ',"model_src":"anchor","effort_src":"anchor","choice_reason":"x"'
+  printf '{"ts":"2026-09-06T13:20+0100","run":"r-raised","event":"lane-resumed","lane":"%s","effort":"max","effort_src":"resume: depth","choice_reason":"depth"}\n' "${rs%%:*}" >> "$RD/r-raised.jsonl"
+  printf '{"ts":"2026-09-06T13:30+0100","run":"r-raised","event":"lane-closed","lane":"%s","effort_applied":["%s"]}\n' "${rs%%:*}" "${rs##*:}" >> "$RD/r-raised.jsonl"
+done
 printf '%s\n' '{"ts":"2026-09-06T13:00+0100","event":"spawn","lane":"old"}' 'not json' > "$RD/r-norunopen.jsonl"
 # An attended run (known-issues 2026-09-08): lane-open lines and no run-open, the shape `lane.py spawn` writes in
 # an attended session. It is dated by its EARLIEST lane-open (written second here), labelled attended and checked
@@ -1662,6 +1700,12 @@ leg "srr: auto, an anchor pick is clean" "$(notwant "$TMP/srr.out" 'FINDING AA1'
 leg "srr: auto, a reasoned pick BELOW the anchor is clean (the hand-set phrase check does not apply)" "$(notwant "$TMP/srr.out" 'FINDING AD1')"
 leg "srr: auto, both axes unreasoned are two findings" "$(want "$TMP/srr.out" 'FINDING AB1: auto pick without --choice-reason (model fable departs from the anchor opus)')$(want "$TMP/srr.out" 'FINDING AB1: auto pick without --choice-reason (effort max departs from the anchor xhigh)')"
 leg "srr: a pre-fields auto line (no model_src) keeps the phrase check" "$(want "$TMP/srr.out" 'AP1: model sonnet below the row default opus without')$(notwant "$TMP/srr.out" 'AP1: auto pick')"
+leg "srr: (fails on old) under a hand-set preset a pick below the default with a choice_reason on a line carrying the pick fields is clean" "$(notwant "$TMP/srr.out" 'FINDING PR1')"
+leg "srr: a reasoned preset pick opened before the ruling of 2026-11-20 keeps the phrase check: the acceptance is dated" "$(want "$TMP/srr.out" "FINDING PRD: model sonnet below the row default opus without 'sonnet because'")"
+leg "srr: under a hand-set preset the same pick with a whitespace-only choice_reason is still caught on both axes (control for PR1)" "$(want "$TMP/srr.out" "FINDING PN1: model sonnet below the row default opus without 'sonnet because'")$(want "$TMP/srr.out" "FINDING PN1: effort high below the row default max without 'effort high because'")"
+leg "srr: a reason never answers the owner's floor: cheap above its floor with a choice_reason is still caught" "$(want "$TMP/srr.out" "FINDING PF1: pick above the owner's floor (model opus under cheap)")"
+leg "srr: (fails on old) a pass a resume raised is compared with its own effort: max applied after a raise to max is clean" "$(notwant "$TMP/srr.out" 'FINDING RS1')"
+leg "srr: the same raised pass applying xhigh is caught against max (control for RS1)" "$(want "$TMP/srr.out" 'FINDING RS2: effort max recorded, xhigh applied')"
 srr --json
 leg "srr: json totals count attended runs and skipped files apart (1 attended, 1 skipped, 3 files without run-open)" "$($PY -c 'import json, sys; t = json.load(open(sys.argv[1]))["totals"]; assert (t["attended"], t["skipped"], t["no_run_open"]) == (1, 1, 3), t' "$TMP/srr.out" 2>&1)"
 srr --since 2099-01-01T00:00+0100

@@ -49,8 +49,8 @@ GRANTS
 - Pushed: {{lesson ids or grants, each with one line on why this seat needs it | none}}
 - Held by the reviewer: {{lesson ids (not shown to the builder) | none}}
 - Left out on purpose: {{what, and why | none}}
-- Second seat: {{this seat is one: the rule that earns it, and what it checks against}}
-DECISIONS: {{the run's decisions that bear on this task, and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
+- Second seat: {{this seat is one: the rule that earns it, what it checks against, and, where the review has more than one reviewer, how many and why, with this seat's own question}}
+DECISIONS: {{the run's decisions that bear on this task, the owner's earlier decisions on the same question (a search of decided-work, its closed page and the subject page's dated owner notes), and what sibling lanes hold | none}} — a decision the task needs and the brief lacks is a gap the lane reports, never a guess (A1).
 Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
 A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 {{headless lanes: the read directories, the write scope and any add-on granted beyond the
@@ -73,7 +73,7 @@ Role delta: blind lane applies doubly — the spawner's leaning is deliberately 
 if the brief leaks one, note the leak and disregard it. {{extra conduct | —}}
 
 REPORT
-Begin the verdict with "ready" or "not ready". Say "not ready" only where a finding must be fixed before the work passes on, and state why it must wait; list the remaining findings as advice. Judge readiness under the applicable rules and the review's stated pass test, including CUSTOMISATION.md's "Rounds are judged by progress, not counted" and "Stopped designs", quoted in TASK where your copy cannot read that file.
+First line: `VERDICT: ready` or `VERDICT: not ready: <n> must-fix`, which the lead reads first. Say "not ready" only where a finding must be fixed before the work passes on, and state why it must wait; list the remaining findings as advice. Judge readiness under the applicable rules and the review's stated pass test, including CUSTOMISATION.md's "Rounds are judged by progress, not counted" and "Stopped designs", quoted in TASK where your copy cannot read that file.
 ## Verdict · ## Findings (severity-ranked, each evidenced, with its overturn condition) ·
 ## Confirmations · ## The cost question · ## Controls
 ```

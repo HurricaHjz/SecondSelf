@@ -4,6 +4,11 @@
 Fixture construction/removal is the brief's explicit test exception. Evaluators
 run against a read-only fixture, with a complete before/after checksum manifest.
 These are acceptance tests for the proposed interface, not a replacement build.
+
+Ends with the shared result record and closing line (suite_results.py). Its checks are
+decoder-snapshot, each selected case with its separate <case>/manifest, and source-scan.
+The historical tuple is read only by migration's historical part, at its point of use:
+an omitted default known to be absent leaves that one obligation unrun.
 """
 import argparse
 import base64
@@ -22,6 +27,8 @@ import sys
 import uuid
 from unittest.mock import patch
 from contextlib import nullcontext
+import suite_results
+from suite_results import Collector, Premise, Unrun
 
 
 STAMP = '2026-01-02T12:00:00Z'
@@ -32,7 +39,7 @@ HOW_TO_MINIMUM = 2
 
 class Parser(argparse.ArgumentParser):
     def error(self, message):
-        self.exit(2, 'PROBE FAILED: ' + message + '\n')
+        raise Premise('argument parsing', message)
 
 
 def manifest(root):
@@ -504,6 +511,26 @@ def fixture_controls(f, case):
           'skills': len(f.row['freshness']['skills'])}, sort_keys=True))
 
 
+def historical_tuple():
+    """The frozen tuple, acquired where migration needs it. An omitted default provably absent is one
+    known omission; an explicit path, or a default that cannot be read, is a broken premise."""
+    stage = 'external fixture acquisition'
+    if not INSTANCE_EXPLICIT:
+        try:
+            state = suite_results.default_state(INSTANCE_DATA)
+        except OSError as exc:
+            raise Premise(stage, 'cannot inspect the default frozen tuple: ' + str(exc))
+        if state == 'absent':
+            raise Unrun('frozen historical layout-1 tuple', [str(INSTANCE_DATA)])
+    try:
+        value = json.loads(INSTANCE_DATA.read_text())
+    except (OSError, ValueError) as exc:
+        raise Premise(stage, 'frozen tuple unusable: ' + str(exc))
+    if type(value) is not dict or not {'rows', 'migration', 'policy'} <= set(value):
+        raise Premise(stage, 'frozen tuple has the wrong shape: ' + str(INSTANCE_DATA))
+    return value
+
+
 def check_case(f, case, build):
     if case in REFUSALS:
         refusal(f, f.evaluate, REFUSALS[case])
@@ -522,7 +549,7 @@ def check_case(f, case, build):
         assert 'activation' not in changed['rows'][0]['lifecycle'], 'v1 activation survived the changed rule'
         prepared = upgrade(f.prepared_doc, at=STAMP)
         assert prepared['rows'][0]['lifecycle'] == f.prepared_doc['rows'][0]['lifecycle']
-        live_copy = json.loads(INSTANCE_DATA.read_text())
+        live_copy = historical_tuple()
         legacy = upgrade(live_copy, at=STAMP)
         assert legacy['rows'] == live_copy['rows'], 'legacy import facts changed'
         assert legacy['migration'] == live_copy['migration'], 'source coverage changed'
@@ -613,6 +640,7 @@ def check_case(f, case, build):
 
 
 INSTANCE_DATA = None
+INSTANCE_EXPLICIT = False
 CASES = ('claimed', 'comparison', 'taste', 'checked-runs', 'drop-proven', 'drop-claimed',
          'no-record', 'bad-pair', 'too-few-runs', 'duplicate-runs', 'unhelpful-comparison',
          'writer-transition', 'migration', 'render', 'schema', 'unproven', 'old-date',
@@ -623,6 +651,123 @@ CASES = ('claimed', 'comparison', 'taste', 'checked-runs', 'drop-proven', 'drop-
          'owner-closure', 'owner-closure-missing', 'owner-closure-mismatch')
 
 
+def selected_inventory(scope):
+    """The checks of a scope as plain data: no argument parsing, fixture or test."""
+    if scope != 'all' and scope not in CASES:
+        raise ValueError('unknown O5 scope: ' + str(scope))
+    entries = ['decoder-snapshot']
+    for case in CASES if scope == 'all' else (scope,):
+        entries += [case, case + '/manifest']
+    return [{'id': entry, 'modules': []} for entry in entries + ['source-scan']]
+
+
+def run_case(build, modules, root, case, results):
+    check = case + '/manifest'
+    case_dir = root / case
+    try:
+        case_dir.mkdir()
+        f = Fixture(case_dir, modules)
+        configure(f, case)
+        permissions(case_dir, True)
+        before = manifest(case_dir)
+        fixture_controls(f, case)
+    except Exception as exc:
+        results.probe('fixture construction', [case, check], type(exc).__name__ + ': ' + str(exc))
+        return
+    results.execute(case)
+    try:
+        check_case(f, case, build)
+        print('PASS ' + case)
+    except Unrun as exc:
+        results.unrun('o5/' + case + '/instance-data', case, exc.requirement, exc.missing)
+    except Premise as exc:
+        results.probe(exc.stage, [case], exc.message)
+    except Exception as exc:
+        # A test body has begun on its fixture: whatever it raises is an executed failure.
+        results.fail(case)
+        print('FAIL ' + case + ': ' + type(exc).__name__ + ': ' + str(exc))
+    finally:
+        after = manifest(case_dir)
+        same = before == after and any(k.endswith('SKILL.md') for k in before)
+        results.execute(check)
+        if not same:
+            results.fail(check)
+        print(('PASS ' if same else 'FAIL ') + case + ' complete read-only fixture manifest')
+        print('NO_WRITE ' + json.dumps({'case': case, 'before': before, 'after': after}, sort_keys=True))
+        permissions(case_dir, False)
+    print(results.family_line(case))
+
+
+def source_scan(build, modules, results):
+    """Literal source grep, with its own planted controls on this run."""
+    pattern = re.compile(r'\b(?:write_text|write_bytes|mkdir|unlink|chmod|rmtree|Popen)\s*\(|\bos\.(?:write|replace|remove|rename)\s*\(|\bsubprocess\.|\.open\([^\n]*["\x27][wax]|\bopen\([^\n]*,[ ]*["\x27][wax]')
+    names = ('adopt_freshness.py', 'adopt_migrate.py', 'adopt_render.py', 'adopt_data.py', 'adopt_resources.py',
+             'adopt_manifest.py', 'adopt_snapshot.py') + (('adopt_compat_v1.py',) if modules['W'].seed_document()['schema_version'] == 2 else ())
+    try:
+        texts = {name: (build / 'adopt' / name).read_text() for name in names}
+    except OSError as exc:
+        raise Premise('implementation imports', 'source scan: ' + str(exc))
+    results.execute('source-scan')
+    hits = {name: [(n, line.strip()) for n, line in enumerate(text.splitlines(), 1) if pattern.search(line)]
+            for name, text in texts.items()}
+    planted = ["path.write_text('control')", 'os.replace(a, b)', "open(path, 'w')"]
+    controls = sum(bool(pattern.search(line)) for line in planted)
+    ok = not any(hits.values()) and controls == len(planted)
+    if not ok:
+        results.fail('source-scan')
+    print(('PASS ' if ok else 'FAIL ') + 'source write grep with positive controls')
+    print('SOURCE_SCAN ' + json.dumps({'hits': hits, 'control_hits': controls}, sort_keys=True))
+
+
+def run_checks(build, modules, root, selected, results):
+    control_dir = root / 'control'
+    try:
+        control_dir.mkdir()
+        control = Fixture(control_dir, modules)
+    except Exception as exc:
+        raise Premise('fixture construction', 'control fixture: ' + type(exc).__name__ + ': ' + str(exc))
+    results.execute('decoder-snapshot')
+    try:
+        # A native v1 control proves that the staged premise really qualifies.
+        if modules['W'].seed_document()['schema_version'] == 1:
+            assert control.evaluate() == ['old-task']
+            print('CONTROL native v1 qualification refs=1')
+        assert modules['D'].control() > 0 and modules['S'].controls() > 0
+        print('PASS decoder and typed snapshot controls')
+    except Exception as exc:
+        results.fail('decoder-snapshot')
+        print('FAIL decoder and typed snapshot controls: ' + type(exc).__name__ + ': ' + str(exc))
+    for case in (selected,) if selected else CASES:
+        run_case(build, modules, root, case, results)
+    source_scan(build, modules, results)
+
+
+def bootstrap(args):
+    """The named premises every selected check shares; each failure is a typed probe."""
+    if sys.flags.optimize != 0:
+        raise Premise('interpreter-options', 'Python options strip the bare assertions these checks use')
+    if not os.environ.get('TMPDIR') or not Path(os.environ['TMPDIR']).is_dir():
+        raise Premise('TMPDIR and scratch creation', 'explicit existing TMPDIR required')
+    try:
+        build = args.build.resolve(strict=True)
+    except OSError as exc:
+        raise Premise('implementation imports', str(exc))
+    if not (build / 'adopt/adopt_freshness.py').is_file():
+        raise Premise('implementation imports', 'missing staged freshness module')
+    global INSTANCE_DATA, INSTANCE_EXPLICIT
+    INSTANCE_EXPLICIT = args.instance_data is not None
+    INSTANCE_DATA = args.instance_data or build / 'fixtures/instance-layout1/.claude/adopt/capability-register.json'
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(build / 'adopt'))
+    try:
+        modules = {key: importlib.import_module(name) for key, name in {
+            'D': 'adopt_data', 'W': 'adopt_register', 'S': 'adopt_snapshot', 'R': 'adopt_resources',
+            'F': 'adopt_freshness', 'G': 'adopt_migrate', 'V': 'adopt_manifest', 'render': 'adopt_render'}.items()}
+    except Exception as exc:
+        raise Premise('implementation imports', type(exc).__name__ + ': ' + str(exc))
+    return build, modules
+
+
 def main():
     parser = Parser(description=__doc__)
     parser.add_argument('--build', required=True, type=Path)
@@ -630,88 +775,32 @@ def main():
     parser.add_argument('--instance-data', type=Path,
                         help='frozen instance register data; default: the staged build-relative '
                              'compatibility fixture (the historical layout-1 tuple)')
-    args = parser.parse_args()
-    if not os.environ.get('TMPDIR') or not Path(os.environ['TMPDIR']).is_dir():
-        print('PROBE FAILED: explicit existing TMPDIR required')
-        return 2
     try:
-        build = args.build.resolve(strict=True)
-    except OSError as exc:
-        print('PROBE FAILED: ' + str(exc))
-        return 2
-    if not (build / 'adopt/adopt_freshness.py').is_file():
-        print('PROBE FAILED: missing staged freshness module')
-        return 2
-    global INSTANCE_DATA
-    INSTANCE_DATA = args.instance_data or build / 'fixtures/instance-layout1/.claude/adopt/capability-register.json'
-    if not INSTANCE_DATA.is_file():
-        print('PROBE FAILED: frozen instance data not found: ' + str(INSTANCE_DATA) +
-              ' (pass --instance-data in an installed position)')
-        return 2
-    sys.dont_write_bytecode = True
-    sys.path.insert(0, str(build / 'adopt'))
-    modules = {key: importlib.import_module(name) for key, name in {
-        'D': 'adopt_data', 'W': 'adopt_register', 'S': 'adopt_snapshot', 'R': 'adopt_resources',
-        'F': 'adopt_freshness', 'G': 'adopt_migrate', 'V': 'adopt_manifest', 'render': 'adopt_render'}.items()}
-    root = Path(subprocess.check_output(['/usr/bin/mktemp', '-d', os.path.join(os.environ['TMPDIR'], 'adopt.XXXXXXXX')], text=True).strip()).resolve(strict=True)
-    failed, total, broken = 0, 0, False
+        args = parser.parse_args()
+    except Premise as exc:
+        results = Collector('o5', 'all', selected_inventory('all'))
+        results.probe(exc.stage, results.unaccounted(), exc.message)
+        return results.finish()
+    results = Collector('o5', args.case or 'all', selected_inventory(args.case or 'all'))
+    root = None
     try:
-        control_dir = root / 'control'
-        control_dir.mkdir()
-        control = Fixture(control_dir, modules)
-        # A native v1 control proves that the staged premise really qualifies.
-        if modules['W'].seed_document()['schema_version'] == 1:
-            assert control.evaluate() == ['old-task']
-            print('CONTROL native v1 qualification refs=1')
-        assert modules['D'].control() > 0 and modules['S'].controls() > 0
-        total += 1
-        print('PASS decoder and typed snapshot controls')
-        for case in (args.case,) if args.case else CASES:
-            case_dir = root / case
-            case_dir.mkdir()
-            f = Fixture(case_dir, modules)
-            configure(f, case)
-            permissions(case_dir, True)
-            before = manifest(case_dir)
-            fixture_controls(f, case)
-            total += 1
-            try:
-                check_case(f, case, build)
-                print('PASS ' + case)
-            except (AssertionError, modules['D'].Problem) as exc:
-                failed += 1
-                print('FAIL ' + case + ': ' + str(exc))
-            finally:
-                after = manifest(case_dir)
-                total += 1
-                same = before == after and any(k.endswith('SKILL.md') for k in before)
-                failed += int(not same)
-                print(('PASS ' if same else 'FAIL ') + case + ' complete read-only fixture manifest')
-                print('NO_WRITE ' + json.dumps({'case': case, 'before': before, 'after': after}, sort_keys=True))
-                permissions(case_dir, False)
-        # Literal source grep, with its own planted controls on this run.
-        pattern = re.compile(r'\b(?:write_text|write_bytes|mkdir|unlink|chmod|rmtree|Popen)\s*\(|\bos\.(?:write|replace|remove|rename)\s*\(|\bsubprocess\.|\.open\([^\n]*["\x27][wax]|\bopen\([^\n]*,[ ]*["\x27][wax]')
-        hits = {name: [(n, line.strip()) for n, line in enumerate((build / 'adopt' / name).read_text().splitlines(), 1)
-                       if pattern.search(line)] for name in ('adopt_freshness.py', 'adopt_migrate.py', 'adopt_render.py',
-                       'adopt_data.py', 'adopt_resources.py', 'adopt_manifest.py', 'adopt_snapshot.py') +
-                       (('adopt_compat_v1.py',) if modules['W'].seed_document()['schema_version'] == 2 else ())}
-        planted = ["path.write_text('control')", 'os.replace(a, b)', "open(path, 'w')"]
-        controls = sum(bool(pattern.search(line)) for line in planted)
-        total += 1
-        ok = not any(hits.values()) and controls == len(planted)
-        failed += int(not ok)
-        print(('PASS ' if ok else 'FAIL ') + 'source write grep with positive controls')
-        print('SOURCE_SCAN ' + json.dumps({'hits': hits, 'control_hits': controls}, sort_keys=True))
+        build, modules = bootstrap(args)
+        try:
+            root = Path(subprocess.check_output(['/usr/bin/mktemp', '-d', os.path.join(os.environ['TMPDIR'], 'adopt.XXXXXXXX')], text=True).strip()).resolve(strict=True)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise Premise('TMPDIR and scratch creation', str(exc))
+        run_checks(build, modules, root, args.case, results)
+    except Premise as exc:
+        results.probe(exc.stage, results.unaccounted(), exc.message)
     except Exception as exc:
-        broken = True
-        failed += 1
-        total += 1
-        print('PROBE FAILED: ' + type(exc).__name__ + ': ' + str(exc))
-    finally:
-        permissions(root, False)
-        shutil.rmtree(root)
-    print(f'FAIL {failed}/{total}' if failed or broken else f'PASS {total}/{total}')
-    return 2 if broken else int(bool(failed))
+        results.probe('harness', results.unaccounted(), type(exc).__name__ + ': ' + str(exc))
+    if root is not None:
+        try:
+            permissions(root, False)
+            shutil.rmtree(root)
+        except OSError as exc:
+            results.probe('clean-up', [], str(exc))
+    return results.finish()
 
 
 if __name__ == '__main__':

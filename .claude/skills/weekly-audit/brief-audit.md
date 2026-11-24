@@ -34,7 +34,8 @@ PASS 1: the slice and its requirements, and nothing else
      pass's object, never a step-6 source: read it now, its `## Open` section as a text (stale
      entries, duplicates, entries whose blocker has gone, entries with no next step). Step 6 does
      not list it, and in pass 2 what you read of it here, its `## Closed` section included, serves
-     the labels.
+     the labels, with its closed page, `wiki/developments/known-issues-closed.md`, which step 6
+     lists where it exists.
 3. For each due item below, judge whether it still guards a failure that can occur, at a cost in
    proportion, from its purpose and the failure it guards as given and from the files you read.
 4. For each unregistered item below, write one line: its purpose and the failure it guards, as
@@ -71,7 +72,9 @@ PASS 2: against the known faults, only after your PASS 1 FINDINGS message is sen
    is this audit's slice it is not among them, since pass 1 read it):
    {{PASS2_SOURCES: the "- " lines of the SECOND-PASS SOURCES block of slice.py's output, each
    whole}}
-   Read the register, when it is listed, with its `## Open` and `## Closed` sections both.
+   Read the register, when it is listed, with its `## Open` and `## Closed` sections both, and
+   its closed page when it is listed (it exists once a sweep has run): an entry closed before the
+   last sweep stands there, no longer under `## Closed`.
    Deep-lint's framework checks (settings, prefix composition, register liveness, spawn records)
    are known results: do not repeat them.
 7. Label each pass-1 finding with one of four labels:

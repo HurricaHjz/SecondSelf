@@ -47,7 +47,8 @@ and their derivations sit beside ARTICLE_MIN_WORDS below), whatever
         prints PASS (exit 0) or REJECT + reason (exit 3)
     dedup --urls a,b,c | --urls a b c  [--titles 'T1' 'T2']  --control URL [--vault-root PATH]
           [--allow-no-control]
-        greps candidate URLs against source_url/converted_from/resolved_url in raw/ + wiki/, and matches
+        greps candidate URLs against source_url/converted_from/resolved_url in raw/ + wiki/ (and
+        source:, a Web Clipper page's address, inside the frontmatter), and matches
         the arXiv ids and DOIs in those URLs, and each normalised title, against the
         wiki/sources/ + raw/ frontmatter keys (key code loaded from
         ../ingest/dedup_probe.py, never copied — missing, or failing its self-test, exits 2).
@@ -56,7 +57,7 @@ and their derivations sit beside ARTICLE_MIN_WORDS below), whatever
         the definitive ones and never changes them: the same host (case-folded, a leading
         www. dropped) and the same final path segment (case-folded; a trailing slash,
         .html and .htm dropped; query and fragment ignored) as a raw capture's
-        source_url, converted_from or resolved_url prints a second line,
+        source_url, converted_from, resolved_url or frontmatter source: prints a second line,
         "<url> ~> likely duplicate of <paths> (same host and final slug ...)": advisory,
         shown at the gate for the owner, never an exclusion (versioned docs, generic
         index pages and query-selected items share such keys). A title naming a review site
@@ -573,7 +574,9 @@ def dedup(a):
     targets = urls + ([a.control] if a.control else [])
     hits = {u: [] for u in targets}
     slugs = collections.defaultdict(set)   # (host, final slug) -> {(raw path, field)}: the advisory key
-    key = re.compile(r"^(source_url|converted_from|resolved_url):", re.I)  # resolved_url: the open copy a capture came from
+    # resolved_url: the open copy a capture came from. source: the address an Obsidian Web Clipper page carries
+    # alone, read in the frontmatter only, since a page's body uses the word too ("Source: <a cited URL>").
+    key = re.compile(r"^(source_url|converted_from|resolved_url|source):", re.I)
     for root in ("raw", "wiki"):
         top = os.path.join(a.vault_root, root)
         for dirpath, _dirs, files in os.walk(top):
@@ -592,9 +595,11 @@ def dedup(a):
                 except OSError:
                     continue
                 rel = os.path.relpath(fp, a.vault_root)
-                for line in head.splitlines():
+                end = head.find("\n---", 3) if head.startswith("---") else -1   # dedup_probe.py's frontmatter bounds
+                front = len(head[:end].splitlines()) if end >= 0 else 0        # the block's lines, its opener included
+                for i, line in enumerate(head.splitlines()):
                     m = key.match(line)
-                    if not m:
+                    if not m or (m.group(1).lower() == "source" and i >= front):
                         continue
                     for u in targets:
                         if u and u in line:

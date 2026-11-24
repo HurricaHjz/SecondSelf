@@ -1,7 +1,7 @@
 ---
 name: attic
 description: >
-  Archive vault files into attic/ cold storage, or restore them — the executable runbook for the
+  Archive vault files into attic/ cold storage, restore them, or move named ones to the Trash on the owner's word — the executable runbook for the
   CLAUDE.md §2.1 contract. Use on the owner's instruction: /attic, "archive X to the
   attic", "retire these files", "restore Y from the attic", "what's in my attic?"; an archive may
   also start on the agent's own finding of a stale file and run up to the preview, and the move then
@@ -21,7 +21,7 @@ it can never relax a permission. Never edit the *contents* of an archived file; 
 live again, and the restore changes only its links to files still archived (Restore step 4).
 
 ## Triggers
-`/attic archive <files|folder|topic>` · `/attic restore <item>` · `/attic list` · natural language
+`/attic archive <files|folder|topic>` · `/attic restore <item>` · `/attic remove <files>` · `/attic list` · natural language
 ("archive the X project to the attic", "retire these files", "what's in my attic?"). Passive
 context (an `@`-mention, an editor selection, IDEAS.md) never triggers it. The agent's own finding of a stale file starts an archive up to the Step-3 preview, presented for the owner's one-word yes.
 
@@ -31,7 +31,7 @@ yes and before Step 4, in an archive the agent prepared. From the vault root,
 `grep -n '^- \[pending ' attic/MANIFEST.md` prints every pending manifest line (Step 4): exit
 status 1 with no output is clean, and exit status 2 (no manifest found) a failed probe, never clean.
 Control, same run: `printf '%s\n' '- [pending 2000-01-01] control' | grep -c '^- \[pending '` prints 1.
-A pending line is an interrupted archive: stop before anything moves or the manifest changes, and
+A pending line is an interrupted archive, or under `## Removed` an interrupted removal: stop before anything moves or the manifest changes, and
 report each line to the owner with where its file now is
 (`ls -d "<origin folder>/<name>" "attic/<subfolder>/<name>"`, names only, never opening an archived
 file). It is never completed, deleted or repaired automatically; the owner decides.
@@ -168,6 +168,35 @@ archiving removed.
    status line) is a failed probe, never clean. The control passes only with a hit printed and
    `search exit: 0`. A hit stops the restore and goes to the owner, never fixed here.
 
+## Remove pipeline
+A removal moves named files out of the attic to the system trash (the Bin on macOS). It runs only on
+the owner's word: their instruction naming the files, or their yes to a list the agent prepared. It
+never deletes anything for good, and a file that git does not hold stays where it is.
+1. The start check; then read `attic/MANIFEST.md` (this instruction is the sanctioned read) and find
+   each named file's line.
+2. **Proof that git still holds each file, before anything moves.** From the vault root, per file:
+   `git log -1 --format=%H -- "<attic path>"` prints the last commit that touched it; then
+   `git rev-parse "<commit>:<attic path>"` and `git hash-object "<attic path>"` must print the same
+   id, which shows that commit holds the file byte for byte. A file with no commit, or with two
+   different ids, is reported and not removed. Control, same run: the same commands on a tracked
+   file outside the attic that is unchanged since its last commit print one id twice.
+3. **The manifest first, pending.** Under a heading `## Removed` at the manifest's end (add the
+   heading where it is missing), write one line per file with the file-editing tool:
+   `- [pending YYYY-MM-DD] `<attic path>` — from `origin/` — one-phrase reason — held by commit <commit>` (a backticked path, never a link, since the file will be gone),
+   and delete the file's own catalogue line. Read back: `grep -c '^- \[pending ' attic/MANIFEST.md`
+   prints the number of lines written, and `grep -c '^- \[' attic/MANIFEST.md`, run before and after, prints
+   the same number (one line written and one deleted per file); and per file,
+   `grep -cF "<file name, without .md>" attic/MANIFEST.md`, run before and after, prints the same number too
+   (its catalogue line gone, its `## Removed` line written).
+4. **Move** each file to the system trash, never with `rm`. Confirm each move as Archive step 5 does: the attic
+   path is gone and the file is in the trash. A move that did not happen is a finding, reported, never forced, and that file's two
+   manifest lines are put back as they were.
+5. Append one `attic` entry to `wiki/log.md` (shell append) naming each file removed and its commit,
+   and read it back. Only then complete the manifest: drop `pending ` from each line step 3 wrote,
+   with the read-backs of Archive step 8.
+6. Where a service syncs the vault, check again at least fifteen minutes after the moves (set by
+   judgement, unmeasured) that no removed path has come back. A path that returns is moved to the trash once more and listed for the owner.
+
 ## /attic list
 Read the manifest back to the owner. Nothing else in the attic is opened.
 
@@ -185,3 +214,5 @@ British/UK English.
   a pending line found by the start check goes to the owner, never repaired automatically.
 - Never edit archived file contents; never sweep a link between two archived files, or `log.md` history.
 - deep-lint SUGGESTS candidates (as ready `/attic archive …` lines); only the owner's word runs them.
+- **A removal is a move to the system trash on the owner's word**, each file first listed under
+  `## Removed` with the commit that holds it; nothing in the attic is deleted for good.

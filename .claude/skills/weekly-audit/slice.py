@@ -181,8 +181,10 @@ alone, and the rotation counts as attempted only the slice the manifest represen
   its role judged apart from whatever else lists its path, so one absent leaves the pick
   incomplete on the reading list as well, an owed deletion's place: CR-AUDIT12 F1)
   and the second-pass sources (pass 2: the lifecycle page, the register unless it is the slice,
+  its closed page where it exists,
   and wiki/log.md for deep-lint's entry); and which of them are comparison sources, whatever their
-  phase (the register, a reading-list file in its own week, and wiki/log.md: CR-AUDIT11 F3). The
+  phase (the register, a reading-list file in its own week, its closed page where it exists, and
+  wiki/log.md: CR-AUDIT11 F3). The
   section may name any of them, and any path it names makes the audit incomplete, its reason
   stored. A reading-list path named keeps the debt and baseline rules below; a requirement file or
   a second-pass source named is no debt (none of them is owed) and stays an explicit reason; a
@@ -224,7 +226,8 @@ alone, and the rotation counts as attempted only the slice the manifest represen
   phase. An entry whose content was not listed (all of it held, or not acquired), or not read,
   stays owed. Each path named under `## Not read` becomes owed, or stays owed, and so does each
   path the pick could not read. Content held for the second pass (the lifecycle page, wiki/log.md,
-  and the register unless it is the slice) is read whole there every week, and no record makes it
+  the register unless it is the slice, and its closed page where it exists) is read whole there
+  every week, and no record makes it
   owed while it is held.
 - An owed path with no file of it there now, its absence established (its own metadata reporting
   it missing, or, for a folder, its listing read whole holding no file; never an error read as
@@ -260,12 +263,16 @@ pin files beside a `node_modules` folder (for example `package.json`) stay hashe
 `slices.json` and its temporary files, which change at every record.
 
 HELD FOR THE SECOND PASS: the second-pass sources, the register (`known-issues.md`), the lifecycle
-page and `wiki/log.md`, never enter the reading list or the requirement files, changed or not and
+page and `wiki/log.md`, and where it exists the register's closed page (`known-issues-closed.md`,
+where sweep_closed.py moves the entries under the register's `## Closed`: never a slice, so held in
+every week, the register's own included, and a comparison source as the register is), never enter
+the reading list or the requirement files, changed or not and
 whatever lists them (a changed file, an owed entry, a due row, an inventory item, the rotating
 part), since the first pass holds no earlier answer (held_files, derived from the sources' own
 list: CR-AUDIT11 F4). The register enters it only when the rotating slice is the register itself,
 which the first pass reads as a text; it is then the first pass's object and no second-pass
-source, so the SECOND-PASS SOURCES block lists only the lifecycle page and deep-lint's entry in
+source, so the SECOND-PASS SOURCES block lists only the register's closed page where it exists,
+the lifecycle page and deep-lint's entry in
 `wiki/log.md`, while the register stays a comparison source, what the first pass read of it
 serving the second pass's labels.
 
@@ -273,7 +280,8 @@ THE INVENTORY: what can be discovered (the skills' test scripts, the hooks in bo
 the watch tools, and the standing-text groups: each top-level section of CLAUDE.md and of
 CUSTOMISATION.md, and every SKILL.md under `.claude/skills` at any depth, by its vault-relative
 path), plus NAMED_GROUPS, a fixed list of groups with no file of their own (the reflection
-controls, and the two hooks defined inline in `.claude/settings.json`), each listed as missing
+controls, the experience pages, the stale-information design's five recurring parts, and the two
+hooks defined inline in `.claude/settings.json`), each listed as missing
 while no row names it. The Monitor section of IDEAS.md stays out: it is the owner's scratchpad,
 and deep-lint reviews it. A standing-rules file whose sections cannot be read whole (undecodable
 bytes) or decided (THE SECTION ADAPTER) or come out empty fails the inventory, and so does a file
@@ -322,6 +330,7 @@ from stat import S_ISDIR, S_ISLNK, S_ISREG
 
 LIFECYCLE_REL = "wiki/developments/check-lifecycle.md"
 REGISTER_REL = "wiki/developments/known-issues.md"
+CLOSED_REL = "wiki/developments/known-issues-closed.md"   # the register's closed page (sweep_closed.py)
 LOG_REL = "wiki/log.md"
 SKILLS_REL = ".claude/skills"
 SKILL_FILE = "SKILL.md"
@@ -360,6 +369,13 @@ STANDING_RULES = ("CLAUDE.md", "CUSTOMISATION.md")
 NAMED_GROUPS = (
     "reflection controls",
     "experience pages (wiki/experience/; a group name)",
+    # The stale-information design's recurring parts (21 November 2026), as their rows name them;
+    # the last two leave the list when their rows' Items become their scripts' paths.
+    "replace at the write (a group name)",
+    "hold before removing (a group name)",
+    "closing review reads edited pages (a group name)",
+    "old-state listing (a group name)",
+    "bulk-clean check (a group name)",
 )
 # The requirement files of each slice (the governing texts it serves), vault-relative: the first
 # row's for every slice, the others' for the slice they name. The pick lists each one that is not
@@ -2810,8 +2826,9 @@ def missing_items(items, registered):
 def held_files(vault, slice_name):
     """The second-pass sources, which the reading list and the requirement files never hold,
     whatever lists them (a changed file, an owed entry, a due row, an inventory item or the rotating
-    part): every path second_pass_sources names, the register unless it is the slice, the lifecycle
-    page and wiki/log.md. Derived from that list, so the two cannot differ (CR-AUDIT11 F4: the log
+    part): every path second_pass_sources names, the register unless it is the slice, its closed
+    page where it exists, the lifecycle page and wiki/log.md. Derived from that list, so the two
+    cannot differ (CR-AUDIT11 F4: the log
     was left out here, so a due row naming it put it in pass 1, and the recorder refused the
     manifest)."""
     return [source["path"] for source in second_pass_sources(vault, slice_name)]
@@ -2819,19 +2836,24 @@ def held_files(vault, slice_name):
 
 def second_pass_sources(vault, slice_name):
     """The second pass's mandatory inputs, as the SECOND-PASS SOURCES block lists them: the
-    register unless it is the slice, the lifecycle page, and wiki/log.md for deep-lint's entry;
-    each {path, comparison}, the register and the log being the comparison sources the labels rest
-    on (an unread one limits the labels). The first pass never sees them: none is ever on the
-    reading list or among the requirement files."""
+    register unless it is the slice, the register's closed page where it exists, the lifecycle
+    page, and wiki/log.md for deep-lint's entry; each {path, comparison}, the register, its closed
+    page and the log being the comparison sources the labels rest on (an unread one limits the
+    labels). The first pass never sees them: none is ever on the reading list or among the
+    requirement files. The closed page holds the entries sweep_closed.py moved off the register's
+    `## Closed`, the earlier answers the first pass must not hold; it is never a slice, so it is
+    held in every week. Where it does not exist, nothing here changes."""
     sources = []
     if slice_name != "register":
         sources.append({"path": os.path.join(vault, REGISTER_REL), "comparison": True})
+    if os.path.exists(os.path.join(vault, CLOSED_REL)):
+        sources.append({"path": os.path.join(vault, CLOSED_REL), "comparison": True})
     sources.append({"path": os.path.join(vault, LIFECYCLE_REL), "comparison": False})
     sources.append({"path": os.path.join(vault, LOG_REL), "comparison": True})
     return sources
 
 
-def comparison_sources(vault, slice_name, reading):
+def comparison_sources(vault, slice_name, reading, sources=None):
     """The comparison sources among this audit's mandatory inputs, whatever their phase (CR-AUDIT11
     F3): the register, a second-pass source in an ordinary week and in its own week a reading-list
     file the first pass reads (spelled as the list spells it, and left out when it was not there to
@@ -2839,10 +2861,13 @@ def comparison_sources(vault, slice_name, reading):
     in either phase: in its own week the register is the first pass's object, and what that pass
     read of it still serves the second pass's labels."""
     register = os.path.join(vault, REGISTER_REL)
+    # and the register's closed page where this pick's sources hold it, so the two always agree
+    closed = [s["path"] for s in (second_pass_sources(vault, slice_name) if sources is None
+                                  else sources) if s["path"] == os.path.join(vault, CLOSED_REL)]
     if slice_name != "register":
-        return [register, os.path.join(vault, LOG_REL)]
+        return [register] + closed + [os.path.join(vault, LOG_REL)]
     on_list = [path for path in reading if os.path.realpath(path) == os.path.realpath(register)]
-    return on_list[:1] + [os.path.join(vault, LOG_REL)]
+    return on_list[:1] + closed + [os.path.join(vault, LOG_REL)]
 
 
 def requirement_files(registry, vault, slice_name, reading, current, unread_keys, held_real):
@@ -2993,7 +3018,7 @@ def do_pick(registry, vault, tools, hooks, state_path, today, manifest_out):
     requirements, requirement_notes = requirement_files(registry, vault, name, reading, current,
                                                         unread_keys, held_real)
     sources = second_pass_sources(vault, name)
-    comparison = comparison_sources(vault, name, reading)
+    comparison = comparison_sources(vault, name, reading, sources)
     # Each owed entry's files, all of them, as owed_parts found them before the held sources left
     # the reading list (CR-AUDIT13 F2: an entry was given only its listed files, so a folder owed
     # from an earlier audit was discharged though the reviewer left a file of it held for the
@@ -3214,6 +3239,8 @@ def do_pick(registry, vault, tools, hooks, state_path, today, manifest_out):
     if name != "register":
         out.append("- the register: %s%s" % (register, " (%s)" % register_note if register_note
                                              else ""))
+    out.extend("- the register's closed page: %s" % source["path"] for source in sources
+               if source["path"] == os.path.join(vault, CLOSED_REL))
     out.append("- the lifecycle register: %s%s" % (lifecycle, "" if lifecycle_ok
                                                    else " (%s)" % lifecycle_problem.upper()))
     out.append("- deep-lint's latest report: %s" % deeplint_text)

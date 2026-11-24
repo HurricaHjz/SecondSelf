@@ -458,7 +458,7 @@ SAFEPATH=$(printf '%s\n' "$PATH" | tr ':' '\n' | grep -v ' ' | paste -s -d: -)
 LANEV="env -u CLAUDE_CONFIG_DIR PATH=$BIN:$SAFEPATH LLM_WIKI_STORE=$STORE STUB_LOG=$F/stub STUB_PROJECTS=$PROJ CLAUDE_PROJECT_DIR=$FXV LLM_WIKI_PROGRESS_DIR=$F/progress AIMYTH_VIEWER_CMD=$BIN/viewer-stub.sh AIMYTH_VIEWER_ARGV=$F/viewer-default.argv"
 # --reason is required of every spawn (register, 2026-09-07), so the helper carries one; "$@"
 # comes after it, and a call site's own --reason is the one argparse keeps.
-spawn(){ $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+spawn(){ $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
          --projects-root "$PROJ" --reason '(a) fixture spawn' "$@"; }
 
 echo "== offline =="
@@ -562,7 +562,7 @@ done
 reqfail(){ # $1 = leg name, then the spawn's own flags
   NAME="$1"; shift
   rm -f "$F/rec-rq.jsonl"
-  RQ=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+  RQ=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
        --projects-root "$PROJ" --run run-test-rq --lane RQ --class verifier \
        --grant "$F/granted" --record "$F/rec-rq.jsonl" "$@" 2>&1); RC=$?
   if [ "$RC" = 2 ] && printf '%s' "$RQ" | grep -q 'carries no instrument-rule letter' \
@@ -575,7 +575,7 @@ reqfail "spawn refuses an omitted --reason as it refuses a letterless one"
 reqfail "spawn refuses a whitespace-only --reason" --reason '   '
 reqfail "spawn --dry-run refuses an omitted --reason before it prints anything" --dry-run
 rm -f "$F/rec-rq.jsonl"
-RQOK=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+RQOK=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
        --projects-root "$PROJ" --run run-test-rq --lane RQ --class verifier \
        --grant "$F/granted" --record "$F/rec-rq.jsonl" --reason '(b) parallel breadth' 2>&1); RC=$?
 RQREC=$("$PY" - "$F/rec-rq.jsonl" <<'REQ_CONTROL_TERMINATOR'
@@ -590,7 +590,7 @@ if [ "$RC" = 0 ] && [ "$RQREC" = '1 "(b) parallel breadth"' ]; then
 else no "the lettered control spawn  [exit $RC, record $RQREC: $(printf '%s' "$RQOK" | head -2 | tr '\n' ' ')]"; fi
 
 # 6 · the record exists even when the process fails ------------------------------------------
-env STUB_EXIT=9 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+env STUB_EXIT=9 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
   --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-a --lane L1 --class verifier \
   --grant "$F/granted" --record "$F/rec-a.jsonl" --reason '(a) leg 6' >/dev/null 2>&1
 RC=$?
@@ -775,6 +775,56 @@ VL_DRIFT_END
 if [ "$VLCLEAN" = 0 ] && [ "$VLEDIT" = 1 ] && [ "$VLNOTE" = "None|True" ]; then
   ok "VL04 a hand-edited home core draws the note and a stale one says so; a home core equal to its template draws none (control: the clean spawn)"
 else no "VL04 the home core note  [clean $VLCLEAN, edited $VLEDIT, helper $VLNOTE]"; fi
+# VL06 · a home core that has drifted from its template never reaches a lane: the spawn appends the
+# template's own text instead, its source named, and the note says so (register 2026-10-04 00:09; it
+# recurred on 15 November 2026, a helper running without two template lines its home core lacked).
+# The home copy carries a planted line the template lacks; the control names that same copy with
+# --append-core, so the probe finds the planted line when it is appended.
+cp "$LHOME/lane-core.md" "$F/home-core.keep"
+printf 'HOME-ONLY-DRIFT-LINE\n' >> "$LHOME/lane-core.md"
+spawn --run run-test-vl6 --lane VL6 --class verifier --grant "$F/granted" --record "$F/rec-vl6.jsonl" \
+      --reason '(a) appended: a drifted home core' >/dev/null 2>"$F/vl6.err"; RC=$?
+spawn --run run-test-vl6 --lane VL6C --class verifier --grant "$F/granted" --record "$F/rec-vl6.jsonl" \
+      --append-core "$LHOME/lane-core.md" --reason '(a) appended: the drifted copy named' >/dev/null 2>&1; RCC=$?
+cp "$F/home-core.keep" "$LHOME/lane-core.md"
+VL6=$("$PY" - "$LANE" "$CORESRC" "$STORE/spawn-records/run-test-vl6-appended-VL6.md" <<'VL6_END'
+import importlib.machinery, importlib.util, sys
+spec = importlib.util.spec_from_loader("lanev6", importlib.machinery.SourceFileLoader("lanev6", sys.argv[1]))
+lane = importlib.util.module_from_spec(spec); spec.loader.exec_module(lane)
+want = lane.strip_vault_local(lane.strip_frontmatter(lane.read_text(sys.argv[2], "the template")), "the template").strip()
+try:
+    text = open(sys.argv[3], encoding="utf-8").read()
+except OSError:
+    text = ""
+head, _, rest = text.partition("\n\n")
+body = rest.split("\n\n## Lane slice: ", 1)[0].strip()
+print("%s|%s|%s" % (head.startswith("## Lane slice: lane-core — source: ") and head.endswith("templates/lane-core.md"),
+                    bool(want) and body == want, "HOME-ONLY-DRIFT-LINE" in text))
+VL6_END
+)
+if [ "$RC" = 0 ] && [ "$RCC" = 0 ] && [ "$VL6" = "True|True|False" ] && grep -qF 'this spawn appends the template' "$F/vl6.err" \
+   && appended run-test-vl6 VL6C | grep -qxF 'HOME-ONLY-DRIFT-LINE'; then
+  ok "VL06 a drifted home core reaches no lane: the spawn appends the template's own text, its source named, and the note says so (control: the drifted copy named by --append-core shows the planted line)"
+else no "VL06 the drifted home core  [exit $RC/$RCC, $VL6, note $(grep -c 'this spawn appends the template' "$F/vl6.err"), control $(appended run-test-vl6 VL6C | grep -c 'HOME-ONLY-DRIFT-LINE')]"; fi
+# SID01 · --session-id names the new lane's own session (register 2026-11-10 13:56: a head passed
+# its own id and the close read the head's transcript): an id whose transcript already stands in any
+# project folder under the projects root is refused in the caller, exit 2, before any record line,
+# and the help says so. Control: a fresh id passes the same dry run.
+SIDUSED="0b1c2d3e-4f50-4617-8899-aabbccddee01"; SIDNEW="0b1c2d3e-4f50-4617-8899-aabbccddee02"
+mkdir -p "$PROJ/-another-project"
+printf '{"type":"user"}\n' > "$PROJ/-another-project/$SIDUSED.jsonl"
+SIDOUT=$(spawn --run run-test-sid --lane SID1 --class verifier --grant "$F/granted" --record "$F/rec-sid.jsonl" \
+         --session-id "$SIDUSED" --dry-run 2>&1); RC=$?
+[ -e "$F/rec-sid.jsonl" ] && SIDREC=written || SIDREC=none
+spawn --run run-test-sid --lane SID2 --class verifier --grant "$F/granted" --record "$F/rec-sid.jsonl" \
+      --session-id "$SIDNEW" --dry-run >/dev/null 2>&1; RCN=$?
+SIDHELP=$("$PY" "$LANE" spawn --help 2>&1 | tr -s ' \n' '  ')
+if [ "$RC" = 2 ] && [ "$SIDREC" = none ] && [ "$RCN" = 0 ] \
+   && printf '%s' "$SIDOUT" | grep -qF "already in use: its transcript stands at $PROJ/-another-project/$SIDUSED.jsonl" \
+   && printf '%s' "$SIDHELP" | grep -qF "already stands under the projects root is refused (exit 2)"; then
+  ok "SID01 spawn refuses a --session-id whose transcript already stands under the projects root (exit 2, nothing recorded), and its help says so (control: a fresh id passes the same dry run)"
+else no "SID01 the session id in use  [exit $RC/$RCN, record $SIDREC, $(printf '%s' "$SIDOUT" | tail -1 | cut -c1-200), help $(printf '%s' "$SIDHELP" | grep -c 'already stands under')]"; fi
+rm -f "$PROJ/-another-project/$SIDUSED.jsonl"
 
 spawn --run run-test-ap4 --lane A4 --class wiki-compile --grant "$F/granted" --no-core \
       --record "$F/rec-ap4.jsonl" --reason '(a) appended: --no-core' >/dev/null 2>&1
@@ -798,7 +848,7 @@ else no "report not persisted  [$(cat "$STORE/spawn-records/run-test-b-report-L2
 BRIEFED=$(cat "$F/stub/stdin.txt")
 eq "the brief is delivered on stdin" "$BRIEFED" "$(cat "$F/brief.md")"
 
-env STUB_FENCE=1 STUB_DENIALS=1 STUB_EFFORT=xhigh $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" \
+env STUB_FENCE=1 STUB_DENIALS=1 STUB_EFFORT=xhigh $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" \
   --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-d --lane L4 \
   --class verifier --grant "$F/granted" --effort xhigh --record "$F/rec-d.jsonl" \
   --reason '(a) leg 15' >/dev/null 2>&1
@@ -879,7 +929,7 @@ print("unmarked %d marked %d" % tuple(counts))
 FN_UNMARKED_END
 )
 eq "FN10 a tool result with no is_error field that opens with lane-fence: is no refusal (0); the same text marked is_error true counts 1 (control)" "$FN10" "unmarked 0 marked 1"
-env STUB_FENCE=1 STUB_FENCE_FORM=hook $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" \
+env STUB_FENCE=1 STUB_FENCE_FORM=hook $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" \
   --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-fn --lane FN8 \
   --class verifier --grant "$F/granted" --record "$F/rec-fn.jsonl" --reason '(a) FN08' >"$F/fn8.out" 2>&1
 FN8=$("$PY" -c 'import json, sys
@@ -900,14 +950,14 @@ FN_SUMMARY_END
 )
 eq "FN09 a close with no transcript read shows fence ? in its summary, its record count left an integer; with a transcript it shows fence 0 (control)" "$FN9" "ok"
 
-env STUB_REFUSAL=1 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+env STUB_REFUSAL=1 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
   --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-e --lane L5 --class verifier \
   --grant "$F/granted" --record "$F/rec-e.jsonl" --reason '(a) leg 17' >/dev/null 2>&1
 eq "a refusal in the transcript closes the lane at exit 3" "$?" "3"
 grep -q '"exit_class": "refusal-continued"' "$F/rec-e.jsonl" \
   && ok "E5: the later assistant end_turn makes the refusal continued, pending head judgement" || no "close line does not name the continued refusal"
 
-env STUB_SUBTYPE=error_max_budget_usd $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+env STUB_SUBTYPE=error_max_budget_usd $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
   --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-f --lane L6 --class verifier \
   --grant "$F/granted" --record "$F/rec-f.jsonl" --reason '(a) leg 19' >/dev/null 2>&1
 RC=$?
@@ -917,7 +967,7 @@ else no "budget stop mishandled  [exit $RC]"; fi
 
 # 20 · the deadline path ----------------------------------------------------------------------
 START=$(date +%s)
-env STUB_SLEEP=30 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+env STUB_SLEEP=30 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
   --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-g --lane L7 --class verifier \
   --grant "$F/granted" --deadline-s 2 --record "$F/rec-g.jsonl" --reason '(a) leg 20' >/dev/null 2>&1
 RC=$?; ELAPSED=$(( $(date +%s) - START ))
@@ -926,7 +976,7 @@ if [ "$RC" = 3 ] && grep -q '"exit_class": "deadline"' "$F/rec-g.jsonl" && [ "$E
 else no "deadline path  [exit $RC, ${ELAPSED}s]"; fi
 
 # 21 · the glob fallback for a transcript in an unexpected directory ---------------------------
-env STUB_PROJECT_DIR=some-other-name $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+env STUB_PROJECT_DIR=some-other-name $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
   --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-h --lane L8 --class verifier \
   --grant "$F/granted" --record "$F/rec-h.jsonl" --reason '(a) leg 21' >/dev/null 2>&1
 if grep -q '"effort_applied": \[' "$F/rec-h.jsonl"; then
@@ -934,7 +984,7 @@ if grep -q '"effort_applied": \[' "$F/rec-h.jsonl"; then
 else no "the glob fallback did not find the transcript"; fi
 
 # 22–26 · the throttle mapping and out-of-range choices ----------------------------------------
-tier(){ $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+tier(){ $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
         --run run-test-t --lane T --class wiki-compile --grant "$F/granted" --dry-run \
         --reason '(a) throttle tier' --throttle "$1" 2>/dev/null \
         | grep '^  claude' | tr ' ' '\n' | grep -A1 -x -e --model -e --effort | grep -v '^--' \
@@ -952,7 +1002,7 @@ rec = json.load(open(sys.argv[1]))
 rec["preset_model"] = {"top": "opus", "cheap": "opus", "_": "fixture: the owner ruling of 2026-09-29"}
 json.dump(rec, open(sys.argv[2], "w"), indent=2)
 LANE_PRESET_END
-tierp(){ $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$F/routing-v2p.json" --brief "$F/brief.md" \
+tierp(){ $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$F/routing-v2p.json" --brief "$F/brief.md" \
         --run run-test-t --lane T --class wiki-compile --grant "$F/granted" --dry-run \
         --reason '(a) throttle tier' --throttle "$1" 2>/dev/null \
         | grep '^  claude' | tr ' ' '\n' | grep -A1 -x -e --model -e --effort | grep -v '^--' \
@@ -967,7 +1017,7 @@ rec = json.load(open(sys.argv[1]))
 rec["preset_model"] = {"top": "haiku"}
 json.dump(rec, open(sys.argv[2], "w"), indent=2)
 LANE_PRESET_BAD_END
-PERR=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$F/routing-v2pbad.json" --brief "$F/brief.md" \
+PERR=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$F/routing-v2pbad.json" --brief "$F/brief.md" \
         --run run-test-t --lane T --class wiki-compile --grant "$F/granted" --dry-run \
         --reason '(a) throttle tier' --throttle top 2>&1); PRC=$?
 if [ "$PRC" = 2 ] && printf '%s' "$PERR" | grep -q 'preset_model.top'; then
@@ -988,7 +1038,7 @@ if [ -L "$HOME/.llm-wiki" ]; then
 else ok "(skipped: no ~/.llm-wiki symlink on this machine)"; fi
 
 # 26b · row_default is the row's tier before the override (2026-09-06) --------------------------
-OUT=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+OUT=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
       --run run-test-rd --lane RD --class wiki-compile --grant "$F/granted" --dry-run \
       --throttle default --model sonnet --effort high --reason '(a) row_default' 2>&1)
 if printf '%s' "$OUT" | grep -q '"row_default": {"model": "opus", "effort": "xhigh"}' \
@@ -1075,7 +1125,7 @@ else no "fence environment under --grants-only  [$(printf '%s\n' "$GOENV" | grep
 premise(){ # name, expected-fragment, args...
   NAME="$1"; FRAG="$2"; shift 2
   rm -f "$F/rec-p.jsonl"
-  ERR=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-p.jsonl" \
+  ERR=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-p.jsonl" \
         --reason '(a) premise fixture' "$@" 2>&1)
   RC=$?
   if [ "$RC" = 2 ] && [ ! -f "$F/rec-p.jsonl" ] && printf '%s' "$ERR" | grep -q "$FRAG"; then
@@ -1107,7 +1157,7 @@ premise "--grants-only with no --grant" "needs at least one --grant" --home "$LH
         --grants-only --write "$F/fx"
 
 mkdir -p "$F/rolock"; : > "$F/rolock/rec.jsonl"; chmod a-w "$F/rolock/rec.jsonl" "$F/rolock"
-ERR=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+ERR=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
       --projects-root "$PROJ" --run run-test-p --lane P --class verifier --grant "$F/granted" \
       --record "$F/rolock/rec.jsonl" --reason '(a) an unwritable record' 2>&1)
 RC=$?; chmod u+w "$F/rolock" "$F/rolock/rec.jsonl"
@@ -1130,28 +1180,28 @@ else no "--dry-run wrote something or printed too little"; fi
 # Every spawn puts the run's console on screen when none is alive (owner ruling 2026-09-08); the
 # recording stub in AIMYTH_VIEWER_CMD stands in for the Terminal, so no window opens here.
 V1="$F/viewer-v1.argv"; : > "$V1"
-$LANEV AIMYTH_VIEWER_ARGV="$V1" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+$LANEV AIMYTH_VIEWER_ARGV="$V1" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) leg 36' --run run-test-view --lane V1 --class verifier \
   --grant "$F/granted" --record "$F/rec-view.jsonl" >/dev/null 2>"$F/v1.err"
 if [ "$(grep -c 'run-test-view-console.command' "$V1")" = 1 ] && grep -q 'viewer: Terminal window opened on' "$F/v1.err"; then
   ok "the first spawn of a run opens its console once (the viewer stub ran on the run's command file)"
 else no "the first spawn opened no console  [argv $(grep -c . "$V1"), stderr: $(head -3 "$F/v1.err" | tr '\n' ' ')]"; fi
 V2="$F/viewer-v2.argv"; : > "$V2"
-$LANEV AIMYTH_VIEWER_ARGV="$V2" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+$LANEV AIMYTH_VIEWER_ARGV="$V2" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) leg 37' --run run-test-view --lane V2 --class verifier \
   --grant "$F/granted" --record "$F/rec-view.jsonl" >/dev/null 2>"$F/v2.err"
 if [ "$(grep -c . "$V2")" = 0 ] && grep -q 'no second window' "$F/v2.err"; then
   ok "a second spawn on the same run inside the grace window opens no second window (the live console shows the new lane)"
 else no "the second spawn doubled the console  [argv $(grep -c . "$V2"), stderr: $(head -3 "$F/v2.err" | tr '\n' ' ')]"; fi
 V3="$F/viewer-v3.argv"; : > "$V3"
-$LANEV AIMYTH_VIEWER_ARGV="$V3" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+$LANEV AIMYTH_VIEWER_ARGV="$V3" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) leg 38' --run run-test-view2 --lane V3 --class verifier --viewer none \
   --grant "$F/granted" --record "$F/rec-view2.jsonl" >/dev/null 2>"$F/v3.err"
 if [ "$(grep -c . "$V3")" = 0 ] && grep -q 'viewer none' "$F/v3.err"; then
   ok "--viewer none opts out (no window, said on stderr)"
 else no "--viewer none still opened  [argv $(grep -c . "$V3"), stderr: $(head -3 "$F/v3.err" | tr '\n' ' ')]"; fi
 V4="$F/viewer-v4.argv"; : > "$V4"
-$LANEV AIMYTH_VIEWER_ARGV="$V4" AIMYTH_VIEWER=none "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+$LANEV AIMYTH_VIEWER_ARGV="$V4" AIMYTH_VIEWER=none "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) leg 39' --run run-test-view3 --lane V4 --class verifier \
   --grant "$F/granted" --record "$F/rec-view3.jsonl" >/dev/null 2>"$F/v4.err"
 if [ "$(grep -c . "$V4")" = 0 ]; then
@@ -1166,14 +1216,14 @@ exit 1
 VIEWER_FAIL_END
 chmod +x "$BIN/viewer-fail.sh"
 V5="$F/viewer-v5.argv"; : > "$V5"
-$LANEV AIMYTH_VIEWER_ARGV="$V5" AIMYTH_VIEWER_CMD="$BIN/viewer-fail.sh" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+$LANEV AIMYTH_VIEWER_ARGV="$V5" AIMYTH_VIEWER_CMD="$BIN/viewer-fail.sh" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) leg 40' --run run-test-view4 --lane V5 --class verifier \
   --grant "$F/granted" --record "$F/rec-view4.jsonl" >/dev/null 2>"$F/v5.err"; RC5=$?
 if [ "$RC5" = 0 ] && grep -q 'no Terminal window' "$F/v5.err" && [ "$(grep -c '"event": "lane-closed"' "$F/rec-view4.jsonl")" = 1 ]; then
   ok "a viewer that fails never fails the spawn (exit 0, the lane ran to its close, the failure said on stderr)"
 else no "a failing viewer broke the spawn  [exit $RC5, stderr: $(head -3 "$F/v5.err" | tr '\n' ' ')]"; fi
 V6="$F/viewer-v6.argv"; : > "$V6"
-$LANEV AIMYTH_VIEWER_ARGV="$V6" AIMYTH_VIEWER=1 "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+$LANEV AIMYTH_VIEWER_ARGV="$V6" AIMYTH_VIEWER=1 "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) leg 41' --run run-test-view5 --lane V6 --class verifier \
   --grant "$F/granted" --record "$F/rec-view5.jsonl" >/dev/null 2>"$F/v6.err"
 if grep -q 'neither terminal nor none' "$F/v6.err" && [ "$(grep -c . "$V6")" = 1 ]; then
@@ -1197,7 +1247,7 @@ exit 0
 OPEN_STUB_END
 chmod +x "$BIN/open-stub"
 V7="$F/viewer-v7.argv"; : > "$V7"
-$LANEV AIMYTH_VIEWER_ARGV="$V7" AIMYTH_VIEWER_CMD= AIMYTH_OPEN_BIN="$BIN/open-stub" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+$LANEV AIMYTH_VIEWER_ARGV="$V7" AIMYTH_VIEWER_CMD= AIMYTH_OPEN_BIN="$BIN/open-stub" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) leg 42' --run run-test-view6 --lane V7 --class verifier \
   --grant "$F/granted" --record "$F/rec-view6.jsonl" >/dev/null 2>"$F/v7.err"
 V7PID=none; [ -f "$V7.pid" ] && V7PID=$(cat "$V7.pid")
@@ -1240,7 +1290,7 @@ for line in open(sys.argv[1]):
 MODEOF_TERMINATOR
 }
 # $1 = vault dir (the CLAUDE_PROJECT_DIR override goes AFTER $LANEV's own, so it wins), then args
-dspawn(){ V="$1"; shift; $LANEV CLAUDE_PROJECT_DIR="$V" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" \
+dspawn(){ V="$1"; shift; $LANEV CLAUDE_PROJECT_DIR="$V" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" \
           --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" --class verifier \
           --grant "$F/granted" --reason '(a) delegation regime fixture' "$@"; }
 eq "a Settings single passes through to the record with source owner (the leg-7 spawn)" \
@@ -1346,7 +1396,7 @@ K2_SLOW_END
 "$PY" -c 'import sys; sys.stdout.write("".join("K2 brief line %07d\n" % n for n in range(16000)))' > "$F/k2-big.md"
 k2run(){ # lane, brief, more spawn flags: the real spawn, held back, with the stub's one-second wait
   k2lane=$1; k2brief=$2; shift 2
-  env STUB_STDIN_WAIT_S=1 K2_SLOW_S=3 $LANEV "$PY" "$F/k2-slow.py" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+  env STUB_STDIN_WAIT_S=1 K2_SLOW_S=3 $LANEV "$PY" "$F/k2-slow.py" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
     --brief "$k2brief" --projects-root "$PROJ" --run run-test-k2 --lane "$k2lane" --class verifier --grant "$F/granted" \
     --record "$F/rec-k2.jsonl" --reason '(a) a held-back wrapper' "$@" >"$F/$k2lane.out" 2>"$F/$k2lane.err"
 }
@@ -1363,7 +1413,7 @@ k2run K2C "$F/brief.md" --prompt-arg; RC=$?
 if [ "$RC" = 0 ] && [ ! -s "$F/stub/stdin.txt" ] && grep -q -F "$(head -1 "$F/brief.md")" "$F/stub/argv.txt"; then
   ok "K203 a brief passed as the prompt argument leaves the lane's input closed at once (control: the brief is in its argv)"
 else no "K203 the prompt argument  [exit $RC, stdin $(wc -c < "$F/stub/stdin.txt") bytes]"; fi
-env STUB_SKIP_STDIN=1 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/k2-big.md" --projects-root "$PROJ" \
+env STUB_SKIP_STDIN=1 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/k2-big.md" --projects-root "$PROJ" \
   --run run-test-k2 --lane K2D --class verifier --grant "$F/granted" --record "$F/rec-k2.jsonl" --reason '(a) a lane that reads nothing' >"$F/K2D.out" 2>"$F/K2D.err"; RC=$?
 if [ "$RC" = 0 ] && [ "$(recfield "$F/rec-k2.jsonl" lane-closed exit_class)" = '"completed"' ] && ! grep -q 'Traceback' "$F/K2D.err"; then
   ok "K204 a lane that exits without reading a long brief closes as itself, with no hang and no traceback"
@@ -1531,14 +1581,14 @@ premise "a malformed CONTROL+ line" "malformed control line" --home "$LHOME" \
 premise "the rehearsal form (--dry-run, no --detach --no-wait) reaches the controls and rejects a broken one" "matches nothing" --home "$LHOME" \
         --routing "$R" --brief "$F/brief-ctl-miss.md" --run run-test-p --lane P --class verifier --grant "$F/granted" --dry-run
 rm -f "$F/rec-ctl-dry.jsonl"
-DRYCTL=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-ctl-dry.jsonl" \
+DRYCTL=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-ctl-dry.jsonl" \
          --reason '(a) rehearsal' --home "$LHOME" --routing "$R" --brief "$F/brief-ctl.md" --run run-test-p \
          --lane P --class verifier --grant "$F/granted" --grant-vault-root --dry-run 2>&1); RCD=$?
 if [ "$RCD" = 0 ] && [ ! -f "$F/rec-ctl-dry.jsonl" ] && printf '%s' "$DRYCTL" | grep -q 'controls checked: \[{"'; then
   ok "the rehearsal form on a sound brief prints the controls checked and writes no record (the control for the refusal above)"
 else no "the rehearsal form on a sound brief  [exit $RCD, said: $(printf '%s' "$DRYCTL" | head -3 | tr '\n' ' ')]"; fi
 rm -f "$F/rec-ctl-det.jsonl"
-DETDRY=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-ctl-det.jsonl" \
+DETDRY=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-ctl-det.jsonl" \
          --reason '(a) rehearsal' --home "$LHOME" --routing "$R" --brief "$F/brief-ctl-miss.md" --run run-test-p \
          --lane P --class verifier --grant "$F/granted" --detach --no-wait --dry-run 2>&1); RCX=$?
 if [ "$RCX" = 2 ] && printf '%s' "$DETDRY" | grep -q 'no-wait goes with --detach' \
@@ -1666,7 +1716,7 @@ if [ "$RC" = 0 ] && ! printf '%s' "$GPC" | grep -q 'file grant reaches its whole
   ok "GP02 a --grant file in a directory of its own earns no warning (the control for GP01 and GP03)"
 else no "GP02 the staged file grant  [exit $RC: $(printf '%s' "$GPC" | grep -m1 'warning')]"; fi
 mkdir -p "$F/fakehome"; printf 'notes\n' > "$F/fakehome/notes.txt"
-GPH=$($LANEV HOME="$F/fakehome" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+GPH=$($LANEV HOME="$F/fakehome" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
       --run run-test-gp --lane GP3 --class verifier --grant "$F/fakehome/notes.txt" --record "$F/rec-gp.jsonl" \
       --reason '(a) a file at a home root' --dry-run 2>&1); RC=$?
 if [ "$RC" = 0 ] && printf '%s' "$GPH" | grep -q "whole parent $FR/fakehome (a home directory)"; then
@@ -1775,7 +1825,7 @@ if [ "$RC" = 0 ] && printf '%s' "$MI" | grep -q 'lane home: ' && ! printf '%s' "
    && [ "$(cat "$MV/$MEMR/MEMORY.md")" = 'vault copy' ] && [ "$(cat "$MVH/$MEMR/MEMORY.md")" = 'home copy' ]; then
   ok "MM01 init syncs no memory directory and names none: the vault's and the home's files stay as they were, with a class still declaring the field (the control: init ran and printed its own line)"
 else no "MM01 init and the old memory directory  [exit $RC: $(printf '%s' "$MI" | grep memory | tr '\n' '|')]"; fi
-memspawn(){ $LANEV CLAUDE_PROJECT_DIR="$MV" "$PY" "$LANE" spawn --expect-usd 2 --home "$MVH" --routing "$R" --brief "$F/brief.md" \
+memspawn(){ $LANEV CLAUDE_PROJECT_DIR="$MV" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$MVH" --routing "$R" --brief "$F/brief.md" \
             --projects-root "$PROJ" --class memory-hunter --run run-test-mem --record "$F/rec-mem.jsonl" "$@"; }
 rm -f "$F/stub/argv.txt"
 MS=$(memspawn --lane MEM1 --reason '(a) no memory sync at the close' 2>&1); RC=$?
@@ -1808,7 +1858,7 @@ premise "--config-dir that is not a directory" "not a directory" --home "$LHOME"
 
 # the report cut --------------------------------------------------------------------------------
 LONG=$("$PY" -c 'print(" ".join("w%d" % i for i in range(1, 1001)))')
-CUT=$(env STUB_REPORT="$LONG" $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+CUT=$(env STUB_REPORT="$LONG" $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
       --projects-root "$PROJ" --run run-test-cut --lane CU --class verifier --grant "$F/granted" \
       --record "$F/rec-cut.jsonl" --reason '(a) report cut' 2>&1)
 RC=$?
@@ -1823,7 +1873,7 @@ if [ "$RC" = 0 ] && printf '%s\n' "$CUT" | grep -qF "(1000 of 1000 words shown; 
 else no "the report cut  [exit $RC; $(printf '%s\n' "$CUT" | grep -c .) lines; $(printf '%s\n' "$CUT" | grep 'words shown')]"; fi
 SHORT=$(spawn --run run-test-cut2 --lane CU2 --class verifier --grant "$F/granted" --record "$F/rec-cut2.jsonl" \
         --reason '(a) control: a short report' 2>&1)
-FIVE=$(env STUB_REPORT="$LONG" $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+FIVE=$(env STUB_REPORT="$LONG" $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
        --projects-root "$PROJ" --run run-test-cut3 --lane CU3 --class verifier --grant "$F/granted" \
        --record "$F/rec-cut3.jsonl" --report-words 5 --reason '(a) the report cut' 2>&1)
 if printf '%s\n' "$SHORT" | grep -q '(9 of 9 words shown; full text: ' \
@@ -1835,7 +1885,7 @@ else no "report cut controls  [$(printf '%s\n' "$SHORT" | grep 'words shown') / 
 
 # the silence watch -----------------------------------------------------------------------------
 START=$(date +%s)
-env STUB_SLEEP_AFTER=20 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_SLEEP_AFTER=20 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-st1 --lane S1 --class verifier --grant "$F/granted" \
   --silence-s 2 --poll-s 1 --record "$F/rec-st1.jsonl" --reason '(a) a silent lane' >/dev/null 2>&1
 RC=$?; ELAPSED=$(( $(date +%s) - START ))
@@ -1844,7 +1894,7 @@ if [ "$RC" = 5 ] && grep -q '"event": "stall"' "$F/rec-st1.jsonl" && grep -q '"r
    && [ "$ELAPSED" -lt 15 ]; then
   ok "a lane silent past --silence-s is killed: stall event, exit_class stall, exit 5 (${ELAPSED}s against a 20 s sleep)"
 else no "the silence watch  [exit $RC, ${ELAPSED}s, $(grep -o '"event": "[a-z-]*"' "$F/rec-st1.jsonl" | tr '\n' ' ')]"; fi
-env STUB_SLEEP_AFTER=5 STUB_PROGRESS=1 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_SLEEP_AFTER=5 STUB_PROGRESS=1 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-st2 --lane S2 --class verifier --grant "$F/granted" \
   --silence-s 2 --poll-s 1 --record "$F/rec-st2.jsonl" --reason '(a) control: a progress file' >/dev/null 2>&1
 RC=$?
@@ -1853,14 +1903,14 @@ if [ "$RC" = 0 ] && ! grep -q '"event": "stall"' "$F/rec-st2.jsonl" && [ -s "$F/
   ok "a lane that appends to its progress file through a 5 s silence is not stalled at a 2 s threshold (control; the path reaches the lane as LLM_WIKI_LANE_PROGRESS)"
 else no "the progress-file liveness  [exit $RC, progress file: $(wc -l < "$F/progress/run-test-st2-S2.progress" 2>&1) lines]"; fi
 START=$(date +%s)
-env STUB_SLEEP=20 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_SLEEP=20 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-st3 --lane S3 --class verifier --grant "$F/granted" \
   --silence-s 30 --poll-s 1 --no-transcript-s 2 --record "$F/rec-st3.jsonl" --reason '(a) no transcript' >/dev/null 2>&1
 RC=$?; ELAPSED=$(( $(date +%s) - START ))
 if [ "$RC" = 3 ] && grep -q '"reason": "no transcript"' "$F/rec-st3.jsonl" && [ "$ELAPSED" -lt 15 ]; then
   ok "no transcript within --no-transcript-s is a stall of reason 'no transcript' (${ELAPSED}s)"
 else no "the no-transcript stall  [exit $RC, ${ELAPSED}s]"; fi
-env STUB_SLEEP_AFTER=4 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_SLEEP_AFTER=4 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-st4 --lane S4 --class verifier --grant "$F/granted" \
   --silence-s 0 --poll-s 1 --no-transcript-s 1 --record "$F/rec-st4.jsonl" --reason '(a) --silence-s 0' >/dev/null 2>&1
 RC=$?
@@ -1923,7 +1973,7 @@ cdspawn --run run-test-cd --lane CDV --class verifier --reason '(a) class defaul
 eq "class default: a verifier spawn keeps 900 s (control: the longer default belongs to the four classes alone; exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDV lane-open)" "0|900|class default for verifier"
 cdspawn --run run-test-cd --lane CDW6 --class writer --silence-s 600 --reason '(a) class default: writer, explicit' >/dev/null 2>&1; RC=$?
 eq "class default: a writer with --silence-s 600 resolves 600, the flag named as the source (exit $RC)" "$RC|$(cdsrc "$F/rec-cd.jsonl" CDW6 lane-open)" "0|600.0|--silence-s"
-env STUB_SLEEP_AFTER=4 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$F/routing-cd.json" --brief "$F/brief.md" \
+env STUB_SLEEP_AFTER=4 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$F/routing-cd.json" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-cd --lane CDW0 --class writer --grant "$F/granted" \
   --silence-s 0 --poll-s 1 --no-transcript-s 1 --record "$F/rec-cd.jsonl" --reason '(a) class default: writer, watch off' >/dev/null 2>&1; RC=$?
 if [ "$RC" = 0 ] && [ "$(cdsrc "$F/rec-cd.jsonl" CDW0 lane-open)" = "0|--silence-s 0 (watch disabled)" ] \
@@ -1988,7 +2038,7 @@ OUT=$($LANEV "$PY" "$LANE" watch --run run-test-b --lane L2 --record "$F/rec-b.j
 if [ "$RC" = 2 ] && printf '%s' "$OUT" | grep -q 'already closed' && printf '%s' "$OUT" | grep -q '^lane run-test-b/L2: '; then
   ok "watch: an already-closed lane is refused (exit 2) after its summary line"
 else no "watch on a closed lane  [exit $RC: $OUT]"; fi
-env STUB_SLEEP_AFTER=6 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_SLEEP_AFTER=6 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-w1 --lane W1 --class verifier --grant "$F/granted" \
   --silence-s 0 --record "$F/rec-w1.jsonl" --reason '(a) watched to its close' >/dev/null 2>&1 &
 SP=$!
@@ -2000,7 +2050,7 @@ if [ "$RC" = 0 ] && printf '%s\n' "$WOUT" | grep -q '^lane run-test-w1/W1: .* co
    && [ "$(events "$F/rec-w1.jsonl" lane-closed)" = 1 ]; then
   ok "watch: a running lane that closes on its own returns 0 with the summary line, and no second close is written"
 else no "watch to a natural close  [exit $RC: $(printf '%s' "$WOUT" | head -2 | tr '\n' ' ')]"; fi
-env STUB_SLEEP_AFTER=8 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_SLEEP_AFTER=8 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-w2 --lane W2 --class verifier --grant "$F/granted" \
   --silence-s 0 --record "$F/rec-w2.jsonl" --reason '(a) still running' >/dev/null 2>&1 &
 SP=$!
@@ -2011,7 +2061,7 @@ wait "$SP"
 if [ "$RC" = 8 ] && printf '%s' "$WOUT" | grep -q 'still-running'; then
   ok "watch: --max-wait-s returns still-running (exit 8) so the head can re-issue a bounded blocking call"
 else no "watch --max-wait-s  [exit $RC: $WOUT]"; fi
-env STUB_SLEEP_AFTER=30 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_SLEEP_AFTER=30 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-ws --lane WS --class verifier --grant "$F/granted" \
   --silence-s 0 --record "$F/rec-ws.jsonl" --reason '(a) stalled by watch' >/dev/null 2>&1 &
 SP=$!
@@ -2701,19 +2751,52 @@ if [ "$RC" = 0 ] && [ "$RNSN" = '"(d) the override for an older record"' ] \
 else no "resume with the override  [exit $RC, reason $RNSN, src $(recfield "$F/rec-rn.jsonl" lane-resumed reason_src)]"; fi
 
 # the per-call pick (owner ruling 2026-09-07 17:0x; built 2026-09-08) ----------------------------
-# Under `auto` the row default is the ANCHOR: a departure on either axis needs --choice-reason, and
-# the refusal comes before any record line, --dry-run included; a hand-set preset records
-# `throttle <name>` or `explicit` and never asks. Every field below is read by a json parse of the
-# record (recfield), never a grep. The fixture table's builder anchor is opus·xhigh; the resumed
-# leg above pins the verifier's effort as xhigh for the same reason (both moved 2026-09-08).
-pkspawn(){ spawn --class builder --write "$F/writable" "$@"; }
+# Every start names its pick (owner ruling 2026-11-20, "Guided judgement": every pick names its
+# option and its reason in one clause, the default included): a --choice-reason that is absent,
+# empty or only whitespace is refused under every throttle, the row's default and the hand-set
+# presets included, before any record line, --dry-run and --detach included. Under `auto` the row
+# default is the ANCHOR and a departure keeps its own message; a hand-set preset records
+# `throttle <name>` or `explicit`. Every field below is read by a json parse of the record
+# (recfield), never a grep. The fixture table's builder anchor is opus·xhigh; the resumed leg above
+# pins the verifier's effort as xhigh for the same reason (both moved 2026-09-08). pkspawn carries
+# no --choice-reason of its own (the shared spawn helper does), so a refusal leg below tests a
+# reason truly absent; each leg that must go through passes its own.
+pkspawn(){ $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+           --projects-root "$PROJ" --class builder --write "$F/writable" "$@"; }
 pkf(){ recfield "$F/rec-$1.jsonl" "$2" "$3"; }
-pkspawn --run run-test-pk --lane PK1 --throttle auto --record "$F/rec-pk1.jsonl" --reason '(a) pick: no override' >/dev/null 2>&1; RC=$?
-if [ "$RC" = 0 ] && [ "$(pkf pk1 lane-open model_src)" = '"anchor"' ] && [ "$(pkf pk1 lane-open effort_src)" = '"anchor"' ] \
-   && [ "$(pkf pk1 lane-open choice_reason)" = 'null' ] && [ "$(pkf pk1 lane-open throttle)" = '"auto"' ] \
-   && [ "$(pkf pk1 lane-open row_default)" = '{"effort": "xhigh", "model": "opus"}' ]; then
-  ok "auto, no override: model_src and effort_src read anchor, choice_reason null, row_default the anchor opus·xhigh"
-else no "auto anchor pick  [exit $RC: $(pkf pk1 lane-open model_src)/$(pkf pk1 lane-open effort_src)/$(pkf pk1 lane-open choice_reason)/$(pkf pk1 lane-open row_default)]"; fi
+haskey(){ # record, event, key -> yes when the LAST such event carries the key at all (null included)
+  "$PY" - "$1" "$2" "$3" <<'HASKEY_TERMINATOR'
+import json, sys
+found = "no"
+for line in open(sys.argv[1]):
+    try:
+        record = json.loads(line)
+    except ValueError:
+        continue
+    if record.get("event") == sys.argv[2]:
+        found = "yes" if sys.argv[3] in record else "no"
+print(found)
+HASKEY_TERMINATOR
+}
+pkgone(){ # lane -> the spawn destinations of run-test-pk that exist (none for a refused start)
+  for p in definition-$1.md appended-$1.md report-$1.md settings-$1.json in-$1 detached-$1.log; do
+    [ -e "$STORE/spawn-records/run-test-pk-$p" ] && printf '%s ' "$p"
+  done; :
+}
+NOREASON="no --choice-reason: every start names why this model and effort, the row's default included"
+ERR=$(pkspawn --run run-test-pk --lane PK1 --throttle auto --record "$F/rec-pk1.jsonl" --reason '(a) pick: no override, no reason' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "PROBE FAILED: $NOREASON (this start resolves to opus · xhigh under throttle auto)" \
+   && [ ! -e "$F/rec-pk1.jsonl" ] && [ -z "$(pkgone PK1)" ]; then
+  ok "NP-R01 (fails on old) auto, no override and no --choice-reason is refused: exit 2, the message names the flag and the pick it would get, no record file, no spawn destination"
+else no "NP-R01 the default with no reason  [exit $RC, record $([ -e "$F/rec-pk1.jsonl" ] && echo written || echo absent), left: $(pkgone PK1): $ERR]"; fi
+pkspawn --run run-test-pk --lane PK1R --throttle auto --choice-reason 'the anchor fits: a clear build checked by its suite' \
+        --record "$F/rec-pk1r.jsonl" --reason '(a) pick: no override, a reason' >/dev/null 2>&1; RC=$?
+if [ "$RC" = 0 ] && [ "$(pkf pk1r lane-open model_src)" = '"anchor"' ] && [ "$(pkf pk1r lane-open effort_src)" = '"anchor"' ] \
+   && [ "$(pkf pk1r lane-open choice_reason)" = '"the anchor fits: a clear build checked by its suite"' ] \
+   && [ "$(pkf pk1r lane-open throttle)" = '"auto"' ] && [ "$(pkf pk1r lane-open row_default)" = '{"effort": "xhigh", "model": "opus"}' ] \
+   && [ "$(haskey "$F/rec-pk1r.jsonl" lane-open work_kind)" = yes ] && [ "$(pkf pk1r lane-open work_kind)" = 'null' ]; then
+  ok "NP-A01 (fails on old) auto, no override, with a reason: model_src and effort_src read anchor, choice_reason the text, row_default opus·xhigh, work_kind present and null (control for NP-R01)"
+else no "NP-A01 the default with a reason  [exit $RC: $(pkf pk1r lane-open model_src)/$(pkf pk1r lane-open effort_src)/$(pkf pk1r lane-open choice_reason)/work_kind key $(haskey "$F/rec-pk1r.jsonl" lane-open work_kind)]"; fi
 pkspawn --run run-test-pk --lane PK2 --throttle auto --effort max --choice-reason 'design-heavy' \
         --record "$F/rec-pk2.jsonl" --reason '(a) pick: raised with a reason' >/dev/null 2>&1; RC=$?
 if [ "$RC" = 0 ] && [ "$(pkf pk2 lane-open effort_src)" = '"auto: design-heavy"' ] && [ "$(pkf pk2 lane-open model_src)" = '"anchor"' ] \
@@ -2731,10 +2814,15 @@ ERR=$(pkspawn --run run-test-pk --lane PK3 --throttle auto --effort max --choice
 if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- 'pass --choice-reason' && [ "$(wc -l < "$F/rec-pk2.jsonl" | tr -d ' ')" = "$PKN" ]; then
   ok "a whitespace-only --choice-reason is no reason: the same refusal, nothing recorded"
 else no "whitespace choice reason  [exit $RC: $ERR]"; fi
-pkspawn --run run-test-pk --lane PK4 --throttle auto --effort xhigh --record "$F/rec-pk4.jsonl" --reason '(a) pick: override equal to the anchor' >/dev/null 2>&1; RC=$?
-if [ "$RC" = 0 ] && [ "$(pkf pk4 lane-open effort_src)" = '"anchor"' ] && [ "$(pkf pk4 lane-open choice_reason)" = 'null' ]; then
-  ok "auto, --effort xhigh equal to the anchor needs no reason and reads anchor (control: the refusal is the departure's, not the flag's)"
-else no "auto override equal to the anchor  [exit $RC: $(pkf pk4 lane-open effort_src)]"; fi
+pkspawn --run run-test-pk --lane PK4 --throttle auto --effort xhigh --choice-reason 'xhigh named on purpose' --record "$F/rec-pk4.jsonl" --reason '(a) pick: override equal to the anchor' >/dev/null 2>&1; RC=$?
+if [ "$RC" = 0 ] && [ "$(pkf pk4 lane-open effort_src)" = '"anchor"' ] && [ "$(pkf pk4 lane-open choice_reason)" = '"xhigh named on purpose"' ]; then
+  ok "auto, --effort xhigh equal to the anchor with a reason reads anchor and keeps the reason (control for NP-R05)"
+else no "auto override equal to the anchor  [exit $RC: $(pkf pk4 lane-open effort_src)/$(pkf pk4 lane-open choice_reason)]"; fi
+ERR=$(pkspawn --run run-test-pk --lane PK4N --throttle auto --effort xhigh --record "$F/rec-pk4n.jsonl" --reason '(a) pick: equal to the anchor, no reason' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "$NOREASON (this start resolves to opus · xhigh under throttle auto)" \
+   && ! printf '%s' "$ERR" | grep -qF -- 'departs from the anchor' && [ ! -e "$F/rec-pk4n.jsonl" ] && [ -z "$(pkgone PK4N)" ]; then
+  ok "NP-R05 (fails on old) auto, --effort xhigh equal to the anchor with no reason is refused with the no-reason message, not the departure's"
+else no "NP-R05 equal to the anchor, no reason  [exit $RC: $ERR]"; fi
 ERR=$(pkspawn --run run-test-pk --lane PK5 --throttle auto --model fable --effort max --record "$F/rec-pk5.jsonl" --reason '(a) pick: both depart' 2>&1); RC=$?
 if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- '--model fable departs from the anchor opus and --effort max departs from the anchor xhigh under throttle auto; pass --choice-reason' \
    && [ ! -e "$F/rec-pk5.jsonl" ]; then
@@ -2745,15 +2833,21 @@ if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- 'PROBE FAILED: --effort hig
    && [ ! -e "$F/rec-pkb.jsonl" ]; then
   ok "PK10 auto, --effort high BELOW the xhigh anchor with no --choice-reason is refused: exit 2, the message names the value and the anchor, no record file (register 2026-09-08, spawn records)"
 else no "PK10 auto below-anchor departure  [exit $RC, record $([ -e "$F/rec-pkb.jsonl" ] && echo written || echo absent): $ERR]"; fi
-pkspawn --run run-test-pk --lane PK6 --throttle default --record "$F/rec-pk6.jsonl" --reason '(a) pick: hand-set, no override' >/dev/null 2>&1; RC=$?
-if [ "$RC" = 0 ] && [ "$(pkf pk6 lane-open model_src)" = '"throttle default"' ] && [ "$(pkf pk6 lane-open effort_src)" = '"throttle default"' ]; then
-  ok "throttle default, no override: both sources read throttle default"
-else no "hand-set, no override  [exit $RC: $(pkf pk6 lane-open model_src)/$(pkf pk6 lane-open effort_src)]"; fi
-pkspawn --run run-test-pk --lane PK7 --throttle default --effort max --record "$F/rec-pk7.jsonl" --reason '(a) pick: hand-set, departure' >/dev/null 2>&1; RC=$?
-if [ "$RC" = 0 ] && [ "$(pkf pk7 lane-open effort_src)" = '"explicit"' ] && [ "$(pkf pk7 lane-open model_src)" = '"throttle default"' ] \
-   && [ "$(pkf pk7 lane-open choice_reason)" = 'null' ]; then
-  ok "throttle default, --effort max: effort_src explicit, choice_reason null, no refusal (a hand-set preset never asks)"
-else no "hand-set departure  [exit $RC: $(pkf pk7 lane-open effort_src)/$(pkf pk7 lane-open choice_reason)]"; fi
+pkspawn --run run-test-pk --lane PK6 --throttle default --choice-reason 'the preset value fits' --record "$F/rec-pk6.jsonl" --reason '(a) pick: hand-set, no override' >/dev/null 2>&1; RC=$?
+if [ "$RC" = 0 ] && [ "$(pkf pk6 lane-open model_src)" = '"throttle default"' ] && [ "$(pkf pk6 lane-open effort_src)" = '"throttle default"' ] \
+   && [ "$(pkf pk6 lane-open choice_reason)" = '"the preset value fits"' ]; then
+  ok "NP-A04 throttle default, no override, with a reason: both sources read throttle default and the reason is recorded (control for NP-R06)"
+else no "NP-A04 hand-set, no override  [exit $RC: $(pkf pk6 lane-open model_src)/$(pkf pk6 lane-open effort_src)/$(pkf pk6 lane-open choice_reason)]"; fi
+ERR=$(pkspawn --run run-test-pk --lane PK6N --throttle default --record "$F/rec-pk6n.jsonl" --reason '(a) pick: hand-set, no reason' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "$NOREASON (this start resolves to opus · xhigh under throttle default)" \
+   && [ ! -e "$F/rec-pk6n.jsonl" ] && [ -z "$(pkgone PK6N)" ]; then
+  ok "NP-R06 (fails on old) a hand-set preset (default), no override and no reason, is refused: every throttle asks"
+else no "NP-R06 a preset with no reason  [exit $RC: $ERR]"; fi
+ERR=$(pkspawn --run run-test-pk --lane PK7 --throttle default --effort max --record "$F/rec-pk7.jsonl" --reason '(a) pick: hand-set, departure, no reason' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "$NOREASON (this start resolves to opus · max under throttle default)" \
+   && [ ! -e "$F/rec-pk7.jsonl" ] && [ -z "$(pkgone PK7)" ]; then
+  ok "NP-R07 (fails on old) throttle default, --effort max with no reason is refused (a departure under a preset now asks too; PK8 below is its control)"
+else no "NP-R07 a preset departure with no reason  [exit $RC: $ERR]"; fi
 pkspawn --run run-test-pk --lane PK8 --throttle default --effort max --choice-reason 'design-heavy' --record "$F/rec-pk8.jsonl" --reason '(a) pick: hand-set with a reason' >/dev/null 2>&1; RC=$?
 if [ "$RC" = 0 ] && [ "$(pkf pk8 lane-open effort_src)" = '"explicit"' ] && [ "$(pkf pk8 lane-open choice_reason)" = '"design-heavy"' ]; then
   ok "throttle default with --choice-reason: the text is recorded beside explicit"
@@ -2765,7 +2859,7 @@ else no "auto out of range  [exit $RC: $(pkf pk9 lane-open model_src)/$(pkf pk9 
 RS=$($LANEV "$PY" "$LANE" resume --run run-test-pk --lane PK2 --brief "$F/brief-follow.md" --record "$F/rec-pk2.jsonl" --home "$LHOME" 2>&1); RC=$?
 if [ "$RC" = 0 ] && [ "$(pkf pk2 lane-resumed model_src)" = '"anchor"' ] && [ "$(pkf pk2 lane-resumed effort_src)" = '"auto: design-heavy"' ] \
    && [ "$(pkf pk2 lane-resumed choice_reason)" = '"design-heavy"' ] && [ "$(argafter --effort)" = max ]; then
-  ok "resume copies model_src, effort_src and choice_reason from the lane-open onto lane-resumed and re-uses the pick (no new pick)"
+  ok "resume copies model_src, effort_src and choice_reason from the lane-open onto lane-resumed and re-uses the pick (no new pick without --effort)"
 else no "resume pick carry-forward  [exit $RC: $(pkf pk2 lane-resumed model_src)/$(pkf pk2 lane-resumed effort_src)/$(pkf pk2 lane-resumed choice_reason): $(printf '%s' "$RS" | head -2 | tr '\n' ' ')]"; fi
 # An older record: a separately named fixture with the pick fields dropped from its lane-open and the resume
 # above removed, as every record written before 2026-09-08 reads.
@@ -2807,18 +2901,346 @@ if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- 'pass --choice-reason' && !
 else no "--dry-run refusal  [exit $RC: $(printf '%s' "$ERR" | head -2 | tr '\n' ' ')]"; fi
 mkvault "$F/vault-nothr" '- **delegation**: single — the fixture regime'
 printf '## Settings\n- **breadth**: standard\n- **delegation**: single — the fixture regime\n' > "$F/vault-nothr/CUSTOMISATION.md"
-$LANEV CLAUDE_PROJECT_DIR="$F/vault-nothr" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+$LANEV CLAUDE_PROJECT_DIR="$F/vault-nothr" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
   --run run-test-pk --lane PKF --class builder --write "$F/writable" --record "$F/rec-pkf.jsonl" --reason '(a) pick: no Settings line' >/dev/null 2>&1; RC=$?
 if [ "$RC" = 0 ] && [ "$(pkf pkf lane-open throttle)" = '"auto"' ] && [ "$(pkf pkf lane-open model_src)" = '"anchor"' ] && [ "$(pkf pkf lane-open throttle_note)" = 'null' ]; then
   ok "a vault with no throttle line spawns under auto, the default preset, with no note (the fallback moved from default on 2026-09-08)"
 else no "the auto fallback  [exit $RC: $(pkf pkf lane-open throttle)/$(pkf pkf lane-open model_src)/$(pkf pkf lane-open throttle_note)]"; fi
-pkspawn --run run-test-pk --lane PKU --throttle turbo --record "$F/rec-pku.jsonl" --reason '(a) pick: unknown throttle' >/dev/null 2>&1; RC=$?
+pkspawn --run run-test-pk --lane PKU --throttle turbo --choice-reason 'fixture pick' --record "$F/rec-pku.jsonl" --reason '(a) pick: unknown throttle' >/dev/null 2>&1; RC=$?
 if [ "$RC" = 0 ] && [ "$(pkf pku lane-open throttle)" = '"auto"' ] && printf '%s' "$(pkf pku lane-open throttle_note)" | grep -qF 'treated as `auto`'; then
   ok "an unknown throttle name is treated as auto and the record's throttle_note says so (control: the fallback leg above carries no note)"
 else no "unknown throttle  [exit $RC: $(pkf pku lane-open throttle)/$(pkf pku lane-open throttle_note)]"; fi
+ERR=$(pkspawn --run run-test-pk --lane PKUN --throttle turbo --record "$F/rec-pkun.jsonl" --reason '(a) pick: unknown throttle, no reason' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "$NOREASON (this start resolves to opus · xhigh under throttle auto)" \
+   && printf '%s' "$ERR" | grep -qF -- "unknown throttle 'turbo', treated as \`auto\`" && [ ! -e "$F/rec-pkun.jsonl" ]; then
+  ok "NP-R08 (fails on old) an unknown throttle read as auto, with no reason, is refused; the throttle note still shows on stderr"
+else no "NP-R08 unknown throttle, no reason  [exit $RC: $ERR]"; fi
+# NP-R04: a reason of only whitespace (spaces; a tab and a newline; U+00A0 alone) with no departure.
+WSB=$(printf '\t\n_'); WSB=${WSB%_}; NBSP=$(printf '\302\240'); WSN=0; WSOK=0
+for ws in '   ' "$WSB" "$NBSP"; do
+  WSN=$((WSN + 1))
+  ERR=$(pkspawn --run run-test-pk --lane "PKW$WSN" --throttle auto --choice-reason "$ws" --record "$F/rec-pkw.jsonl" \
+        --reason '(a) pick: whitespace reason, no departure' 2>&1); RC=$?
+  if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "$NOREASON" && [ ! -e "$F/rec-pkw.jsonl" ]; then WSOK=$((WSOK + 1)); fi
+done
+if [ "$WSOK" = 3 ]; then
+  ok "NP-R04 (fails on old) a --choice-reason of spaces, of a tab and a newline, or of U+00A0 alone, with no departure, is no reason: 3 of 3 refused, nothing recorded"
+else no "NP-R04 whitespace reasons  [$WSOK of 3 refused: $ERR]"; fi
+ERR=$(pkspawn --run run-test-pk --lane PKD2 --throttle auto --record "$F/rec-pkd2.jsonl" --dry-run --reason '(a) pick: dry run, no reason' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "$NOREASON" && ! printf '%s\n' "$ERR" | grep -q '^command:' \
+   && [ ! -e "$F/rec-pkd2.jsonl" ] && [ ! -e "$F/rec-pkd2.jsonl.a3" ]; then
+  ok "NP-R02 (fails on old) --dry-run with no reason is refused before it prints anything, and writes nothing (no record, no lifetime gate)"
+else no "NP-R02 dry run, no reason  [exit $RC: $(printf '%s' "$ERR" | head -2 | tr '\n' ' ')]"; fi
+ERR=$(pkspawn --run run-test-pk --lane PKDW --throttle auto --record "$F/rec-pkdw.jsonl" --detach --no-wait --reason '(a) pick: detached, no reason' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "$NOREASON" && ! printf '%s' "$ERR" | grep -q 'detached pid' \
+   && [ ! -e "$F/rec-pkdw.jsonl" ] && [ ! -e "$F/rec-pkdw.jsonl.a3" ] && [ -z "$(pkgone PKDW)" ]; then
+  ok "NP-R03 (fails on old) --detach --no-wait with no reason is refused in the caller: no worker, no detach log, no record"
+else no "NP-R03 detached, no reason  [exit $RC: $(printf '%s' "$ERR" | head -2 | tr '\n' ' '), left: $(pkgone PKDW)]"; fi
+ERR=$(pkspawn --run run-test-pk --lane PKK --throttle auto --work-kind closed --choice-reason 'fixture pick' --record "$F/rec-pkk.jsonl" --reason '(a) pick: a kind outside the two' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "invalid choice: 'closed'" && [ ! -e "$F/rec-pkk.jsonl" ]; then
+  ok "NP-R10 (fails on old) --work-kind outside checkable and open is refused by the argument parser, nothing recorded"
+else no "NP-R10 a kind outside the two  [exit $RC: $(printf '%s' "$ERR" | tail -1)]"; fi
+ERR=$(pkspawn --run run-test-pk --lane PKO --throttle auto --record "$F/rec-pko.jsonl" 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- 'carries no instrument-rule letter' && ! printf '%s' "$ERR" | grep -qF -- "$NOREASON" \
+   && [ ! -e "$F/rec-pko.jsonl" ]; then
+  ok "NP-R11 with neither --reason nor --choice-reason, the --reason refusal comes first, as before this change"
+else no "NP-R11 the order of the two refusals  [exit $RC: $ERR]"; fi
+pkspawn --run run-test-pk --lane PKC --throttle auto --work-kind checkable --choice-reason 'a clear build checked by its suite' \
+        --record "$F/rec-pkc.jsonl" --reason '(a) pick: a checkable job' >/dev/null 2>&1; RC=$?
+if [ "$RC" = 0 ] && [ "$(pkf pkc lane-open work_kind)" = '"checkable"' ] && [ "$(pkf pkc lane-open effort)" = '"xhigh"' ] \
+   && [ "$(pkf pkc lane-open model)" = '"opus"' ] && [ "$(pkf pkc lane-open effort_src)" = '"anchor"' ] && [ "$(argafter --effort)" = xhigh ]; then
+  ok "NP-A02 (fails on old) --work-kind checkable is recorded as work_kind and changes no pick: opus·xhigh, effort_src anchor, the stub saw --effort xhigh"
+else no "NP-A02 a checkable kind  [exit $RC: $(pkf pkc lane-open work_kind)/$(pkf pkc lane-open effort)/$(pkf pkc lane-open effort_src)]"; fi
+pkspawn --run run-test-pk --lane PKP --throttle auto --work-kind open --effort max --choice-reason 'design of a guard' \
+        --record "$F/rec-pkp.jsonl" --reason '(a) pick: an open job' >/dev/null 2>&1; RC=$?
+if [ "$RC" = 0 ] && [ "$(pkf pkp lane-open work_kind)" = '"open"' ] && [ "$(pkf pkp lane-open effort_src)" = '"auto: design of a guard"' ] \
+   && [ "$(pkf pkp lane-open choice_reason)" = '"design of a guard"' ]; then
+  ok "NP-A03 (fails on old) --work-kind open beside a reasoned departure: work_kind open, effort_src auto: design of a guard"
+else no "NP-A03 an open kind  [exit $RC: $(pkf pkp lane-open work_kind)/$(pkf pkp lane-open effort_src)]"; fi
+DRY=$(pkspawn --run run-test-pk --lane PKPD --throttle auto --work-kind open --effort max --choice-reason 'design of a guard' \
+      --record "$F/rec-pkpd.jsonl" --dry-run --reason '(a) pick: an open job, dry run' 2>&1); RC=$?
+if [ "$RC" = 0 ] && printf '%s\n' "$DRY" | grep -qx 'choice_reason: design of a guard' && printf '%s' "$DRY" | grep -qF '"work_kind": "open"' \
+   && [ ! -e "$F/rec-pkpd.jsonl" ]; then
+  ok "NP-A05 (fails on old) --dry-run with a reason and a kind prints choice_reason and a record line carrying work_kind open, and writes nothing"
+else no "NP-A05 dry run with a kind  [exit $RC: $(printf '%s\n' "$DRY" | grep -E '^choice_reason|work_kind' | head -2 | tr '\n' ' ')]"; fi
+# NP-A09: the reason and the kind never enter config_sha256, the hash a held-lane beat must match. Three
+# dry runs of one lane: two differ only in the reason's text and the kind and must hash alike; the
+# control differs in --effort, which is on the command line, and must hash differently.
+cfghash(){ printf '%s\n' "$1" | "$PY" -c 'import json,sys
+lines = sys.stdin.read().split("\n")
+for i, line in enumerate(lines):
+    if line.startswith("record line ("):
+        print(json.loads(lines[i + 1]).get("config_sha256")); break
+else:
+    print("none")'; }
+H1=$(cfghash "$(pkspawn --run run-test-pk --lane PKH --throttle auto --choice-reason 'one reason' --record "$F/rec-pkh.jsonl" --dry-run --reason '(a) pick: hash one' 2>&1)")
+H2=$(cfghash "$(pkspawn --run run-test-pk --lane PKH --throttle auto --choice-reason 'another reason entirely' --work-kind open --record "$F/rec-pkh.jsonl" --dry-run --reason '(a) pick: hash one' 2>&1)")
+H3=$(cfghash "$(pkspawn --run run-test-pk --lane PKH --throttle auto --effort max --choice-reason 'one reason' --record "$F/rec-pkh.jsonl" --dry-run --reason '(a) pick: hash one' 2>&1)")
+if [ "$H1" != none ] && [ "$H1" = "$H2" ] && [ "$H3" != none ] && [ "$H1" != "$H3" ]; then
+  ok "NP-A09 (fails on old) the reason's text and the kind leave config_sha256 unchanged, so a held-lane beat still matches (control: a different --effort changes it)"
+else no "NP-A09 the configuration hash  [$H1 / $H2 / control $H3]"; fi
+
+# A resume's own pick (2026-11-21; the agreed way of working sends a review's findings back to the
+# helper that made the work, one rung higher after a review that failed on depth): `--effort` raises
+# the effort by exactly one rung with --choice-reason, `--late` resumes past the cache window with
+# --choice-reason, and every other resume is as before. PK1R is an opus·xhigh builder lane (above).
+rsm(){ # lane, record, more flags -> a resume of a run-test-pk lane with the follow-up brief
+  rl=$1; rr=$2; shift 2
+  $LANEV "$PY" "$LANE" resume --run run-test-pk --lane "$rl" --brief "$F/brief-follow.md" --record "$rr" --home "$LHOME" "$@"
+}
+RSN=$(events "$F/rec-pk1r.jsonl" lane-resumed)
+ERR=$(rsm PK1R "$F/rec-pk1r.jsonl" --effort max 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- '--effort on a resume needs --choice-reason' && [ "$(events "$F/rec-pk1r.jsonl" lane-resumed)" = "$RSN" ]; then
+  ok "NP-E01 (fails on old) resume --effort max with no --choice-reason is refused, exit 2, no lane-resumed line"
+else no "NP-E01 a raise with no reason  [exit $RC: $ERR]"; fi
+RSE=""
+for bad in high:'is not above the lane'"'"'s recorded effort xhigh' xhigh:'is not above the lane'"'"'s recorded effort xhigh' ultra:'is not an effort in the routing table'"'"'s order.effort'; do
+  ERR=$(rsm PK1R "$F/rec-pk1r.jsonl" --effort "${bad%%:*}" --choice-reason 'fixture pick' 2>&1); RC=$?
+  if [ "$RC" != 2 ] || ! printf '%s' "$ERR" | grep -qF -- "${bad#*:}"; then RSE="$RSE ${bad%%:*}: exit $RC $(printf '%s' "$ERR" | tail -1);"; fi
+done
+if [ -z "$RSE" ] && [ "$(events "$F/rec-pk1r.jsonl" lane-resumed)" = "$RSN" ]; then
+  ok "NP-E02/E03/E05 (fail on old) resume --effort lower (high), the same (xhigh) or outside the order (ultra), with a reason, is refused, exit 2, nothing recorded"
+else no "NP-E02/E03/E05 the refused rungs  [$RSE]"; fi
+pkspawn --run run-test-pk --lane PKLO --throttle auto --effort high --choice-reason 'a closed one-leg task' --record "$F/rec-pklo.jsonl" --reason '(a) pick: a high lane' >/dev/null 2>&1
+ERR=$(rsm PKLO "$F/rec-pklo.jsonl" --effort max --choice-reason 'fixture pick' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- 'is 2 rungs above the lane'"'"'s recorded effort high: a resume raises it by exactly one rung (xhigh)' \
+   && [ "$(events "$F/rec-pklo.jsonl" lane-resumed)" = 0 ]; then
+  ok "NP-E04 (fails on old) resume --effort max on a high lane (two rungs) is refused and names the one rung, xhigh"
+else no "NP-E04 two rungs  [exit $RC: $ERR]"; fi
+ERR=$(rsm PK1R "$F/rec-pk1r.jsonl" --model sonnet 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- 'unrecognized arguments: --model sonnet' && [ "$(events "$F/rec-pk1r.jsonl" lane-resumed)" = "$RSN" ]; then
+  ok "NP-E06 a model change on a resume stays refused by the parser (resume takes no --model), nothing recorded"
+else no "NP-E06 a model change  [exit $RC: $ERR]"; fi
+ERR=$(rsm PK1R "$F/rec-pk1r.jsonl" --choice-reason 'fixture pick' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- '--choice-reason on a resume goes with --effort or --late' && [ "$(events "$F/rec-pk1r.jsonl" lane-resumed)" = "$RSN" ]; then
+  ok "NP-E07 (fails on old) --choice-reason alone on a resume is refused: a reason is never recorded where nothing reads it"
+else no "NP-E07 a reason alone  [exit $RC: $ERR]"; fi
+ERR=$($LANEV "$PY" "$LANE" resume --run run-test-pk --lane PK1R --record "$F/rec-pk1r.jsonl" --home "$LHOME" --beat --effort max --choice-reason 'fixture pick' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- '--beat takes no --effort, --late or --choice-reason' && [ "$(events "$F/rec-pk1r.jsonl" hold-beat)" = 0 ]; then
+  ok "NP-E08 (fails on old) --beat with --effort is refused: a beat carries the spawn's configuration byte for byte"
+else no "NP-E08 a beat with a raise  [exit $RC: $ERR]"; fi
+RS=$(rsm PK1R "$F/rec-pk1r.jsonl" --effort max --choice-reason 'the review failed on depth' 2>&1); RC=$?
+if [ "$RC" = 0 ] && [ "$(pkf pk1r lane-resumed effort)" = '"max"' ] && [ "$(pkf pk1r lane-resumed effort_src)" = '"resume: the review failed on depth"' ] \
+   && [ "$(pkf pk1r lane-resumed choice_reason)" = '"the review failed on depth"' ] && [ "$(pkf pk1r lane-resumed config_match)" = false ] \
+   && [ "$(argafter --effort)" = max ]; then
+  ok "NP-E09 (fails on old) resume --effort max with a reason on an xhigh lane runs at max: lane-resumed records effort max, effort_src resume: <reason>, the reason, config_match false"
+else no "NP-E09 the raise  [exit $RC: $(pkf pk1r lane-resumed effort)/$(pkf pk1r lane-resumed effort_src)/$(pkf pk1r lane-resumed config_match): $(printf '%s' "$RS" | head -2 | tr '\n' ' ')]"; fi
+RS=$(rsm PK1R "$F/rec-pk1r.jsonl" 2>&1); RC=$?
+if [ "$RC" = 0 ] && [ "$(argafter --effort)" = max ] && [ "$(pkf pk1r lane-resumed effort)" = '"max"' ] \
+   && [ "$(pkf pk1r lane-resumed effort_src)" = '"resume: the review failed on depth"' ]; then
+  ok "NP-E10 (fails on old) a later resume without --effort keeps the raised effort (max) and copies its source, never dropping back to the lane-open's xhigh"
+else no "NP-E10 the next resume  [exit $RC: effort $(argafter --effort), $(pkf pk1r lane-resumed effort)/$(pkf pk1r lane-resumed effort_src)]"; fi
+if [ "$(haskey "$F/rec-pk2.jsonl" lane-resumed effort)" = no ] && [ "$(haskey "$F/rec-pk2.jsonl" lane-resumed effort_src)" = yes ]; then
+  ok "NP-E11 a plain resume of a lane never raised writes no effort key on lane-resumed, as before (control: effort_src is there)"
+else no "NP-E11 the plain resume's fields  [effort key $(haskey "$F/rec-pk2.jsonl" lane-resumed effort)]"; fi
+# --late: lane L2 with its close moved 2 h back (agedclose, above), from rec-comp, the copy made before
+# the beat legs added successful beats to rec-b (a beat after the close would be the last call).
+agedclose "$F/rec-comp.jsonl" "$F/rec-late.jsonl" completed
+LRN=$(events "$F/rec-late.jsonl" lane-resumed); LBN=$(events "$F/rec-late.jsonl" hold-beat)
+lrs(){ # run, record, more flags -> a resume of lane L2
+  lr=$1; lrec=$2; shift 2
+  $LANEV "$PY" "$LANE" resume --run "$lr" --lane L2 --brief "$F/brief-follow.md" --record "$lrec" --home "$LHOME" "$@"
+}
+ERR=$(lrs run-test-late "$F/rec-late.jsonl" 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q 'resume window' && printf '%s' "$ERR" | grep -qF -- '--late and --choice-reason' \
+   && [ "$(events "$F/rec-late.jsonl" lane-resumed)" = "$LRN" ]; then
+  ok "NP-L01 (fails on old) a completed close 2 h old without --late is still refused, and the message names --late"
+else no "NP-L01 the window refusal  [exit $RC: $ERR]"; fi
+ERR=$(lrs run-test-late "$F/rec-late.jsonl" --late 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- '--late on a resume needs --choice-reason' && [ "$(events "$F/rec-late.jsonl" lane-resumed)" = "$LRN" ]; then
+  ok "NP-L02 (fails on old) --late with no --choice-reason is refused, nothing recorded"
+else no "NP-L02 late with no reason  [exit $RC: $ERR]"; fi
+agedclose "$F/rec-comp.jsonl" "$F/rec-latenots.jsonl" completed fixture-no-transcript
+ERR=$(lrs run-test-latenots "$F/rec-latenots.jsonl" --late --choice-reason 'fixture pick' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q 'the session cannot be re-entered' && ! printf '%s' "$ERR" | grep -q 'resume window' \
+   && [ "$(events "$F/rec-latenots.jsonl" lane-resumed)" = "$LRN" ]; then
+  ok "NP-L03 (fails on old) a late resume whose transcript is gone is refused by the transcript check, not waved through"
+else no "NP-L03 late with no transcript  [exit $RC: $ERR]"; fi
+ERR=$($LANEV "$PY" "$LANE" resume --run run-test-late --lane L2 --record "$F/rec-late.jsonl" --home "$LHOME" --beat --late --choice-reason 'fixture pick' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- '--beat takes no --effort, --late or --choice-reason' && [ "$(events "$F/rec-late.jsonl" hold-beat)" = "$LBN" ]; then
+  ok "NP-L06 (fails on old) --beat with --late is refused"
+else no "NP-L06 a beat with late  [exit $RC: $ERR]"; fi
+RS=$(lrs run-test-late "$F/rec-late.jsonl" --late --choice-reason 'a late resume re-reads less than a fresh helper' 2>"$F/late4.err"); RC=$?
+LAGE=$(recfield "$F/rec-late.jsonl" lane-resumed age_s | cut -d. -f1)
+if [ "$RC" = 0 ] && grep -qF -- 'passed by --late' "$F/late4.err" && grep -qF -- 'written again' "$F/late4.err" \
+   && ! printf '%s' "$RS" | grep -qF -- 'passed by --late' \
+   && [ "$(recfield "$F/rec-late.jsonl" lane-resumed late)" = true ] \
+   && [ "$(recfield "$F/rec-late.jsonl" lane-resumed late_reason)" = '"a late resume re-reads less than a fresh helper"' ] \
+   && [ -n "$LAGE" ] && [ "$LAGE" -gt 3600 ]; then
+  ok "NP-L04 (fails on old) --late with a reason resumes a completed close 2 h old: the rewrite is named on stderr, never stdout, and lane-resumed records late, late_reason and age_s ($LAGE s)"
+else no "NP-L04 the late resume  [exit $RC, age $LAGE: stderr $(head -3 "$F/late4.err" | tr '\n' ' ') · stdout $(printf '%s' "$RS" | head -2 | tr '\n' ' ')]"; fi
+RS=$(rsm PK2 "$F/rec-pk2.jsonl" --late --choice-reason 'fixture pick' 2>"$F/late5.err"); RC=$?
+if [ "$RC" = 0 ] && [ "$(grep -cF -- '--late not needed: the last call is within the window' "$F/late5.err")" = 1 ] \
+   && ! printf '%s' "$RS" | grep -qF -- '--late not needed' \
+   && [ "$(haskey "$F/rec-pk2.jsonl" lane-resumed late)" = no ]; then
+  ok "NP-L05 (fails on old) --late within the window goes through with one note on stderr, never stdout, and records nothing extra"
+else no "NP-L05 late within the window  [exit $RC: stderr $(head -2 "$F/late5.err" | tr '\n' ' ') · stdout $(printf '%s' "$RS" | head -2 | tr '\n' ' ')]"; fi
+# Each refusal branch of the resume's own pick has a leg that fails when the branch is removed.
+recedit(){ # source record, destination, lane-open key=JSON-value... -> a copy with the lane's resumes dropped
+  "$PY" - "$@" <<'RECEDIT_TERMINATOR'
+import json, sys
+src, dst, pairs = sys.argv[1], sys.argv[2], sys.argv[3:]
+out = []
+for line in open(src):
+    if not line.strip():
+        continue
+    record = json.loads(line)
+    for key in ("pass_id", "close_id", "a3_record", "notice", "disposition"):
+        record.pop(key, None)     # an edited copy carries no A3 commit identity, as agedclose's
+    if record.get("event") == "lane-resumed":
+        continue                  # the lane-open is the latest pick again
+    if record.get("event") == "lane-open":
+        for pair in pairs:
+            key, _, value = pair.partition("=")
+            record[key] = json.loads(value)
+    out.append(record)
+with open(dst, "w") as handle:
+    for record in out:
+        handle.write(json.dumps(record) + "\n")
+RECEDIT_TERMINATOR
+}
+agedclose "$F/rec-comp.jsonl" "$F/rec-lateunp.jsonl" completed fixture-unparseable-l2
+mkdir -p "$PROJ/fixture-unparseable"
+printf '[]\nnull\n42\n' > "$PROJ/fixture-unparseable/fixture-unparseable-l2.jsonl"
+LUN=$(events "$F/rec-lateunp.jsonl" lane-resumed)
+ERR=$(lrs run-test-lateunp "$F/rec-lateunp.jsonl" --late --choice-reason 'fixture pick' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- 'unparseable transcript: no parseable session record' \
+   && [ "$(events "$F/rec-lateunp.jsonl" lane-resumed)" = "$LUN" ]; then
+  ok "NP-L07 a late resume whose transcript is present but holds no JSON object is refused by D29's check (control: NP-L04's good transcript goes through)"
+else no "NP-L07 late with an unparseable transcript  [exit $RC: $(printf '%s' "$ERR" | tail -2 | tr '\n' ' ')]"; fi
+agedclose "$F/rec-comp.jsonl" "$F/rec-latews.jsonl" completed
+LWN=$(events "$F/rec-latews.jsonl" lane-resumed)
+ERR=$(lrs run-test-latews "$F/rec-latews.jsonl" --late --choice-reason '   ' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- '--late on a resume needs --choice-reason' && [ "$(events "$F/rec-latews.jsonl" lane-resumed)" = "$LWN" ]; then
+  ok "NP-L08 --late with a whitespace-only --choice-reason is refused, nothing recorded"
+else no "NP-L08 late with a whitespace reason  [exit $RC: $(printf '%s' "$ERR" | tail -1)]"; fi
+P4N=$(events "$F/rec-pk4.jsonl" lane-resumed)
+ERR=$(rsm PK4 "$F/rec-pk4.jsonl" --effort max --choice-reason '   ' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- '--effort on a resume needs --choice-reason' && [ "$(events "$F/rec-pk4.jsonl" lane-resumed)" = "$P4N" ]; then
+  ok "NP-E12 --effort max with a whitespace-only --choice-reason on an xhigh lane is refused, nothing recorded"
+else no "NP-E12 a raise with a whitespace reason  [exit $RC: $(printf '%s' "$ERR" | tail -1)]"; fi
+pkspawn --run run-test-pk --lane PKLW --throttle auto --effort low --choice-reason 'a probe below the options' --record "$F/rec-pklw.jsonl" --reason '(a) pick: a lane below the options' >/dev/null 2>&1
+ERR=$(rsm PKLW "$F/rec-pklw.jsonl" --effort medium --choice-reason 'fixture pick' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "--effort medium is outside class \`builder\`'s effort options" \
+   && [ "$(events "$F/rec-pklw.jsonl" lane-resumed)" = 0 ] && [ "$(events "$F/rec-pklw.jsonl" lane-open)" = 1 ]; then
+  ok "NP-E13 a one-rung raise to a rung outside the class's options (low to medium on a builder) is refused, nothing recorded"
+else no "NP-E13 a rung outside the options  [exit $RC: $(printf '%s' "$ERR" | tail -1)]"; fi
+NPE=""
+for case in "routing_path=\"$F/no-such-routing.json\"|routing table unreadable|NP-E14" \
+            'class="zq-absent-class"|class `zq-absent-class` is not in the routing table|NP-E15' \
+            'effort="turbo"|the lane'"'"'s recorded effort '"'"'turbo'"'"' is not in the routing table'"'"'s order.effort|NP-E16'; do
+  edit=${case%%|*}; rest=${case#*|}; want=${rest%|*}; leg=${rest##*|}
+  recedit "$F/rec-pk1r.jsonl" "$F/rec-$leg.jsonl" "$edit"
+  # its own run id, so no earlier pass file of PK1R's stands in the way if the branch were gone
+  ERR=$($LANEV "$PY" "$LANE" resume --run "run-test-premise-$leg" --lane PK1R --brief "$F/brief-follow.md" --record "$F/rec-$leg.jsonl" \
+        --home "$LHOME" --effort max --choice-reason 'fixture pick' 2>&1); RC=$?
+  if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- "$want" && [ "$(events "$F/rec-$leg.jsonl" lane-resumed)" = 0 ]; then
+    ok "$leg a raise whose premise fails is refused, never guessed: ${edit%%=*} edited (${want})"
+  else no "$leg the raise's premise ${edit%%=*}  [exit $RC: $(printf '%s' "$ERR" | tail -1 | cut -c1-200)]"; fi
+done
+# The floor reads the throttle in force when the resume is made, as a start reads it, never the one
+# the lane opened under (the lead's decision HD-15, provisional): each fixture vault below carries
+# its own Settings line, so a resume can run under a throttle other than its lane-open's.
+thrvault(){ # vault dir, Settings throttle value ("" for no throttle line)
+  mkvault "$1" '- **delegation**: single — the fixture regime'
+  { printf '## Settings\n'; [ -n "$2" ] && printf '%s\n' "- **throttle**: $2"
+    printf '%s\n' '- **breadth**: standard' '- **delegation**: single — the fixture regime'; } > "$1/CUSTOMISATION.md"
+}
+rsmv(){ # vault, lane, record, more flags -> rsm with that vault's Settings line in force
+  rv=$1; rl=$2; rr=$3; shift 3
+  $LANEV CLAUDE_PROJECT_DIR="$rv" "$PY" "$LANE" resume --run run-test-pk --lane "$rl" --brief "$F/brief-follow.md" --record "$rr" --home "$LHOME" "$@"
+}
+PFL=""
+for thr in fast cheap-fast; do
+  thrvault "$F/vault-thr-$thr" "$thr"
+  pkspawn --run run-test-pk --lane "PKFL-$thr" --throttle "$thr" --choice-reason 'the preset value' --record "$F/rec-pkfl-$thr.jsonl" --reason '(a) pick: a lane under a floor preset' >/dev/null 2>&1
+  ERR=$(rsmv "$F/vault-thr-$thr" "PKFL-$thr" "$F/rec-pkfl-$thr.jsonl" --effort xhigh --choice-reason 'the review failed on depth' 2>&1); RC=$?
+  if [ "$RC" != 2 ] || ! printf '%s' "$ERR" | grep -qF -- "--effort under throttle $thr: the owner's preset holds this class's effort at its weakest option" \
+     || ! printf '%s' "$ERR" | grep -qF -- 'a floor the owner wrote binds on its axis (`fast` and `cheap-fast` for effort, the delegate skill §2)' \
+     || ! printf '%s' "$ERR" | grep -qF -- 'fold at the recorded effort high' || [ "$(events "$F/rec-pkfl-$thr.jsonl" lane-resumed)" != 0 ]; then
+    PFL="$PFL $thr: exit $RC $(printf '%s' "$ERR" | tail -1 | cut -c1-160);"
+  fi
+done
+pkspawn --run run-test-pk --lane PKFL-default --throttle default --choice-reason 'the preset value' --record "$F/rec-pkfl-default.jsonl" --reason '(a) pick: a lane under a preset with no floor' >/dev/null 2>&1
+rsm PKFL-default "$F/rec-pkfl-default.jsonl" --effort max --choice-reason 'the review failed on depth' >/dev/null 2>&1; RC=$?
+if [ -z "$PFL" ] && [ "$RC" = 0 ] && [ "$(pkf pkfl-default lane-resumed effort)" = '"max"' ]; then
+  ok "NP-E17 (fails on old) a raise while the Settings line reads fast or cheap-fast, whose effort floor the owner wrote, is refused, cites §2's floor clause and says to fold at the recorded effort high (control: under default the same raise goes through, as NP-E09 under auto)"
+else no "NP-E17 the preset floor  [$PFL default: exit $RC, effort $(pkf pkfl-default lane-resumed effort)]"; fi
+thrvault "$F/vault-thr-auto" auto
+pkspawn --run run-test-pk --lane PKAF --throttle auto --choice-reason 'the anchor fits' --record "$F/rec-pkaf.jsonl" --reason '(a) pick: an auto lane resumed under fast' >/dev/null 2>&1
+ERR=$(rsmv "$F/vault-thr-fast" PKAF "$F/rec-pkaf.jsonl" --effort max --choice-reason 'the review failed on depth' 2>&1); RC=$?
+if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -qF -- '--effort under throttle fast:' && printf '%s' "$ERR" | grep -qF -- 'fold at the recorded effort xhigh' \
+   && [ "$(pkf pkaf lane-open throttle)" = '"auto"' ] && [ "$(events "$F/rec-pkaf.jsonl" lane-resumed)" = 0 ]; then
+  ok "NP-E20 (fails on old) a lane opened under auto, resumed while the Settings line reads fast, is refused: the throttle in force governs the resume's pick, as a start's"
+else no "NP-E20 the throttle in force  [exit $RC, lane-open $(pkf pkaf lane-open throttle): $(printf '%s' "$ERR" | tail -1 | cut -c1-200)]"; fi
+RS=$(rsmv "$F/vault-thr-auto" PKFL-fast "$F/rec-pkfl-fast.jsonl" --effort xhigh --choice-reason 'the review failed on depth' 2>&1); RC=$?
+if [ "$RC" = 0 ] && [ "$(pkf pkfl-fast lane-open throttle)" = '"fast"' ] && [ "$(pkf pkfl-fast lane-resumed effort)" = '"xhigh"' ] \
+   && [ "$(pkf pkfl-fast lane-resumed effort_src)" = '"resume: the review failed on depth"' ]; then
+  ok "NP-E21 (fails on old) a lane opened under fast, resumed after the Settings line moved back to auto, raises one rung (high to xhigh): the lane-open's throttle is not read"
+else no "NP-E21 the throttle moved back  [exit $RC, effort $(pkf pkfl-fast lane-resumed effort): $(printf '%s' "$RS" | tail -1 | cut -c1-200)]"; fi
+# A4: the floor check cannot decide where no throttle names a floor; it admits, and the help says so.
+recedit "$F/rec-pkfl-cheap-fast.jsonl" "$F/rec-pktn.jsonl" 'throttle=null'
+RH=$(COLUMNS=4000 "$PY" "$LANE" resume --help 2>&1 | tr '\n' ' ' | tr -s ' ')
+RS=$($LANEV CLAUDE_PROJECT_DIR="$F/vault-nothr" "$PY" "$LANE" resume --run run-test-thrnull --lane PKFL-cheap-fast --brief "$F/brief-follow.md" --record "$F/rec-pktn.jsonl" \
+     --home "$LHOME" --effort xhigh --choice-reason 'the review failed on depth' 2>&1); RC=$?
+if [ "$RC" = 0 ] && [ "$(recfield "$F/rec-pktn.jsonl" lane-open throttle)" = null ] && [ "$(recfield "$F/rec-pktn.jsonl" lane-resumed effort)" = '"xhigh"' ] \
+   && printf '%s' "$RH" | grep -qF -- 'When it cannot decide (no Settings line, or a value that names no preset, read as auto), the raise is admitted'; then
+  ok "NP-E22 (fails on old) the floor check cannot decide (lane-open throttle null, no Settings throttle line): the raise goes through, and the resume help states it"
+else no "NP-E22 cannot decide  [exit $RC, effort $(recfield "$F/rec-pktn.jsonl" lane-resumed effort), help $(printf '%s' "$RH" | grep -cF 'When it cannot decide'): $(printf '%s' "$RS" | tail -1 | cut -c1-200)]"; fi
+thrvault "$F/vault-thr-unknown" zq-turbo
+RS=$(rsmv "$F/vault-thr-unknown" PKFL-cheap-fast "$F/rec-pkfl-cheap-fast.jsonl" --effort xhigh --choice-reason 'the review failed on depth' 2>"$F/thr-unknown.err"); RC=$?
+if [ "$RC" = 0 ] && [ "$(grep -cF -- "lane.py: unknown throttle 'zq-turbo', treated as \`auto\`" "$F/thr-unknown.err")" = 1 ] \
+   && [ "$(pkf pkfl-cheap-fast lane-open throttle)" = '"cheap-fast"' ] && [ "$(pkf pkfl-cheap-fast lane-resumed effort)" = '"xhigh"' ]; then
+  ok "NP-E23 (fails on old) a Settings throttle that names no preset is read as auto with the start's note, and the raise of a lane opened under cheap-fast goes through"
+else no "NP-E23 an unknown throttle  [exit $RC, effort $(pkf pkfl-cheap-fast lane-resumed effort): $(head -2 "$F/thr-unknown.err" | tr '\n' ' ')]"; fi
+# NP-E24: the record names the throttle that governed a raise, since the floor reads the Settings line in
+# force and not the lane-open's (2026-11-22): NP-E21's raise after the setting moved and NP-E23's under a
+# value that names no preset carry the value the check acted on; a plain resume carries no such field.
+TRF=$(pkf pkfl-fast lane-resumed throttle); TRC=$(pkf pkfl-cheap-fast lane-resumed throttle)
+rsmv "$F/vault-thr-auto" PKFL-fast "$F/rec-pkfl-fast.jsonl" >/dev/null 2>&1; RC=$?
+if [ "$TRF" = '"auto"' ] && [ "$(pkf pkfl-fast lane-open throttle)" = '"fast"' ] && [ "$TRC" = '"auto"' ] \
+   && [ "$(pkf pkfl-cheap-fast lane-open throttle)" = '"cheap-fast"' ] && [ "$RC" = 0 ] \
+   && [ "$(events "$F/rec-pkfl-fast.jsonl" lane-resumed)" = 2 ] && [ "$(haskey "$F/rec-pkfl-fast.jsonl" lane-resumed throttle)" = no ]; then
+  ok "NP-E24 (fails on old) a raised resume's lane-resumed names the throttle the floor check acted on, the Settings line in force (auto for a lane opened under fast, and for a value that names no preset), and a plain resume of that lane carries no throttle field (control)"
+else no "NP-E24 the raise's throttle  [moved $TRF, unknown $TRC, plain resume exit $RC, its throttle key $(haskey "$F/rec-pkfl-fast.jsonl" lane-resumed throttle)]"; fi
+# The summaries read a raised pass's effort through the latest pick: wait on a detached resume of the
+# raised PK1R (watch_lane), then watch the closed lane (cmd_watch's summary of a closed lane).
+env STUB_SLEEP_AFTER=4 $LANEV "$PY" "$LANE" resume --run run-test-pk --lane PK1R --brief "$F/brief-follow.md" --record "$F/rec-pk1r.jsonl" --home "$LHOME" \
+  --projects-root "$PROJ" --silence-s 0 --detach --no-wait >/dev/null 2>&1; RCD=$?
+WS1=$($LANEV "$PY" "$LANE" watch --run run-test-pk --lane PK1R --record "$F/rec-pk1r.jsonl" --poll-s 1 --home "$LHOME" --projects-root "$PROJ" 2>&1)
+WS2=$($LANEV "$PY" "$LANE" watch --run run-test-pk --lane PK1R --record "$F/rec-pk1r.jsonl" --poll-s 1 --home "$LHOME" --projects-root "$PROJ" 2>&1)
+if [ "$RCD" = 0 ] && printf '%s' "$WS1" | grep -qF -- 'PK1R: builder opus·max · completed' \
+   && printf '%s' "$WS2" | grep -qF -- 'PK1R: builder opus·max · completed' && printf '%s' "$WS2" | grep -qF -- 'is already closed'; then
+  ok "NP-E18 the watch summary of a raised lane's pass, and the summary of the closed lane, name the raised effort (opus·max), not the lane-open's xhigh (the A3 renderer, which reads the pass's own start)"
+else no "NP-E18 the summaries' effort  [detach $RCD: $(printf '%s' "$WS1" | grep 'PK1R:' | head -1 | cut -c1-120) | $(printf '%s' "$WS2" | grep 'PK1R:' | head -1 | cut -c1-120)]"; fi
+# NP-E19: the two summaries a legacy record reaches (no A3 journal beside it): watch's closed-lane
+# summary (cmd_watch) and the waiting loop's (watch_lane, called in-process on the closed copy).
+"$PY" - "$F/rec-pk1r.jsonl" "$F/rec-pk1r-legacy.jsonl" <<'LEGACY_COPY_TERMINATOR'
+import json, sys
+rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+with open(sys.argv[2], "w") as handle:
+    for row in rows:
+        for key in ("pass_id", "close_id", "a3_record", "notice", "disposition"):
+            row.pop(key, None)    # a legacy record: no A3 commit identity, no journal beside it
+        handle.write(json.dumps(row) + "\n")
+LEGACY_COPY_TERMINATOR
+WL1=$($LANEV "$PY" "$LANE" watch --run run-test-pk --lane PK1R --record "$F/rec-pk1r-legacy.jsonl" --poll-s 1 --home "$LHOME" --projects-root "$PROJ" 2>&1)
+WL2=$($LANEV "$PY" - "$LANE" "$F/rec-pk1r-legacy.jsonl" "$LHOME" "$PROJ" 2>&1 <<'WATCH_LANE_TERMINATOR'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("lane_np_e19", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+code = module.watch_lane("run-test-pk", "PK1R", sys.argv[2], sys.argv[3], sys.argv[4], None, 1, 60, 0, 1, "text")
+print("watch_lane returned %s" % code)
+WATCH_LANE_TERMINATOR
+)
+if printf '%s' "$WL1" | grep -qF -- 'PK1R: builder opus·max · completed' && printf '%s' "$WL1" | grep -qF -- 'is already closed' \
+   && printf '%s' "$WL2" | grep -qF -- 'PK1R: builder opus·max · completed' && printf '%s' "$WL2" | grep -qF -- 'watch_lane returned 0'; then
+  ok "NP-E19 on a legacy record of the raised lane, watch's closed-lane summary and the waiting loop's summary both name opus·max, read through the latest pick"
+else no "NP-E19 the legacy summaries  [$(printf '%s' "$WL1" | grep 'PK1R:' | head -1 | cut -c1-110) | $(printf '%s' "$WL2" | grep -E 'PK1R:|returned|Error' | head -2 | tr '\n' ' ' | cut -c1-200)]"; fi
 
 # the limit class -------------------------------------------------------------------------------
-env STUB_REPORT="You've hit your session limit · resets 8:50am (Europe/London)" STUB_ISERROR=1 $LANEV "$PY" "$LANE" spawn --expect-usd 2 \
+env STUB_REPORT="You've hit your session limit · resets 8:50am (Europe/London)" STUB_ISERROR=1 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 \
   --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-lm1 --lane LM1 \
   --class verifier --grant "$F/granted" --record "$F/rec-lm1.jsonl" --reason '(a) a limit stop' >/dev/null 2>&1
 RC=$?
@@ -2826,7 +3248,7 @@ if [ "$RC" = 6 ] && grep -q '"exit_class": "limit"' "$F/rec-lm1.jsonl" \
    && grep -q '"limit_signal": ".*session limit.*resets 8:50am' "$F/rec-lm1.jsonl"; then
   ok "a result naming a session limit closes as limit, exit 6"
 else no "the limit class from the result text  [exit $RC]"; fi
-env STUB_SYNTHETIC=1 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_SYNTHETIC=1 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-lm2 --lane LM2 --class verifier --grant "$F/granted" \
   --record "$F/rec-lm2.jsonl" --reason '(a) a synthetic stop' >/dev/null 2>&1
 RC=$?
@@ -2834,7 +3256,7 @@ if [ "$RC" = 6 ] && grep -q '"exit_class": "limit"' "$F/rec-lm2.jsonl" && grep -
   ok "a transcript whose last assistant record is a synthetic model with zero usage closes as limit, exit 6 (C2 N12)"
 else no "the limit class from the transcript  [exit $RC: $(grep -o '"limit_signal": "[^"]*"' "$F/rec-lm2.jsonl")]"; fi
 LONGLIMIT=$("$PY" -c 'print("the rate limit in the usage table is documented here; " * 12)')
-env STUB_REPORT="$LONGLIMIT" $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_REPORT="$LONGLIMIT" $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-lm3 --lane LM3 --class verifier --grant "$F/granted" \
   --record "$F/rec-lm3.jsonl" --reason '(a) control: a report that mentions limits' >/dev/null 2>&1
 RC=$?
@@ -2843,7 +3265,7 @@ if [ "$RC" = 0 ] && grep -q '"exit_class": "completed"' "$F/rec-lm3.jsonl"; then
 else no "the limit text guard  [exit $RC]"; fi
 
 # --detach --------------------------------------------------------------------------------------
-DT=$(env STUB_SLEEP_AFTER=4 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+DT=$(env STUB_SLEEP_AFTER=4 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
      --projects-root "$PROJ" --run run-test-dt1 --lane D1 --class verifier --grant "$F/granted" \
      --silence-s 0 --record "$F/rec-dt1.jsonl" --reason '(a) detach, no wait' --detach --no-wait 2>"$F/dt1.err"); RC=$?
 DPID=$(printf '%s\n' "$DT" | sed -n 's/^detached pid \([0-9][0-9]*\) session .*$/\1/p')
@@ -2858,20 +3280,20 @@ if [ "$RC" = 0 ] && printf '%s\n' "$WD" | grep -q '^lane run-test-dt1/D1: .* com
    && [ "$(recfield "$F/rec-dt1.jsonl" lane-closed wrapper_pid)" = "$DPID" ]; then
   ok "watch on a detached lane waits for the worker's close; lane-spawned and lane-closed carry the worker's pid as wrapper_pid"
 else no "watch on a detached lane  [exit $RC: $(printf '%s' "$WD" | head -2 | tr '\n' ' '); wrapper_pid $(recfield "$F/rec-dt1.jsonl" lane-spawned wrapper_pid) vs $DPID]"; fi
-DT2=$(env STUB_EXIT=9 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+DT2=$(env STUB_EXIT=9 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
       --projects-root "$PROJ" --run run-test-dt2 --lane D2 --class verifier --grant "$F/granted" \
       --silence-s 0 --poll-s 1 --record "$F/rec-dt2.jsonl" --reason '(a) detach, failing worker' --detach 2>&1); RC=$?
 if [ "$RC" = 3 ] && printf '%s\n' "$DT2" | grep -q '^lane run-test-dt2/D2: .* error ' \
    && [ "$(recfield "$F/rec-dt2.jsonl" lane-spawned detached)" = true ]; then
   ok "--detach (waiting) stays as the watch over its worker and exits with the worker's code (3 for a stub exiting 9), printing the same summary line"
 else no "--detach waiting on a failing worker  [exit $RC: $(printf '%s' "$DT2" | head -2 | tr '\n' ' ')]"; fi
-DT3=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+DT3=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
       --run run-test-dt3 --lane D3 --class verifier --grant "$F/granted" --silence-s 0 --poll-s 1 \
       --record "$F/rec-dt3.jsonl" --reason '(a) detach, clean worker' --detach 2>&1); RC=$?
 if [ "$RC" = 0 ] && printf '%s\n' "$DT3" | grep -q '^lane run-test-dt3/D3: .* completed '; then
   ok "--detach with a clean worker exits 0 with the summary (control)"
 else no "--detach on a clean worker  [exit $RC: $(printf '%s' "$DT3" | head -2 | tr '\n' ' ')]"; fi
-DT4=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+DT4=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
       --run run-test-dt4 --lane D4 --class no-such-class --grant "$F/granted" --poll-s 1 \
       --record "$F/rec-dt4.jsonl" --reason '(a) detach, premise failure' --detach 2>&1); RC=$?
 if [ "$RC" = 2 ] && printf '%s' "$DT4" | grep -q 'unknown class' && [ ! -f "$F/rec-dt4.jsonl" ]; then
@@ -2885,7 +3307,7 @@ premise "--no-wait without --detach" "goes with --detach" --home "$LHOME" --rout
 DWW='lane.py: --detach without --no-wait: this call stays open as the watch'
 dwspawn(){ # lane, more flags
   dwlane=$1; shift
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+  $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
     --run run-test-dw --lane "$dwlane" --class verifier --grant "$F/granted" --silence-s 0 --poll-s 1 \
     --record "$F/rec-dw.jsonl" --reason '(a) the warn-only check' "$@"
 }
@@ -2908,7 +3330,7 @@ if [ "$RC3" = 0 ] && [ "$(grep -c -F "$DWW" "$F/dw3.err")" = 1 ] && [ "$RC4" = 0
   ok "DW03 resume --detach without --no-wait warns once and returns 0 on its close; DW04 resume --detach --no-wait does not warn"
 else no "DW03-DW04 the resume warning  [exits $RC3/$RC4: $(head -3 "$F/dw3.err" | tr '\n' ' ')]"; fi
 DW5=$(dwspawn DW5 --detach --dry-run 2>&1); RC5=$?
-DW6=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+DW6=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
       --run run-test-dw --lane DW6 --class no-such-class --grant "$F/granted" --record "$F/rec-dw.jsonl" \
       --reason '(a) a refused detached call' --detach 2>&1); RC6=$?
 DWLOGS=$(cat "$STORE/spawn-records/run-test-dw-detached-DW1.log" "$STORE/spawn-records/run-test-dw-detached-DW2.log" 2>&1)
@@ -2916,6 +3338,9 @@ if [ "$RC5" = 0 ] && ! printf '%s' "$DW5" | grep -q -F "$DWW" && [ "$RC6" = 2 ] 
    && printf '%s' "$DWLOGS" | grep -q '^lane.py: worker pid [0-9]* exit 0$' && ! printf '%s' "$DWLOGS" | grep -q -F "$DWW"; then
   ok "DW05-DW07 no warning on a dry run, on a refused detached call (exit 2) or in the workers' own logs, which end with their exit line"
 else no "DW05-DW07 the quiet cases  [dry run $RC5, refusal $RC6: $(printf '%s' "$DW6" | tail -1)]"; fi
+if [ "$(recfield "$F/rec-dw.jsonl" lane-open choice_reason)" = '"fixture pick"' ] && [ "$(events "$F/rec-dw.jsonl" lane-open)" -ge 2 ]; then
+  ok "NP-A06 a detached worker's lane-open carries the caller's --choice-reason (the worker re-runs the caller's arguments; control for NP-R03)"
+else no "NP-A06 the detached worker's reason  [$(recfield "$F/rec-dw.jsonl" lane-open choice_reason), lane-open lines $(events "$F/rec-dw.jsonl" lane-open)]"; fi
 DH=$("$PY" - "$LANE" <<'DH_HELP_END'
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("lane_dh", sys.argv[1])
@@ -2957,7 +3382,7 @@ for pid in tree:
 print(" ".join(str(p) for p in tree))
 DS_STOPPER_END
 dsalive(){ kill -0 "$1" 2>/dev/null; }
-env STUB_SLEEP_AFTER=8 $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_SLEEP_AFTER=8 $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --run run-test-ds --lane DS1 --class verifier --grant "$F/granted" --silence-s 0 --poll-s 1 \
   --record "$F/rec-ds.jsonl" --reason '(a) the stopped caller' --detach >"$F/ds1.out" 2>"$F/ds1.err" &
 DSCALLER=$!
@@ -2995,7 +3420,7 @@ for ds4 in plant:2:wait plant:2:nowait crash:1:wait crash:1:nowait; do
   cp "$R" "$F/ds4-routing-$lane.json"
   if [ "$mode" = plant ]; then path="$STORE/spawn-records/run-test-ds4$lane-report-$lane.md"; else path="$F/ds4-routing-$lane.json"; fi
   if [ "$how" = wait ]; then nw=""; else nw="--no-wait"; fi
-  out=$($LANEV AIMYTH_VIEWER_CMD="$BIN/ds4-opener.sh" DS4_MODE="$mode" DS4_PATH="$path" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" \
+  out=$($LANEV AIMYTH_VIEWER_CMD="$BIN/ds4-opener.sh" DS4_MODE="$mode" DS4_PATH="$path" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" \
         --routing "$F/ds4-routing-$lane.json" --brief "$F/brief.md" --projects-root "$PROJ" --run "run-test-ds4$lane" --lane "$lane" \
         --class verifier --grant "$F/granted" --silence-s 0 --poll-s 1 --viewer terminal --record "$F/rec-ds4-$lane.jsonl" \
         --reason '(a) a worker-side exit' --detach $nw 2>&1); rc=$?
@@ -3038,10 +3463,10 @@ DS56_END
 )
 eq "DS05-DS06 the handle reads a live worker as running, a reused pid as gone with the exit code its log holds after the launch (else 3, shown as (code unknown)), and the launch leaves no child of the caller behind" "$DS56" "True True True True"
 printf '#!/bin/sh\nexit 0\n' > "$BIN/mute-shell.sh"; chmod +x "$BIN/mute-shell.sh"
-DS7A=$($LANEV AIMYTH_DETACH_SHELL="$BIN/mute-shell.sh" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+DS7A=$($LANEV AIMYTH_DETACH_SHELL="$BIN/mute-shell.sh" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
        --projects-root "$PROJ" --run run-test-ds7 --lane DS7A --class verifier --grant "$F/granted" --silence-s 0 \
        --record "$F/rec-ds7.jsonl" --reason '(a) a mute launch' --detach --no-wait 2>"$F/ds7a.err"); RCA=$?
-DS7B=$($LANEV AIMYTH_DETACH_SHELL="$BIN/mute-shell.sh" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+DS7B=$($LANEV AIMYTH_DETACH_SHELL="$BIN/mute-shell.sh" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
        --projects-root "$PROJ" --run run-test-ds7 --lane DS7B --class verifier --grant "$F/granted" --silence-s 0 \
        --record "$F/rec-ds7.jsonl" --reason '(a) a mute launch' --detach 2>"$F/ds7b.err"); RCB=$?
 if [ "$RCA" = 4 ] && [ "$RCB" = 4 ] && printf '%s\n' "$DS7A" | grep -q '^detached pid unknown, unconfirmed after [0-9]* s$' \
@@ -3071,7 +3496,7 @@ smcount(){ grep -c "^$SMP" "$1"; }
 smlast(){ tail -n 1 "$1"; }
 smspawn(){ # lane, record, more flags: both streams joined into $F/sm-<lane>.out, as a launch script writes them
   smlane=$1; smrec=$2; shift 2
-  $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$SMR" --brief "$F/brief.md" --projects-root "$PROJ" \
+  $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$SMR" --brief "$F/brief.md" --projects-root "$PROJ" \
     --run run-test-sm --lane "$smlane" --grant "$F/granted" --silence-s 0 --poll-s 1 \
     --record "$smrec" --reason '(a) the closing summary' "$@" >"$F/sm-$smlane.out" 2>&1
 }
@@ -3118,7 +3543,7 @@ if [ "$RC" = 0 ] && [ "$(smcount "$F/sm-SM6.out")" = 1 ] && [ "$(smlast "$F/sm-S
    && grep -q '^detached pid [0-9]* session ' "$F/sm-SM6.out"; then
   ok "SM06 a clean resume --detach --no-wait ends its joined output with one line, lane.py: summary: clean"
 else no "SM06 the resume  [exit $RC, $(smcount "$F/sm-SM6.out") summary line(s), last: $(smlast "$F/sm-SM6.out")]"; fi
-$LANEV AIMYTH_DETACH_SHELL="$BIN/mute-shell.sh" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$SMR" \
+$LANEV AIMYTH_DETACH_SHELL="$BIN/mute-shell.sh" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$SMR" \
   --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-sm --lane SM7 --class memory-hunter --grant "$F/granted" \
   --silence-s 0 --record "$F/rec-sm.jsonl" --reason '(a) the closing summary' --detach --no-wait >"$F/sm-SM7.out" 2>&1; RC=$?
 if [ "$RC" = 4 ] && [ "$(smcount "$F/sm-SM7.out")" = 1 ] \
@@ -3143,7 +3568,7 @@ if [ "$RCD" = 0 ] && [ "$RCF" = 0 ] && [ "$RCN" = 2 ] && [ "$(smcount "$F/sm-SM9
    && [ "$(smcount "$F/sm-SM9F.out")" = 0 ] && [ "$(smcount "$F/sm-SM9N.out")" = 0 ] && [ "$(smcount "$F/sm-SM1.out")" = 1 ]; then
   ok "SM09 no summary line on a dry run naming --detach, a foreground spawn or an undetached refusal (--no-wait alone, exit 2); control: the detached SM01 carries one"
 else no "SM09 the quiet cases  [exits $RCD/$RCF/$RCN, summary lines $(smcount "$F/sm-SM9D.out")/$(smcount "$F/sm-SM9F.out")/$(smcount "$F/sm-SM9N.out")/$(smcount "$F/sm-SM1.out")]"; fi
-$LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$SMR" --brief "$F/brief.md" --projects-root "$PROJ" \
+$LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$SMR" --brief "$F/brief.md" --projects-root "$PROJ" \
   --run run-test-sm --lane SM10 --class memory-hunter --grant "$F/granted" --silence-s 0 --record "$F/rec-sm.jsonl" \
   --reason '(a) the closing summary' --detach --no-wait >"$F/sm-SM10.o" 2>"$F/sm-SM10.e"; RC=$?
 smwatch SM10 "$F/rec-sm.jsonl"
@@ -3227,7 +3652,7 @@ AWAKE_FACTS_END
 }
 awspawn(){ # stand-in binary, stand-in mode, stand-in log, then the spawn's own flags
   AWB="$1"; AWM="$2"; AWL="$3"; shift 3
-  env AIMYTH_CAFFEINATE="$AWB" AWAKE_STANDIN_MODE="$AWM" AWAKE_STANDIN_LOG="$AWL" $LANEV "$PY" "$LANE" spawn \
+  env AIMYTH_CAFFEINATE="$AWB" AWAKE_STANDIN_MODE="$AWM" AWAKE_STANDIN_LOG="$AWL" $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' \
       --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
       --class verifier --grant "$F/granted" --silence-s 0 "$@"
 }
@@ -3277,7 +3702,7 @@ else no "AW02 the keep-awake process's streams, session and exit  [gone $AWGONE;
 # AW03 · a detached spawn: the worker starts it beside its own lane process (the lane stays 3 s
 #        after its transcript, as D1's does, so the watch attaches to a running lane)
 AW3=$(env STUB_SLEEP_AFTER=3 AIMYTH_CAFFEINATE="$AWBIN" AWAKE_STANDIN_MODE=watch AWAKE_STANDIN_LOG="$F/aw3.log" \
-      $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+      $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
       --projects-root "$PROJ" --class verifier --grant "$F/granted" --silence-s 0 --run run-test-aw --lane AW3 \
       --record "$F/rec-aw3.jsonl" --reason '(a) keep-awake: a detached spawn' --detach --no-wait 2>"$F/aw3.err"); RC3=$?
 AWD3=$(printf '%s\n' "$AW3" | sed -n 's/^detached pid \([0-9][0-9]*\) session .*$/\1/p')
@@ -3331,7 +3756,7 @@ else no "AW05 the unstartable binaries  [exit $RC5A/$RC5B; $(printf '%s' "$AWF5A
 # AW06 · a keep-awake process that dies at once (exit status 1) while the lane runs on for 2 s
 #        changes nothing about the lane's result: AW01's lane, with the normal stand-in, is the control.
 AW6=$(env STUB_SLEEP=2 AIMYTH_CAFFEINATE="$AWBIN" AWAKE_STANDIN_MODE=exit AWAKE_STANDIN_LOG="$F/aw6.log" \
-      $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+      $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
       --projects-root "$PROJ" --class verifier --grant "$F/granted" --silence-s 0 --run run-test-aw --lane AW6 \
       --record "$F/rec-aw6.jsonl" --reason '(a) keep-awake: a stand-in that dies at once' 2>&1); RC6=$?
 AWF6=$(awfacts "$F/rec-aw6.jsonl" AW6); AWP6=$(awpid "$AWF6" pid); AWS6=$(awstandin "$F/aw6.log")
@@ -3578,7 +4003,7 @@ else no "DR05 the doubled root on resume  [exit $RC: $ERR]"; fi
 
 # OP · a detached spawn's caller opens the console before the worker exists (register 2026-09-09 11:21)
 : > "$F/order.txt"
-OP=$($LANEV STUB_ORDER="$F/order.txt" AIMYTH_VIEWER_CMD="$BIN/viewer-order.sh" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+OP=$($LANEV STUB_ORDER="$F/order.txt" AIMYTH_VIEWER_CMD="$BIN/viewer-order.sh" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
      --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-op --lane OP --class verifier --grant "$F/granted" \
      --viewer terminal --silence-s 0 --record "$F/rec-op.jsonl" --reason '(a) the opener runs in the caller' --detach --no-wait 2>"$F/op.err"); RC=$?
 OPPID=$(printf '%s\n' "$OP" | sed -n 's/^detached pid \([0-9][0-9]*\) session .*$/\1/p')
@@ -3598,7 +4023,7 @@ else no "OP01 the opener's call order  [exit $RC, order: $(tr '\n' '|' < "$F/ord
 # the caller starts is replaced by a script that records its argv and acts on FAKE_WORKER_MODE, so each of the four
 # outcomes is forced rather than raced. The missing-estimate refusal under --detach --no-wait stays W1-40.
 AGREC="$F/rec-ag.jsonl"
-AG1=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+AG1=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
       --run run-test-ag --lane AG1 --class verifier --silence-s 0 --record "$AGREC" \
       --reason '(a) F8: a detached spawn missing its grant' --detach --no-wait 2>"$F/ag1.err"); RC=$?
 if [ "$RC" = 2 ] && grep -qF 'leaves `<claim files>` to the call: needs --grant for <claim files>' "$F/ag1.err" \
@@ -3606,7 +4031,7 @@ if [ "$RC" = 2 ] && grep -qF 'leaves `<claim files>` to the call: needs --grant 
    && [ ! -e "$STORE/spawn-records/run-test-ag-detached-AG1.log" ]; then
   ok "F8-L01 a detached spawn missing its grant exits 2 in the caller with the diagnostic, prints no detached line and starts no worker (no detach log, no record line)"
 else no "F8-L01 the missing grant under --detach --no-wait  [exit $RC, stdout '$AG1', detach log $([ -e "$STORE/spawn-records/run-test-ag-detached-AG1.log" ] && echo present || echo absent): $(tail -2 "$F/ag1.err" | tr '\n' ' ')]"; fi
-AG2=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+AG2=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
       --run run-test-ag --lane AG2 --class verifier --grant "$F/granted" --silence-s 0 --record "$AGREC" \
       --reason '(a) F8: the granted twin' --detach --no-wait 2>"$F/ag2.err"); RC=$?
 AG2SID=$(printf '%s\n' "$AG2" | sed -n 's/^detached pid [0-9][0-9]* session \([0-9a-f-][0-9a-f-]*\)$/\1/p')
@@ -3792,7 +4217,7 @@ def pid_of(text, unconfirmed=False):
                      else r"detached pid (\d+) session ([0-9a-f-]+)\n", text)
     return (int(m.group(1)), m.group(2)) if m else (None, None)
 def spawn_args(lane_id, wait):
-    return ["spawn", "--expect-usd", "2", "--home", home, "--routing", routing, "--brief", brief,
+    return ["spawn", "--choice-reason", "fixture pick", "--expect-usd", "2", "--home", home, "--routing", routing, "--brief", brief,
             "--projects-root", projects, "--run", "run-test-f8", "--lane", lane_id, "--class", "verifier",
             "--grant", granted, "--silence-s", "0", "--record", os.path.join(root, "rec-f8-%s.jsonl" % lane_id),
             "--reason", "(a) F8 forced outcome", "--viewer", "none", "--detach", "--no-wait", "--ack-wait-s", str(wait)]
@@ -3970,7 +4395,7 @@ if [ "$F8RC" != 0 ] || [ "$(grep -c '^OK \|^BAD ' "$F/f8-forced.log")" != 16 ]; 
   no "F8 forced outcomes: PROBE FAILED: the harness exited $F8RC with $(grep -c '^OK \|^BAD ' "$F/f8-forced.log") of 16 legs reported"
 fi
 # A worker handed a cap that is not one refuses (exit 2): the hand-off is checked, never trusted blind.
-ERR=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+ERR=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
       --run run-test-ag --lane AGW --class verifier --grant "$F/granted" --record "$F/rec-agw.jsonl" --viewer none \
       --reason '(a) F8: a malformed handed cap' --as-worker --worker-caps '{"hard_usd": 0}' 2>&1); RC=$?
 if [ "$RC" = 2 ] && printf '%s' "$ERR" | grep -q 'is not a composed cap' && [ ! -e "$F/rec-agw.jsonl" ]; then
@@ -4379,7 +4804,7 @@ def seed(envelope=1000., spent=None):
     record.write_text("".join(json.dumps(e) + "\n" for e in planted))
 
 def spawn(estimate=2., cls="builder", dry=True, extra=(), report=None, target=script):
-    args = ["spawn", "--run", run, "--lane", "B", "--class", cls, "--home", home,
+    args = ["spawn", "--choice-reason", "fixture pick", "--run", run, "--lane", "B", "--class", cls, "--home", home,
             "--routing", cost, "--brief", root / "brief.md", "--projects-root", projects,
             "--record", record, "--reason", "(a) fixture estimate", "--viewer", "none"]
     args += ["--write", root / "writable"] if cls == "builder" else ["--grants-only", "--grant", root / "granted"]
@@ -4763,9 +5188,11 @@ rc,out,err=spawn(8.,dry=False,extra=("--lane","Detached","--detach",),report="de
 check("W1-42 detached spawn prints one caller advisory",rc==0 and sum(1 for x in err.splitlines() if x.startswith("estimate advisory:"))==1
       and last(record,"lane-open")["estimate_advisory"]=="estimate $8.00 above 3 × class builder median $2.00")
 latest=root / "latest-advice-report.md"
-latest.write_text("x" * (lane.ADVISE_REPORT_MIN_BYTES + 1))
+latest_brief=root / "latest-advice-brief.md"
+latest_brief.write_text("REPORT\n## Summary · ## Findings\n")
+latest.write_text("## Summary\nThe lane's report, in its brief's shape.\n")   # a report counts by its shape, never its size
 advice_record=root / "latest-advice.jsonl"
-advice_record.write_text(json.dumps({"event":"lane-open","lane":"AD"})+'\n'+json.dumps({
+advice_record.write_text(json.dumps({"event":"lane-open","lane":"AD","brief":str(latest_brief)})+'\n'+json.dumps({
     "event":"lane-closed","lane":"AD","exit_class":"limit","report":str(latest),
     "ts":lane.time.strftime("%Y-%m-%dT%H:%M:%S%z",lane.time.localtime(lane.time.time()-lane.RESUME_WINDOW_S-1)),
     "usage":{"peak_context":lane.ORIENTATION_TOKENS+1}})+'\n')
@@ -4827,7 +5254,7 @@ if CODEX:
 else:
     routing,home,projects=map(pathlib.Path,sys.argv[3:])
     common=["--class","verifier","--home",home,"--routing",routing,"--projects-root",projects,
-            "--expect-usd","2","--grants-only","--grant",root]
+            "--expect-usd","2","--grants-only","--grant",root,"--choice-reason","fixture"]
 common += ["--brief",root / "brief.md","--reason","(a) casefold fixture","--viewer","none","--silence-s","0"]
 def check(number, name, condition):
     print(("OK " if condition else "BAD ")+"FOLD1-"+label+number+" "+name,flush=True)
@@ -5101,10 +5528,13 @@ d = sys.argv[1]
 def ts(age_s):
     t = time.time() - age_s
     return time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t))
-def rec(name, closes):
+with open(os.path.join(d, "brief.md"), "w") as f:
+    f.write("TASK\nThe fixture's task.\n\nREPORT\n## Summary · ## Findings · ## Controls\n")
+def rec(name, closes, opened=None):
     with open(os.path.join(d, name), "w") as f:
         f.write(json.dumps({"event": "run-open", "run": "radv", "session": "s"}) + "\n")
-        f.write(json.dumps({"event": "lane-open", "run": "radv", "lane": "L"}) + "\n")
+        f.write(json.dumps(opened or {"event": "lane-open", "run": "radv", "lane": "L",
+                                      "brief": os.path.join(d, "brief.md")}) + "\n")
         f.write(json.dumps({"event": "lane-spawned", "run": "radv", "lane": "L", "pid": 1}) + "\n")
         for c in closes:
             f.write(json.dumps(dict({"event": "lane-closed", "run": "radv", "lane": "L"}, **c)) + "\n")
@@ -5117,8 +5547,17 @@ rec("refusal.jsonl", [{"exit_class": "refusal", "ts": ts(60)}])
 rec("noclose.jsonl", [])
 for cls in ("stall", "max-turns", "error", "spawn-failed", "killed"):
     rec("%s.jsonl" % cls, [{"exit_class": cls, "ts": ts(60), "usage": {"peak_context": 400000}}])
+# The class fallback (ADV-S3): a brief whose REPORT section names no heading, on a verifier lane.
+with open(os.path.join(d, "brief-prose.md"), "w") as f:
+    f.write("TASK\nThe fixture's task.\n\nREPORT\nConcise: the verdicts first, then the gaps.\n")
+cold = [{"exit_class": "limit", "ts": ts(4000), "usage": {"peak_context": 400000, "first_call_context": 30000}}]
+rec("cold-verifier.jsonl", cold, {"event": "lane-open", "run": "radv", "lane": "L", "class": "verifier",
+                                  "brief": os.path.join(d, "brief-prose.md")})
+rec("cold-noshape.jsonl", cold, {"event": "lane-open", "run": "radv", "lane": "L", "class": "no-such-class",
+                                 "brief": os.path.join(d, "brief-prose.md")})
 ADVISE_FIXTURE_END
-"$PY" -c 'print("a lane report with more than the placeholder: " + "x" * 500)' > "$ADV/radv-report-L.md"
+# The lane's report in its brief's shape (a report counts as work by its shape, never by its size).
+printf '## Summary\nThree findings, each checked on disk.\n\n## Findings\n1. The fixture finding.\n\n## Controls\nPositive control hit.\n' > "$ADV/radv-report-L.md"
 adv() { "$PY" "$LANE" advise --run radv --lane L --record "$ADV/$1" --report "$ADV/radv-report-L.md" ${2:+--stage "$2"} 2>&1; }
 mkdir -p "$ADV/stage/out"; printf 'partial work\n' > "$ADV/stage/out/part.txt"
 O=$(adv fresh-limit.jsonl); case $O in "advise: resume · "*"warm"*) ok "advise: a limit close a minute old is a resume (cache warm)";; *) no "advise fresh limit  [$O]";; esac
@@ -5150,6 +5589,40 @@ WSA=""; for c in error spawn-failed killed; do
 done
 [ -z "$WSA" ] && ok "WS-A3 advise on an error, spawn-failed or killed close says restart and keeps the skill's rule for other failures: one fresh re-spawn, a second failure returning the step to the head (the control for WS-A1: these lines never name the progress rule)" \
   || no "WS-A3 the other-failure classes  [$WSA: $(adv error.jsonl)]"
+# ADV-S1/S2 (register 2026-11-14 15:58): a cut helper's progress-only report counted as work on
+# disk by its size alone, so advise said restart where a resume would have saved the whole task.
+# A report counts only when it carries a heading of the lane's report shape: a progress-only report
+# well over the old 400-byte line does not, and says why (S1); the same close with the report in its
+# brief's shape restarts (S2, the control). S3: with no heading in the brief, the class definition's
+# report shape decides; with neither, a report never counts, and the line says so.
+O=$(adv cold-limit-big.jsonl)
+case $O in "advise: restart · "*"on disk report"*) ADVS2=yes ;; *) ADVS2="no: $O" ;; esac
+"$PY" - "$ADV/radv-report-L.md" <<'ADV_PROGRESS_END'
+import sys
+lines = ["Controls passed (1 hit / 0 hits). Reading the register entries now.",
+         "Read the first entries; now the judge rows and the decided-work line.",
+         "Copying the tree into scratch and recording the base hashes before any change."] * 5
+lines.append("API Error: Connection error.")
+with open(sys.argv[1], "w") as handle:
+    handle.write("\n\n".join(lines) + "\n")
+ADV_PROGRESS_END
+ADVBYTES=$(wc -c < "$ADV/radv-report-L.md" | tr -d ' ')
+O=$(adv cold-limit-big.jsonl)
+if [ "$ADVBYTES" -gt 400 ] && case $O in "advise: resume · "*"on disk nothing · report not counted: it carries none of the headings of its brief's REPORT section (## Summary, ## Findings, ## Controls)"*"nothing of the lane's work is on disk"*) true ;; *) false ;; esac; then
+  ok "ADV-S1 a progress-only report over the old 400-byte line is no work on disk: a cold limit close resumes and the line names why"
+else no "ADV-S1 the progress-only report  [$ADVBYTES bytes: $O]"; fi
+[ "$ADVS2" = yes ] && ok "ADV-S2 control: the same close with a report in its brief's shape counts the report and restarts" \
+  || no "ADV-S2 the shaped report  [$ADVS2]"
+printf '## Verdicts\nC1 confirmed.\n' > "$ADV/radv-report-L.md"
+OV=$(adv cold-verifier.jsonl); ON=$(adv cold-noshape.jsonl)
+printf 'Prose with no heading.\n' > "$ADV/radv-report-L.md"
+OP=$(adv cold-verifier.jsonl)
+ADVS3=""
+case $OV in "advise: restart · "*"on disk report"*) ;; *) ADVS3="$ADVS3 verifier report: $OV;" ;; esac
+case $OP in "advise: resume · "*"report not counted: it carries none of the headings of the verifier definition's report shape (## Summary, ## Verdicts, ## Controls)"*) ;; *) ADVS3="$ADVS3 verifier prose: $OP;" ;; esac
+case $ON in "advise: resume · "*"report not counted: no report shape to read it against"*) ;; *) ADVS3="$ADVS3 no shape: $ON;" ;; esac
+[ -z "$ADVS3" ] && ok "ADV-S3 with no heading in the brief, the class definition's report shape decides (a verifier's ## Verdicts counts, prose does not); with neither, a report never counts and the line says so" \
+  || no "ADV-S3 the class fallback  [$ADVS3]"
 rm -f "$ADV/radv-report-L.md"
 O=$(adv cold-limit-big.jsonl); case $O in "advise: resume · "*"nothing of the lane's work is on disk"*) ok "advise: a cold limit close with nothing on disk resumes (D29: one cold re-read beats the whole task)";; *) no "advise cold nothing on disk  [$O]";; esac
 
@@ -5521,9 +5994,10 @@ else no "the sweep's premise case  [exit $SWERC: $SWE]"; fi
 DOCUSAGE=$(grep -n 'lane\.py spawn ' "$LANE" | head -1)
 DOCCTL=$(printf '    lane.py %s  --run ID --lane ID --class CLASS --brief FILE [options]\n' spawn)
 if printf '%s' "$DOCUSAGE" | grep -q -- '--reason' && printf '%s' "$DOCUSAGE" | grep -q -- '--run' \
-   && ! printf '%s' "$DOCCTL" | grep -q -- '--reason'; then
-  ok "the lane.py docstring's spawn usage line carries --reason (control: the same grep misses a copy of the line without it)"
-else no "the docstring usage line  [$DOCUSAGE]"; fi
+   && printf '%s' "$DOCUSAGE" | grep -q -- '--choice-reason' \
+   && ! printf '%s' "$DOCCTL" | grep -q -- '--reason' && ! printf '%s' "$DOCCTL" | grep -q -- '--choice-reason'; then
+  ok "NP-A11 (fails on old) the lane.py docstring's spawn usage line carries --reason and --choice-reason (control: the same greps miss a copy of the line without them)"
+else no "NP-A11 the docstring usage line  [$DOCUSAGE]"; fi
 
 # ------------------------------------------------- contract text: the brief templates (item3) ---------
 # Every line the text pass changed in the templates beside this script is grepped as a fixed string, the whole
@@ -6027,7 +6501,7 @@ b4dry R13 "$F/b4-cite.md" --grant "$F/granted"
 premise "B4-T01 --tools naming WebSearch on a class whose definition blocks it refuses, pointing to codex-lane.py --search" "codex-lane.py --search" \
         --home "$LHOME" --routing "$R" --brief "$F/brief.md" --run run-test-p --lane B4T01 --class memory-hunter --write "$F/writable" --tools Read,WebSearch
 rm -f "$STORE/spawn-records/run-test-p-detached-T01D.log"
-T01D=$($LANEV "$PY" "$LANE" spawn --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-p.jsonl" --reason '(a) premise fixture' \
+T01D=$($LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --projects-root "$PROJ" --record "$F/rec-p.jsonl" --reason '(a) premise fixture' \
        --home "$LHOME" --routing "$R" --brief "$F/brief.md" --run run-test-p --lane T01D --class verifier --grant "$F/granted" \
        --tools Read,WebFetch --detach --no-wait 2>&1); RC=$?
 if [ "$RC" = 2 ] && printf '%s' "$T01D" | grep -q 'WebFetch' && [ ! -e "$STORE/spawn-records/run-test-p-detached-T01D.log" ] \
@@ -6067,7 +6541,7 @@ b4wvault(){ # $1 = vault dir, then the definition's frontmatter lines after name
 b4wspawn(){ # $1 = vault, $2 = lane, extra args... -> B4WOUT, RC, B4WTOOLS (the --tools value the stub saw)
   B4WV="$1"; B4WL="$2"; shift 2
   rm -f "$F/stub/argv.txt"
-  B4WOUT=$($LANEV CLAUDE_PROJECT_DIR="$B4WV" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+  B4WOUT=$($LANEV CLAUDE_PROJECT_DIR="$B4WV" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
            --brief "$F/brief.md" --projects-root "$PROJ" --run run-test-b4w --lane "$B4WL" --class critic \
            --grant "$F/granted" --record "$F/rec-b4w-$B4WL.jsonl" --reason '(a) the withheld-tools notice' "$@" 2>&1); RC=$?
   B4WTOOLS=$( [ -f "$F/stub/argv.txt" ] && grep -A1 -x -- '--tools' "$F/stub/argv.txt" | tail -1 || echo 'no stub call')
@@ -6321,7 +6795,7 @@ else no "B4-P02 the planner's write allowance  [$RC1/$RC2/$RC3: $(printf '%s' "$
 
 # B4-D · a control on the pass's own report, checked at the close ------------------------------
 printf 'x\nCONTROL+: DONE-7 in <<REPORT>>\n' > "$F/b4-rep.md"
-env STUB_REPORT='the work is DONE-7' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/b4-rep.md" \
+env STUB_REPORT='the work is DONE-7' $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/b4-rep.md" \
   --projects-root "$PROJ" --reason '(a) report control' --run run-test-rep --lane D01 --class verifier --grant "$F/granted" \
   --record "$F/rec-rep.jsonl" --silence-s 0 >"$F/b4-d01.out" 2>"$F/b4-d01.err"; RC=$?
 D01=$("$PY" - "$F/rec-rep.jsonl" D01 <<'B4_DEFERRED_END'
@@ -6338,7 +6812,7 @@ B4_DEFERRED_END
 if [ "$RC" = 0 ] && [ "$D01" = "DONE-7 run-test-rep-report-D01.md checked 1 None" ] && grep -q 'report controls checked 1 of 1' "$F/b4-d01.out"; then
   ok "B4-D01 a control on <<REPORT>> is pending at the spawn (this pass's report path) and checked at the close on the fresh report"
 else no "B4-D01 the report control  [exit $RC: $D01]"; fi
-env STUB_REPORT='nothing of the kind' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/b4-rep.md" \
+env STUB_REPORT='nothing of the kind' $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/b4-rep.md" \
   --projects-root "$PROJ" --reason '(a) report control' --run run-test-rep --lane D02 --class verifier --grant "$F/granted" \
   --record "$F/rec-rep.jsonl" --silence-s 0 >"$F/b4-d02.out" 2>"$F/b4-d02.err"
 D02=$("$PY" - "$F/rec-rep.jsonl" D02 <<'B4_DEFERRED_END'
@@ -6354,7 +6828,7 @@ if [ "$D02" = "failed 0" ] && grep -q 'report controls FAILED 1 of 1' "$F/b4-d02
 else no "B4-D02 a missing phrase  [$D02]"; fi
 printf 'x\nCONTROL+: no report text in <<REPORT>>\n' > "$F/b4-rep-ph.md"
 mkdir -p "$F/noproj"
-env STUB_REPORT='' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/b4-rep-ph.md" \
+env STUB_REPORT='' $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/b4-rep-ph.md" \
   --projects-root "$F/noproj" --reason '(a) report control' --run run-test-rep --lane D03 --class verifier --grant "$F/granted" \
   --record "$F/rec-rep.jsonl" --silence-s 0 >"$F/b4-d03.out" 2>&1
 D03=$("$PY" - "$F/rec-rep.jsonl" D03 <<'B4_DEFERRED_END'
@@ -6370,10 +6844,10 @@ if grep -q '(no report text' "$STORE/spawn-records/run-test-rep-report-D03.md" &
 else no "B4-D03 the placeholder  [$D03] [$(cat "$STORE/spawn-records/run-test-rep-report-D03.md" 2>&1 | head -1)]"; fi
 # An earlier pass's report and a sibling's never stand in: pass 1 and a sibling lane both carry the
 # phrase on disk; pass 2's own response does not, so pass 2's control fails.
-env STUB_REPORT='pass one says DONE-8' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_REPORT='pass one says DONE-8' $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) report control' --run run-test-rep --lane D04 --class verifier --grant "$F/granted" \
   --record "$F/rec-rep.jsonl" --silence-s 0 >/dev/null 2>&1
-env STUB_REPORT='the sibling says DONE-8' $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+env STUB_REPORT='the sibling says DONE-8' $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) report control' --run run-test-rep --lane D04SIB --class verifier --grant "$F/granted" \
   --record "$F/rec-rep.jsonl" --silence-s 0 >/dev/null 2>&1
 printf 'Continue.\nCONTROL+: DONE-8 in <<REPORT>>\n' > "$F/b4-rep-follow.md"
@@ -6952,7 +7426,7 @@ printf 'x\nCONTROL+: DONE-9 in <<REPORT>>\n' > "$F/lf-nostart.md"
 if [ -n "$(env PATH="$NOSTART_PATH" sh -c 'command -v claude' 2>&1)" ] || [ -z "$PYABS" ]; then
   no "B4LF-09 PROBE FAILED: an executable claude answers on $NOSTART_PATH, or no absolute python ($PYABS)"
 else
-  $LANEV PATH="$NOSTART_PATH" "$PYABS" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/lf-nostart.md" \
+  $LANEV PATH="$NOSTART_PATH" "$PYABS" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/lf-nostart.md" \
     --projects-root "$PROJ" --reason '(a) a start that fails' --run run-test-lf --lane LF09 --class verifier --grant "$F/granted" \
     --record "$F/rec-lf09.jsonl" --silence-s 0 >"$F/lf09.out" 2>"$F/lf09.err"; LF09RC=$?
   LF09=$("$PY" - "$F/rec-lf09.jsonl" LF09 <<'B4LF_NOSTART_END'
@@ -7021,13 +7495,13 @@ cp "$F/rec-trace.jsonl" "$F/rec-trace0.jsonl"
 traced(){ TLOG=$1; shift; env PYTHONPATH="$F/trace-site${PYTHONPATH:+:$PYTHONPATH}" B4_TRACE_ROOTS="$TROOTS" B4_TRACE_LOG="$TLOG" "$@"; }
 : > "$F/trace-claim.log"
 traced "$F/trace-claim.log" "$PY" "$LANE" init --home "$F/trace-home" >/dev/null 2>&1
-traced "$F/trace-claim.log" $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
+traced "$F/trace-claim.log" $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" \
   --projects-root "$PROJ" --reason '(a) trace' --run run-test-trace --lane TR1 --class verifier --grant "$F/granted" \
   --record "$F/rec-trace.jsonl" --silence-s 0 >"$F/trace-spawn.out" 2>&1; TRC=$?
 traced "$F/trace-claim.log" $LANEV "$PY" "$LANE" watch --run run-test-trace --lane TR1 --record "$F/rec-trace.jsonl" \
   --projects-root "$PROJ" --max-wait-s 5 >/dev/null 2>&1
 : > "$F/trace-control.log"
-traced "$F/trace-control.log" env HOME="$REAL_HOME" $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+traced "$F/trace-control.log" env HOME="$REAL_HOME" $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
   --brief "$F/brief.md" --projects-root "$PROJ" --reason '(a) trace control' --run run-test-trace --lane TR0 --class verifier \
   --grant "$F/granted" --record "$F/rec-trace0.jsonl" --dry-run >/dev/null 2>&1
 if [ "$TRC" = 0 ] && [ ! -s "$F/trace-claim.log" ] && [ "$(wc -l < "$F/trace-control.log" | tr -d ' ')" -ge 1 ] \
@@ -7209,6 +7683,658 @@ if [ "$DSPAWN_RC" != 0 ] && ! grep -q '^BAD ' "$F/decisions-spawn.log"; then
   no "spawn hold harness failed before an assertion: $(tail -3 "$F/decisions-spawn.log")"
 fi
 
+# What a close ranks first (registers 2026-10-25 08:16 and 2026-11-10 21:18): real wrappers on
+# test_a3.py's stub provider, each transcript planted. A usage-limit or network stop outranks a
+# refusal the lane worked on past, so the task does not move (CR01, CR04); a refusal that is the
+# lane's last message of its own still moves, a synthetic stop record after it changing nothing
+# (CR02), and so does one it went past with no stop text (CR03). The same ranking holds on the
+# wrapper's infrastructure-failure close (CR05, CR06) and on recover's close of a pass whose wrapper
+# died, read from the transcript alone (CR07, CR08), and a task both families have tried raises no
+# family rule from a refusal the lane worked past (CR09, CR10). A usage-limit stop text outranks
+# the silence watch that fired after it, the stall kept on the close (ST01); plain silence, and a
+# synthetic stop naming no limit, stay a stall (ST02, ST03). advise reads the class it got.
+"$PY" - "$HERE" "$F" > "$F/close-rank.log" 2>&1 <<'CLOSE_RANK_END'
+import sys
+sys.dont_write_bytecode = True
+here, root = sys.argv[1], sys.argv[2]
+sys.path.insert(0, here)
+from test_a3 import Fixture, claude_message
+LIMIT = "You've hit your session limit · resets 8am (Europe/London)"
+DOWN = "API Error: Connection error: connection refused"
+def stop(identifier, text):
+    return {"type": "assistant", "message": {"id": identifier, "model": "<synthetic>",
+            "stop_reason": "stop_sequence", "content": [{"type": "text", "text": text}],
+            "usage": {"input_tokens": 0, "output_tokens": 0}}}
+def failed(text):
+    return {"type": "result", "subtype": "success", "is_error": True, "result": text}
+refused = claude_message("refusal", "refusal", "PROHIBITED-OUTPUT-CONTROL")
+work = claude_message("work", "tool_use", "FURTHER-WORK")
+def case(events, result=None, exit_code=0, silence=None):
+    f = Fixture(here, root)
+    try:
+        f.scenario("claude", events, exit_code=exit_code, wait=silence is not None, result=result)
+        command = f.command("claude")
+        if silence is not None:
+            command[command.index("--silence-s") + 1] = str(silence)
+            command += ["--poll-s", "0.5"]
+        run = f.run(command, timeout=90)
+        got = f.snapshot()
+        closes = [r for r in got["record"] if r.get("event") == "lane-closed" and r.get("lane") == "case"]
+        close = closes[-1] if closes else {}
+        journal = got["journals"][0] if got["journals"] else {}
+        advise = f.run([sys.executable, "-B", str(f.wrappers / "lane.py"), "advise", "--run", "fixture",
+                        "--lane", "case", "--record", str(f.record)])
+        disposition = journal.get("disposition") or {}
+        return {"rc": run.returncode, "class": close.get("exit_class"), "refusals": close.get("refusal_count"),
+                "moves": got["successor_start_count"], "phase": disposition.get("phase"),
+                "decision": disposition.get("decision"), "limit": close.get("limit_signal") or "",
+                "network": close.get("network_signal") or "", "stall": close.get("stall"),
+                "stall_events": sum(1 for r in got["record"] if r.get("event") == "stall"),
+                "advise": advise.stdout.strip().split(" · ")[0], "stderr": run.stderr[-200:]}
+    finally:
+        f.cleanup()
+def check(name, good, got):
+    print(("OK %s" % name) if good else "BAD %s  [%s]" % (name, got), flush=True)
+got = case([refused, work, stop("stop", LIMIT)], failed(LIMIT), 1)
+check("CR01 a refusal the lane worked on past, then a usage-limit stop, closes limit (exit 6) with its refusal "
+      "count kept, resolves with no move and advises a resume",
+      got["class"] == "limit" and got["rc"] == 6 and got["refusals"] == 1 and got["moves"] == 0
+      and (got["phase"], got["decision"]) == ("resolved", "none") and "session limit" in got["limit"]
+      and got["advise"] == "advise: resume", got)
+got = case([work, refused, stop("stop", LIMIT)], failed(LIMIT), 1)
+check("CR02 control: a refusal that is the lane's last message of its own, then the same limit stop, closes "
+      "refusal (exit 3) and moves the task once",
+      got["class"] == "refusal" and got["rc"] == 3 and got["moves"] == 1 and got["refusals"] == 1, got)
+got = case([refused, work])
+check("CR03 control: a refusal the lane went past with no stop text still closes refusal and moves",
+      got["class"] == "refusal" and got["moves"] == 1, got)
+got = case([refused, work, stop("stop", DOWN)], failed(DOWN), 1)
+check("CR04 a refusal the lane worked on past, then a network stop, closes network with no move",
+      got["class"] == "network" and got["moves"] == 0 and got["refusals"] == 1
+      and (got["phase"], got["decision"]) == ("resolved", "none") and "connection refused" in got["network"], got)
+got = case([work, stop("stop", LIMIT)], silence=2)
+check("ST01 a usage-limit stop text, then silence past --silence-s, closes limit (exit 6), the stall kept on "
+      "the close and its stall event written, and advises a resume",
+      got["class"] == "limit" and got["rc"] == 6 and bool(got["stall"]) and got["stall_events"] == 1
+      and "session limit" in got["limit"] and got["advise"] == "advise: resume", got)
+got = case([work], silence=2)
+check("ST02 control: silence after plain work closes stall (exit 5) and advises a restart",
+      got["class"] == "stall" and got["rc"] == 5 and got["stall_events"] == 1 and got["advise"] == "advise: restart", got)
+got = case([work, stop("stop", "API Error: 500 Internal server error")], silence=2)
+check("ST03 control: a synthetic stop naming no usage limit, then silence, stays a stall",
+      got["class"] == "stall" and got["rc"] == 5, got)
+import os, shlex, signal, time
+def infra(events):
+    """An infrastructure failure planted once the outcome is saved: the close the wrapper's own
+    error path writes, which never moves the task."""
+    f = Fixture(here, root)
+    try:
+        f.scenario("claude", events, exit_code=1, result=failed(LIMIT))
+        proc, release, _ = f.barrier("claude", "outcome-saved")
+        os.write(release, b"E")
+        proc.communicate(timeout=30)
+        got = f.snapshot()
+        close = (got["journals"][0] if got["journals"] else {}).get("close") or {}
+        return {"class": close.get("exit_class"), "refusals": close.get("refusal_count"),
+                "moves": got["successor_start_count"]}
+    finally:
+        f.cleanup()
+def recovered(events):
+    """The wrapper killed once its child started; the child writes its whole transcript and is
+    stopped, and `recover --decision hold` closes the pass from that transcript alone."""
+    f = Fixture(here, root)
+    try:
+        f.scenario("claude", events, wait=True)
+        proc, release, _ = f.barrier("claude", "child-started")
+        proc.kill()
+        proc.communicate(timeout=10)
+        end = time.monotonic() + 20   # bound set by judgement, unmeasured: the stub writes at once
+        while not (f.root / "provider-ready").exists() and time.monotonic() < end:
+            time.sleep(0.05)
+        module = f.module()
+        journal = f.snapshot()["journals"][0]
+        child = journal.get("child")
+        if child and module.a3_liveness(child) == "alive":
+            os.killpg(child["pid"], signal.SIGKILL)
+            while module.a3_liveness(child) == "alive" and time.monotonic() < end:
+                time.sleep(0.01)
+        command = shlex.split(module.a3_recovery_command(journal))
+        done = f.run(command + ["--decision", "hold", "--reason", "fixture recovery", "--repair-projection"])
+        got = f.snapshot()
+        closes = [r for r in got["record"] if r.get("event") == "lane-closed" and r.get("lane") == "case"]
+        close = closes[-1] if closes else {}
+        return {"rc": done.returncode, "class": close.get("exit_class"), "refusals": close.get("refusal_count"),
+                "moves": got["successor_start_count"], "ready": (f.root / "provider-ready").exists(),
+                "stderr": done.stderr[-200:]}
+    finally:
+        f.cleanup()
+got = infra([refused, work, stop("stop", LIMIT)])
+check("CR05 an infrastructure failure after a refusal the lane worked on past and a usage-limit stop closes "
+      "error, not refusal, with the refusal count kept and no move",
+      got["class"] == "error" and got["refusals"] == 1 and got["moves"] == 0, got)
+got = infra([work, refused, stop("stop", LIMIT)])
+check("CR06 control: the same failure after a refusal that is the lane's last message closes refusal",
+      got["class"] == "refusal" and got["refusals"] == 1 and got["moves"] == 0, got)
+got = recovered([refused, work, stop("stop", LIMIT)])
+check("CR07 recover closes a pass whose wrapper died, from a transcript of a refusal worked past and then a "
+      "usage-limit stop, as limit with its refusal count kept and no move",
+      got["ready"] and got["class"] == "limit" and got["refusals"] == 1 and got["moves"] == 0, got)
+got = recovered([work, refused, stop("stop", LIMIT)])
+check("CR08 control: the same recovery from a transcript ending on the refusal closes refusal",
+      got["ready"] and got["class"] == "refusal" and got["refusals"] == 1 and got["moves"] == 0, got)
+import json
+from test_a3 import CHAIN_RECEIVER, events_for
+def chain(second):
+    """A task the stub Codex pass refused, moved to Claude, whose pass gets `second`: both families
+    tried, so a refusal that ended the Claude pass raises the family rule and holds the task."""
+    f = Fixture(here, root)
+    try:
+        f.successor.write_text(CHAIN_RECEIVER)
+        f.env.update(A3_WRAPPERS=str(f.wrappers), A3_SECOND_TRIGGER="refusal")
+        (f.root / "second-scenario.json").write_text(json.dumps({"events": second, "exit": 1,
+                                                                 "result": failed(LIMIT)}))
+        f.scenario("codex", events_for("codex", "terminal"))
+        f.run(f.command("codex"), timeout=60)
+        got = f.snapshot()
+        target = next((j for j in got["journals"] if j.get("lane") != "case"), {})
+        return {"starts": got["successor_start_count"], "class": (target.get("close") or {}).get("exit_class"),
+                "rules": sum(1 for j in got["journals"] for n in j.get("notices", []) if n["payload"].get("rule")),
+                "decision": (target.get("disposition") or {}).get("decision")}
+    finally:
+        f.cleanup()
+got = chain([refused, work, stop("stop", LIMIT)])
+check("CR09 with both families tried, a Claude pass that worked past its refusal and stopped on a usage limit "
+      "closes limit, raises no family rule and resolves with no move",
+      got["starts"] == 1 and got["class"] == "limit" and got["rules"] == 0 and got["decision"] == "none", got)
+got = chain([work, refused, stop("stop", LIMIT)])
+check("CR10 control: the same chain ending on the Claude pass's refusal raises the family rule and holds the task",
+      got["starts"] == 1 and got["class"] == "refusal" and got["rules"] == 1 and got["decision"] == "held", got)
+CLOSE_RANK_END
+CLOSE_RANK_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) ok "${line#OK }" ;;
+    'BAD '*) no "${line#BAD }" ;;
+  esac
+done < "$F/close-rank.log"
+if [ "$CLOSE_RANK_RC" != 0 ] || [ "$(grep -c '^OK \|^BAD ' "$F/close-rank.log")" != 13 ]; then
+  no "close-ranking harness failed or reported short (exit $CLOSE_RANK_RC): $(tail -3 "$F/close-rank.log")"
+fi
+
+# B16 (known-issues [2026-11-10 13:17], package P05-FENCE): a stop ends the helper's whole process group.
+# The stop sent SIGKILL only while the leader lived, so a member that ignores SIGTERM outlived a leader
+# that exits on it; `lane.py kill` sent a bare SIGTERM, after which the wrapper's normal-exit path runs no
+# stop at all. Every stop now goes through stop_proven_group: the group id recorded at the start, a
+# census while the leader holds its pid, SIGTERM, the grace, then SIGKILL to the group, each signal only
+# once the group is proven the helper's. In-process cases each in a fresh process (test_limit_defaults.py's
+# B15 shape); the two wrapper cases through test_a3.py's Fixture, as the close-rank block above uses it.
+"$PY" - "$HERE" "$F" > "$F/b16.log" 2>&1 <<'B16_STOP_END'
+import hashlib, importlib.util, json, os, signal, stat, subprocess, sys, time
+here, root = sys.argv[1], sys.argv[2]
+sys.dont_write_bytecode = True
+sys.path.insert(0, here)
+work = os.path.join(root, "b16")
+os.makedirs(work, exist_ok=True)
+
+
+def check(name, good, got):
+    print(("OK %s" % name) if good else "BAD %s  [%s]" % (name, got), flush=True)
+
+
+def manifest(top):
+    rows = {}
+    for base, dirs, files in os.walk(top):
+        dirs.sort()
+        for name in sorted(files):
+            path = os.path.join(base, name)
+            st = os.lstat(path)
+            digest = None
+            if stat.S_ISREG(st.st_mode):
+                with open(path, "rb") as handle:
+                    digest = hashlib.sha256(handle.read()).hexdigest()
+            rows[path] = (stat.S_IMODE(st.st_mode), digest)
+    return rows
+
+
+BEFORE = manifest(here)
+
+# Each in-process case runs in a fresh process, as test_limit_defaults.py's B15 does, so a module load
+# and any spy stay there; it prints one JSON object. Every process it starts is killed by its known
+# group id before it ends.
+PROBE = r'''
+import importlib.util, json, os, signal, subprocess, sys, time
+here, case, work = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("lane_b16_probe", os.path.join(here, "lane.py"))
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+out = {"case": case}
+
+def member_code(tag, ignores):
+    ready = os.path.join(work, tag + ".member")
+    return ("import os, signal, time\n" + ("signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if ignores else "")
+            + "open(%r, 'w').write(str(os.getpid()))\ntime.sleep(60)\n" % ready), ready
+
+def group(tag, ignores, via_lane=True):
+    """A stand-in helper: a leader in its own session, started as lane.py starts one (its stdin, stdout
+    and stderr piped), and one child that holds no pipe (its stdio is /dev/null)."""
+    code, ready = member_code(tag, ignores)
+    lead = ("import subprocess, sys, time\nsubprocess.Popen([sys.executable, '-B', '-c', %r], stdin=subprocess.DEVNULL,"
+            " stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\ntime.sleep(60)\n" % code)
+    command = [sys.executable, "-B", "-c", lead]
+    if via_lane:
+        p = m.start_lane_process(command, work, dict(os.environ), "")
+    else:
+        p = subprocess.Popen(command, start_new_session=True, stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    end = time.monotonic() + 10
+    while time.monotonic() < end and not (os.path.exists(ready) and open(ready).read().strip()):
+        time.sleep(0.02)
+    return p, int(open(ready).read())
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+def gone_within(pid, seconds):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end and alive(pid):
+        time.sleep(0.05)
+    return not alive(pid)
+
+def cleanup(*pids):
+    for pid in pids:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+if case in ("member", "polite"):
+    p, member = group(case, case == "member")
+    try:
+        m.kill_group(p)
+        out.update(leader_exit=p.returncode, member_gone=gone_within(member, 3),
+                   stop_group=getattr(p, "_lane_stop_group", None))
+    finally:
+        cleanup(p.pid, member)
+elif case == "reused":
+    # The leader exited and was reaped before the stop; its pid now stands, by a spy, for a process in
+    # another group (987654, a stand-in id no call may name). The spy records every killpg and kill.
+    p = m.start_lane_process([sys.executable, "-B", "-c", "pass"], work, dict(os.environ), "")
+    p.wait(timeout=10)
+    calls, real = [], (os.killpg, os.kill, os.getpgid)
+    os.killpg = lambda g, s: calls.append(["killpg", g, int(s)])
+    os.kill = lambda q, s: calls.append(["kill", q, int(s)])
+    os.getpgid = lambda q: 987654 if q == p.pid else real[2](q)
+    try:
+        m.kill_group(p)
+    finally:
+        os.killpg, os.kill, os.getpgid = real
+    out.update(calls=calls, stop_group=getattr(p, "_lane_stop_group", None))
+elif case == "decoy":
+    # The helper's group is seen while its leader is unreaped, then ends whole and its leader is reaped;
+    # an unrelated live group (its member ignoring SIGTERM) then holds the id recorded at the start.
+    p, member = group("lane", False)
+    if hasattr(m, "lane_group_census"):
+        p._lane_group_seen = m.lane_group_census(p._lane_pgid, {}, p)
+    cleanup(p.pid)
+    p.wait(timeout=10)
+    gone_within(member, 3)
+    d, dmember = group("decoy", True, via_lane=False)
+    try:
+        p._lane_pgid = d.pid
+        m.kill_group(p)
+        time.sleep(0.3)
+        out.update(decoy_leader_alive=d.poll() is None, decoy_member_alive=alive(dmember),
+                   stop_group=getattr(p, "_lane_stop_group", None))
+    finally:
+        cleanup(d.pid, dmember)
+elif case == "recovery":
+    # The recovery stop runs in a process that is not the helper's parent: a launcher starts the group
+    # and exits, and this process stops it by pid and birth identity.
+    code, ready = member_code("recovery", True)
+    lead = ("import subprocess, sys, time\nsubprocess.Popen([sys.executable, '-B', '-c', %r], stdin=subprocess.DEVNULL,"
+            " stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\ntime.sleep(60)\n" % code)
+    launcher = ("import subprocess, sys\np = subprocess.Popen([sys.executable, '-B', '-c', %r], start_new_session=True,"
+                " stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\nprint(p.pid)\n" % lead)
+    leader = int(subprocess.run([sys.executable, "-B", "-c", launcher], capture_output=True, text=True).stdout)
+    end = time.monotonic() + 10
+    while time.monotonic() < end and not (os.path.exists(ready) and open(ready).read().strip()):
+        time.sleep(0.02)
+    member = int(open(ready).read())
+    identity = m.a3_process_identity(leader)
+    try:
+        try:
+            got = m.kill_pid_group(leader, identity=identity)
+        except TypeError:
+            got = m.kill_pid_group(leader)          # the stop before this change takes no identity
+        out.update(member_gone=gone_within(member, 3), stop_group=got)
+    finally:
+        cleanup(leader, member)
+elif case == "no-pgid":
+    real = os.getpgid
+    def raising(q):
+        raise OSError("planted: no group id")
+    os.getpgid = raising
+    try:
+        p, member = group("nopgid", False)
+    finally:
+        os.getpgid = real
+    try:
+        m.kill_group(p)
+        out.update(pgid=getattr(p, "_lane_pgid", "unset"), stop_group=getattr(p, "_lane_stop_group", None))
+    finally:
+        cleanup(p.pid, member)
+elif case == "no-listing":
+    if hasattr(m, "group_members"):
+        m.group_members = lambda pgid: None
+    p, member = group("nolisting", True)
+    try:
+        m.kill_group(p)
+        out.update(member_alive=alive(member), stop_group=getattr(p, "_lane_stop_group", None))
+    finally:
+        cleanup(p.pid, member)
+elif case == "census-time":
+    p, member = group("census", True)
+    try:
+        census = getattr(m, "lane_group_census", None)
+        if census is None:
+            out.update(mean_ms=None)
+        else:
+            start = time.perf_counter()
+            for _ in range(100):
+                census(p._lane_pgid, {}, p)
+            out.update(mean_ms=(time.perf_counter() - start) * 10.0,
+                       members=sorted(census(p._lane_pgid, {}, p)))
+    finally:
+        cleanup(p.pid, member)
+elif case in ("launch", "launch-unlisted"):
+    # A launch failure: the lifetime owner's infrastructure_failure on a live child, the path a failure
+    # after the start takes (codex-lane.py's launch failure calls the same owner method). Its journal is
+    # real, in this work folder; only the owner's finish, which writes the close, is stood in. With no
+    # group listing the census sees no member, so once the leader is reaped the group is not proven.
+    import types, uuid
+    if case == "launch-unlisted" and hasattr(m, "group_members"):
+        m.group_members = lambda pgid: None
+    p, member = group(case, True)
+    record = os.path.join(work, case + ".jsonl")
+    closes = []
+    try:
+        owner = m.A3Owner(types.SimpleNamespace(record=record), "claude", types.SimpleNamespace(), None)
+        journal = {"schema": m.A3_SCHEMA, "record": m.a3_canonical(record), "pass_id": uuid.uuid4().hex,
+                   "owner": owner.identity, "run": "b16",
+                   "lane": case, "kind": "task", "execution": "running", "disposition": {"phase": "none"},
+                   "stop_cause": None, "stop_intent": None, "child": None, "child_started": False,
+                   "child_start_pending": False, "report": None, "start": {"class": "fixture"}, "boundary": {},
+                   "evidence": {"refusal_count": None, "refusal_evidence": [], "settled": True}}
+        m.a3_save_journal(journal)
+        owner.journal, owner.process = journal, p
+        owner.finish = lambda close, allow_move=False: closes.append(close)
+        owner.infrastructure_failure(OSError("planted launch failure"))
+        saved = m.a3_read_journal(record, journal["pass_id"])
+        gone = gone_within(member, 3) if case == "launch" else None
+        if case == "launch-unlisted":
+            time.sleep(0.3)
+        out.update(member_gone=gone, member_alive=alive(member), stop_group=getattr(p, "_lane_stop_group", None),
+                   stop_cause=saved.get("stop_cause"), close_class=(closes[-1] if closes else {}).get("exit_class"))
+    finally:
+        cleanup(p.pid, member)
+print(json.dumps(out))
+'''
+
+
+def probe(case):
+    p = subprocess.run([sys.executable, "-B", "-c", PROBE, here, case, work], capture_output=True, text=True,
+                       timeout=60, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+    try:
+        return json.loads(p.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"crash": (p.stdout + p.stderr)[-600:]}
+
+
+def sent(entries, sig):
+    return [e for e in entries or [] if e.get("signal") == sig and e.get("sent") is True]
+
+
+r = probe("member")
+kill = sent(r.get("stop_group"), "SIGKILL")
+check("B16.1 must fire (fails on old): a stopped helper whose leader exits on SIGTERM and whose member ignores it and "
+      "holds no pipe: kill_group leaves no member, its SIGKILL sent to the group after the leader was reaped",
+      r.get("member_gone") is True and len(kill) == 1 and kill[0].get("leader_reaped") is True, r)
+r = probe("reused")
+check("B16.2 must not fire, a reused id (fails on old): the leader reaped before the stop and its pid standing for "
+      "another group: no killpg or kill call, and every stop_group entry unsent and not signalled",
+      r.get("calls") == [] and r.get("stop_group")
+      and all(e.get("sent") is False and "not signalled" in str(e.get("proof")) for e in r["stop_group"]), r)
+r = probe("decoy")
+check("B16.3 must not fire, a decoy under the recorded id: the helper's group gone whole, an unrelated live group "
+      "holding its id keeps its leader and its SIGTERM-ignoring member",
+      r.get("decoy_leader_alive") is True and r.get("decoy_member_alive") is True, r)
+r = probe("polite")
+check("B16.4 control: leader and member both exit on SIGTERM and are gone after the stop",
+      r.get("member_gone") is True, r)
+r = probe("recovery")
+check("B16.6 the recovery stop (fails on old): kill_pid_group from a process that is not the parent leaves no member, "
+      "with a SIGKILL sent to the group",
+      r.get("member_gone") is True and bool(sent(r.get("stop_group"), "SIGKILL")), r)
+r = probe("no-pgid")
+check("B16.7 premise (fails on old): no group id at the start: the leader alone is signalled, and stop_group says so",
+      r.get("pgid") is None and bool(r.get("stop_group")) and all(e.get("pgid") is None for e in r["stop_group"])
+      and any(e.get("signal") == "SIGTERM" and e.get("sent") is True and "the leader alone was signalled" in str(e.get("proof"))
+              for e in r["stop_group"]), r)
+r = probe("no-listing")
+late = [e for e in r.get("stop_group") or [] if e.get("signal") == "SIGKILL"]
+check("B16.8 premise (fails on old): no group listing: once the leader is reaped no group signal goes, and the "
+      "record says not signalled",
+      len(late) == 1 and late[0].get("sent") is False and "not signalled" in str(late[0].get("proof")), r)
+r = probe("census-time")
+print("  measure — B16.10 one census of a two-process group: mean %s ms over 100 (bound 20 ms); members %s"
+      % (("%.2f" % r["mean_ms"]) if r.get("mean_ms") is not None else "n/a", r.get("members")), flush=True)
+
+# B16.5 and B16.5b: the same through the real wrapper, a Claude lane over test_a3.py's fixture, its
+# stand-in provider made to start a member that ignores SIGTERM and holds no pipe; stopped by
+# `lane.py kill`. In B16.5 the leader outlives SIGTERM by 1.5 s, so the wrapper's own stop runs; in
+# B16.5b it exits at once, so the wrapper takes its normal-exit path and only kill's own stop is left.
+PROVIDER = r'''
+import json, os, re, signal, subprocess, sys, time
+from pathlib import Path
+if "--version" in sys.argv:
+    print("fixture provider 1")
+    raise SystemExit(0)
+root = Path(os.environ["A3_FIXTURE"])
+prompt = sys.stdin.read()
+if prompt == "Reply with the single word ok.":
+    print(json.dumps({}))
+    raise SystemExit(0)
+def flag(name):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
+sid = flag("--session-id") or flag("--resume")
+project = re.sub(r"[^A-Za-z0-9]", "-", str(Path.cwd().resolve()))
+target = root / "projects" / project / (sid + ".jsonl")
+target.parent.mkdir(parents=True, exist_ok=True)
+with target.open("a") as handle:
+    handle.write(json.dumps({"type": "assistant", "message": {"id": "m1", "model": "fixture-model",
+        "stop_reason": "tool_use", "content": [{"type": "text", "text": "working"}],
+        "usage": {"input_tokens": 1, "output_tokens": 1}}}) + "\n")
+member = ("import os, signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+          "open(%r, 'w').write(str(os.getpid()))\ntime.sleep(60)\n" % str(root / "b16-member.pid"))
+subprocess.Popen([sys.executable, "-B", "-c", member], stdin=subprocess.DEVNULL,
+                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+if os.environ.get("B16_MODE") == "linger":
+    signal.signal(signal.SIGTERM, lambda *_: (time.sleep(1.5), os._exit(143)))
+(root / "provider-ready").write_text(str(os.getpid()))
+end = time.monotonic() + 60   # fixture lifetime ceiling, set by judgement, unmeasured
+while time.monotonic() < end:
+    time.sleep(0.05)
+raise SystemExit(0)
+'''
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def through_wrapper(mode):
+    from test_a3 import Fixture
+    f = Fixture(here, root)
+    member = None
+    try:
+        provider = f.root / "bin" / "claude"
+        provider.write_text("#!" + sys.executable + "\n" + PROVIDER)
+        provider.chmod(0o755)
+        f.scenario("claude", [], wait=True)
+        f.env["B16_MODE"] = mode
+        spawn = subprocess.Popen(f.command("claude"), env=f.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        f.processes.append(spawn)
+        pidfile = f.root / "b16-member.pid"
+        end = time.monotonic() + 30
+        while time.monotonic() < end and not (pidfile.exists() and pidfile.read_text().strip()
+                                               and (f.root / "provider-ready").exists()):
+            time.sleep(0.05)
+        member = int(pidfile.read_text()) if pidfile.exists() and pidfile.read_text().strip() else None
+        killed = f.run(f.command("claude", "kill", ["--reason", "suite stop of a member that ignores SIGTERM"]), timeout=60)
+        gone = None
+        if member is not None:
+            end = time.monotonic() + 3
+            while time.monotonic() < end and alive(member):
+                time.sleep(0.05)
+            gone = not alive(member)
+        try:
+            spawn.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            spawn.kill()
+        snap = f.snapshot()
+        journal = next((j for j in snap["journals"] if j.get("lane") == "case"), {})
+        closes = [row for row in snap["record"] if row.get("event") == "lane-closed" and row.get("lane") == "case"]
+        return {"member": member, "gone": gone, "kill_rc": killed.returncode, "kill_err": killed.stderr[-300:],
+                "close_class": (closes[-1] if closes else {}).get("exit_class"),
+                "close_stop_group": (closes[-1] if closes else {}).get("stop_group"),
+                "journal_stop_group": journal.get("stop_group")}
+    finally:
+        if member is not None and alive(member):
+            try:
+                os.kill(member, signal.SIGKILL)       # fixture hygiene where the stop left it
+            except OSError:
+                pass
+        f.cleanup()
+
+
+r = through_wrapper("linger")
+check("B16.5 through the wrapper (fails on old): lane.py kill on a Claude lane whose leader outlives SIGTERM: it "
+      "closes killed, the member is gone once kill returns, and the close's stop_group holds a sent SIGKILL",
+      r.get("gone") is True and r.get("close_class") == "killed" and bool(sent(r.get("close_stop_group"), "SIGKILL")), r)
+r = through_wrapper("prompt")
+check("B16.5b the explicit stop's race (fails on old): the leader exits at once on SIGTERM, the wrapper takes its "
+      "normal-exit path: the member is gone once kill returns, and the stop_group kill appends to the journal "
+      "holds a sent SIGKILL",
+      r.get("gone") is True and bool(sent(r.get("journal_stop_group"), "SIGKILL")), r)
+
+
+# B16.11: the launch failure, infrastructure_failure's wait-only branch (the shared stop with drain off),
+# the one stop path without a leg of its own until 2026-11-22. Through the wrapper, a failure is planted
+# once the child has started (test_a3.py's `child-started` barrier, released with an error, as its A11
+# post-launch case does), over the same stand-in provider with its leader exiting at once on SIGTERM;
+# in-process, the same owner method with the group listed and with no listing.
+def launch_through_wrapper():
+    from test_a3 import Fixture
+    f = Fixture(here, root)
+    member = None
+    try:
+        provider = f.root / "bin" / "claude"
+        provider.write_text("#!" + sys.executable + "\n" + PROVIDER)
+        provider.chmod(0o755)
+        f.scenario("claude", [], wait=True)
+        f.env["B16_MODE"] = "prompt"
+        proc, release, arrived = f.barrier("claude", "child-started")
+        pidfile = f.root / "b16-member.pid"
+        end = time.monotonic() + 30
+        while time.monotonic() < end and not (pidfile.exists() and pidfile.read_text().strip()
+                                               and (f.root / "provider-ready").exists()):
+            time.sleep(0.05)
+        member = int(pidfile.read_text()) if pidfile.exists() and pidfile.read_text().strip() else None
+        os.write(release, b"E")
+        out, err = proc.communicate(timeout=60)
+        gone = None
+        if member is not None:
+            end = time.monotonic() + 3
+            while time.monotonic() < end and alive(member):
+                time.sleep(0.05)
+            gone = not alive(member)
+        snap = f.snapshot()
+        journal = next((j for j in snap["journals"] if j.get("lane") == "case"), {})
+        closes = [row for row in snap["record"] if row.get("event") == "lane-closed" and row.get("lane") == "case"]
+        return {"member": member, "gone": gone, "rc": proc.returncode, "err": err[-300:],
+                "barrier": arrived.get("barrier"), "stop_cause": journal.get("stop_cause"),
+                "close_class": (closes[-1] if closes else {}).get("exit_class")}
+    except Exception as exc:
+        return {"crash": str(exc)[-300:]}
+    finally:
+        if member is not None and alive(member):
+            try:
+                os.kill(member, signal.SIGKILL)       # fixture hygiene where the stop left it
+            except OSError:
+                pass
+        f.cleanup()
+
+
+w = launch_through_wrapper()
+a = probe("launch")
+u = probe("launch-unlisted")
+a_kill = sent(a.get("stop_group"), "SIGKILL")
+u_kill = [e for e in u.get("stop_group") or [] if e.get("signal") == "SIGKILL"]
+check("B16.11 the launch failure (fails on old): a failure after the helper started, whose leader exits on SIGTERM "
+      "and whose member ignores it and holds no pipe, leaves no member, through the wrapper (closed error, stop_cause "
+      "infrastructure-failure) and in-process with a SIGKILL sent to the group after the leader was reaped; with no "
+      "group listing the group is not proven once the leader is reaped, and no SIGKILL goes",
+      w.get("gone") is True and w.get("rc") == 3 and w.get("barrier") == "child-started"
+      and w.get("stop_cause") == "infrastructure-failure" and w.get("close_class") == "error"
+      and a.get("member_gone") is True and len(a_kill) == 1 and a_kill[0].get("leader_reaped") is True
+      and a.get("stop_cause") == "infrastructure-failure" and a.get("close_class") == "error"
+      and len(u_kill) == 1 and u_kill[0].get("sent") is False and "not signalled" in str(u_kill[0].get("proof"))
+      and u.get("member_alive") is True,
+      {"wrapper": w, "in_process": a, "unlisted": u})
+
+AFTER = manifest(here)
+control_dir = os.path.join(work, "control")
+os.makedirs(control_dir, exist_ok=True)
+with open(os.path.join(control_dir, "probe"), "w") as handle:
+    handle.write("a\n")
+c1 = manifest(control_dir)
+with open(os.path.join(control_dir, "probe"), "w") as handle:
+    handle.write("b\n")
+c2 = manifest(control_dir)
+check("B16.9 the group writes nothing in the scripts folder (a checksum-and-mode manifest of %d files, before and "
+      "after; control: one changed byte in a fixture file is caught)" % len(BEFORE),
+      bool(BEFORE) and BEFORE == AFTER and c1 != c2,
+      sorted(set(BEFORE) ^ set(AFTER))[:3] or [p for p in BEFORE if BEFORE[p] != AFTER.get(p)][:3])
+B16_STOP_END
+B16_RC=$?
+while IFS= read -r line; do
+  case "$line" in
+    'OK '*) ok "${line#OK }" ;;
+    'BAD '*) no "${line#BAD }" ;;
+    '  measure — '*) echo "$line" ;;
+  esac
+done < "$F/b16.log"
+if [ "$B16_RC" != 0 ] || [ "$(grep -c '^OK \|^BAD ' "$F/b16.log")" != 11 ]; then
+  no "B16 stop harness failed or reported short (exit $B16_RC): $(tail -3 "$F/b16.log")"
+fi
+
 # ------------------------------------------------------------------------- live --------------
 # The live legs drive the real harness, which needs the owner's login under the real home: only
 # they get the real HOME back, and the fixture home returns after them (register 2026-10-04 10:45).
@@ -7223,7 +8349,7 @@ if [ "$LIVE" = 1 ]; then
   mkdir -p "$F/live/granted" "$F/live/whitelist" "$F/live/offlimits"
   printf 'LIVE-GRANTED-TOKEN-5150\n' > "$F/live/granted/inside.txt"
   printf 'LIVE-OFFLIMITS-TOKEN-6260\n' > "$F/live/offlimits/outside.txt"
-  live(){ env LLM_WIKI_STORE="$LSTORE" "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" \
+  live(){ env LLM_WIKI_STORE="$LSTORE" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" \
           --run run-test-live --model sonnet --budget-usd 1 --max-turns 6 --deadline-s 420 \
           --record "$LREC" --reason '(a) live probe: only a real harness shows this' "$@"; }
 
@@ -7367,7 +8493,7 @@ if [ "$LIVEHO" = 1 ]; then
   mkdir -p "$F/ho/.claude/skills/thing" "$F/ho/plain"
   printf '# thing\n' > "$F/ho/.claude/skills/thing/SKILL.md"
   printf 'PLAIN-TOKEN-8181\n' > "$F/ho/plain/file.txt"
-  holive(){ env -u CLAUDE_CONFIG_DIR LLM_WIKI_STORE="$HSTORE" CLAUDE_PROJECT_DIR="$FXV" "$PY" "$LANE" spawn --expect-usd 2 \
+  holive(){ env -u CLAUDE_CONFIG_DIR LLM_WIKI_STORE="$HSTORE" CLAUDE_PROJECT_DIR="$FXV" "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 \
             --home "$LHOME" --routing "$R" --run run-test-ho --model haiku --effort high --budget-usd 0.1 \
             --max-turns 4 --deadline-s 300 --record "$HREC" \
             --reason '(a) live hands-off probe' "$@"; }
@@ -7636,7 +8762,8 @@ if not codex:
           and kill.call_count == 0 and "explicit head stop required" in result[1]
           and any(row.get("event") == "stall" for row in core.load_record(str(record))))
 
-# Subcommand help itself names the fresh hand-off and the two exceptions.
+# Subcommand help itself names a review's findings, the two other uses, and the resume's own pick
+# with its cost (2026-11-21: findings go back to the helper that made the work).
 with patch.object(sys, "argv", [str(source), "resume", "--help"]), \
         contextlib.redirect_stdout(io.StringIO()) as help_output:
     try:
@@ -7644,20 +8771,30 @@ with patch.object(sys, "argv", [str(source), "resume", "--help"]), \
     except SystemExit as exc:
         assert exc.code == 0
 help_text = " ".join(help_output.getvalue().split())
-policy = ("fresh helper", "compact hand-off", "usage limit", "on disk and checked", "panel's round 2")
-check("resume help names fresh helper and both exceptions", help_text.startswith("usage:")
-      and "--brief BRIEF" in help_text and all(word in help_text for word in policy))
+policy = ("a review's findings on its own work", "usage limit", "on disk and checked", "panel's round 2",
+          "--effort", "--late", "written again")
+check("NP-T01 (fails on old) resume help names a review's findings, both other uses, and --effort and --late with their cost",
+      help_text.startswith("usage:") and "--brief BRIEF" in help_text
+      and all(word in help_text for word in policy) and "a second pass goes to a fresh helper" not in help_text)
 if not codex:
-    seed([opened, spawned, close()])
-    args = module.build_parser().parse_args(["advise", "--run", base["run"], "--lane", base["lane"],
-                                           "--record", str(record)])
-    with contextlib.redirect_stdout(io.StringIO()) as advice:
-        code = module.cmd_advise(args)
-    text = advice.getvalue()
-    check("completed advice: fresh helper, compact hand-off, both exceptions", code == 0
-          and text.startswith("advise: restart") and all(word in text for word in policy)
-          and all(word in text for word in ("report's path", "findings to fold", "held files", "must not change"))
-          and "inside its window for a follow-up" not in text)
+    def advice_for(rows):
+        seed(rows)
+        args = module.build_parser().parse_args(["advise", "--run", base["run"], "--lane", base["lane"],
+                                               "--record", str(record)])
+        with contextlib.redirect_stdout(io.StringIO()) as advice:
+            code = module.cmd_advise(args)
+        return code, advice.getvalue()
+    code, text = advice_for([opened, spawned, close()])
+    aged = dict(close(), ts=time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(time.time() - 2 * 3600)))
+    code_aged, text_aged = advice_for([opened, spawned, aged])
+    findings = ("a review's findings go back to the helper that made the work", "compact hand-off",
+                "its record is gone", "its context is spent",
+                "the review asks, with its reason, for the fix to go to a seat that has not seen the work")
+    check("NP-T02 (fails on old) completed advice: resume with the review's findings, a fresh helper only in its three cases; 2 h old it names --late",
+          code == 0 and text.startswith("advise: resume") and all(word in text for word in findings)
+          and "--late" not in text and code_aged == 0 and text_aged.startswith("advise: resume")
+          and "--late with --choice-reason" in text_aged and "written again" in text_aged,
+          (text + " | " + text_aged)[:300])
 
 # Last legs: actual CLI calls on a read-only copy; no mock can hide a write here.
 readonly = root / "readonly"
@@ -7752,7 +8889,7 @@ if grep -q "$FR/g1-dirty" "$F/G1B-move.swap" && printf '%s' "$G1M" | grep -q 'th
    && ! printf '%s' "$G1M" | grep -q 'G1-FALLEN-BACK-TEXT'; then
   ok "G104 the head's own recover --decision move starts the successor, and recover then names the continuation's report"
 else no "G104 the head's move  [$(tail -2 "$F/G1B-move.out" | tr '\n' '|' | cut -c1-300)]"; fi
-env STUB_REPORT=G1-PLAIN-TEXT $LANEV "$PY" "$LANE" spawn --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
+env STUB_REPORT=G1-PLAIN-TEXT $LANEV "$PY" "$LANE" spawn --choice-reason 'fixture pick' --expect-usd 2 --home "$LHOME" --routing "$R" --brief "$F/brief.md" --projects-root "$PROJ" \
   --run run-test-g1 --lane G1C --class verifier --grant "$F/granted" --record "$G1REC" --reason '(a) a plain lane' >"$F/G1C.out" 2>"$F/G1C.err"
 G1V=$(g1disp G1C)
 G1P=$($LANEV "$PY" "$LANE" recover --run run-test-g1 --lane G1C --record "$G1REC" --pass "${G1V##* }" 2>&1)

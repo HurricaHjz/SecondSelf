@@ -462,6 +462,20 @@ long_fm = os.path.join(VAULT, "raw", "longfm.md")
 open(long_fm, "w").write("---\ntitle: t\nnote_field: " + "x" * 5000 + "\nsource_url: https://x.test/longfm\n---\nbody\n")
 r = run("dedup", "--urls", "https://x.test/longfm", "--control", "https://x.test/two")
 check("key past 4096 B found (extend-on-miss)", "ALREADY IN VAULT" in r.stdout and "longfm" in r.stdout)
+# An Obsidian Web Clipper page names its address with source: alone; a body line opening "Source:" is a
+# citation, never the page's own address.
+clip_md = os.path.join(VAULT, "raw", "clipped.md")
+open(clip_md, "w").write('---\ntitle: "Clipped page"\nsource: "https://clip.test/notes/clipped-only"\ncreated: 2026-11-10\n'
+                         '---\n\nSource: https://clip.test/cited-in-body\n')
+r = run("dedup", "--urls", "https://clip.test/notes/clipped-only", "https://clip.test/cited-in-body",
+        "https://www.clip.test/notes/clipped-only.html", "--control", "https://x.test/two")
+check("dedup finds a Web Clipper page by its frontmatter source: alone, its host-and-slug advisory too, while a body "
+      "line 'Source: <url>' stays new (control in the same run)",
+      r.returncode == 0 and "https://clip.test/notes/clipped-only -> ALREADY IN VAULT: raw/clipped.md (matched on: url)" in r.stdout
+      and "https://clip.test/cited-in-body -> new" in r.stdout
+      and "https://www.clip.test/notes/clipped-only.html ~> likely duplicate of raw/clipped.md" in r.stdout
+      and "from source;" in r.stdout)
+os.remove(clip_md)
 
 print("== dedup: a review site's name proves no review (G7) ==")
 import shutil

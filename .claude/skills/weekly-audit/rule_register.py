@@ -8,10 +8,12 @@ Commands (stdout only, unless the command says WRITES):
   wording-check   [--trial] [--installed-only LIST]  each approved wording against its home.
   weekly          [--full] [--all-flags]  the one pass: wording check, coverage check with its four
                   listings and the older-rulings listing, copies listing, flags now due, sources
-                  changed by recorded fingerprints. It only lists and stops no work.
-  record-audit    WRITES the audit block of the data file: the fingerprints, rulings and listed flags
-                  the next weekly pass compares with. Run it once the weekly pass has been walked
-                  through.
+                  changed by recorded fingerprints, and the old-state listing (old_state_listing.py
+                  beside this file): end dates now past, and pages whose count of old-state marks
+                  rose since the last recorded audit. It only lists and stops no work.
+  record-audit    WRITES the audit block of the data file: the fingerprints, rulings, listed flags
+                  and old-state counts the next weekly pass compares with. Run it once the weekly
+                  pass has been walked through.
   seed            --map FILES --rules FILE --tracing FILE  the first rows, from the map's rows.
                   --skill-sections adds one row per section of each skill's SKILL.md.
                   Prints the data document; --out FILE WRITES it, only where nothing exists.
@@ -101,7 +103,7 @@ LOCK_POLL = 0.05
 
 # Dated records. The wording check never searches them and refuses a row that names one as a home.
 DATED_FILES = ("wiki/log.md", "wiki/developments/owner-rulings-history.md",
-               "wiki/developments/known-issues.md")
+               "wiki/developments/known-issues.md", "wiki/developments/known-issues-closed.md")
 DATED_PREFIXES = ("output/reports/",)
 OWNER_NOTES_HEADING = "## Dated owner notes"
 # Registries nearly every page names; a change to them says nothing about a page that names them.
@@ -117,6 +119,10 @@ LISTED = "listed, not checked"
 FRAMEWORK_FOLDERS = ("wiki/developments/", "wiki/syntheses/", "wiki/user/")
 
 LIST_CAP = 40      # lines shown per listing, the count always whole; set by judgement, unmeasured
+# Where a replaced approved wording is held: after CLAUDE.md section 12's retire clause, its nouns
+# fitted to the sentence of a miss ("the old one" for "the replaced wording").
+HELD_OLD = ("and the log entry names the commit that holds the old one or, where no commit holds "
+            "it, an entry appended before the edit quotes it")
 OLDER_SHOWN = 3    # older rulings shown beside a new one, closest first; set by judgement, unmeasured
 EXCERPT = 150      # characters of a text shown in a listing line; set by judgement, unmeasured
 CLEANUP_DAYS = 14  # the owner's rule on old records; its number is set by judgement, unmeasured
@@ -759,8 +765,8 @@ def print_wording(result, show_listed=True):
         print("LISTED %s · %s: %s" % (row_id, LISTED, reason))
     if result.misses:
         print("A miss goes to the owner, who chooses: the stored wording goes back; the new text becomes "
-              "the approved wording, the old one going once to the rulings history; or it stays as a "
-              "noted difference, stored on the row with its date and the owner's words.")
+              "the approved wording, %s; or it stays as a noted difference, stored on the row with "
+              "its date and the owner's words." % HELD_OLD)
     print("WORDING: %d approved wordings: %d in their homes, %d missed (%d of them standing outside "
           "their named section), %d noted differences, %d refused homes; %d rows %s" % (
               result.checked, result.in_home, len(result.misses),
@@ -1401,6 +1407,56 @@ def list_sources(ctx, report, pages, audit):
         report.probe("none of the %d recorded fingerprints matches a file now" % len(recorded))
 
 
+def old_state_counts(ctx):
+    """The old-state listing's counts ({wiki-relative path: counts}), read by its own count(),
+    which runs its controls first and raises on a broken premise, as it does when it is not here."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    try:
+        import old_state_listing
+    except ImportError as error:
+        raise RuntimeError("old_state_listing.py is not beside this tool (%s)" % error)
+    today = old_state_listing.parse_date(ctx.today)
+    if today is None:
+        raise old_state_listing.ProbeFailed("--today is not a YYYY-MM-DD date: %r" % ctx.today)
+    pages, _typed = old_state_listing.count(os.path.join(ctx.vault.root, "wiki"), today)
+    return {rel: counts for rel, (_kind, _size, counts, _hits) in pages.items()}, old_state_listing
+
+
+def list_old_state(ctx, report, audit):
+    """End dates now past, every pass; and the pages whose count of old-state marks rose since the
+    last recorded audit, with the rise. The record pages are left out, as the listing leaves them."""
+    try:
+        counts, module = old_state_counts(ctx)
+    except Exception as failure:            # the listing's ProbeFailed, or a page it cannot read
+        report.probe("old-state listing: %s" % failure)
+        report.counts["old_state_risen"] = "could not check"
+        return
+    past = sorted((rel, c["until_past"]) for rel, c in counts.items() if c["until_past"])
+    recorded = audit.get("old_state")
+    lines = ["PAST wiki/%s · %d end date%s now past" % (rel, n, "" if n == 1 else "s")
+             for rel, n in past]
+    risen = []
+    if recorded is not None:
+        for rel, c in sorted(counts.items()):
+            was = recorded.get(rel, 0)
+            if c["items"] > was:
+                risen.append("ROSE wiki/%s · %d → %d (+%d)" % (rel, was, c["items"], c["items"] - was))
+    report.counts["end_dates_past"] = len(past)
+    report.counts["old_state_risen"] = len(risen) if recorded is not None else "no baseline"
+    print("OLD STATE · %d pages read, %d with marks, %d marks (the records skipped: %s); end dates "
+          "now past on %d pages; %s" % (
+              len(counts), sum(1 for c in counts.values() if c["items"]),
+              sum(c["items"] for c in counts.values()), ", ".join(
+                  getattr(module, "records", lambda wiki: module.RECORDS)(os.path.join(ctx.vault.root, "wiki"))),
+              len(past),
+              "%d pages risen since the audit of %s" % (len(risen), audit.get("at"))
+              if recorded is not None else
+              "no recorded counts yet, so nothing can be called risen (record-audit records them)"))
+    report.listing(lines + risen)
+
+
 def rows_digest(rows):
     return hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
 
@@ -1455,6 +1511,11 @@ def cmd_weekly(args):
         list_sources(ctx, report, pages, audit)
     elif not ctx.problem:
         print("SOURCES · not applicable (no data file holds a baseline)")
+    if ctx.data and pages:
+        list_old_state(ctx, report, audit)
+    elif not ctx.problem:
+        print("OLD STATE · not applicable (%s)" % ("no wiki pages" if not pages else
+                                                   "no data file holds a baseline"))
     print("SUMMARY %s seconds=%.1f" % (" ".join(
         "%s=%s" % (key, str(value).replace(" ", "-")) for key, value in report.counts.items()),
         time.time() - started))
@@ -1485,6 +1546,15 @@ def cmd_record_audit(args):
                           else ctx.today for flag in flags}}
     if not (audit["rule_files"] or audit["sources"]):
         return probe_failed("nothing to fingerprint, so no baseline is recorded")
+    unrecorded = None
+    if pages:
+        try:
+            counts, _module = old_state_counts(ctx)
+            audit["old_state"] = {rel: c["items"] for rel, c in sorted(counts.items()) if c["items"]}
+        except Exception as failure:
+            # The listing only warns, so its failure stops no other baseline: its counts are left
+            # out, and the next weekly pass says it has none to compare with.
+            unrecorded = "old-state listing: %s" % failure
     ctx.data["audit"] = audit
     try:
         with guarded_write(ctx.data_path, same=(ctx.data_path, ctx.data_sha)):
@@ -1493,8 +1563,13 @@ def cmd_record_audit(args):
         print(refusal)
         return 1
     print("record-audit %s: %d rule-holding files, %d cited or named files, %d dated rulings, %d flags "
-          "recorded" % (ctx.today, len(audit["rule_files"]), len(audit["sources"]),
-                        sum(audit["rulings"].values()), len(flags)))
+          "recorded%s" % (ctx.today, len(audit["rule_files"]), len(audit["sources"]),
+                          sum(audit["rulings"].values()), len(flags),
+                          "; old-state counts of %d pages recorded" % len(audit["old_state"])
+                          if "old_state" in audit else ""))
+    if unrecorded:
+        print("  old-state counts not recorded: %s; the next weekly pass has no counts to call a "
+              "page risen" % unrecorded)
     # Named, so a flag set or come due since the pass, recorded here and never listed, can be seen.
     fresh = sorted(flag.rel for flag in flags if earlier.get(flag.rel) != flag.digest)
     if fresh:
@@ -2029,11 +2104,12 @@ def open_entries(text):
 def named_tokens(ctx, pages):
     """Every path-like word of what can keep a record: the wiki, the calendar, the open entries.
 
-    The log and a closed register entry keep nothing: the log names every run ever made.
+    The log and a closed register entry keep nothing: the log names every run ever made, and a
+    closed entry, under the register's Closed or swept to its closed page, names finished work.
     """
-    register, log = DATED_FILES[2], DATED_FILES[0]
+    register, log, closed = DATED_FILES[2], DATED_FILES[0], DATED_FILES[3]
     texts = [page.body + " " + str(page.flagged) + " " + " ".join(page.sources)
-             for page in pages if page.rel not in (register, log)]
+             for page in pages if page.rel not in (register, log, closed)]
     entries = ctx.vault.raw(register)
     if entries is not None:
         texts.append(open_entries(entries))
@@ -2190,10 +2266,10 @@ def render_page(data, date):
            "- **Whose and layer.** `product`, `default` or `owner`; `core` or `user`, for the split between the public core and a user's own layer.",
            "- **Shape.** `guided` (a default, with room to depart from it for a stated reason, and few hard limits), `fixed` (a hard limit, with the failure that justifies it or the owner's decision it records) or `mechanism` (a hook or script, with its failure).",
            "- **Wording.** `approved-record`: a dated record of the owner's approval of those very words exists, and only these are checked word for word. `approved-untraced`: the home marks the text as the owner's and no record has been found; its text stays unchanged. `listed, not checked`: the approved words stand in a dated record, which the check never reads, so the row is listed with that reason and fails no install. `agent`: the agent's wording, everything else.",
-           "- **A miss.** It comes to the owner with the stored wording, the home's text and the difference. The owner chooses: the stored wording goes back; the new text becomes the approved wording, the old one going once to " + wikilink("owner-rulings-history") + "; or it stays as a noted difference, stored on the row with its date and the owner's words.",
+           "- **A miss.** It comes to the owner with the stored wording, the home's text and the difference. The owner chooses: the stored wording goes back; the new text becomes the approved wording, " + HELD_OLD + "; or it stays as a noted difference, stored on the row with its date and the owner's words.",
            "- **A skill section's row.** A skill's steps are already read at their moment, so they are listed by section: the row names the file and the section and holds no text, and the coverage check asks only that the section still stands.",
            "- **Its writer.** Only the lead of the session that changes a rule writes the data, in the same pass as the change; helpers propose rows. The weekly pass only lists, and its row is on " + wikilink("check-lifecycle") + ".",
-           "- **When a rule changes.** On the owner's yes, in one pass: the home's text changes; every pointer and restatement is swept; the row's stored wording is replaced, so the register keeps only the current wording, and the replaced wording goes once to " + wikilink("owner-rulings-history") + "; holds made under the old rule are reopened; a lifecycle row is added or changed if the rule is recurring work. The wording check runs as one of that install's tests, listing the rows it placed: `wording-check --installed-only LIST`.",
+           "- **When a rule changes.** On the owner's yes, in one pass: the home's text changes; every pointer and restatement is swept; the row's stored wording is replaced, so the register keeps only the current wording, and the log entry names the commit that holds the replaced wording or, where no commit holds it, an entry appended before the edit quotes that wording; holds made under the old rule are reopened; a lifecycle row is added or changed if the rule is recurring work. The wording check runs as one of that install's tests, listing the rows it placed: `wording-check --installed-only LIST`.",
            "- **The wording check's trial state.** The data's `trial` stays on through the first install: the check logs what it would have blocked and blocks nothing. The lead sets it off after that install; a miss on a text just placed, or a could-not-check, then fails an install.",
            ""]
     wording = collections.Counter(row.get("wording") for row in rows)
@@ -2235,7 +2311,6 @@ def render_page(data, date):
             "- " + wikilink("capability-register") + ", whose shape this register follows: one data file, a generated page and its checks.",
             "", "## Related", "",
             "- " + wikilink("check-lifecycle"),
-            "- " + wikilink("owner-rulings-history"),
             "- " + wikilink("capability-register"), ""]
     return "\n".join(out)
 

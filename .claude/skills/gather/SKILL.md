@@ -243,7 +243,7 @@ existing paths; never edit or delete existing raw bytes; only *add* new captures
 "converted `.md`" provision). If the script is missing or broken, STOP and ask — never hand-write
 a capture around it. Every capture carries full provenance frontmatter
 (`converted_from`/`converted_by`/`converted_on` + `source_url`, keeping ingest's de-dup working).
-Download body images to `assets/` with relative paths. The **capture quality gate** (mechanical,
+Download body images to `assets/figures/` with relative paths. The **capture quality gate** (mechanical,
 in the script) refuses unwritten: engine error stubs, Page-Not-Found shells, HTML-dominant bodies
 (a crashed converter emitting markup), near-empty pages. Platform captures (tier-3 CLIs) pipe the
 CLI's output VERBATIM inside a closed fenced block under a one-line header — the gate honours the
@@ -326,7 +326,10 @@ WHETHER)
   one. Under a hard window, EVERY menu row is date-verified pre-gate (the overrun past the ≤6
   baseline declared at the gate) and rule-selected below-menu rows are date-checked at capture;
   out-of-window pages are discarded unwritten, the spent fetch reported, the shortfall never
-  auto-backfilled — offer a follow-up rule or round. An UNDATED living surface (an active repo's
+  auto-backfilled — offer a follow-up rule or round.
+  A "first posted before X" cutoff also fixes the version captured: the last version posted before X,
+  at its versioned address (on arXiv `/html/<id>v<k>`), never the unversioned one, which serves the
+  latest. An UNDATED living surface (an active repo's
   files, a vendor docs page) may pass the window on liveness evidence named in its row —
   host/repo activity (e.g. `pushed_at`) inside the window — while dated artefacts (posts,
   announcements) pass only on publication date.

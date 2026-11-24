@@ -88,6 +88,13 @@ build_fake_vault(){
   cp "$VAULT_DIR/.claude/skills/delegate/throttle.py" "$VAULT_DIR/.claude/skills/delegate/routing.json" \
      "$V/.claude/skills/delegate/"
   chmod -R u+w "$V/.claude"   # a copy of a locked core is read-only, and these legs write in it
+  # every hook the copied payload list names, as a real vault holds them: the export refuses a listed hook that is absent (P06-RUN, D-E2b)
+  mkdir -p "$V/.claude/hooks"
+  if [ -f "$V/.claude/skills/export-template/payload/shipped-hooks.txt" ]; then
+    for h in $(grep -vE '^[[:space:]]*(#|$)' "$V/.claude/skills/export-template/payload/shipped-hooks.txt"); do
+      printf '# %s (a listed hook, fixture)\n' "$h" > "$V/.claude/hooks/$h"
+    done
+  fi
   # The real table, with any row the vault has not marked yet marked core here, so that these legs test
   # the chain whatever the table's state; the unmarked case has its own leg in group 6.
   python3 - "$V/.claude/skills/delegate/routing.json" <<'MARK_FIXTURE'
@@ -239,6 +246,7 @@ chk "clean: the recap quotes the personal-strings line" 'grep -q "^personal-stri
 chk "clean: the recap carries the staged stat"     'grep -q "files* changed" "$RECAP"'
 chk "clean: the recap carries git log --oneline -5" 'grep -q -- "-- git log --oneline -5 --" "$RECAP"'
 chk "clean: the recap carries the throttle gate line" 'grep -q "match throttle .auto." "$RECAP"'
+chk "clean: the recap carries the README-image check, its one image in the index" 'grep -q "^  README images: 1 named, all in the index" "$RECAP"'
 chk "drift: a transformed path is exempt, not drift"    'grep -q "exempt  .obsidian/graph.json  (transformed by apply_fixes())" "$RECAP"'
 chk "drift: a vault-local block is exempt, not drift"   'grep -q "exempt  CLAUDE.md  (a vault-local:begin block was stripped" "$RECAP"'
 chk "drift: a payload-packaged file is exempt, not drift" 'grep -q "exempt  .gitignore  (packaged from the skill payload" "$RECAP"'
@@ -309,6 +317,7 @@ chk "publish: the run did not pull again"      '! hasline "^-- pull"'
 chk "publish: the run did not overlay again"   '! hasline "^-- overlay"'
 chk "publish: all four gates ran again on the staged index" \
     'hasline "^-- drift check" && hasline "^-- payload gate" && hasline "^-- release gate" && hasline "^-- throttle gate"'
+chk "publish: the README-image check ran again on the staged index" 'hasline "^-- README images" && hasline "README images: 1 named, all in the index"'
 chk "publish: the bare repo gained exactly one commit" '[ "$(count_bare)" = "$((B0 + 1))" ]'
 chk "publish: the clone gained exactly one commit"     '[ "$(count_clone)" = "$((C0 + 1))" ]'
 chk "publish: the commit carries the given message"    '$GIT -C "$REMOTE" log -1 --pretty=%s main | grep -q "publish: $VER (fixture)"'
@@ -463,6 +472,86 @@ add_vault_local three                          # negative control: the same tree
 run_publish --release "$VER" "$CLONE"
 chk "control: with the plant removed the same tree reaches the recap" '[ "$RC" = 0 ] && hasline "STOP: recap written"'
 
+echo "== group 3b: every assets/ file the staged README names is in the index =="
+# The shipped .gitignore tracks only the assets/ names it lists, so an image off that list is copied by
+# the overlay and passed over by `git add -A`; every other gate passes it, and the README ships broken.
+cp "$V/README.md" "$ROOT/readme.kept"
+bump_vault threeb
+printf '# README (test)\n\n![graph](assets/framework_demo.png)\n\n![parts](assets/not-listed.png)\n\nSee the [Manual](MANUAL.md).\n' > "$V/README.md"
+printf 'FAKE-PNG-OFF-THE-LIST\n' > "$V/assets/not-listed.png"
+rm -f "$RECAP"
+run_publish --release "$VER" "$CLONE"
+chk "README image: one off the shipped allowlist stops the chain at its own gate, exit 1" '[ "$RC" = 1 ] && hasline "STOP readme-images — 1 of the 2 assets/ file(s)"'
+chk "README image: the stop names the image and why it is missing" 'hasline "NOT IN INDEX  assets/not-listed.png  (in the clone but ignored: payload/gitignore.txt has no .!/assets/not-listed.png. line)"'
+chk "README image: it stops before the recap and commits nothing" '[ "$RC" = 1 ] && ! grep -q "^recap-complete " "$RECAP" && [ "$(count_bare)" = "$B1" ] && [ "$(count_clone)" = "$C1" ]'
+printf '# README (test)\n\n![graph](assets/framework_demo.png)\n\n<img src="./assets/diagram.svg">\n\nSee the [Manual](MANUAL.md).\n' > "$V/README.md"
+printf '<svg/>\n' > "$V/assets/diagram.svg"
+run_publish --release "$VER" "$CLONE"
+chk "README image: a type the overlay never copies stops it too, named as not in the clone" '[ "$RC" = 1 ] && hasline "NOT IN INDEX  assets/diagram.svg  (not in the clone"'
+# Four more ways GitHub shows an image, each copied by the overlay: each one off the list must stop it too.
+readme_form(){   # $1 the form, $2 the image file, $3 the README line naming it
+  printf '# README (test)\n\n![graph](assets/framework_demo.png)\n\n%s\n\nSee the [Manual](MANUAL.md).\n' "$3" > "$V/README.md"
+  printf 'FAKE-PNG-OFF-THE-LIST\n' > "$V/assets/$2"
+  run_publish --release "$VER" "$CLONE"
+  rm -f "$V/assets/$2"
+  chk "README image: $1 off the shipped allowlist stops the chain, exit 1, named" \
+      '[ "$RC" = 1 ] && hasline "STOP readme-images — 1 of the 2 assets/ file(s)" && hasline "NOT IN INDEX  assets/'"$2"'  (in the clone but ignored"'
+}
+readme_form "a root-relative /assets/ link"        root-relative.png '![parts](/assets/root-relative.png)'
+readme_form "a <source srcset=…> (dark mode)"     dark-mode.png     '<picture><source srcset="assets/dark-mode.png" media="(prefers-color-scheme: dark)"><img src="assets/framework_demo.png"></picture>'
+readme_form "a space after the link bracket"       spaced.png        '![parts]( assets/spaced.png)'
+readme_form "an upper-case SRC="                   upper-case.png    '<IMG SRC="assets/upper-case.png">'
+printf '# README (test)\n\n![a](/assets/framework_demo.png)\n<picture><source srcset="assets/framework_demo.png"></picture>\n![b]( assets/framework_demo.png)\n<IMG SRC="./assets/framework_demo.png">\n' > "$V/README.md"
+run_publish --release "$VER" "$CLONE"
+chk "control: a listed image named in each of those four ways reaches the recap, read as one name" \
+    '[ "$RC" = 0 ] && grep -q "^  README images: 1 named, all in the index" "$RECAP"'
+rm -f "$V/assets/not-listed.png" "$V/assets/diagram.svg"
+printf '# README (test)\n\nhttps://github.com/user-attachments/assets/0f0f0f0f-aaaa-4bbb-8ccc-0d0d0d0d0d0d\n\n![graph](assets/framework_demo.png)\n\nSee the [Manual](MANUAL.md).\n' > "$V/README.md"
+run_publish --release "$VER" "$CLONE"
+chk "control: with only listed images, and an address into another site's assets/, the same chain reaches the recap" \
+    '[ "$RC" = 0 ] && grep -q "^  README images: 1 named, all in the index (reader control: 2 of 2 names read" "$RECAP"'
+cp "$ROOT/readme.kept" "$V/README.md"
+GITIGNORE_KIT="$V/.claude/skills/export-template/payload/gitignore.txt"
+cp "$GITIGNORE_KIT" "$ROOT/gitignore.kept"
+printf '/README.md\n' >> "$GITIGNORE_KIT"          # the overlay copies it, `git add -A` now passes it over
+$GIT -C "$CLONE" rm -q --cached README.md >/dev/null 2>&1
+run_publish --release "$VER" "$CLONE"
+chk "README image: an index with no README.md is a broken premise, exit 2, never a pass" '[ "$RC" = 2 ] && hasline "PROBE FAILED: the index of .* holds no README.md"'
+cp "$ROOT/gitignore.kept" "$GITIGNORE_KIT"
+cp "$PUBV" "$ROOT/publish.kept"
+python3 - "$PUBV" <<'BREAK_READER'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    lines = handle.read().split("\n")
+lines = [l.replace("assets/[^", "no-such-folder/[^") if l.startswith("README_REF_RE=") else l for l in lines]
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(lines))
+BREAK_READER
+run_publish --release "$VER" "$CLONE"
+chk "README image: a reader that reads nothing fails its own control, exit 2" '[ "$RC" = 2 ] && hasline "PROBE FAILED: the README reader did not read exactly its control"'
+cp "$ROOT/publish.kept" "$PUBV"
+python3 - "$PUBV" <<'LOOSEN_READER'
+import sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    lines = handle.read().split("\n")
+hits = [i for i, l in enumerate(lines) if l.startswith("README_REF_RE=") and l.count("assets/[^") == 1]
+if len(hits) != 1:
+    sys.exit("PROBE FAILED: no single README_REF_RE line to loosen")
+lines[hits[0]] = lines[hits[0]].replace("assets/[^", "([^)]*/)?assets/[^")
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("\n".join(lines))
+LOOSEN_READER
+LOOSENED=$?
+run_publish --release "$VER" "$CLONE"
+chk "README image: a reader that reads past the link prefix into another site fails its own control, exit 2" \
+    '[ "$LOOSENED" = 0 ] && [ "$RC" = 2 ] && hasline "PROBE FAILED: the README reader did not read exactly its control"'
+cp "$ROOT/publish.kept" "$PUBV"
+run_publish --release "$VER" "$CLONE"
+chk "control: with the README, the allowlist and the reader restored the same chain reaches the recap" \
+    '[ "$RC" = 0 ] && grep -q "^  README images: 1 named, all in the index" "$RECAP"'
+
 echo "== group 4: a broken premise stops before any write =="
 mv "$GUARDV" "$GUARDV.away"
 rm -f "$RECAP"
@@ -602,6 +691,20 @@ run_publish --release "$VER" --publish "yes, publish it" --message "publish: ins
 chk "control: an edit inside the block alone is no drift" '[ "$RC" = 0 ] && hasline "PUBLISHED:"'
 chk "control: that publish made exactly one commit" '[ "$(count_bare)" = "$((B6 + 1))" ]'
 
+echo "== group 6c: a backup left beside a shipped file stops the chain at the overlay =="
+B6C="$(count_bare)"
+bump_vault sixc
+printf 'a backup\n' > "$V/.claude/skills/ingest/SKILL.md.bak-x"
+STATUS6C="$($GIT -C "$CLONE" status --porcelain)"
+run_publish --release "$VER" "$CLONE"
+RC6C="$RC"
+chk "backup beside a skill file: the overlay is the named stop, naming the file, the clone untouched" \
+    '[ "$RC" = 3 ] && hasline "STOP overlay" && hasline "^  .claude/skills/ingest/SKILL.md.bak-x$" && [ "$($GIT -C "$CLONE" status --porcelain)" = "$STATUS6C" ]'
+rm -f "$V/.claude/skills/ingest/SKILL.md.bak-x"
+run_publish --release "$VER" "$CLONE"
+chk "control: with the backup moved out the same chain reaches the recap, nothing committed" \
+    '[ "$RC6C" = 3 ] && [ "$RC" = 0 ] && hasline "STOP: recap written" && [ "$(count_bare)" = "$B6C" ]'
+
 echo "== group 7: the chain's shape is the one the skill describes =="
 chk "publish.sh runs the payload gate script"   'grep -q "publish_guard.py" "$PUB"'
 chk "publish.sh runs the overlay script"        'grep -q "export_template.sh" "$PUB"'
@@ -609,6 +712,7 @@ chk "publish.sh runs the throttle gate"         'grep -q "throttle.py" "$PUB"'
 chk "the chain is one && list of steps"         '[ "$(grep -c "&& step_" "$PUB")" -ge 7 ]'
 chk "control: the same grep misses a step the chain does not carry" '! grep -q "&& step_backup" "$PUB"'
 chk "the publish chain carries an approval step" 'grep -q "&& step_drift" "$PUB" && grep -q "^  step_verify_approval" "$PUB"'
+chk "both chains carry the README-image step" '[ "$(grep -c "^    && step_readme_images" "$PUB")" = 2 ]'
 # What the script SAYS about itself, checked against what the legs above measured it doing.
 chk "header: the write scope is stated, not summed as two things" \
     'grep -q "^# WHAT IT WRITES" "$PUB" && ! grep -q "writes exactly two things" "$PUB"'
@@ -620,6 +724,72 @@ chk "control: the same greps still find text the header does carry" \
     'grep -q "^# WHAT IT DOES NOT DO" "$PUB" && grep -q "output/publish-recap.txt" "$PUB"'
 chk "the throttle preset literal carries its derivation beside it" \
     '[ "$(grep -c "require auto" "$PUB")" -ge 2 ] && grep -q "grep -n .require auto. SKILL.md" "$PUB"'
+
+echo "== group 8: a recap-only run keeps a published recap, one copy per version, before its placeholder =="
+# known-issues 2026-11-20 18:05 b: a recap-only run wrote its INCOMPLETE placeholder over the recap of the release the
+# owner had approved and published. A recap carrying the `published` line is now kept beside it first; nothing else is.
+chk "header: the write scope names the kept copy and its two names" \
+    'grep -q "<stem>-<candidate>.txt" "$PUB" && grep -q "<stem>-<first 12 hex of its sha-256>.txt" "$PUB"'
+R8D="$ROOT/recap8"; R8="$R8D/publish-recap.txt"
+fresh_r8(){ chmod 755 "$R8D" 2>/dev/null; rm -rf "$R8D"; mkdir -p "$R8D"; }
+put_recap(){   # $1 candidate ('' for none) · $2 published|unpublished · $3 a word that marks this recap's body
+  { printf 'publish.sh recap — stamp 1-20261120T180500Z\n'
+    if [ -n "$1" ]; then printf 'candidate   %s\n' "$1"; fi
+    printf 'tree        0123456789abcdef0123456789abcdef01234567\nbody        %s\n' "$3"
+    printf '\nrecap-complete 1-20261120T180500Z\nrecap-digest 0123456789ab\n'
+    if [ "$2" = published ]; then printf '\npublished    abc1234\ntag          %s\nmessage      publish: fixture\nowner word   yes\n' "${1:-none}"; fi
+  } > "$R8"
+}
+sha8(){ shasum -a 256 "$1" | awk '{ print $1 }'; }
+only_recap(){ [ "$(ls -A "$R8D" | tr -d ' \n')" = "publish-recap.txt" ]; }
+
+fresh_r8; put_recap v0.10.3 published approved-one; S8="$(sha8 "$R8")"
+run_publish --release "$VER" --recap "$R8" "$CLONE"
+chk "keep: a published recap is kept as publish-recap-v0.10.3.txt, byte for byte (D2-1)" \
+    '[ -f "$R8D/publish-recap-v0.10.3.txt" ] && [ "$(sha8 "$R8D/publish-recap-v0.10.3.txt")" = "$S8" ]'
+chk "keep: the run then writes its own recap in that place, to the end (D2-1)" \
+    '[ "$RC" = 0 ] && grep -q "^recap-complete " "$R8" && grep -q "^candidate   $VER$" "$R8" && [ "$(sha8 "$R8")" != "$S8" ]'
+chk "keep: the run names the kept copy" 'hasline "is kept as $R8D/publish-recap-v0.10.3.txt"'
+chk "keep: no temporary file is left beside it" '[ "$(ls -A "$R8D" | wc -l | tr -d " ")" = 2 ]'
+
+fresh_r8
+run_publish --release "$VER" --recap "$R8" "$CLONE"
+chk "control: with no recap there, no copy is made (D2-2)" '[ "$RC" = 0 ] && only_recap'
+
+fresh_r8; put_recap v0.10.3 unpublished not-approved
+run_publish --release "$VER" --recap "$R8" "$CLONE"
+chk "keep: a recap with no published line is not kept, is replaced, and the run says so (D2-3)" \
+    '[ "$RC" = 0 ] && only_recap && ! grep -q "not-approved" "$R8" && hasline "holds no published line"'
+
+fresh_r8; put_recap v0.10.3 published approved-one; cp -p "$R8" "$R8D/publish-recap-v0.10.3.txt"; S8="$(sha8 "$R8")"
+run_publish --release "$VER" --recap "$R8" "$CLONE"
+chk "keep: a second run with the same published recap writes no second copy (D2-4)" \
+    '[ "$RC" = 0 ] && [ "$(ls -A "$R8D" | wc -l | tr -d " ")" = 2 ] && [ "$(sha8 "$R8D/publish-recap-v0.10.3.txt")" = "$S8" ] && hasline "already kept as"'
+fresh_r8; put_recap v0.10.3 published approved-two; S8="$(sha8 "$R8")"
+printf 'another published recap of v0.10.3\n' > "$R8D/publish-recap-v0.10.3.txt"; SK8="$(sha8 "$R8D/publish-recap-v0.10.3.txt")"
+run_publish --release "$VER" --recap "$R8" "$CLONE"
+chk "keep: other bytes under the version's name stop the run, exit 2, the recap and the copy untouched, no placeholder (D2-4)" \
+    '[ "$RC" = 2 ] && hasline "STOP recap" && [ "$(sha8 "$R8")" = "$S8" ] && [ "$(sha8 "$R8D/publish-recap-v0.10.3.txt")" = "$SK8" ] && ! grep -q INCOMPLETE "$R8"'
+chk "keep: that stop comes before the chain starts" '! hasline "^-- pull"'
+
+fresh_r8; put_recap v0.10.3 published approved-one; S8="$(sha8 "$R8")"; chmod 555 "$R8D"
+run_publish --release "$VER" --recap "$R8" "$CLONE"
+chmod 755 "$R8D"
+chk "keep: a folder the copy cannot be written into stops the run, exit 2, the recap untouched, no placeholder (D2-5)" \
+    '[ "$RC" = 2 ] && hasline "STOP recap" && [ "$(sha8 "$R8")" = "$S8" ] && only_recap'
+
+fresh_r8; put_recap '' published no-version; S8="$(sha8 "$R8")"; H8="$(printf '%s' "$S8" | cut -c 1-12)"
+run_publish --release "$VER" --recap "$R8" "$CLONE"
+chk "keep: a published recap naming no version is kept under the first 12 hex of its sha-256 (D2-6)" \
+    '[ -f "$R8D/publish-recap-$H8.txt" ] && [ "$(sha8 "$R8D/publish-recap-$H8.txt")" = "$S8" ]'
+
+fresh_r8; put_recap v0.10.3 published approved-one; S8="$(sha8 "$R8")"
+assert_fixture_remote "group 8, a --publish run that must stop at its approval check"
+B8="$(count_bare)"
+run_publish --release "$VER" --publish "yes" --message "m" --approved ffffffffffff --recap "$R8" "$CLONE"
+chk "keep: a --publish run makes no copy and never truncates the recap (D2-7)" \
+    '[ "$RC" != 0 ] && only_recap && [ "$(sha8 "$R8")" = "$S8" ] && [ "$(count_bare)" = "$B8" ]'
+fresh_r8; rm -rf "$R8D"
 
 echo
 TOTAL=$((PASS + FAIL))

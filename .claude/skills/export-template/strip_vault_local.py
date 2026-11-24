@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """strip_vault_local.py — the one implementation of the export's conditional-compile strip.
 
-Two callers, so they cannot drift: export_template.sh rewrites the shipped copies with it, and
-publish.sh's drift check runs a vault file through it before comparing that file with its staged
-copy.
+Two callers, so they cannot drift: export_template.sh rewrites the shipped copies with it
+(--in-place), and publish.sh's drift check runs a vault file through it (--stdout) before comparing
+that file with its staged copy.
 
-  strip_vault_local.py FILE...           rewrite each file in place (a file with no block is untouched)
-  strip_vault_local.py --stdout FILE     print the stripped bytes, write nothing
+  strip_vault_local.py --in-place FILE...  rewrite each file in place (a file with no block is untouched)
+  strip_vault_local.py --stdout FILE       print the stripped bytes, write nothing
+
+It writes only when told to: a FILE with neither flag is refused (exit 2) and nothing is written,
+so a call that meant to print, its output redirected, cannot empty the file it names.
 
 Markdown (.md) markers are HTML comments and may sit anywhere in a line:
   - a block alone on its lines goes with those lines, indentation and line end included;
@@ -17,8 +20,9 @@ Code and text files (.py .sh .txt) use the same two markers as whole comment lin
 type is never rewritten, and --stdout prints it unchanged.
 
 Exit 0 done; 2 PROBE FAILED: a nested or unmatched marker, a Markdown marker split across lines (one a re-wrap
-could make, which the strip would otherwise miss and so ship the block), an unreadable file. A file
-that fails is left as it was.
+could make, which the strip would otherwise miss and so ship the block), an unreadable file, a call
+of neither form above (a FILE with no flag, --in-place with no FILE or a flag among its files,
+--stdout with other than one FILE). A file that fails is left as it was.
 """
 import re
 import sys
@@ -107,9 +111,10 @@ def main(argv):
         else:
             sys.stdout.buffer.write(result.encode("utf-8"))
         return 0
-    if not argv or argv[0].startswith("--"):
-        raise Broken("usage: strip_vault_local.py FILE... | --stdout FILE")
-    for path in argv:
+    if len(argv) < 2 or argv[0] != "--in-place" or any(a.startswith("--") for a in argv[1:]):
+        raise Broken("usage: strip_vault_local.py --in-place FILE... | --stdout FILE "
+                     "(nothing written: a file is rewritten only under --in-place)")
+    for path in argv[1:]:
         if not path.endswith(STRIPPED_SUFFIXES):
             continue
         text = read_text(path)

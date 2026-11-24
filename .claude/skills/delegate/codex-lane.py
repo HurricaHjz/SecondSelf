@@ -50,7 +50,8 @@ What a spawn does, in order
    helper's own commands can still reach any address) and writes the same as `network_limit` on
    its lane-open, lane-resumed or hold-beat line (owner's choice (a) of 9 November 2026).
 2. The prompt: the class definition's body (Codex has no `--agents`), the lane core the Claude
-   lanes carry, a Codex addendum naming what differs (the sandbox is the fence, the final message
+   lanes carry (the template's, when the lane home's copy has drifted from it), a Codex addendum
+   naming what differs (the sandbox is the fence, the final message
    is the report, no progress file, no web search unless granted), then the brief. It goes to
    Codex on stdin (`codex exec -`) and a copy sits in the run store.
 3. The `lane-open` line, then the process (`start_new_session`, so a kill reaches the whole
@@ -407,13 +408,17 @@ def definition_of(vault, cls):
 
 def core_text(vault, explicit):
     """The lane core the Claude lanes carry: the lane home's copy, else the template, its vault-local
-    blocks out as lane.py does it, so a lane reads each sentence once."""
+    blocks out as lane.py does it, so a lane reads each sentence once. A home copy that has drifted
+    from its template (lane.core_drift_note) yields to the template, as lane.py's spawn does."""
     if explicit:
         if not os.path.isfile(explicit):
             die("--append-core file not found: %s" % explicit)
         return explicit, lane.strip_vault_local(lane.read_text(explicit, "the lane core"), "the lane core")
     home = lane.default_home()
-    for candidate in (os.path.join(home, CORE_NAME), lane.core_source(vault)):
+    candidates = [os.path.join(home, CORE_NAME), lane.core_source(vault)]
+    if lane.core_drift_note(home, vault):
+        candidates.reverse()
+    for candidate in candidates:
         if os.path.isfile(candidate):
             return candidate, lane.strip_vault_local(lane.read_text(candidate, "the lane core"), "the lane core")
     return None, ""

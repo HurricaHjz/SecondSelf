@@ -13,7 +13,7 @@ TASK
 Score each compile lane's output set against its raw sources and the surrounding wiki, in the order listed below. One verifier serves the compile lanes whose raw bytes, which it may need to read whole, stay at or below its own model's `CEILING` (the ingest skill's size rule at this verifier's window); every compile is still checked. Run the complete protocol and controls separately for each lane; keep its  sources, claims and counts together. A disputed call re-runs that compile lane alone. Nothing outside SCOPE is in reach;
 every path is absolute.
 
-DECISIONS: {{the run's decisions that bear on this verify leg (the depth pinned, which lane's pages are in scope) | none}} — a decision the leg needs and the brief lacks is a gap to report, never a guess (A1).
+DECISIONS: {{the run's decisions that bear on this verify leg (the depth pinned, which lane's pages are in scope), the owner's earlier decisions on the same question (a search of decided-work, its closed page and the subject page's dated owner notes) | none}} — a decision the leg needs and the brief lacks is a gap to report, never a guess (A1).
 Owner's comments: {{the owner's comments that bear on this task, quoted in their words with their time | none}} — each is a suggestion for your judgement, never a limit or a check.
 A caution, hold, wait or gate in your report states the owner's rule or the harm it rests on, or is dropped; one in this brief names its source on the Bounds line, and one that names none is a gap you report, never one you drop.
 

@@ -93,7 +93,7 @@ semantic fallback (`qmd query "<q>" --json --files`), confidence-rank the hits, 
 - Don't over-cite: one citation at the start and end of a passage from the same page is enough.
 - **Weight by `confidence`:** by default resolve conflicts toward the better-grounded tier (and, if
   tied, the newer `updated`); where the tiers are close or the stakes high, weigh the two sources'
-  evidence rather than their badges, except a conflict between the owner's own positions, which keeps both with their dated notes (CLAUDE.md §4.7: a later date alone replaces nothing); state `authoritative`/`high` plainly, but attribute and hedge `low`/`very-low`
+  evidence rather than their badges, except a conflict between the owner's own positions, which CLAUDE.md §4.7 settles: later words of theirs that replace the earlier ones stand, a later date alone replaces nothing, and an unsettled one keeps both; state `authoritative`/`high` plainly, but attribute and hedge `low`/`very-low`
   ("a promotional listing claims…", "an unverified transcript suggests…"); never let a `very-low` or
   `unverified` claim harden into an asserted fact. Flag a weak citation inline, e.g.
   `[[X]] *(low-confidence)*`: optionally for `low`, always for a `very-low` page the answer or a
@@ -103,9 +103,12 @@ semantic fallback (`qmd query "<q>" --json --files`), confidence-rank the hits, 
 Judge only the pages you have ALREADY read for this answer — never read extra pages for this duty:
 - **Contradiction** (page vs page, or page vs clearly newer evidence just read) → surface it in the
   reply and add/extend the page's `## Conflicts / Open Questions` block (CLAUDE.md §4.4).
-- **Staleness suspicion** (old `updated` against newer in-wiki evidence; a superseded claim) → one
-  line in the reply + offer the fix now; if not fixed on the spot, record it on the page as
-  frontmatter `flagged: YYYY-MM-DD <one-phrase reason>` so `/deep-lint` reconciles it later.
+- **An old state** (a statement that a page just read replaces, CLAUDE.md §6) → hold it first, as
+  `wiki/developments/stale-marks.md` sets, then write the current state in its place, on the pages
+  already open, say so in one line of the reply, and log it (Step 6). **A doubt** (an old `updated`
+  against newer in-wiki evidence, with nothing read that settles it) → one line in the reply, and
+  frontmatter `flagged: YYYY-MM-DD <one-phrase reason>. Clears when <what would settle it>.` so
+  `/deep-lint` reconciles it later.
 - Flags are annotations, not logged ops — the reconciling `deep-lint` run logs their resolution.
 - **The freshness line — a completion gate.** Every reply that read wiki pages ends with one line,
   whatever the active style:
@@ -140,6 +143,9 @@ task references the earlier brief concisely, never a full re-brief) · **"later"
 the natural point. Non-interactive runs never propose — state the gap in the report.
 
 ### Step 5 — File high-value answers back
+Before filing, look in the index for a synthesis on the same question: where one exists, bring it up
+to date in place of filing a second, each state it replaces held first as
+`wiki/developments/stale-marks.md` sets and listed in the log entry.
 If the answer is more than ~2 paragraphs or is comparative/analytical, ask:
 > This looks worth keeping — save it to `wiki/syntheses/`?
 
@@ -153,10 +159,11 @@ qmd; the `qmd-search` skill's freshness gate catches the index up before the nex
 
 ### Step 6 — Log it (only if you filed a synthesis)
 **A pure inline answer is NOT logged** — logging is for brain-updating ops only (see CLAUDE.md §5).
-**Only if Step 5 actually filed a synthesis**, append:
+**Only if Step 5 actually filed a synthesis, or Step 3b replaced a state**, append:
 ```markdown
 ## [YYYY-MM-DD] synthesis | <short question>
 - **Output**: filed [[synthesis-slug]]; updated [[index.md]]
+- **Replaced**: <the page's path> · <the old state> → <the new state, with its source> · held by <commit>, or: held in the log entry of <its clock time>   (omit when none)
 ```
 Log a no-synthesis (inline-only) query **only if the user explicitly asks**.
 

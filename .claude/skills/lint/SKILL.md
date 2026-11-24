@@ -246,7 +246,10 @@ wording — the page name in code font, no link — never deleting the reference
 
 ### 3 — Conflict audit
 Find pages containing `## Conflicts / Open Questions`. List each unresolved conflict (the two sides)
-as cognitive tech-debt to resolve.
+as cognitive tech-debt to resolve. One that waits on the owner's word goes in the report as a decision
+for the owner, with its two sides and a recommendation. A `Settled` item that still keeps the statement it replaced is
+trimmed to its outcome and its evidence after the report (CLAUDE.md §4.4), the trimmed text held
+first as `wiki/developments/stale-marks.md` sets, and listed under Fixes.
 
 ### 4 — Gap scan (optional, suggestive)
 Note entities/concepts mentioned often but lacking their own page, and stale claims newer sources

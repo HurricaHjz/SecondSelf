@@ -40,7 +40,13 @@ control on the same run, unavailable evidence, and a live read where appropriate
 the tests to the effect; a warning alone does not require crash-surviving records.}}
 
 DECISIONS AND GAPS
-{{The settled choices and any missing requirement; name what depends on each gap.}}
+{{The settled choices, the owner's earlier decisions on the same question (a search of decided-work, its closed page and the subject page's dated owner notes), and any missing requirement; name what depends on each gap.}}
+
+STRONGER MODEL OR HARNESS
+{{What a stronger model or a better harness would make unnecessary here, and how we would
+find out (the record, count or trial that would show it). What stays whatever the model,
+such as a guard on what cannot be undone, a record or an owner decision. Text that only
+answers one model's faults names that model.}}
 
 EVIDENCE
 {{The design sources used, including the basis for deciding numbers, and the code the

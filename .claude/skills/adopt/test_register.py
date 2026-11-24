@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Fixture-only acceptance suite. Run with -B and an explicit scratch TMPDIR."""
+"""Fixture-only acceptance suite. Run with -B and an explicit scratch TMPDIR.
+
+One family registry drives the schedule and the pure inventory. The run ends with the shared result
+record and closing line (suite_results.py): 0 PASS, 1 FAIL, 2 PROBE FAILED, 3 INCOMPLETE. The live
+T-consumers obligation is recorded before anything else and nothing here clears it.
+"""
 import argparse
 import copy
 import importlib.util
@@ -23,11 +28,12 @@ import adopt_manifest as V
 import adopt_maintenance as M
 import adopt_migrate as G
 from adopt_render import render
+import suite_results
+from suite_results import Collector, Premise, Unrun
 
 ROOT = None
 COUNT = 0
-FAILURES = 0
-RESULTS = []
+RUN = None
 POLL_SECONDS = 15  # Set by judgement, unmeasured; test deadlock timeout, never a lease.
 
 
@@ -59,17 +65,20 @@ def write(path, raw, mode=None):
 
 
 def fixture(name):
-    root = ROOT / name
-    root.mkdir()
-    vault, home = root / "vault", root / "home"
-    vault.mkdir()
-    home.mkdir()
-    (home / ".claude/skills").mkdir(parents=True)
-    write(home / ".claude.json", b'{"mcpServers":{},"approval":[]}')
-    write(home / ".claude/settings.json", b'{"enabledPlugins":{},"hooks":{}}')
-    ctx = D.Context(vault, home, root / "locks")
-    W.commit(ctx, W.proposal(ctx, "seed"))
-    return ctx
+    try:
+        root = ROOT / name
+        root.mkdir()
+        vault, home = root / "vault", root / "home"
+        vault.mkdir()
+        home.mkdir()
+        (home / ".claude/skills").mkdir(parents=True)
+        write(home / ".claude.json", b'{"mcpServers":{},"approval":[]}')
+        write(home / ".claude/settings.json", b'{"enabledPlugins":{},"hooks":{}}')
+        ctx = D.Context(vault, home, root / "locks")
+        W.commit(ctx, W.proposal(ctx, "seed"))
+        return ctx
+    except Exception as exc:
+        raise Premise("fixture construction", name + ": " + type(exc).__name__ + ": " + str(exc))
 
 
 def note(identifier, text):
@@ -1232,7 +1241,7 @@ def test_no_write():
             inventory[source.name] = hits
         pure = ("adopt_data.py", "adopt_render.py", "adopt_resources.py", "adopt_snapshot.py",
                 "adopt_freshness.py", "adopt_manifest.py", "adopt_migrate.py",
-                "adopt_acceptance.py", "adopt_kinds.py", "adopt_compat_v1.py")
+                "adopt_acceptance.py", "adopt_kinds.py", "adopt_compat_v1.py", "suite_results.py")
         string_replacements = {
             'return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))',
             '"&#" + str(ord(c)) + ";" for c in str(text)).replace("\\n", "&#10;")',
@@ -1323,7 +1332,11 @@ def test_consumers():
 
 
 def test_migration(source, mapping):
-    raw, mapping = source.read_bytes(), D.read_json(mapping)
+    # Reading the supplied pair is acquisition: a malformed input is a probe, not a product failure (CR-adopt F1).
+    try:
+        raw, mapping = source.read_bytes(), D.read_json(mapping)
+    except (OSError, D.Problem) as exc:
+        raise Premise("external fixture acquisition", str(exc)) from exc
     doc = G.migration_document(raw, mapping, D.now())
     result = G.verify_coverage(raw, doc, mapping)
     check(result["source_rows"] == len(mapping["rows"]) and
@@ -1373,6 +1386,12 @@ def test_migration(source, mapping):
     print("MIGRATION " + json.dumps(result, sort_keys=True), flush=True)
 
 
+def relay(prefix, text):
+    """Relayed output carries its prefix: only the parent's own lines sit at column zero."""
+    for line in text.splitlines():
+        print(prefix + line, flush=True)
+
+
 def old_discriminators(build):
     copied = ROOT / "stopped-copy"
     shutil.copytree(build, copied)
@@ -1381,9 +1400,8 @@ def old_discriminators(build):
     result = subprocess.run([sys.executable, "-B", str(Path(__file__).with_name("test_stopped.py")),
                              "--build", str(copied), "--fixture", str(fixtures)], capture_output=True,
                             text=True, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-    print(result.stdout, end="", flush=True)
-    if result.stderr:
-        print(result.stderr, end="", flush=True)
+    relay("ST | ", result.stdout)
+    relay("ST | ", result.stderr)
     check(result.returncode == 0 and "BASELINE reproduced 4/4" in result.stdout,
           "stopped H1/H2/H3a/H3b prohibited outcomes executed on isolated copy")
 
@@ -1569,14 +1587,56 @@ def previous_reg5_regressions(previous):
 INPUTS = {}
 
 
+def read_child(suite, script, prefix, arguments, hook):
+    """Launch one child and read its validated report against its producer's inventory. Anything
+    short of a valid report is one protocol probe: an unvalidated exit proves no executed failure."""
+    stage = "child launch/protocol reading"
+    producer = Path(__file__).with_name(script)
+    try:
+        expected = suite_results.provider_inventory(producer, "all")
+    except suite_results.ProtocolError as exc:
+        raise Premise(stage, "expected inventory: " + str(exc))
+    try:
+        process = subprocess.run([sys.executable, "-B", str(producer)] + arguments, capture_output=True,
+                                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+    except OSError as exc:
+        raise Premise(stage, "launch: " + str(exc))
+    # Decoding is protocol reading: undecodable output is a probe that keeps the raw status (CR-adopt F4).
+    try:
+        stdout, stderr = process.stdout.decode("utf-8"), process.stderr.decode("utf-8")
+    except UnicodeError as exc:
+        relay(prefix, process.stdout.decode("utf-8", "replace"))
+        relay(prefix, process.stderr.decode("utf-8", "replace"))
+        raise Premise(stage, "exit " + str(process.returncode) + ": output decoding: " + str(exc)) from exc
+    relay(prefix, stdout)
+    relay(prefix, stderr)
+    try:
+        return suite_results.validate_text(stdout, suite, "all", expected, process.returncode, hook)
+    except suite_results.ProtocolError as exc:
+        raise Premise(stage, "exit " + str(process.returncode) + ": " + str(exc))
+
+
+def merge_child(family_id, report, namespace):
+    """Fold one valid child report into the family's single record. Unrun IDs arrive namespaced."""
+    assertions = sum(record["assertions"] for record in report["records"])
+    if report["failed"]:
+        RUN.fail(family_id, assertions)
+    elif report["executed"]:
+        RUN.execute(family_id, assertions)
+    for item in report["unrun"]:
+        RUN.unrun(item["id"], family_id, item["requirement"], item["missing"])
+    for item in report["not_applicable"]:
+        RUN.not_applicable(namespace + item["id"], family_id, item["reason"])
+    for item in report["probe_errors"]:
+        RUN.probe(item["stage"], [family_id], item["message"], tag=namespace + item["key"])
+
+
 def o5_contracts():
-    command = [sys.executable, "-B", str(Path(__file__).with_name("test_o5.py")),
-               "--build", str(Path(__file__).resolve().parent.parent)]
+    arguments = ["--build", str(Path(__file__).resolve().parent.parent)]
     if INPUTS.get("instance_data"):
-        command += ["--instance-data", str(INPUTS["instance_data"])]
-    process = subprocess.run(command, capture_output=True, text=True)
-    print(process.stdout + process.stderr, end="", flush=True)
-    check(process.returncode == 0, "O5 complete acceptance cases and read-only controls")
+        arguments += ["--instance-data", str(INPUTS["instance_data"])]
+    report = read_child("o5", "test_o5.py", "O5 | ", arguments, "absent")
+    merge_child(O5_FAMILY, report, "o5:")
 
 
 def o5_integration():
@@ -1587,42 +1647,212 @@ def o5_integration():
 def generated_dates():
     """The generated-register family: dates, body digest, navigation, migration and readers.
     Hook-dependent cases run only with --stamp-hook; outside the vault they are not applicable."""
-    command = [sys.executable, "-B", str(Path(__file__).with_name("test_generated_dates.py")),
-               "--adopt-dir", str(Path(__file__).resolve().parent)]
+    arguments = ["--adopt-dir", str(Path(__file__).resolve().parent)]
     for key, value in sorted(INPUTS.items()):
         if value:
-            command += ["--" + key.replace("_", "-"), str(value)]
-    process = subprocess.run(command, capture_output=True, text=True,
-                             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-    for line in (process.stdout + process.stderr).splitlines():
-        print("GD | " + line, flush=True)
-    lines = process.stdout.splitlines()
-    check(process.returncode == 0 and lines and re.fullmatch(r"PASS (\d+)/\1", lines[-1]) is not None,
-          "generated-register family executed and passed: " + (lines[-1] if lines else "no output"))
-    absent = [line for line in lines if line.startswith("NOT APPLICABLE: hook absent")]
-    if absent:
-        print("NOT APPLICABLE hook-dependent cases: hook absent (" + str(len(absent)) +
+            arguments += ["--" + key.replace("_", "-"), str(value)]
+    hook = "present" if INPUTS.get("stamp_hook") else "absent"
+    report = read_child("generated-dates", "test_generated_dates.py", "GD | ", arguments, hook)
+    merge_child(GD_FAMILY, report, suite_results.GD_NAMESPACE)
+    if report["not_applicable"]:
+        print("NOT APPLICABLE hook-dependent cases: hook absent (" + str(len(report["not_applicable"])) +
               "); the vault's hook suite runs them", flush=True)
 
 
-def family(name, function):
-    global FAILURES
+def fingerprint_acceptance():
+    """The separate fingerprint family. Its runner joins as a producer of the same protocol."""
+    runner = Path(__file__).with_name(FINGERPRINT_RUNNER)
+    try:
+        state = suite_results.default_state(runner)
+    except OSError as exc:
+        raise Premise("child launch/protocol reading", "fingerprint runner: " + str(exc))
+    if state == "absent":
+        raise Unrun("fingerprint acceptance runner", [FINGERPRINT_RUNNER])
+    report = read_child("fingerprint", FINGERPRINT_RUNNER, "FP | ", [], "absent")
+    merge_child(FINGERPRINT_FAMILY, report, "fingerprint:")
+
+
+def supplied_build(value, option, requirement, marker):
+    """An omitted historical build is a known omission; a supplied one must hold its implementation,
+    since a build that cannot run establishes no test execution."""
+    if value is None:
+        raise Unrun(requirement, [option])
+    if not (Path(value) / marker).is_file():
+        raise Premise("external fixture acquisition", option + " holds no " + marker + ": " + str(value))
+    return Path(value)
+
+
+def migration_family():
+    """Source and mapping are one pair: one member alone leaves it unrun, and a member supplied but
+    unusable is a probe as well."""
+    pair = (("--source", ARGS.source), ("--mapping", ARGS.mapping))
+    missing = [option for option, value in pair if value is None]
+    broken = [option + " " + str(value) for option, value in pair if value is not None and not Path(value).is_file()]
+    if missing:
+        if broken:
+            RUN.probe("external fixture acquisition", [MIGRATION_FAMILY], "unusable: " + ", ".join(broken))
+        raise Unrun("live-page copy and reviewed mapping", missing)
+    if broken:
+        raise Premise("external fixture acquisition", "unusable: " + ", ".join(broken))
+    test_migration(Path(ARGS.source), Path(ARGS.mapping))
+
+
+def stopped_family():
+    old_discriminators(supplied_build(ARGS.stopped_build, "--stopped-build", "stopped build", "skills/adopt/adopt_register.py"))
+
+
+def previous_family():
+    previous_regressions(supplied_build(ARGS.previous_build, "--previous-build", "previous reviewed build", "adopt/adopt_data.py"))
+
+
+def reg4_family():
+    previous_reg4_regressions(supplied_build(ARGS.reg4_build, "--reg4-build", "last reviewed build", "adopt/adopt_data.py"))
+
+
+def reg5_family():
+    previous_reg5_regressions(supplied_build(ARGS.reg5_build, "--reg5-build", "last reviewed build", "adopt/adopt_data.py"))
+
+
+ARGS = None
+ADOPT_PREFIX = ".claude/skills/adopt/"
+O5_FAMILY = "O5 tier and input contracts"
+GD_FAMILY = suite_results.GD_FAMILY
+MIGRATION_FAMILY = "T-migration"
+FINGERPRINT_FAMILY = "fingerprint acceptance"
+FINGERPRINT_RUNNER = "test_fingerprint.py"
+LIVE_CONSUMERS = suite_results.LIVE_CONSUMERS
+
+
+def helper(*names):
+    return [{"path": ADOPT_PREFIX + name, "role": "helper"} for name in names]
+
+
+def entry(name):
+    return [{"path": ADOPT_PREFIX + name, "role": "entry"}]
+
+
+# The one registry: it drives the schedule and the inventory, helper ownership included.
+FAMILIES = (
+    ("T-schema", test_schema, []),
+    ("H1 T-edits T-render", test_h1_edits_render, []),
+    ("H2 T-proof", test_h2_proof, []),
+    ("H3a H3b T-snapshot", test_snapshot, []),
+    ("T-routes T-core-extensions", test_routes_extensions, []),
+    ("F2-workspace", test_workspace, []),
+    ("F3-caller-model T-freshness", test_freshness_model, []),
+    ("T-crash T-race", test_crash_race, []),
+    ("F1-maintenance F4-domain-guard", test_maintenance, []),
+    ("T-kinds", test_kinds, []),
+    ("T-consumers supplied adapters; unfolded traces", test_consumers, []),
+    ("CR-REG3 F1 F2 F6 depth regressions", reg3_depth, helper("test_reg3_depth.py")),
+    ("CR-REG3 F3 typed snapshot regressions", reg3_snapshot, helper("test_reg3_snapshot.py")),
+    ("CR-REG3 F4 F5 kind and model regressions", reg3_basic, helper("test_reg3_basic.py")),
+    ("CR-REG4 N1 N2 closure regressions", reg4, helper("test_reg4.py")),
+    ("CR-REG5 N3 installation identity regressions", reg5, helper("test_reg5.py")),
+    (O5_FAMILY, o5_contracts, entry("test_o5.py")),
+    ("O5 writer and recovery integration", o5_integration, helper("test_o5_integration.py")),
+    (GD_FAMILY, generated_dates, entry("test_generated_dates.py")),
+    (MIGRATION_FAMILY, migration_family, []),
+    ("stopped HIGH discriminators", stopped_family, helper("test_stopped.py")),
+    ("CR-REG3 reviewed-build discriminators", previous_family,
+     helper("test_reg3_depth.py", "test_reg3_basic.py", "test_reg3_snapshot.py")),
+    ("CR-REG4 reviewed-build discriminators", reg4_family, helper("test_reg4.py")),
+    ("CR-REG5 reviewed-build discriminators", reg5_family, helper("test_reg5.py")),
+    (FINGERPRINT_FAMILY, fingerprint_acceptance, entry(FINGERPRINT_RUNNER)),
+    ("T-no-write", test_no_write, []),
+)
+
+
+def selected_inventory(scope):
+    """The families as plain data, with no argument parsing, fixture or test. The live obligation is
+    an entry of its own, which no family's fixture coverage can fulfil."""
+    if scope != "all":
+        raise ValueError("unknown register scope: " + str(scope))
+    return ([{"id": name, "modules": modules} for name, _function, modules in FAMILIES] +
+            [{"id": LIVE_CONSUMERS, "modules": []}])
+
+
+def family(name, function, setup=None):
+    """One family. A named premise stage is a probe; once the body has begun on its fixture, whatever
+    it raises is an executed failure, even before its first counted assertion."""
     before = COUNT
     print("\nCASE " + name, flush=True)
     try:
-        function()
-        result = {"family": name, "result": "PASS", "assertions": COUNT - before}
+        if setup:
+            setup()
     except Exception as exc:
-        FAILURES += 1
+        RUN.probe("fixture construction", [name], type(exc).__name__ + ": " + str(exc))
+        print(RUN.family_line(name), flush=True)
+        return
+    try:
+        function()
+        if name not in CHILD_FAMILIES:
+            RUN.execute(name, COUNT - before)
+    except Unrun as exc:
+        if COUNT > before:
+            RUN.execute(name, COUNT - before)
+        RUN.unrun(name, name, exc.requirement, exc.missing)
+    except Premise as exc:
+        if COUNT > before:
+            RUN.execute(name, COUNT - before)
+        RUN.probe(exc.stage, [name], exc.message)
+    except Exception:
+        RUN.fail(name, COUNT - before)
         traceback.print_exc(file=sys.stdout)
-        result = {"family": name, "result": "FAIL", "assertions": COUNT - before, "error": str(exc)}
-    RESULTS.append(result)
-    print("RESULT " + json.dumps(result, sort_keys=True), flush=True)
+    print(RUN.family_line(name), flush=True)
+
+
+CHILD_FAMILIES = (O5_FAMILY, GD_FAMILY, FINGERPRINT_FAMILY)
+
+
+def scratch_root():
+    tmp = os.environ.get("TMPDIR")
+    if not tmp or not Path(tmp).is_dir():
+        raise Premise("TMPDIR and scratch creation", "explicit TMPDIR is required")
+    try:
+        return Path(subprocess.check_output(["/usr/bin/mktemp", "-d", os.path.join(tmp, "adopt.XXXXXXXX")], text=True).strip())
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise Premise("TMPDIR and scratch creation", str(exc))
+
+
+def remove_root():
+    shutil.rmtree(ROOT)
+
+
+def boundary(run, schedule, make_root=scratch_root, clean=remove_root):
+    """The outer result boundary: bootstrap, families, one clean-up attempt, then one verdict."""
+    global ROOT, RUN
+    RUN = run
+    try:
+        if sys.flags.optimize != 0:
+            raise Premise("interpreter-options", "Python options strip the checks' assertions")
+        ROOT = make_root()
+    except Premise as exc:
+        run.probe(exc.stage, run.unaccounted(), exc.message)
+        return run.finish()
+    try:
+        for step in schedule:
+            family(*step)
+    except Exception as exc:
+        run.probe("harness", run.unaccounted(), type(exc).__name__ + ": " + str(exc))
+    try:
+        clean()
+    except Exception as exc:
+        run.probe("clean-up", [], type(exc).__name__ + ": " + str(exc))
+    return run.finish()
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Premise("argument parsing", message)
 
 
 def main():
-    global ROOT
-    parser = argparse.ArgumentParser()
+    global ARGS
+    run = Collector("register", "all", selected_inventory("all"))
+    run.unrun(LIVE_CONSUMERS, LIVE_CONSUMERS, "live update/install, launcher, setup/export/deep-lint sources and integration grants",
+              ["a grant no current run holds"])
+    parser = Parser()
     parser.add_argument("--stopped-build")
     parser.add_argument("--previous-build")
     parser.add_argument("--reg4-build")
@@ -1632,81 +1862,15 @@ def main():
     for name in ("stamp-hook", "audit-pools", "required-sections", "link-check", "lint-adapter",
                  "instance-data", "demo-instance", "deep-lint-skill", "lint-skill"):
         parser.add_argument("--" + name)
-    args = parser.parse_args()
+    try:
+        ARGS = parser.parse_args()
+    except Premise as exc:
+        run.probe(exc.stage, run.unaccounted(), exc.message)
+        return run.finish()
     for key in ("stamp_hook", "audit_pools", "required_sections", "link_check", "lint_adapter",
                 "instance_data", "demo_instance", "deep_lint_skill", "lint_skill"):
-        INPUTS[key] = getattr(args, key)
-    if not os.environ.get("TMPDIR"):
-        raise SystemExit("PROBE FAILED: explicit TMPDIR is required")
-    ROOT = Path(subprocess.check_output(["/usr/bin/mktemp", "-d", os.path.join(os.environ["TMPDIR"], "adopt.XXXXXXXX")], text=True).strip())
-    try:
-        family("T-schema", test_schema)
-        family("H1 T-edits T-render", test_h1_edits_render)
-        family("H2 T-proof", test_h2_proof)
-        family("H3a H3b T-snapshot", test_snapshot)
-        family("T-routes T-core-extensions", test_routes_extensions)
-        family("F2-workspace", test_workspace)
-        family("F3-caller-model T-freshness", test_freshness_model)
-        family("T-crash T-race", test_crash_race)
-        family("F1-maintenance F4-domain-guard", test_maintenance)
-        family("T-kinds", test_kinds)
-        family("T-consumers supplied adapters; unfolded traces", test_consumers)
-        family("CR-REG3 F1 F2 F6 depth regressions", reg3_depth)
-        family("CR-REG3 F3 typed snapshot regressions", reg3_snapshot)
-        family("CR-REG3 F4 F5 kind and model regressions", reg3_basic)
-        family("CR-REG4 N1 N2 closure regressions", reg4)
-        family("CR-REG5 N3 installation identity regressions", reg5)
-        family("O5 tier and input contracts", o5_contracts)
-        family("O5 writer and recovery integration", o5_integration)
-        family("GD generated register dates, digest and navigation", generated_dates)
-        if args.source and args.mapping:
-            family("T-migration", lambda: test_migration(Path(args.source), Path(args.mapping)))
-        else:
-            print("UNRUN T-migration: source and reviewed mapping not supplied", flush=True)
-        if args.stopped_build:
-            family("stopped HIGH discriminators", lambda: old_discriminators(Path(args.stopped_build)))
-        else:
-            print("UNRUN stopped discriminators: stopped build not supplied", flush=True)
-        if args.previous_build:
-            family("CR-REG3 reviewed-build discriminators", lambda: previous_regressions(Path(args.previous_build)))
-        else:
-            print("UNRUN CR-REG3 regressions: previous reviewed build not supplied", flush=True)
-        if args.reg4_build:
-            family("CR-REG4 reviewed-build discriminators", lambda: previous_reg4_regressions(Path(args.reg4_build)))
-        else:
-            print("UNRUN CR-REG4 regressions: last reviewed build not supplied", flush=True)
-        if args.reg5_build:
-            family("CR-REG5 reviewed-build discriminators", lambda: previous_reg5_regressions(Path(args.reg5_build)))
-        else:
-            print("UNRUN CR-REG5 regressions: last reviewed build not supplied", flush=True)
-        family("T-no-write", test_no_write)
-        print("COUNTS " + json.dumps({"assertions": COUNT, "families": RESULTS}, sort_keys=True))
-        # The external cutover manifest-schema.md requires is its own registered work: no run of this
-        # suite can execute it, so it is named and never counted.
-        outside = ["T-consumers: live update/install, launcher, setup/export/deep-lint sources and integration grants"]
-        missing = []
-        if not (args.source and args.mapping):
-            missing.append("T-migration: live-page copy and reviewed mapping")
-        if not args.stopped_build:
-            missing.append("stopped HIGH discriminators: stopped build")
-        if not args.previous_build:
-            missing.append("CR-REG3 reviewed-build discriminators: previous build")
-        if not args.reg4_build:
-            missing.append("CR-REG4 reviewed-build discriminators: last reviewed build")
-        if not args.reg5_build:
-            missing.append("CR-REG5 reviewed-build discriminators: last reviewed build")
-        for gap in outside:
-            print("UNRUN (outside the tally) " + gap, flush=True)
-        for gap in missing:
-            print("UNRUN REQUIRED " + gap, flush=True)
-        print(f"EXECUTED {'FAIL' if FAILURES else 'PASS'} {len(RESULTS) - FAILURES}/{len(RESULTS)} families; "
-              f"{COUNT} assertions", flush=True)
-        total = len(RESULTS) + len(missing)
-        failed = FAILURES + len(missing)
-        print(f"FAIL {failed}/{total}" if failed else f"PASS {total}/{total}", flush=True)
-        return 1 if failed else 0
-    finally:
-        shutil.rmtree(ROOT)
+        INPUTS[key] = getattr(ARGS, key)
+    return boundary(run, [(name, function) for name, function, _modules in FAMILIES])
 
 
 if __name__ == "__main__":

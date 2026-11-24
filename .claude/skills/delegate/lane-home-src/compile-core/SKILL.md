@@ -127,7 +127,7 @@ updated: <YYYY-MM-DD>
 ## Contributions
 ## Limitations & Threats to Validity
 ## Relation to Wiki
-- Confirms [[…]]; contradicts [[…]] → flag a `## Conflicts / Open Questions` block on that page
+- Confirms [[…]]; contradicts [[…]] → flag a `## Conflicts / Open Questions` block on that page; gives a newer state of the same thing as [[…]] → the replacement proposed there
 ## Key Quotes
 > "<verbatim>" (§/p.)
 ## Open Questions / Follow-ups
@@ -174,9 +174,14 @@ Add the links the source warrants, and only the pages the schema warrants.
 - **Reuse, never duplicate.** Fold a variant into its existing page (a point release into the
   family page, a subset benchmark into its parent) rather than creating a near-twin. Canonicalise
   every name against `wiki/index.md` in `name` mode (`grep -o '^- \[\[[^]|]*' wiki/index.md | sed 's/^- \[\[//'`) before you write it — never a whole read.
-- **A page exists** → read it and merge incrementally. Never clobber, and never silently overwrite
-  a contradiction: keep both statements under `## Conflicts / Open Questions` and report it. A
-  conflict never pauses you.
+- **A page exists** → read it and merge, choosing one of four operations for each statement the
+  source brings. It says what the page says: add the source as support and change nothing else. It
+  is new: add it. It is a newer state of the same thing, from a source with the standing to change
+  it: leave the page's statement as it stands and report the pair under `## Replaced (proposed)`:
+  the page's path, the older statement quoted whole, and the newer one with its source. It disagrees
+  and neither replaces the other: never overwrite it, keep both statements under
+  `## Conflicts / Open Questions` and report it. A later date alone replaces nothing, and a sourced
+  claim is never removed for its age. A conflict never pauses you.
 - **The stub rule.** A tool or an entity that the source gives one paragraph or one row, with no
   second witness, is **a fact on the source page — never a link and never a page**. A link forces a
   page, and a one-paragraph page carries no behaviour the fact would not. Create a tool, entity or
@@ -207,7 +212,7 @@ registry entry is copied from your brief's first line or omitted — never infer
 
 `{name · type · kind: create|update · target (canonicalised against index.md — a variant arrives as
 an update to the family page) · facts[] with a per-fact source locator · links[] · appears_in[] ·
-confidence · from: source-page · source: raw identity · diff: absolute path · base: sha256 prefix · diff_hash: sha256 prefix}`
+page_tier (the tier proposed for the target page, or `keep`) · from: source-page · source: raw identity · diff: absolute path · base: sha256 prefix · diff_hash: sha256 prefix}`
 
 An update diff is against the page exactly as read, with `base` the first 16 sha256 hex digits (the `source_hash` length used by de-dup). A create is a new-file diff carrying the schema's frontmatter and sections and `aliases:` with acronym and expansion wherever the source gives both. Record the diff's own sha256 prefix in `diff_hash`. Never apply the diff yourself. The lane's `lane_open` carries `role: compile` and the same lane id as the spawn record for metering.
 

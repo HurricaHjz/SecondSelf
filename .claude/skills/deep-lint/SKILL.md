@@ -114,10 +114,11 @@ The generated capability register at `wiki/developments/capability-register.md` 
 ### 2 — Flag-ledger reconciliation (Tier 2 → Tier 3)
 Collect the query-time freshness flags accumulated since the last run — one cheap global grep:
 `grep -rn "^flagged:" wiki --include='*.md'` (glob quoted — unquoted it breaks under zsh; **verify
-the probe against a known positive before trusting an empty result**, per CLAUDE.md §11). For each flagged page: re-read it, resolve the
-suspicion (update the page · re-grade its `confidence` · re-ingest its source via §3.1 tools ·
-or clear a false alarm) — a `source conversion suspect` flag resolves only by ingest 3c's terminal state (a repaired conversion scored `clean` joins `sources:` and the page's `## Summary` ends with the dated Provenance sentence); a re-read alone is never that resolution (2026-09-09) —, **remove the `flagged:` line**, and list the resolution in the report.
-The ledger is the run's first LLM-read priority.
+the probe against a known positive before trusting an empty result**, per CLAUDE.md §11). For each flagged page: re-read it, resolve the suspicion (bring the page to the current state, the older one held and the replacement logged as `wiki/developments/stale-marks.md` sets · re-grade its `confidence` · re-ingest its source via §3.1 tools · or clear a false alarm) — a `source conversion suspect` flag resolves only by ingest 3c's terminal state (a repaired conversion scored `clean` joins `sources:` and the page's `## Summary` ends with the dated Provenance sentence); a re-read alone is never that resolution (2026-09-09) —, **remove the `flagged:` line**, and list the resolution in the report.
+The ledger is the run's first LLM-read priority. A hold entry written during this run
+(`wiki/developments/stale-marks.md`) is logged as `synthesis`, or as `framework` for a page under
+`developments/`, and never as `deep-lint`: Step 3 takes the last `deep-lint` entry in the log as the
+previous run.
 - **Calendar (the owner's dated items):** if `CALENDAR.md` exists at the vault root, report every
   unticked item whose date is more than 14 days past (set by judgement, unmeasured; the owner's
   rule of 4 October 2026) as a list for the owner; report only, never tick, withdraw or delete.
@@ -128,9 +129,10 @@ The ledger is the run's first LLM-read priority.
   run, whether each open entry's named blocker still holds (its **why not fixed now** line; an older
   entry without one gets it in this pass). Where the blocker no longer holds, fix the defect in this
   run under CLAUDE.md §12's act-now rule (on a helper where §2.2's instrument rule calls for one) and
-  close the entry as a dated status fact; where it still holds, keep the entry, say why, and flag it
+  close the entry; where it still holds, keep the entry, say why, and flag it
   past ~90 days. List what stays open **ranked by severity × age**, each with its blocker and its
-  design doc where one exists.
+  design doc where one exists. An open entry keeps one status: what blocks it now, who proposes the
+  next step and when. Where an entry holds several, merge them into that one.
 - **Spawn-record review (2026-09-06; carries the instrument rule's over-calling guard and the per-call
   model-and-effort rule's pick guard).** Head-side, never routed — the records live outside the vault
   at `~/.llm-wiki/spawn-records/<run>.jsonl`, beyond any lane's grants — and scripted:
@@ -221,25 +223,48 @@ states that report `n/a`, not failures.
       audited`). The cap never silently stretches.
     - *A page has no parseable `updated:`* → it belongs to neither pool: list it as **unclassifiable** and
       audit it this run: broken frontmatter deserves a read. More than a capful is a Step 1 structural finding, not an audit pool.
-  - Prefer reading only frontmatter + the summary unless a fuller read is needed. Keep one consistent
+  - Prefer reading only frontmatter + the summary unless a fuller read is needed. The changed sample
+    is the exception: each of its pages is read whole, for two statements of one thing on that page,
+    one of them older, and for a state that a newer page replaces; a judge reports such a page under
+    `## Anomalies`, and the head makes the replacement in this run, held and logged as
+    `wiki/developments/stale-marks.md` sets. Three kinds of page keep the short read: the fault
+    list with its closed page where it exists, and the work list with its closed page, which their
+    primitives guard, with
+    `check_register.py` for the fault list; and a page a program generates, as its opening lines
+    say, which its generator rewrites whole. Keep one consistent
     standard; on a genuine tie pick the lower tier, never as insurance.
   - **Stamp what you check** (§4.6 write-time self-audit): every page whose badge this step actually
     judged — flagged, changed-sample, tail-sample, unclassifiable — gets `audited: <today>` in the same
     pass, confirmed and re-tiered alike. Never stamp a page the run did not judge; never mass-backfill.
   - A page held low or thin only because a stronger source it names is uncaptured goes in the report
-    with its `/gather` proposal (propose-only; at most three per report, for pages this run judged).
+    with its `/gather` proposal (propose-only, for pages this run judged).
     Every re-grade is listed with its ground.
 - Apply the same rule everywhere: CLAUDE.md §4.6, which settles every grade on its own, with
   `wiki-confidence-levels.md` explaining how it is applied. Compiled pages cap at `high`.
 - **Tier-audit execution (parity gate G1).** *(applies under the `multi` regime, owner-set or head-resolved for the run under delegation `auto`; in `single` the head runs the step itself unless an instrument-rule reason holds — thin-lanes phase 4, 2026-09-04; delegation `auto` 2026-09-04)* The sample's tier judgements run in **two blind `gate-judge` lanes** (at the class's fixed model and effort, as `routing.json` sets them), each given the same fixture copy of the sampled pages with badges, `audited:` stamps and tier rationale stripped, the rubric (CLAUDE.md §4.6 alone, so no worked case names a sampled page's grade to a judge) and the per-page form `pNN · tier · rubric ground · evidence`; each lane also returns an `## Anomalies` list. The head adjudicates: agreement = the tier; a one-step split = the lower tier unless the head's own read of that page settles it (the head reads only the disputed pages); a two-step split = that lane's batch re-judged by a third blind lane. A lane tier that would raise a page's badge is never applied unread: the head reads that page in full first (§4.6, delegation never raises a tier). Before any stamp, the verify leg runs — `tier-cap-check.py` over every verdict plus a `verifier` lane over the lanes' claim forms — and the head judges the flagged and `authoritative` strata itself (the head slice); the log entry names all three as the stamp's basis (design items 3, 4, 9). Stamping (`audited:`, re-tiers) stays head-side.
 
 ### 4 — Staleness
-Flag `authoritative`/`high` pages whose `updated` is old or that a newer page supersedes; down-weight or
-add a `## Conflicts / Open Questions` note, and route high-stakes stale claims to the human. Use `updated`
-+ supersession; do not silently rewrite.
-- **Archive candidates (prepared, the owner's yes):** flag pages that look retired — superseded and not cited by any
-  live work, or long-stale at low confidence — as candidates for the attic (CLAUDE.md §2.1), each
-  prepared through the `attic` skill up to its preview (`/attic archive <page> — <reason>`), so the owner's
+Run the old-state listing and report its totals. For the ten pages it ranks highest (set by
+judgement, unmeasured), and for any page a newer page replaces: bring the page to the current state
+by the method on `wiki/developments/stale-marks.md`, replacing each older state and logging each
+replacement; never rewrite silently, and never remove a sourced claim for its age. Where the newer
+state is in doubt, add a `## Conflicts / Open Questions` note or a `flagged:` line. Route a
+high-stakes one to the owner. A clean of a whole page follows the bulk-clean shape: a candidate
+beside the page, the program check, then the swap. The old-state listing runs as
+`python3 -B .claude/skills/weekly-audit/old_state_listing.py --wiki wiki` from the vault root; its totals
+are the `TOTAL` and `BY CATEGORY` lines it prints. While the Purpose of the bulk-clean check's row
+on `wiki/developments/check-lifecycle.md` names its trial, pass `--trial` to
+`.claude/skills/deep-lint/bulk-clean-check.py`: the check then prints what it would block and blocks
+nothing.
+- **Archive candidates (prepared, the owner's yes):** list pages that look retired. A design page
+  that a newer page replaces is proposed with its successor named: on the owner's yes its still-true
+  parts are merged into the successor, its links repointed and the page removed once a commit holds
+  it, or through the attic (CLAUDE.md §12, the sweep clause). A record of one moment that nothing
+  current cites is listed the same way. So is a design page that its replacing session merged and
+  could not remove before it ended, because no commit yet held it (that session's log entry names it
+  in a `Merged` line): it is proposed with its successor and the commit that now holds it. A file he
+  wants kept goes through the `attic` skill up to its preview, as before
+  (`/attic archive <page> — <reason>`), so the owner's
   yes is one word. NEVER move anything yourself: the move happens only on the owner's yes to that
   preview.
 - **Lifecycle register:** read `wiki/developments/check-lifecycle.md`, with the weekly audit's
@@ -250,7 +275,7 @@ add a `## Conflicts / Open Questions` note, and route high-stakes stale claims t
 
 ### 4a — Experience pages
 
-`python3 .claude/skills/deep-lint/experience-line.py --vault .` prints each page's entries, owner entries and bytes, and lists a malformed entry, a missing `Measures` field, an `owner` entry still dated provisional, an `owner` entry changed or relabelled since the last run, a lesson with no date in twelve months, a probe older than the last reach change, a probe naming another Claude Code major version than the one installed, and growth since the last completed run, with the labels added and reworded. Report every line. Growth has no size number: judge a trim by the page's use, and an `owner` entry changes only under CLAUDE.md §12. Compare each page's `probe` model with the head's own model; a differing one lists as due, and a due probe runs `.claude/skills/reflect/recall-probe.py` on the moved page, a fresh checker reads each record for whether the read came before the decision, and a failed task reruns once before `no gross failure` is written.
+`python3 .claude/skills/deep-lint/experience-line.py --vault .` prints each page's entries, owner entries and bytes, and lists a malformed entry, a missing `Measures` field, an `owner` entry still dated provisional, an `owner` entry changed or relabelled since the last run, a lesson with no date in twelve months, a probe older than the last reach change, a probe naming another Claude Code major version than the one installed, and growth since the last completed run, with the labels added and reworded. Report every line, and put each `owner` entry still dated provisional to the owner as an item that needs only the owner's yes, with its text and its evidence; the owner's yes replaces the provisional date with the date of that yes. Growth has no size number: judge a trim by the page's use, and an `owner` entry changes only under CLAUDE.md §12. Compare each page's `probe` model with the head's own model; a differing one lists as due, and a due probe runs `.claude/skills/reflect/recall-probe.py` on the moved page, a fresh checker reads each record for whether the read came before the decision, and a failed task reruns once before `no gross failure` is written.
 
 **Uses.** `python3 .claude/skills/reflect/experience-uses.py --vault . --all` counts each page's use notes from its `uses ... since` date across the transcripts the harness still holds. Set `uses` to the larger of the page's value and the count, never adding, so a rerun changes nothing; do the same for the `confirmed <last three dates> ×<n>` part of each `lesson` named. A records-only edit stamps neither `confidence:` nor `audited:`. A use is a clause in a session's prose, never a tool line. A mismatch it prints goes on the feature's standing register entry as a suspected case, which the next reflection's Step 1 reads; its diagnosis closes it there. A `GAP` or `UNREAD` line means the figure is a lower bound: say so in the report. Then read the experience-proof entry on the register: a kind of pointer counts as proven when its recall test passed since the last reach change, three live uses are counted (set by judgement, unmeasured) and no suspected miss stands undiagnosed or diagnosed as not read; record the result, and at its review date bring the sweep to the owner whatever the count.
 
@@ -275,7 +300,7 @@ changed**, cheapest signal first, and re-ingest **only** when it did:
   material, report the page as unadjudicated with the count unread. `CANNOT COMPARE: <why>` (exit 2:
   a file missing or empty, an engine field that is not one plain word, two engines) is reported as
   unadjudicated, never as unchanged. A re-capture counts against this step's fetch cap.
-- **Skip the immutable:** published papers / PDFs / DOIs rarely change — don't re-fetch them.
+- **Skip the immutable, never a preprint:** published papers / PDFs / DOIs rarely change — don't re-fetch them; an arXiv preprint does, so first run `python3 -B .claude/skills/deep-lint/preprint-versions.py --vault .`, which lists, warning only and from batched arXiv API calls (one call per 200 ids, 3 s apart), each source page whose captured version is behind the latest (each warning not marked `already flagged` becomes a dated `flagged:` line naming `v<L> of <id>`, its re-capture waits until a text of the owner's is about to cite that source: the session writing the text then proposes it for that source alone, on the owner's yes or a standing allowance, and the flagged sources are not brought up to date together (owner, a cut on trial since 20 November 2026; Step 2 leaves such a flag standing until then), and an `INCOMPLETE:` or `PROBE FAILED:` line is reported as unchecked, never as current).
 - **On a real change → re-ingest through the normal pipeline** (defuddle / `curl` / markitdown per §3.1).
   **Never WebFetch for re-ingest** (it returns a summary, not the source). Merge updates into the existing
   pages (don't duplicate), refresh that page's `confidence` and `updated`, and note the change.
@@ -387,7 +412,7 @@ drifted `cost` blocks to `classes.<name>.cost` in `.claude/routing.local.json` i
 - tail: sampled j of M least-recently-audited (of T unchanged) · unclassifiable: n
 - audited: coverage n of E eligible pages (x%) — stamped this run: s
 ### Staleness
-- N stale high/authoritative claims flagged: [[..]] · N attic candidates suggested as ready `/attic` invocations (user decides)
+- The old-state listing's totals · N states replaced: [[..]] · N doubts flagged: [[..]] · N attic candidates suggested as ready `/attic` invocations (user decides)
 - lifecycle register: N rows due (overdue first) · M malformed — each due row with its proposed keep / simplify / replace / retire
 ### Freshness
 - N sources changed upstream & re-ingested: [[..]] · N checked, unchanged · N unadjudicated (no validator and no comparable re-capture — why stated) · N skipped (immutable/capped — stated)

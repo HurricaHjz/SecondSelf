@@ -64,8 +64,13 @@ is about, or for, the owner. **Triage by `confidence` as `query` does**: lean on
 pages for load-bearing claims; the field is already in frontmatter, so this is free. If the catalogue
 under-covers and qmd is active (the `qmd-search` skill, dormant unless installed), use it as the semantic
 fallback to locate relevant pages, then deep-read; otherwise `grep`. **Freshness duty**: apply
-`query` Step 3b to the pages you read — surface stale/contradicted pages in the report line and mark
-them on-page (`flagged:` frontmatter / §4.4 block); no extra reads for this.
+`query` Step 3b to the pages you read — surface stale or contradicted pages in the report line, and
+on the page replace an old state the pages read settle, held first as
+`wiki/developments/stale-marks.md` sets, or mark a doubt (`flagged:` frontmatter / §4.4 block); no
+extra reads for this. A source page you will cite whose `flagged:` line names a newer version of its
+source is brought up to date before the text cites it: propose its re-capture and recompile for that
+source alone (the deep-lint skill, Step 5), and where the owner declines, cite the captured version by
+its version.
 
 ### Step 3 — Separate grounded · general · unknown (anti-hallucination core)
 Classify every claim before you write it:
@@ -113,10 +118,10 @@ the freshness line (`query` Step 3b's gate, style-invariant):
 - **No hallucination.** Grounded → cite; general → label; unknown → omit / flag / abstain. **Never
   invent facts, figures, quotes, or citations.**
 - **Weight by `confidence`.** Prefer higher-confidence wiki pages for key claims; attribute and hedge anything resting only on `low`/`very-low` pages.
-- **Write only to `output/`.** Never edit `raw/`. Never edit `wiki/`, with two named exceptions: the Freshness duty's on-page marks on a stale or contradicted page (Step 2), and the "maintained derivative" line on a source page's `## Related` (Step 5). Outputs are deliverables, not knowledge.
+- **Write only to `output/`.** Never edit `raw/`. Never edit `wiki/`, with two named exceptions: the Freshness duty's replacement or mark on a stale or contradicted page (Step 2), and the "maintained derivative" line on a source page's `## Related` (Step 5). Outputs are deliverables, not knowledge.
 - **British/UK English** and all other CLAUDE.md rules apply.
-- **Not logged by default** — a deliverable is not a brain-update (CLAUDE.md §5). Log only if the user
-  asks, or if the run also files a wiki page.
+- **Not logged by default** — a deliverable is not a brain-update (CLAUDE.md §5). Log only if the
+  user asks, or if the run also files a wiki page or replaces a state on one.
 
 ## Deliverable graphics (routing rule, moved here from CLAUDE.md §7 on 2026-09-05)
 `lieflat-charts` for browser-viewed HTML and interactive charts, dashboards and full-page HTML reports (some templates need CDN network); `scientific-figure-making` (from figures4papers) for publication-grade matplotlib figures for papers, theses and slides (PDF or PNG for LaTeX). Rule of thumb: web-viewed → lieflat-charts; print or venue-bound → scientific-figure-making. Both keep a recorded `auto` ruling in `wiki/developments/capability-register.md`, as legacy rows whose proof is not re-established; under the adopt skill an existing use ruling remains authoritative.

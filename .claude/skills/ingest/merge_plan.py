@@ -5,7 +5,7 @@ Usage: merge_plan.py --vault DIR --ledger FILE [--ledger CLAIMS_FILE ...]
        [--lanes LA,LB] [--quarantine JSON_LIST] [--allow-malformed FILE:LINE ...]
        [--union-dir EXISTING_SCRATCH_DIRECTORY]
        merge_plan.py --vault DIR --resolved DIFF [--resolved DIFF ...]
-       [--after-read BASE:DIFF_HASH ...]
+       [--after-read BASE:DIFF_HASH ... | --declined BASE:DIFF_HASH ...]
 
 Claims carry name, type, kind, target, facts, source/from, diff, base and diff_hash.
 Hashes are sha256 prefixes of 16 hex digits (or the complete sha256 for diff_hash).
@@ -32,7 +32,14 @@ de-duplicated after whitespace collapse only when their section, parser blocks
 and position amongst base lines agree. Every continuation line counts;
 punctuation, case and target/gloss boundaries remain distinct. A removed or edited body
 line, prose outside a list item, a heading, or any other frontmatter change keeps
-the target in conflict. Every block boundary is markdown-it-py's (CommonMark) over
+the target in conflict. One lane's several diffs for one page, each against the
+same current page, take the same union path; where they cannot union, or two of
+them add the same line under one heading, the target is manual with that reason
+(a lane's own diffs do not compete, so never conflict). A claim object carrying
+page_tier proposes its tier there (a tier name, or keep for none) and its
+confidence is not read as a tier; one without page_tier is read through its
+confidence, the field's earlier meaning, and a run mixing the two prints a note.
+Every block boundary is markdown-it-py's (CommonMark) over
 the page body; frontmatter closes at the first column-zero --- or ... line on
 its own, never an indented delimiter. An unclosed block exits 2. An addition counts
 only when the parser reads it, in its member's proposal, as a one-line top-level
@@ -63,6 +70,10 @@ A confidence lift always names the required full-page read, including a
 lift introduced by a resolved diff. Held output names a second --resolved command
 with --after-read BASE:DIFF_HASH: the head's read acknowledgement is bound to the
 validated page and exact diff. Repeat that pair for each acknowledged resolution.
+A lift the head declines needs no page read (the decline path): a held target
+whose artefact writes no raise itself also prints --resolved with --declined
+BASE:DIFF_HASH, which runs the same binding and prints the commands, so the page
+keeps its tier; --declined refuses a diff that raises confidence itself.
 Every resolution in a batch is validated and rechecked before any commands print.
 The head applies with patch at zero fuzz.
 """
@@ -687,7 +698,19 @@ def inspect_claim(c, target, cat):
     text = cat.pages[target][1] if target in cat.pages else ''
     exists = target.exists()
     oldtier = frontmatter(text).get('confidence', '')
-    lift = TIERS.get(str(c.get('confidence', '')).strip('\'"'), -1) > TIERS.get(oldtier, -1) if exists else False
+    # A claim object that carries page_tier proposes its tier there (or keep, none); its confidence
+    # is then how sure the lane is of its facts, never a tier. One without page_tier is read through
+    # its confidence, the field's earlier name and meaning, so a run on the earlier schema plans as before.
+    if 'page_tier' in c:
+        proposed = str(c.get('page_tier', '')).strip('\'"')
+        if proposed == 'keep':
+            proposed = ''
+        elif proposed not in TIERS:
+            problems.append('page_tier is not a tier or keep: ' + json.dumps(c.get('page_tier'), ensure_ascii=False)[:60])
+            proposed = ''
+    else:
+        proposed = str(c.get('confidence', '')).strip('\'"')
+    lift = TIERS.get(proposed, -1) > TIERS.get(oldtier, -1) if exists and proposed else False
     if c.get('kind') not in ('create', 'update'): problems.append('claim kind is not create or update')
     if c.get('kind') == 'create' and exists: problems.append('create target now exists')
     if c.get('kind') == 'update' and (not exists or c.get('base') != digest(text.encode('utf-8'))): problems.append('base missing or moved')
@@ -740,8 +763,52 @@ def classify(members):
         return 'apply-union'
     if any(x['problems'] for x in members): return 'manual'
     paths = {str(x['diff']) for x in members}
-    if len(paths) != 1: return 'manual'
-    return 'tier-raised' if any(x['lift'] for x in members) else 'apply'
+    if len(paths) == 1:
+        return 'tier-raised' if any(x['lift'] for x in members) else 'apply'
+    # One lane, several diffs on one base: the union path two lanes take. A lane's own diffs do not
+    # compete, so what cannot union is manual, never conflict; two diffs adding one line are manual too.
+    candidates = [list_additions(x) for x in members]
+    if any(c is None or c[1] for c in candidates): return 'manual'
+    if lone_lane_overlap(members, candidates): return 'manual'
+    if any(x['lift'] for x in members): return 'tier-raised'
+    return 'apply-union'
+
+
+def several_diffs(members):
+    """True when one lane's claim objects carry more than one distinct diff for this target."""
+    return len({x['claim']['lane'] for x in members}) == 1 and len({str(x['diff']) for x in members}) > 1
+
+
+def lone_lane_overlap(members, candidates):
+    """(heading, line) that two of one lane's distinct diffs both add, after whitespace collapse, or None.
+
+    Compared across distinct diff paths only: claim objects sharing one diff add its lines once.
+    """
+    seen, by_path = {}, {}
+    for member, candidate in zip(members, candidates):
+        by_path.setdefault(str(member['diff']), candidate)
+    for path, candidate in by_path.items():
+        for heading, content, _place, _at in candidate[0]:
+            key = (heading, normalise_link_line(content))
+            if seen.setdefault(key, path) != path:
+                return key
+    return None
+
+
+def lone_lane_reason(members):
+    """Why one lane's several diffs for a page stay manual, so the plan never prints a bare manual."""
+    candidates = [list_additions(x) for x in members]
+    if any(c is None or c[1] for c in candidates):
+        return f'one lane sent {len({str(x["diff"]) for x in members})} diffs for this page and not all of them are list additions'
+    key = lone_lane_overlap(members, candidates)
+    if key:
+        return f"overlapping diffs: more than one of this lane's diffs adds {quoted(key[1])} under {key[0]}"
+    return None
+
+
+def member_label(member):
+    """A member's name in a refusal: its lane, with #k where one lane has several members in the target."""
+    return member.get('label') or member.get('claim', {}).get('lane', 'unnamed')
 
 
 UNION_HEADINGS = ('## Appears in', '## Related', '## Key Points', '## Conflicts / Open Questions')
@@ -1022,7 +1089,7 @@ def guard_union(member):
             union_list_items(inner, location)
     parsed = member.get('parsed')
     if not parsed: return
-    lane = member.get('claim', {}).get('lane', 'unnamed')
+    lane = member_label(member)
     changed = member.get('changed')
     if changed is not None:
         frontmatter(changed, strict_aliases=True, location='member ' + str(lane))
@@ -1117,7 +1184,7 @@ def placement(member):
     """
     text, ids = proposal(member)
     base, view = page_view(member['text']), page_view(text)
-    lane = member.get('claim', {}).get('lane', 'unnamed')
+    lane = member_label(member)
     line_safe(base, 'page')
     line_safe(view, f'member {lane} proposed')
     for index in range(view.offset, len(view.lines)):
@@ -1225,7 +1292,7 @@ def list_additions(member):
                     position += tag == '-'; continue
                 match = FM_LIST.match(content)
                 if match and match[1] in LIST_KEYS:
-                    lane = member.get('claim', {}).get('lane', 'unnamed')
+                    lane = member_label(member)
                     location = f'member {lane} line {new_position}' if tag == '+' else f'page line {position + 1}'
                     items = union_list_items(match[2], match[1] + ' at ' + location)
                     if tag == '-': removed[match[1]] = items
@@ -1318,7 +1385,7 @@ def check_composed(changed, origin, members, views, kept, duplicates=None):
     def remap(shape):
         return tuple((kind, level, frozenset(map(representative, held))) for kind, level, held in shape)
     for number, (member, (proposed, ids)) in enumerate(zip(members, views)):
-        lane = member.get('claim', {}).get('lane', 'unnamed')
+        lane = member_label(member)
         own = {ident for index, ident in enumerate(ids) if ident[0] == 'A' and index >= proposed.offset}
         for ident in sorted(own):
             mine = ident[2]
@@ -1499,12 +1566,22 @@ def check_read_receipt(receipt, expected, diff_hash):
     base, sep, held_hash = receipt.partition(':')
     pattern = r'[0-9a-f]{' + str(HASH_LENGTH) + '}'
     if not sep or not re.fullmatch(pattern, held_hash) or (base != 'absent' and not re.fullmatch(pattern, base)):
-        raise ProbeError('--after-read wants the printed BASE:DIFF_HASH pair')
+        raise ProbeError('--after-read and --declined want the printed BASE:DIFF_HASH pair')
     if held_hash != diff_hash:
         raise ProbeError('resolved diff hash is not the held artefact: expected ' + held_hash + ', observed ' + diff_hash)
     observed = expected if expected is not None else 'absent'
     if base != observed:
         raise ProbeError('resolved base is not the held page: expected ' + base + ', observed ' + observed)
+
+
+def raises_tier(old, new):
+    """The changed page's confidence: line ranks above the base page's."""
+    return TIERS.get(frontmatter(new).get('confidence'), -1) > TIERS.get(frontmatter(old).get('confidence'), -1)
+
+
+def decline_release(vault, path, expected, diff_hash):
+    receipt = (expected if expected is not None else 'absent') + ':' + diff_hash
+    return 'or decline the raise, with no full-page read: ' + shlex.join(['merge_plan.py', '--vault', str(vault), '--resolved', str(path), '--declined', receipt])
 
 
 def read_release(vault, target, path, expected, diff_hash, kind):
@@ -1515,8 +1592,11 @@ def read_release(vault, target, path, expected, diff_hash, kind):
 
 def resolved_plan(args, vault):
     """Prepare the whole batch, then recheck bytes before printing any commands."""
-    if args.after_read and len(args.after_read) != len(args.resolved):
-        raise ProbeError('pair every --resolved with its own --after-read BASE:DIFF_HASH')
+    if args.after_read and args.declined:
+        raise ProbeError('--after-read and --declined go in separate calls')
+    receipts = args.after_read or args.declined
+    if receipts and len(receipts) != len(args.resolved):
+        raise ProbeError('pair every --resolved with its own ' + ('--after-read' if args.after_read else '--declined') + ' BASE:DIFF_HASH')
     ready, output = [], []
     for index, name in enumerate(args.resolved):
         path = Path(name).expanduser().resolve()
@@ -1527,19 +1607,21 @@ def resolved_plan(args, vault):
         old = old_bytes.decode('utf-8')
         expected = digest(old_bytes) if parsed['old'] else None
         diff_hash = digest(data)
-        if args.after_read: check_read_receipt(args.after_read[index], expected, diff_hash)
+        if receipts: check_read_receipt(receipts[index], expected, diff_hash)
         # Content-addressed union names also detect replacement without an
         # acknowledgement, preserving the ordinary --resolved artefact path.
         named_hash = re.fullmatch(re.escape(normalise(target.stem)) + r'-([0-9a-f]{' + str(HASH_LENGTH) + r'})\.diff', path.name)
         if named_hash and named_hash[1] != diff_hash:
             raise ProbeError('resolved diff hash differs from the held union artefact name')
         new = apply_memory(old, parsed)
-        lift = bool(parsed['old']) and TIERS.get(frontmatter(new).get('confidence'), -1) > TIERS.get(frontmatter(old).get('confidence'), -1)
+        lift = bool(parsed['old']) and raises_tier(old, new)
+        if lift and args.declined:
+            raise ProbeError('a declined raise cannot apply a diff that raises confidence itself: ' + str(target) + ' · resolve a diff without the raise')
         if lift and not args.after_read:
             output.append('confidence lift: read the page in full before applying · ' + str(target))
             output.append(read_release(vault, target, path, expected, diff_hash, 'resolved'))
         else:
-            output.append(('confidence lift: full-page read acknowledged · ' if lift else 'no confidence lift: read the diff, then apply · ') + str(target))
+            output.append(('confidence lift: full-page read acknowledged · ' if lift else 'confidence lift declined: no full-page read; read the diff, then apply · ' if args.declined else 'no confidence lift: read the diff, then apply · ') + str(target))
             output.append('base recheck immediately before real patch: ' + (expected if expected is not None else 'target absent'))
             output.append(patch_command(vault, target, path, path.parent / 'apply.rej'))
             output.append('after dry-run and base recheck: ' + patch_command(vault, target, path, path.parent / 'apply.rej', False))
@@ -1600,6 +1682,13 @@ def planted():
     if list_additions(stamped) is None or list_additions(stamped)[2]['stamps'] != {'audited': '2026-02-02'}: raise ProbeError('stamp union control failed')
     if list_additions(grown) is None or list_additions(grown)[2]['lists'] != {'sources': ['b.md']} or list_additions(shrunk) is not None: raise ProbeError('sources union controls failed')
     if list_additions(removed) is not None: raise ProbeError('removed-line control failed')
+    # One lane's several list-only diffs on one base take the union path; prose or an overlap stays manual.
+    first = dict(bullet, claim={'lane': 'A'}, diff='d1')
+    second = dict(member(page.replace('- old\n', '- old\n- second bullet\n')), claim={'lane': 'A'}, diff='d2')
+    overlapping = dict(member(page.replace('- old\n', '- old\n- new bullet\n- third bullet\n')), claim={'lane': 'A'}, diff='d3')
+    if (classify([first, second]) != 'apply-union' or classify([first, dict(prose, claim={'lane': 'A'}, diff='d4')]) != 'manual'
+            or classify([first, overlapping]) != 'manual' or classify([first, dict(first)]) != 'apply'):
+        raise ProbeError('classification controls failed')
     nested = page.replace('- old\n', '- parent\n  - child\n')
     try: list_additions(member(nested.replace('  - child\n', '- added\n  - child\n'), nested))
     except UnionRefusal: pass
@@ -1689,6 +1778,8 @@ def planted():
     line_safe(page_view('text more\n'), 'control')
     expected, held_hash = digest(b'base'), digest(b'union')
     check_read_receipt(expected + ':' + held_hash, expected, held_hash)
+    if not raises_tier('---\nconfidence: medium\n---\n', '---\nconfidence: "high"\n---\n') or raises_tier('---\nconfidence: high\n---\n', '---\nconfidence: medium\n---\n'):
+        raise ProbeError('tier raise controls failed')
     for observed_base, observed_diff in ((digest(b'moved'), held_hash), (expected, digest(b'member'))):
         try: check_read_receipt(expected + ':' + held_hash, observed_base, observed_diff)
         except ProbeError: pass
@@ -1706,6 +1797,7 @@ def plan(args):
     if args.resolved:
         return resolved_plan(args, vault)
     if args.after_read: raise ProbeError('--after-read requires --resolved')
+    if args.declined: raise ProbeError('--declined requires --resolved')
     if not args.ledger: raise ProbeError('plan needs at least one --ledger')
     if args.union_dir:
         scratch = Path(args.union_dir).expanduser().resolve()
@@ -1716,6 +1808,10 @@ def plan(args):
         print('note: markdown-it-py ' + version + ' is not the accepted ' + PARSER_PIN + '; test_merge_plan.sh is the acceptance test for the union rule')
     events, problems = read_events(args.ledger, args.allow_malformed)
     claims = claims_from(events)
+    tiered = sum(1 for c in claims if 'page_tier' in c)
+    if 0 < tiered < len(claims):
+        print(f'note: {len(claims) - tiered} of {len(claims)} claim objects carry no page_tier; their confidence '
+              "is read as a proposed page tier, the field's earlier meaning")
     for e in events:
         if e.get('event') == 'verify' and str(e.get('shape', '')).casefold() == 'fail':
             print('note: ' + str(e.get('lane')) + ' · the verifier recorded a claims-shape evidence failure; every claim object is validated here individually')
@@ -1767,18 +1863,32 @@ def plan(args):
             for member in members: member['problems'].append(drift)
         if len(paths) > 1:
             for member in members: member['problems'].append('multiple existing pages share this canonical name')
+        multi = len({c['lane'] for c in live}) > 1
+        # Several members of one target: more than one lane, or one lane with several distinct diffs.
+        several = multi or several_diffs(members)
+        per_lane = {}
+        for member in members:
+            per_lane[member['claim']['lane']] = per_lane.get(member['claim']['lane'], 0) + 1
+        numbered = {}
+        for member in members:
+            lane = member['claim']['lane']
+            if per_lane[lane] > 1:
+                numbered[lane] = numbered.get(lane, 0) + 1
+                member['label'] = f'{lane} #{numbered[lane]}'
         try:
-            if len({c['lane'] for c in live}) > 1:
+            if several:
                 guard_catalogue_identities(cat, members, paths)
             disposition = classify(members)
+            if disposition == 'manual' and not multi and several and not any(x['problems'] for x in members):
+                why = lone_lane_reason(members)
+                if why: members[0]['problems'].append(why)
         except UnionRefusal as error:
             disposition = 'manual'
             members[0]['problems'].append(str(error))
         union_patch = None
-        multi = len({c['lane'] for c in live}) > 1
-        # A claim-field lift on a union-eligible multi-lane target composes its union
+        # A claim-field lift on a union-eligible target of several members composes its union
         # too: the head reads the page in full first, and the union never lifts a tier.
-        unionable = multi and disposition == 'tier-raised' and not any(x['problems'] for x in members) and all(
+        unionable = several and disposition == 'tier-raised' and not any(x['problems'] for x in members) and all(
             (cand := list_additions(x)) is not None and not cand[1] for x in members)
         if disposition == 'apply-union' or unionable:
             try:
@@ -1794,37 +1904,48 @@ def plan(args):
         print(disposition + ' ' + name + ' · lanes ' + ' '.join(dict.fromkeys(c['lane'] for c in live)) + f' · objects {len(live)}')
         for c in all_members:
             print('  claim ' + c['_id'] + (' · quarantined' if c['_id'] in dropped else ' · retained'))
+        # Held: a union composed for the read, or a single-lane target whose next class is apply.
+        held = disposition == 'tier-raised' and (union_patch is not None or not several)
+        # A union never lifts a tier; a lane diff that writes the raise itself cannot be declined as it stands.
+        declinable = held and (union_patch is not None or not raises_tier(members[0]['text'], members[0]['changed']))
         if any(x['lift'] for x in members):
-            next_class = 'apply-union' if union_patch else ('conflict' if multi else 'apply')
-            print('  confidence lift: read the page in full · then ' + (next_class if disposition == 'tier-raised' else disposition))
+            next_class = 'apply-union' if union_patch else ('conflict' if multi else ('manual' if several else 'apply'))
+            print('  confidence lift: read the page in full · then ' + (next_class if disposition == 'tier-raised' else disposition) + (' · or decline it with no page read (the --declined line below)' if declinable else ''))
         for why in dict.fromkeys(p for member in members for p in member['problems']): print('  reason: ' + why)
         if not paths:
             aliases = [a for member in members if member['changed'] for a in frontmatter(member['changed']).get('aliases', [])]
             print('  create names and aliases: ' + json.dumps([c['name'] for c in live] + [a for c in live for a in c.get('aliases', [])] + aliases, ensure_ascii=False))
-        if disposition in ('apply', 'apply-union') or (disposition == 'tier-raised' and union_patch):
-            applications.append((target, union_patch, members, disposition == 'tier-raised'))
+        if disposition in ('apply', 'apply-union') or held:
+            applications.append((target, union_patch, members, held, declinable))
     print('summary: targets ' + str(len(groups)) + ' · ' + ' · '.join(f'{k} {v}' for k, v in counts.items()) + f' · claims {len(claims)} · quarantined objects {len(dropped)}')
     print('controls: normalisation matched and separated · apply and conflict classified · duplicate quarantine rejected · quoted confidence parsed')
     if problems:
         raise ProbeError('; '.join(dict.fromkeys(problems)))
     ready = []
-    for target, union_patch, members, after_read in applications:
+    for target, union_patch, members, after_read, declinable in applications:
         diff = emit_union(args.union_dir, target, union_patch, vault) if union_patch else Path(members[0]['diff']).resolve()
-        union_hash = digest(union_patch.encode('utf-8')) if union_patch else None
-        if union_patch: print('union diff: ' + str(diff) + ' · base ' + digest(members[0]['text'].encode('utf-8')) + ' · diff_hash ' + union_hash + (' · after the full-page read' if after_read else ''))
-        ready.append((target, diff, members[0]['expected_base'], after_read, union_hash))
+        held_hash = digest(union_patch.encode('utf-8')) if union_patch else None
+        kind = 'union' if union_patch else 'lane'
+        if after_read and not union_patch:
+            # A held lane diff binds its receipt to the bytes the claim's diff_hash validated.
+            data, wanted = diff.read_bytes(), members[0]['claim']['diff_hash']
+            if digest(data, len(wanted)) != wanted: raise ProbeError('lane diff hash changed during planning: ' + str(diff))
+            held_hash = digest(data)
+        if union_patch: print('union diff: ' + str(diff) + ' · base ' + digest(members[0]['text'].encode('utf-8')) + ' · diff_hash ' + held_hash + (' · after the full-page read' if after_read else ''))
+        ready.append((target, diff, members[0]['expected_base'], after_read, held_hash, declinable, kind))
     # Validate every queued target before printing any patch command. The head
     # still compares this same expected hash immediately before the real apply.
-    for target, diff, expected, _, union_hash in ready:
+    for target, diff, expected, _, held_hash, _, kind in ready:
         drift = base_problem(target, expected)
         if drift: raise ProbeError(str(target) + ': ' + drift)
-        if union_hash is not None and digest(diff.read_bytes()) != union_hash:
-            raise ProbeError('union diff hash changed during planning: ' + str(diff))
-    for target, diff, expected, after_read, union_hash in ready:
+        if held_hash is not None and digest(diff.read_bytes()) != held_hash:
+            raise ProbeError(kind + ' diff hash changed during planning: ' + str(diff))
+    for target, diff, expected, after_read, held_hash, declinable, kind in ready:
         if after_read:
-            # No apply command for a held target: the head reads the page in full, then runs
-            # --resolved on the union artefact, which prints the commands (CR-PLANNER MEDIUM 2).
-            print(read_release(vault, target, diff, expected, union_hash, 'union'))
+            # No apply command for a held target: the head reads the page in full, or declines the
+            # raise, then runs --resolved on the artefact, which prints the commands (CR-PLANNER MEDIUM 2).
+            print(read_release(vault, target, diff, expected, held_hash, kind))
+            if declinable: print(decline_release(vault, diff, expected, held_hash))
             continue
         print('base recheck immediately before real patch: ' + (expected if expected is not None else 'target absent'))
         print(patch_command(vault, target, diff, diff.parent / 'apply.rej'))
@@ -1837,6 +1958,7 @@ def main(argv=None):
     ap.add_argument('--vault', default=str(Path(__file__).resolve().parents[3]))
     ap.add_argument('--union-dir', help='existing head-named scratch directory outside the vault; the sole write exception')
     ap.add_argument('--after-read', action='append', default=[], help='acknowledge the full-page read using the held BASE:DIFF_HASH pair; one per --resolved')
+    ap.add_argument('--declined', action='append', default=[], help='decline the held raise with no full-page read, using the held BASE:DIFF_HASH pair; one per --resolved')
     for name in ('ledger', 'lanes', 'quarantine', 'allow-malformed', 'resolved'):
         ap.add_argument('--' + name, action='append', default=[])
     args = ap.parse_args(argv)

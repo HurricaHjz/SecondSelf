@@ -53,6 +53,16 @@ Collect candidates of four kinds. The first two matter most often; the last is t
 - **Method or process lesson** — something about how to work that would change a future session.
 - **Defect** — a fault in a framework surface (the schema, a skill, a script).
 
+**The pages the session edited.** Read the wiki pages the session wrote to, as the transcript's
+edits name them, for an old state left beside the newer one. Leave out `wiki/index.md`,
+`wiki/log.md`, and the fault list with its closed page where it exists, and the work list with its
+closed page. Read a page of up to
+30,000 bytes whole; of a larger page, read the sections the session edited. Stop at 300,000 bytes in
+all, and name the pages not read: deep-lint's changed pool takes them by their `updated:` date (both
+limits set by judgement). For each state the session replaced, search the wiki once for another page
+that still states the old one. Report each one found as a candidate of its own, with the page's
+path, the older statement and the newer one.
+
 ## Step 3 — Apply the bar, then rank every survivor
 
 The bar is deliberately narrow: the unrecorded essentials, not everything noticed. A long session
@@ -118,8 +128,11 @@ a named discard list shows what the sweep found and what the dedup killed.
 its moment. If none reads it then, route it again. Knowledge and working-context candidates keep their
 own routing tests and show `not a doing lesson`.
 
-A candidate that conflicts with something a page already claims never overwrites it: propose a
-`## Conflicts / Open Questions` block keeping both statements and contrasting them, and say so.
+A candidate that gives a newer state of something a page states (the owner's own world or decisions,
+a measurement taken again) is proposed as a replacement, the old and the new side by side. A
+candidate that disagrees with a sourced claim, with neither replacing the other, never overwrites
+it: propose a `## Conflicts / Open Questions` block keeping both statements and contrasting them,
+and say so.
 Cite the pages a candidate rests on; where a finding is genuinely original with nothing prior to
 cite, say so plainly and let the grading carry it.
 
